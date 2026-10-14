@@ -85,6 +85,8 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   BILL_CYCLE_CHANGED: "Change",
   WIZARD_DEFAULTS_CHANGED: "Change",
   ACCOUNT_CLOSED: "Change",
+  // cm21 — a BAN's invoice template reference changed (binding plan D15).
+  BILLING_ACCOUNT_TEMPLATE_CHANGED: "Change",
   // bm02 — a bill_run row lazily created on list-page render. Additive: it
   // brings a new run into existence (one row per period actually inserted).
   BILL_RUN_MATERIALIZED: "Additive",

@@ -204,7 +204,7 @@ Apply §4 and the general doc §3, plus:
 
 ### 9.5 Missing or ambiguous requirements — stop and ask
 
-1. **Stop and ask on the open items; do not choose a default:** O1 (control copy and placement), O3 (`system_config` key and default for the page size), O4 (final audit event-type name).
+1. **Stop and ask on the open items; do not choose a default:** O1 (control copy and placement), O3 (`system_config` key and default for the page size), O4 (final audit event-type name). All three are now closed: O1 by cm18 (read-only "Follow active template" field with help text) and the cm21 reset control, O3 by cm20 (`CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE` = 20), O4 by cm21 (`BILLING_ACCOUNT_TEMPLATE_CHANGED`).
 2. **Never invent a template-line identifier or a meaning for a non-`NULL` value.** Any question about how a bound template reaches an invoice is Phase 3; stop and raise it.
 3. **Treat any need to edit an Accounts-owned or Billing-owned file not listed in §9.2 as a scope question.** Stop and ask.
 4. **Never resolve a conflict between this module's docs and `billmgmt-*` / `acctmgmt-*` docs yourself.** Flag it with both citations.

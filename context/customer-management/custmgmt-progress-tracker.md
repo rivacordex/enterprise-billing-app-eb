@@ -22,12 +22,20 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   follow-up commit.
 - **cm18 IN PROGRESS** — committed (`12e9c03`, SonarQube fixes `832597c`). It was
   written before cm17 passed §9.8 (§9.2 deviation, now resolved by cm17's sign-off).
-  Still open: its own DB-gated suite (disposable Postgres) and the ac04 spec approval.
+  Its DB-gated suite passed in the cm21 run; the ac04 spec change was approved and
+  applied in cm22 (2026-10-13). Nothing open beyond sign-off.
 - **cm19 IN PROGRESS** (started 2026-10-12) — committed (`6d243f9`); code-review
   fixes committed (`1e2b91e`).
 - **cm20 IN PROGRESS** (started 2026-10-12) — committed (`e44f2c7`); code-review
   fixes done, unit and DB-gated suites green, pending commit. Deviations: the loader
   placement and the review's `fa` page scope (both below).
+- **cm21 IN PROGRESS** (started 2026-10-13) — implemented, tests green incl. DB-gated;
+  committed; open: code review. Manage Customer Billing account panel +
+  audited, CAS-guarded template reset.
+- **cm22 IN PROGRESS** (started 2026-10-13) — ship gate implemented and green
+  (guardrails, journey, posting re-run, full unit + integration runs, docs), committed
+  as `e46ee32`. Open: the plan §11 matrix check, then status → Delivered. ac04 + ac23
+  doc edits approved and applied 2026-10-13.
 
 | Unit | Name                                                        | Boundary | Status      | Commit |
 | ---- | ----------------------------------------------------------- | -------- | ----------- | ------ |
@@ -35,8 +43,8 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 | cm18 | Onboarding wizard: "Invoice template" field                 | APP      | In progress | 12e9c03 |
 | cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | In progress | 6d243f9 |
 | cm20 | View Customer: Accounts tab                                 | APP      | In progress | e44f2c7 |
-| cm21 | Manage Customer: Billing account panel + template reset     | APP      | Not started | —      |
-| cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | Not started | —      |
+| cm21 | Manage Customer: Billing account panel + template reset     | APP      | In progress | e2677bf |
+| cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | In progress | e46ee32 |
 
 ## Invoice Template Binding update — cm17 SIGNED OFF (2026-10-12)
 
@@ -306,14 +314,206 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   - **OPEN:** commit the review fixes. The seed itself was not run (the service falls
     back to 20 when the key is absent).
 
+## Invoice Template Binding update — cm21 IN PROGRESS (started 2026-10-13)
+
+- **cm21 — Manage Customer: Billing account panel + template reset.** Boundary: APP.
+  Spec: `context/customer-management/specs/cm21-manage-customer-billing-account-panel.md`.
+  Authorized by binding plan §6, D3, D12, D13, D15; Inv. #16, #17, #18. Depends on
+  cm17, cm18 (`assertBindableTemplate`), cm20 (label resolver, `BanStateChip`).
+  - **Delivered:**
+    - `types/audit.ts` / `types/audit-log.ts`: `BILLING_ACCOUNT_TEMPLATE_CHANGED`
+      (after `ACCOUNT_CLOSED`), category `Change` (O4).
+    - `db/repositories/accounts/billing-account.repository.ts`: `setTemplateRef` — CAS
+      on the BAN's `last_modified` (`state <> 'closed'`), sets the ref,
+      `last_edited_by`, `last_modified = now()`; re-reads to classify `not_found` /
+      `closed` / `conflict` (the ac16 `close` shape).
+    - `validation/accounts/set-billing-account-template.schema.ts` (new).
+    - `services/accounts/set-billing-account-template.ts` (new): spec §2 steps 1–7 in
+      one transaction; a BAN of another party role → `BAN_NOT_FOUND`; unchanged value
+      → `changed: false`, no write, no audit. `party_role` is never read or bumped.
+    - `services/accounts/list-customer-billing-accounts.ts` (new) + types
+      `CustomerBillingAccountRow` / `CustomerBillingAccounts` in `types/accounts.ts`:
+      FAs by party-role key, BANs per FA, one `resolveCurrentTemplateLabel` per
+      request.
+    - `actions/accounts/set-billing-account-template.ts` (new): `customers : EDIT` via
+      `requirePermission`, then `accounts_transactions : EDIT` via `meetsLevel`, else
+      `FORBIDDEN`; Zod → `VALIDATION_ERROR`; revalidates `/customers/manage/[id]` and
+      `/customers/view/[id]` on success.
+    - `components/customers/billing-account-panel.tsx` (new, client): per BAN, the id
+      (mono), name, `BanStateChip`, template label, and the secondary reset button per
+      the §2 table; failure messages in a destructive `Alert` with an icon;
+      `router.refresh()` on success. Reuses `AccountsNotOnboardedCard` for the
+      not-onboarded copy (identical text) and cm20's `TemplateLabel`, now exported
+      from `billing-account-card.tsx` (no behaviour change to the View tab).
+    - `app/(app)/customers/manage/[id]/page.tsx`: `permissionMap` from the existing
+      guard → `canEditAccounts`; `listCustomerBillingAccounts` in the existing
+      `Promise.all`; panel rendered after `ContactManagerPanel`. Guard unchanged.
+    - Tests: `tests/services/set-billing-account-template.test.ts`,
+      `tests/actions/set-billing-account-template.action.test.ts`,
+      `tests/components/billing-account-panel.test.tsx`,
+      `tests/accounts/set-billing-account-template.integration.test.ts` (all new);
+      `tests/app/customers-manage-page.test.tsx` (+ edit-page block),
+      `tests/types/audit-log.test.ts`, `tests/accounts/route-level-matrix.test.ts`
+      (dual-permission block), `tests/guardrails/customer-accounts-read-boundary.test.ts`
+      (allowlists the panel → reset action), `tests/components/audit-log-filters.test.tsx`
+      (option count 86 → 87, the audit-type ripple).
+    - Docs: `custmgmt-code-standards.md` §7 tree and §8 (table row + dual-permission
+      note); `custmgmt-architecture.md` O3/O4 closed; `custmgmt-ai-workflow-rules.md`
+      §9.5 item 1 notes O1/O3/O4 closed. The binding plan isn't in the repo, so its
+      open-items list was not edited (same as cm20).
+  - **Deviations / judgement calls:**
+    - `tests/app/customers-manage-page.test.tsx` only covered the *search* page; no
+      edit-page test existed. The cm21 cases are a new `describe` in that file (the
+      file the spec names).
+    - `VALIDATION_ERROR` has no spec'd copy; the panel shows the module's generic
+      "Something went wrong. Please try again." (same as the contact panel). A thrown
+      action error shows the same message.
+    - `EDIT_DISABLED_TITLE` reads "Requires accounts configuration edit access" (it was
+      written for `accounts_config`), but the panel gates on `accounts_transactions`.
+      Used unchanged as the spec and §9.6 item 4 require; raised, not changed.
+  - **Verification:** `tsc`, ESLint and Prettier are clean. Unit/component/page/guardrail
+    files green under `--pool=threads --maxWorkers=1` (145 tests across the cm21
+    set + `customer-accounts-tab`), plus every file under `tests/guardrails` and the
+    audit tests. DB-gated: cm21 integration (2/2), cm18 template integration (2/2) and
+    V7 atomicity (2/2) passed on a throwaway `enterprise-billing-app-db` container
+    (port 55433, marked disposable via `tests/helpers/disposable-database.ts`, not the
+    dev stack), then the container was removed. That run also clears cm18's open item
+    (1). Full unit suite (`--pool=threads`): 4464 passed. Apart from `grep-gates`
+    below, every failure is outside cm21: 7 product/billing files fail to load
+    on missing env (`DATABASE_URL` / `BETTER_AUTH_*` unset, no `.env`), and
+    `route-manifest` / `ratecard-parse-csv` fail only in the full run. Both pass
+    when run alone (25/25); the likely cause is the stale `.claude/worktrees/`
+    copies.
+  - **`grep-gates` Result-code catalog — fixed with user approval (2026-10-13):**
+    `tests/accounts/grep-gates.test.ts` had 2 red cases (from cm18's
+    `TEMPLATE_NOT_BINDABLE`; cm21 added `BAN_CLOSED` and `BAN_NOT_FOUND`). The user
+    approved the Accounts doc edit (§9.6 item 7): `acctmgmt-code-standards.md` §9 now
+    lists all three (`BAN_NOT_FOUND` in §9.5; `BAN_CLOSED` and `TEMPLATE_NOT_BINDABLE`
+    in §9.7), and the header and the test's count lock go 51 → 54. `grep-gates` is
+    green (237/237). This also clears cm20's reported `grep-gates` failure.
+  - **Applied with user approval (2026-10-13):**
+    - `acctmgmt-architecture.md` `billing_account` row: `ref_bill_template_version_id`
+      (nullable FK to `bill_template_version`, v1 `NULL` only) written at onboarding
+      (cm18) and by `setBillingAccountTemplate` (cm21, CAS on the BAN's own
+      `last_modified`, audited `BILLING_ACCOUNT_TEMPLATE_CHANGED`); posting never reads
+      it.
+  - **Code review fixes committed** as `a329ff4` (2026-10-13).
+  - **OPEN:** sign-off with the update.
+
+## Invoice Template Binding update — cm22 IN PROGRESS (started 2026-10-13)
+
+- **cm22 — Binding update ship gate.** Boundary: TESTS (+ docs). Spec:
+  `context/customer-management/specs/cm22-binding-update-ship-gate.md`. Authorized by
+  binding plan §9, §11, §14 T6–T7; Inv. #11, #18; workflow rules §9.7, §9.8. Depends
+  on cm17–cm21. No product code changed.
+  - **Delivered:**
+    - `tests/guardrails/customer-accounts-binding-boundaries.test.ts` (new, `node:fs`
+      only, scans production source, never `tests/`): (1) customer screens import no
+      Accounts mutation action, `post-document`, `reversal-dialog`, Accounts
+      `documents-table` or `services/billing/**`; (2) the three new Accounts read
+      services import no action or `post-document` and reference no
+      `pgledgerCreateTransfers` / `resolveTemplate` / `resolveVersionsForPosting`;
+      (3) posting (`services/billing/**`, `db/repositories/billing/**`,
+      `workflow-management/**`) never reads the BAN column; (4) `assertBindableTemplate`
+      defined once, used only by onboarding and the reset; (5) the column is written
+      only by onboarding's BAN insert and `setTemplateRef`, which only the reset
+      service calls. Imports are normalised (`@/`, relative; static, side-effect,
+      dynamic, `require`) and comments are stripped. Self-tests cover the helpers.
+      Checks 4 and 5 share one cached read of the tree and have a 30 s timeout (the
+      first version timed out under full-suite load).
+    - `tests/e2e/customer-accounts-journey.integration.test.ts` (new, DB-gated): the
+      eight spec steps, calling services (dynamic imports after migrate) on the shared
+      onboarding fixture plus the `customer` search-limit config row.
+    - Docs: `custmgmt-architecture.md` (status line, §7 marked built, Inv. #11, #12,
+      #13, #15, #17, #18 wording matched to the code, incl. the cm20 balance-source
+      correction and the CAS lock; §7.2 rows for the action order, the two new read
+      services and the guardrails; baseline row); `custmgmt-code-standards.md` §4
+      (unavailable card, Billing account panel, wizard field), §7 tree, §8
+      (View-detail row, document-link permission, onboarding field), §9 items 9–10;
+      `custmgmt-project-overview.md` core flow steps 11–13 + *Features* section;
+      `cm05.md` Accounts-tab note; `custmgmt-update-overview.md` Status → "Built,
+      sign-off pending".
+  - **Deviations from the spec's literal text (both because the literal rule fails on
+    legitimate delivered code; neither weakens what the rule protects):**
+    - §3.1 item 1 allows `actions/accounts/get-wizard-options` in addition to the two
+      named actions. It is the onboarding wizard's read (ac04), not a mutation path,
+      and the cm20 read-boundary guardrail already allowlists it.
+    - §3.1 item 3 applies the spec's file-level rule (the column named together with
+      `billingAccount` / `billing_account` in one comment-stripped file), so a read
+      through a row variable or SQL alias is caught. The exception:
+      `customer-bill.repository.ts` and `invoice-render-input.ts` are named exemptions
+      held to the direct-pairing rule instead (`billingAccount.refBillTemplateVersionId`
+      or SQL `billing_account.ref_bill_template_version_id`). They read
+      `customerBill.refBillTemplateVersionId` and join `billingAccount` only for
+      name/currency, and the spec says `customer_bill`'s stamp stays allowed. The test
+      asserts both exemptions still exist and still need it, and that the stamp is in
+      the scanned set, so the check is not vacuous. (Tightened in `a3f2923`; `e46ee32`
+      used the pairing rule for every file.)
+    - Not a deviation, but out of reach: the binding plan
+      (`_updatemodule-…-binding-plan.md`) is not in the repo, so §12 O1/O3/O4 could not
+      be closed there (closed in `custmgmt-architecture.md` / workflow rules §9.5) and
+      the §11 matrix could not be checked row by row.
+  - **Verification (2026-10-13):** `tsc`, `npm run lint`, Prettier clean. Guardrail
+    8/8. On a throwaway `enterprise-billing-app-db` container (port 55433, marked
+    disposable, not the dev stack) plus a throwaway Azurite (port 10001):
+    journey 1/1; posting invariance — `customer-bill-stamps`,
+    `invoice-default-resolution`, `invoice-version-pinning` 10/10 and the bm13/bm19
+    `billing-e2e-happy-path` 1/1; render/posting unit suites (render-source boundary,
+    no-legacy-render, render service/template, build-invoice-html, post-run,
+    stored/draft invoice routes, retry-render, preview modal) 19 files / 209 tests.
+    **Full integration project: 131 files passed, 5 skipped, 1213 tests, 0 failed.**
+    **Full unit suite** (`--pool=threads`, `.claude/**` excluded): 4474 passed;
+    9 files fail, none from this update (below). Containers removed afterwards.
+    (The first bm13 run failed at DISTRIBUTING only because no blob store was
+    configured; it passes with the throwaway Azurite.)
+  - **Baseline failures, reported not fixed (billmgmt known-issues §21, workflow
+    rules §9.3 item 11):** 7 unit files fail to load because no env is set (`lib/config`
+    Zod error: `manage-products-*` ×3, `company-profile-form`, `run-detail-tabs`,
+    `selection-region`, `trigger-run.service`) — same set as cm21. `ratecard-parse-csv`
+    (csv-parse single importer) and `pricing-component-guardrails` #31 time out at
+    10 s even when run alone: their whole-repo scans skip only `node_modules`/`.next`
+    and also walk the two stale `.claude/worktrees/` copies. Fix by skipping `.claude`
+    in those scans or removing the worktrees, as its own change.
+  - **Accounts-side docs (approved by the user and applied 2026-10-13, §9.7 item 6):**
+    `ac04-customer-onboarding-wizard.md` — cm18 amendment in §2.2, the read-only
+    Invoice template field in §2.3, `TEMPLATE_NOT_BINDABLE` in §2.7,
+    `billTemplateVersionId` in §3.2; `ac23-guardrail-and-authz-sweep.md` §2.2 addendum
+    for the dual-permission `set-billing-account-template` action. This also closes
+    cm18's ac04 item.
+  - **Committed** as `e46ee32` (cm21 review fixes separately as `a329ff4`).
+  - **Guardrail tightening (`a3f2923`, 2026-10-14; from a `/code-review` of
+    `e46ee32` that stalled before writing its findings report):**
+    - Check 1: customer screens may import only the two Inv. #11 read services from
+      `services/accounts/**` (`get-customer-accounts-summary`,
+      `list-customer-billing-accounts`). Importing a mutation service directly would
+      skip the action's permission checks. `db/repositories/{accounts,billing}/**` is
+      forbidden too.
+    - Check 2: the read services may not make a Drizzle write, a repository
+      insert/update/delete/create/`close`/`setTemplateRef` call, or an audit write.
+    - Check 3: the file-level rule with the two named exemptions (deviation above).
+    - Check 5: a BAN write that hides its column list (a spread, a pre-built object, or
+      `.values()` / `.set()` without an inline literal) is reported. Only the
+      repository's generic `insert(tx, data)` may do that. The raw-SQL pattern also
+      matches quoted identifiers (`"billing"."billing_account"`).
+    - Verification: guardrail 8/8 (full file and each check alone), `tsc`, ESLint and
+      Prettier clean. Under heavy machine load the tree-reading check 4 can approach
+      its 30 s timeout (seen once at 53 s, ~3.5 s when idle). That was already the case
+      before this change.
+  - **OPEN:** confirm the binding plan §11 matrix (plan not in the repo);
+    then move `custmgmt-update-overview.md` to Delivered.
+
 ## Outstanding / Next
 
 - **cm17:** signed off (`c0b2f97` + review follow-up `187d8cb`).
-- **cm18:** DB-gated run + ac04 spec approval above.
+- **cm18:** DB-gated run passed (cm21 run); ac04 spec change applied in cm22.
 - **cm19:** committed (`6d243f9`, review fixes `1e2b91e`).
-- **cm20:** committed (`e44f2c7`); commit the code-review fixes. The `grep-gates` Result-code failure (cm18's
-  `TEMPLATE_NOT_BINDABLE`) is resolved with the ac04/cm18 Accounts doc approval.
-- **cm21 next** (Manage Customer Billing account panel; depends on cm20).
+- **cm20:** committed (`e44f2c7`, review fixes `9eb25e8`). The `grep-gates`
+  Result-code failure was fixed in cm21 (Accounts §9 catalog, user-approved).
+- **cm18:** the DB-gated item (1) passed during the cm21 run (2026-10-13); the ac04
+  spec change was approved and applied 2026-10-13 (cm22).
+- **cm21:** committed (`e2677bf`); all tests green incl. DB-gated. Accounts `billing_account` row applied (user-approved). Code review fixes committed (`a329ff4`).
+- **cm22 IN PROGRESS** (started 2026-10-13, ship gate): all suites green; committed
+  as `e46ee32`. Open: the plan §11 matrix check and the status move to Delivered.
 
 ## Key decisions (durable)
 

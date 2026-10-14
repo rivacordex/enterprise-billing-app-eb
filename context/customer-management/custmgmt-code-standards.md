@@ -77,7 +77,8 @@
 3. **`InconsistencyBanner` is the one component for the cross-status warning** (e.g. ACTIVE customer on a SUSPENDED organization) — warn-only styling (e.g. `border-amber-500`-equivalent semantic token), never a blocking/destructive treatment, since the platform doesn't cascade the mismatch.
 4. **`SpecificationEditor` is the one component for editing `party_role_specification`** — a raw JSON textarea/editor with client-side JSON.parse feedback mirroring the server's well-formedness-only check (§1.8, §2.3); do not build a structured key/value form for it.
 5. **Three-section detail layout is a responsive stack:** Party – Organization, Role – Customer, Customer – Contact Details, in that order top-to-bottom on narrow viewports, optionally side-by-side on `lg:` and up (general §4.10) — order is fixed, do not reorder per page. Since cm19 the View Customer detail page splits them across URL-driven tabs (`?tab=profile|contacts|accounts`, default and fallback `profile`): **Profile** = Organization + Customer Role (in that order), **Contacts** = Contact Details, **Accounts** = billing accounts (cm20). `CustomerDetailTabs` is the one tab strip — a server component of plain `<Link>`s styled like `components/billing/run-detail-tabs.tsx` (ui-context §9.1); the `InconsistencyBanner` sits above it on every tab.
-   The Accounts tab (cm20) is read-only and built from `AccountsLockedCard`, `AccountsNotOnboardedCard`, `FinancialAccountSummaryCard`, `BillingAccountCard` (with `BanStateChip` and the template label), `CustomerDocumentsTable` and `AccountsTabSkeleton`, composed by the presentational `CustomerAccountsTab`. Money uses the Accounts module's `AmountCell` and document state its `DocStateBadge`; the Accounts `documents-table.tsx` is never reused (it imports the reversal mutation path). The summary is fetched by an async loader in the page itself, not in `components/**` (components may not import `services/**`).
+   The Accounts tab (cm20) is read-only and built from `AccountsLockedCard`, `AccountsNotOnboardedCard`, `FinancialAccountSummaryCard`, `BillingAccountCard` (with `BanStateChip` and the template label), `CustomerDocumentsTable` and `AccountsTabSkeleton`, composed by the presentational `CustomerAccountsTab`; a failed summary read renders `AccountsUnavailableCard` inside the tab. Money uses the Accounts module's `AmountCell` and document state its `DocStateBadge`; the Accounts `documents-table.tsx` is never reused (it imports the reversal mutation path). The summary is fetched by an async loader in the page itself, not in `components/**` (components may not import `services/**`).
+   On Manage Customer, `BillingAccountPanel` (cm21, client) lists each BAN with `BanStateChip` and the shared `TemplateLabel` (exported from `billing-account-card.tsx`) and a secondary **Reset to follow active template** button; it reuses `AccountsNotOnboardedCard` for the not-onboarded copy. The onboarding wizard's **Invoice template** field (cm18) is a read-only "Follow active template" field after Currency, with help text; there is no template picker in v1.
 6. **The results table on both search pages reuses the platform table primitives** (general §4.2, product-module precedent) — one `CustomerResultsTable` component shared by View and Manage, not forked per page.
 
 ---
@@ -118,7 +119,7 @@ app/(app)/customers/view/
   error.tsx
 app/(app)/customers/manage/
   page.tsx                    # ManageCustomerSearchPage — guard EDIT, search, results
-  [id]/page.tsx                # CustomerEditPage — org form, role/status, contacts
+  [id]/page.tsx                # CustomerEditPage — org form, role/status, contacts, billing accounts (cm21)
   new/page.tsx                 # NewCustomerPage — create flow
   loading.tsx
   error.tsx
@@ -133,13 +134,16 @@ components/customers/
   accounts-locked-card.tsx         # AccountsLockedCard (no accounts_view : READ)
   accounts-not-onboarded-card.tsx  # AccountsNotOnboardedCard
   accounts-tab-skeleton.tsx        # AccountsTabSkeleton (Suspense fallback)
+  accounts-unavailable-card.tsx    # AccountsUnavailableCard (summary read failed; stays in the tab)
   financial-account-summary-card.tsx # FinancialAccountSummaryCard
   billing-account-card.tsx         # BillingAccountCard (+ template label)
   ban-state-chip.tsx               # BanStateChip
   customer-documents-table.tsx     # CustomerDocumentsTable (read-only, deep-links)
   organization-form.tsx            # OrganizationForm
   customer-role-form.tsx           # CustomerRoleForm
+  onboard-accounts-wizard.tsx      # OnboardAccountsWizard (ac04; read-only "Invoice template" field, cm18)
   contact-manager-panel.tsx        # ContactManagerPanel
+  billing-account-panel.tsx        # BillingAccountPanel (Manage: BANs + template reset, cm21)
   new-customer-form.tsx            # NewCustomerForm
   organization-status-badge.tsx    # OrganizationStatusBadge
   customer-status-badge.tsx        # CustomerStatusBadge
@@ -181,11 +185,21 @@ validation/customer/
   transitions.ts                # ORGANIZATION_TRANSITIONS / CUSTOMER_TRANSITIONS maps
   specification.schema.ts       # JSON well-formedness only
   update-party-role-specification.schema.ts
-  search-params.schema.ts       # search ?q=; CUSTOMER_DETAIL_TABS + detail ?tab= (cm19), ?page= (cm20)
-services/accounts/              # Accounts-side reads owned here for the Accounts tab (cm20)
-  get-customer-accounts-summary.ts  # getCustomerAccountsSummary(partyRoleId, page)
+  search-params.schema.ts       # search ?q=; CUSTOMER_DETAIL_TABS + detail ?tab= (cm19), ?page= / ?fa= (cm20)
+services/accounts/              # Accounts-side services owned here (onboarding field cm18, Accounts tab cm20, BAN panel cm21)
+  assert-bindable-template.ts       # assertBindableTemplate — v1 NULL-only; the one validator (cm18)
+  get-customer-accounts-summary.ts  # getCustomerAccountsSummary(partyRoleId, page, pageFinancialAccountId)
   resolve-ban-template-label.ts     # "Follows active template (currently: … vN), as of now"
+  list-customer-billing-accounts.ts # listCustomerBillingAccounts(partyRoleId) — Manage panel read (cm21)
+  set-billing-account-template.ts   # setBillingAccountTemplate — CAS reset on the BAN lock (cm21)
+actions/accounts/
+  set-billing-account-template.ts   # dual permission: customers + accounts_transactions : EDIT (cm21)
+validation/accounts/
+  set-billing-account-template.schema.ts # partyRoleId, billingAccountId, BTV id | null, lastModified (cm21)
 tests/…                         # mirrors source; incl. authz-matrix entries for both routes
+  guardrails/customer-accounts-read-boundary.test.ts      # Inv. #11 import boundary (cm20)
+  guardrails/customer-accounts-binding-boundaries.test.ts # binding-update ship gate (cm22)
+  e2e/customer-accounts-journey.integration.test.ts       # DB-gated service-level journey (cm22)
 ```
 
 1. **`services/customer` stays framework-agnostic** — no `next/*` imports (general §3.14).
@@ -203,9 +217,9 @@ Authoritative for v1; mirrors architecture §4. New pages are appended before th
 | Page                                                                             | Route                    | Top-level component                                                                          | Folder                             | Permission : level     |
 | -------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------- |
 | View Customer — search                                                           | `/customers/view`        | `ViewCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable`                     | `app/(app)/customers/view/`        | `customers` : **READ** |
-| View Customer — detail                                                           | `/customers/view/[id]`   | `CustomerDetailPage` → `OrganizationSection`, `CustomerRoleSection`, `ContactDetailsSection` | `app/(app)/customers/view/[id]/`   | `customers` : **READ** |
+| View Customer — detail                                                           | `/customers/view/[id]`   | `CustomerDetailPage` → `CustomerDetailTabs`; `OrganizationSection`, `CustomerRoleSection`, `ContactDetailsSection`, `CustomerAccountsTab` | `app/(app)/customers/view/[id]/`   | `customers` : **READ** (Accounts tab content: + `accounts_view` : **READ**) |
 | Manage Customer — search                                                         | `/customers/manage`      | `ManageCustomerSearchPage` → `CustomerSearchPanel`, `CustomerResultsTable`                   | `app/(app)/customers/manage/`      | `customers` : **EDIT** |
-| Manage Customer — edit (org fields, status transitions, contacts, set-preferred) | `/customers/manage/[id]` | `CustomerEditPage` → `OrganizationForm`, `CustomerRoleForm`, `ContactManagerPanel`           | `app/(app)/customers/manage/[id]/` | `customers` : **EDIT** |
+| Manage Customer — edit (org fields, status transitions, contacts, set-preferred) | `/customers/manage/[id]` | `CustomerEditPage` → `OrganizationForm`, `CustomerRoleForm`, `ContactManagerPanel`, `BillingAccountPanel` | `app/(app)/customers/manage/[id]/` | `customers` : **EDIT** |
 | Manage Customer — add new                                                        | `/customers/manage/new`  | `NewCustomerPage` → `NewCustomerForm`                                                        | `app/(app)/customers/manage/new/`  | `customers` : **EDIT** |
 
 **Notes**
@@ -213,7 +227,9 @@ Authoritative for v1; mirrors architecture §4. New pages are appended before th
 - Component names are the binding convention; create them exactly so the page ↔ route ↔ component ↔ permission chain stays traceable (general §9).
 - A USER holds `customers:READ` only — Manage Customer renders greyed/locked in the nav; the page guard and every `actions/customer/*` Server Action independently reject a USER (defense in depth, architecture §4) even if the nav check is bypassed.
 - Deep links (`/customers/view/[id]`, `/customers/manage/[id]`) pass through the same guard as the search pages — the route param grants nothing.
-- **Accounts tab sub-gate (cm20, Inv. #12):** on `/customers/view/[id]?tab=accounts` the page additionally checks `accounts_view : READ` once, from the `permissionMap` `requirePermission` returns. Without it the tab renders `AccountsLockedCard` and `getCustomerAccountsSummary` is never called; the page-level permission stays `customers : READ`.
+- **Accounts tab sub-gate (cm20, Inv. #12):** on `/customers/view/[id]?tab=accounts` the page additionally checks `accounts_view : READ` once, from the `permissionMap` `requirePermission` returns. Without it the tab renders `AccountsLockedCard` and `getCustomerAccountsSummary` is never called; the page-level permission stays `customers : READ`. Document rows link into `/accounts/transactions` only when the same map also holds `accounts_transactions : READ` (that page's guard); otherwise the ids render as plain text.
+- **Onboarding "Invoice template" field (cm18):** no new gate; it rides the existing onboarding action's `customers : EDIT` + `accounts_transactions : EDIT` check.
+- **Billing account template reset (cm21, Inv. #16/#17):** `actions/accounts/set-billing-account-template.ts` requires `customers : EDIT` (via `requirePermission`) **and** `accounts_transactions : EDIT` (via `meetsLevel` on the returned `permissionMap`), else `FORBIDDEN`. `/customers/manage/[id]` derives `canEditAccounts` from the same map to grey the panel's reset button (UX only); the page guard stays `customers : EDIT`. The reset locks the BAN's own `last_modified`, never `party_role.last_modified_datetime`.
 
 ---
 
@@ -229,3 +245,5 @@ The general test-suite gate includes this module's guardrail tests from _Success
 6. **Optimistic lock conflict** — two concurrent editors on the same customer: the second save is rejected with the `CONFLICT` result and the reload-prompt UI state, not a silent overwrite.
 7. **Audit trail** — every create, update, status change, contact CRUD, and set-preferred call produces an `AUDIT_LOG` row with actor, timestamp, entity, and before/after values; `last_modified_by` reflects the true last editor.
 8. **Search correctness** — partial, case-insensitive matches on `organization.name` and `trading_name`; result count capped by `CUSTOMER_SEARCH_RESULT_LIMIT` (default 5) with the refine-search hint shown when the cap is hit.
+9. **Customer screens read accounts data read-only (Inv. #11; cm20, cm22)** — `tests/guardrails/customer-accounts-read-boundary.test.ts` and `tests/guardrails/customer-accounts-binding-boundaries.test.ts`: no file under `app/(app)/customers/**` or `components/customers/**` imports an Accounts mutation action (only onboarding, its `get-wizard-options` read, and the template reset are allowed), `post-document`, pgledger, the Accounts reversal UI or any billing service/action; the three new Accounts read services (`get-customer-accounts-summary`, `list-customer-billing-accounts`, `resolve-ban-template-label`) import no action, `post-document`, `pgledgerCreateTransfers` or posting-time resolver.
+10. **Posting never reads the BAN template reference (Inv. #18; cm22)** — `tests/guardrails/customer-accounts-binding-boundaries.test.ts`: no file under `services/billing/**`, `db/repositories/billing/**` or `workflow-management/**` pairs `billingAccount` with `refBillTemplateVersionId` or contains `billing_account.ref_bill_template_version_id` (`customer_bill`'s own stamp stays allowed); `assertBindableTemplate` is defined once and called only by onboarding and the reset service; the column is written only by onboarding's BAN insert and `billingAccountRepository.setTemplateRef`. The chained flow is proved end to end by `tests/e2e/customer-accounts-journey.integration.test.ts` (DB-gated).

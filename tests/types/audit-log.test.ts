@@ -63,5 +63,9 @@ describe("AUDIT_EVENT_CATEGORY_MAP", () => {
     expect(AUDIT_EVENT_CATEGORY_MAP.BILL_RUN_RERUN).toBe("Change");
     // bm17 — reject (BILL_DRAFT → REJECTED) is a Change (a state transition).
     expect(AUDIT_EVENT_CATEGORY_MAP.BILL_RUN_REJECTED).toBe("Change");
+    // cm21 — a BAN's invoice template reference reset is a Change.
+    expect(AUDIT_EVENT_CATEGORY_MAP.BILLING_ACCOUNT_TEMPLATE_CHANGED).toBe(
+      "Change",
+    );
   });
 });

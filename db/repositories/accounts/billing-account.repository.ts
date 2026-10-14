@@ -87,6 +87,44 @@ export const billingAccountRepository = {
     return "conflict";
   },
 
+  // cm21 (binding plan D15, custmgmt Inv. #17) — CAS write of the BAN's
+  // invoice template reference, same four-outcome shape as `close`. Locks on
+  // the BAN's own last_modified; never touches party_role.
+  async setTemplateRef(
+    tx: Database,
+    billingAccountId: string,
+    lastModified: Date,
+    refBillTemplateVersionId: string | null,
+    actorId: string,
+  ): Promise<"updated" | "conflict" | "closed" | "not_found"> {
+    const [updated] = await tx
+      .update(billingAccount)
+      .set({
+        refBillTemplateVersionId,
+        lastEditedBy: actorId,
+        lastModified: sql`now()`,
+      })
+      .where(
+        and(
+          eq(billingAccount.billingAccountId, billingAccountId),
+          eq(billingAccount.lastModified, lastModified),
+          ne(billingAccount.state, "closed"),
+        ),
+      )
+      .returning();
+
+    if (updated) return "updated";
+
+    const [current] = await tx
+      .select()
+      .from(billingAccount)
+      .where(eq(billingAccount.billingAccountId, billingAccountId))
+      .limit(1);
+    if (!current) return "not_found";
+    if (current.state === "closed") return "closed";
+    return "conflict";
+  },
+
   // Disclosed additive method (pm28-spec §Design, ac04/pm16 locking
   // precedent) — a single-row `FOR UPDATE` finder for the ordering module's
   // in-transaction TOCTOU re-check of the BAN's state (Q15), owning party
