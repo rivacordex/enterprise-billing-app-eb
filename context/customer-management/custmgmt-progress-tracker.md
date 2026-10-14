@@ -438,13 +438,17 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
     - §3.1 item 1 allows `actions/accounts/get-wizard-options` in addition to the two
       named actions. It is the onboarding wizard's read (ac04), not a mutation path,
       and the cm20 read-boundary guardrail already allowlists it.
-    - §3.1 item 3 keys on the pairing itself — `billingAccount.refBillTemplateVersionId`
-      or SQL `billing_account.ref_bill_template_version_id` — not "both names anywhere
-      in one file". The file-level rule flags `customer-bill.repository.ts` and
-      `invoice-render-input.ts`, which read `customerBill.refBillTemplateVersionId` and
-      join `billingAccount` only for name/currency; the spec says `customer_bill`'s
-      stamp stays allowed. The test asserts that stamp is in the scanned set, so the
-      check is not vacuous.
+    - §3.1 item 3 applies the spec's file-level rule (the column named together with
+      `billingAccount` / `billing_account` in one comment-stripped file), so a read
+      through a row variable or SQL alias is caught. The exception:
+      `customer-bill.repository.ts` and `invoice-render-input.ts` are named exemptions
+      held to the direct-pairing rule instead (`billingAccount.refBillTemplateVersionId`
+      or SQL `billing_account.ref_bill_template_version_id`). They read
+      `customerBill.refBillTemplateVersionId` and join `billingAccount` only for
+      name/currency, and the spec says `customer_bill`'s stamp stays allowed. The test
+      asserts both exemptions still exist and still need it, and that the stamp is in
+      the scanned set, so the check is not vacuous. (Tightened in `a3f2923`; `e46ee32`
+      used the pairing rule for every file.)
     - Not a deviation, but out of reach: the binding plan
       (`_updatemodule-…-binding-plan.md`) is not in the repo, so §12 O1/O3/O4 could not
       be closed there (closed in `custmgmt-architecture.md` / workflow rules §9.5) and
@@ -477,6 +481,24 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
     for the dual-permission `set-billing-account-template` action. This also closes
     cm18's ac04 item.
   - **Committed** as `e46ee32` (cm21 review fixes separately as `a329ff4`).
+  - **Guardrail tightening (`a3f2923`, 2026-10-14; from a `/code-review` of
+    `e46ee32` that stalled before writing its findings report):**
+    - Check 1: customer screens may import only the two Inv. #11 read services from
+      `services/accounts/**` (`get-customer-accounts-summary`,
+      `list-customer-billing-accounts`). Importing a mutation service directly would
+      skip the action's permission checks. `db/repositories/{accounts,billing}/**` is
+      forbidden too.
+    - Check 2: the read services may not make a Drizzle write, a repository
+      insert/update/delete/create/`close`/`setTemplateRef` call, or an audit write.
+    - Check 3: the file-level rule with the two named exemptions (deviation above).
+    - Check 5: a BAN write that hides its column list (a spread, a pre-built object, or
+      `.values()` / `.set()` without an inline literal) is reported. Only the
+      repository's generic `insert(tx, data)` may do that. The raw-SQL pattern also
+      matches quoted identifiers (`"billing"."billing_account"`).
+    - Verification: guardrail 8/8 (full file and each check alone), `tsc`, ESLint and
+      Prettier clean. Under heavy machine load the tree-reading check 4 can approach
+      its 30 s timeout (seen once at 53 s, ~3.5 s when idle). That was already the case
+      before this change.
   - **OPEN:** confirm the binding plan §11 matrix (plan not in the repo);
     then move `custmgmt-update-overview.md` to Delivered.
 
