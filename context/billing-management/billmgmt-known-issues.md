@@ -591,6 +591,8 @@ known edge, not expected for polygon ids). A durable decoupling — rating
 itself stamping the matched `ratecard_ran_usage_lkp_id` onto `udr_rated` —
 is recorded as a future cross-plan hardening, not built in this unit.
 
+> **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+
 **D4 ratecard-version residual (accepted, documented).** The appendix
 resolves the **ACTIVE** version of the `productCardLookUp`-named card at
 aggregation time — the same resolution rating uses — because `udr_rated`
@@ -855,6 +857,8 @@ defects shipped unnoticed.
 | 21c5 | Appendix helper built a capacity commitment of **0**, which the product schema now rejects (`> 0`), in the rerun-stability and 10,001-row over-limit tests | Both use `MIN_COMMITMENT = 1`. The tests were kept: removing them would drop the CRITICAL TC57 guard test and the D4 rerun-stability test. Usage is far above 1, so the floor is never engaged. |
 | 21c6 | A recurring-suite fixture defined a two-band motivation, which the flow refuses by design (`capacity_max_bands = 1`, TC52) | The fixture uses one band. Every assertion in that test (zero-usage floor, no discount) still holds.                                                  |
 | 21c7 | The appendix test looked up the card-missing polygon as `POLY-UNMAPPED`, but the flow recovers its id from the canonical `udr_key`, which rating lower-cases | The test looks it up as `poly-unmapped` (the original case is unrecoverable; mapped polygons carry the ratecard casing). Found when bm42a let the test reach that assertion. |
+
+> **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
 
 ### Real defects in delivered code (21c2 to 21c4 FIXED by bm42a; 21e FIXED by pm46a)
 

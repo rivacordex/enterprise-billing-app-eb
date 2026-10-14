@@ -2,7 +2,7 @@
 
 This document builds on `context/architecture.md`, which owns the platform-wide design — stack, folder ownership, multi-module database design, the auth/authorization platform, and platform invariants — and records **only what the Customer Management module adds or changes**. Anything not stated here is inherited unchanged. Key decisions are canonical in `_newmodule-customer-mgmt-plan.md`; the product spec (user flows, data model, features) is in `custmgmt-project-overview.md`; the planned Invoice Template Binding update is in `custmgmt-update-overview.md` and `_updatemodule-customer-accounts-invoice-template-binding-plan.md`.
 
-**Status:** PLANNED — decisions agreed 2026-07-06, amended 2026-07-09 (flattened contact model), pre-implementation. Changes to _Module Invariants_ require a documented design review. **Update built (cm17–cm22, ship gate 2026-10-13; sign-off pending):** Invoice Template Binding, see §7 and `custmgmt-update-overview.md`.
+**Status:** PLANNED — decisions agreed 2026-07-06, amended 2026-07-09 (flattened contact model), pre-implementation. Changes to _Module Invariants_ require a documented design review. **Update delivered (cm17–cm22, ship gate 2026-10-13; signed off 2026-10-14):** Invoice Template Binding, see §7 and `custmgmt-update-overview.md`.
 
 **Scope:** v1 is full CRUD (create/update/soft-delete) for enterprise customers behind two pages — **View Customer** (search + read-only detail, USER + MANAGER + ADMIN) and **Manage Customer** (search + edit + add new, MANAGER + ADMIN) — under a new "Customer" nav section. No accounts, invoicing, credit checks, external/TMF APIs, or merge tooling this release.
 

@@ -34,7 +34,8 @@ const ALLOWED_SEVERITIES = [
 
 // The listed codes that require a human and must never auto-clear (rm02-spec
 // §Verification 10). rm18 added ten more non-auto-clearing PER_UNIT
-// RAN-usage identity/completeness codes (rm18-spec §Implementation §1).
+// RAN-usage identity/completeness codes (rm18-spec §Implementation §1);
+// rm25 added RATECARD_LABEL_INVALID.
 const NON_AUTO_CLEARING = [
   "RECON_IMBALANCE",
   "SHRINKING_REISSUE",
@@ -54,6 +55,7 @@ const NON_AUTO_CLEARING = [
   "UDRTYPE_MISMATCH",
   "CARD_DRIVEN_RATING_UNSUPPORTED",
   "MNO_KEY_NOT_UNIQUE",
+  "RATECARD_LABEL_INVALID",
 ];
 
 type CatalogRow = {
@@ -223,9 +225,9 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("catalog completeness", () => {
-      it("3. all twenty-eight codes are present after the seed runs", async () => {
+      it("3. all twenty-nine codes are present after the seed runs", async () => {
         const rows = await allRows();
-        expect(rows).toHaveLength(28);
+        expect(rows).toHaveLength(29);
       });
 
       it("4. RATING_EVENT_CODES and the seeded rows are the same set in both directions", async () => {
@@ -293,7 +295,7 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
-      it("10. the seven human-resolved / informational codes are not auto-clearing", async () => {
+      it("10. the NON_AUTO_CLEARING human-resolved / informational codes are not auto-clearing", async () => {
         const rows = await allRows();
         const byCode = Object.fromEntries(rows.map((r) => [r.event_code, r]));
         for (const code of NON_AUTO_CLEARING) {
@@ -390,10 +392,10 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("idempotency", () => {
-      it("17. running the seed twice leaves twenty-eight rows, not fifty-six", async () => {
+      it("17. running the seed twice leaves twenty-nine rows, not fifty-eight", async () => {
         await seedEventCatalog(db);
         const rows = await allRows();
-        expect(rows).toHaveLength(28);
+        expect(rows).toHaveLength(29);
       });
 
       it("18. changing a severity and re-running the upsert updates the existing row (DO UPDATE, not DO NOTHING)", async () => {

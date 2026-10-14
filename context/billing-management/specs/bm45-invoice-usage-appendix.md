@@ -31,6 +31,8 @@ The `aggregation` step (already `billrun_runtime`, already reading `udr_rated`, 
 
 This **couples** the bill run to three RAN_USAGE rating facts: the feed role-column **names** (`commercial_unit` / `mno_public_id` / `polygon_id`), the canonical **format** (sorted `k=v|…`), and the **normalisation** (`strip().casefold()` → `btrim` + `lower`). All three are config-only / forbidden-edit on the rating side and are treated as a **TC42-scoped constant** here (capacity is RAN_USAGE-only this phase); the coupling is documented in-code and asserted by the fixture. `lower()` tracks `casefold()` for the ASCII keys these feeds carry (a Unicode-only divergence is noted as a known edge, not expected for polygon ids). A durable decoupling — rating stamping the matched `ratecard_ran_usage_lkp_id` onto `udr_rated` — is recorded as a future cross-plan hardening, not built here.
 
+> **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+
 ### D3 — card-missing polygon is surfaced, never dropped (TC49)
 
 The join is a **LEFT JOIN** from the capacity-volume polygons to the ratecard: a polygon with usage but no matching card row keeps its volume/amount and renders with `state`/`district` shown as an explicit **"(no ratecard entry)"** marker — mirroring rating's `LOOKUP_MISS` discipline (surface, don't silently drop). This is a render/appendix concern only — it does **not** fail the account (money-correctness already passed in 42/43; O-TC6 sequencing). Rows group/order by `state, district, polygon`, with card-missing polygons collected under a trailing "Unmapped" section so totals still reconcile to the capacity line.
@@ -52,6 +54,9 @@ In the bm42 capacity build, add an appendix aggregation per capacity line, writt
 - resolve the capacity offering's `productCardLookUp` card name (`product_specifications.default_value WHERE name = 'productCardLookUp'`) and its ACTIVE `ratecard_version_id` (D4);
 - from the capacity volume (`BILL_DRAFT` rows, `udr_usage_unit = unit AND udr_type = udrType`), group by `ur.udr_key` → `SUM(udr_usage_quantity) AS volume`, `SUM(udr_rated_price) AS amount`, `COUNT(*)`;
 - LEFT JOIN each `udr_key` to `ratecard_ran_usage_lkp` (scoped to the ACTIVE version) via the D2 canonical-key reconstruction, selecting `state`, `district`, `polygon_id`;
+
+  > **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+
 - build `jsonb_agg(jsonb_build_object('polygon', …, 'state', …, 'district', …, 'volume', …, 'amount', …) ORDER BY state NULLS LAST, district NULLS LAST, polygon)` and set it as `additional_info->'appendix'`;
 - a **count guard:** if the distinct-`udr_key` count for an account exceeds **10,000**, `RAISE EXCEPTION 'CAPACITY_APPENDIX_OVER_LIMIT (HARD): account % has % polygon rows (> 10000, the load-tested bound this phase)'` — a loud, documented cap, never a silent truncation (TC57).
 
@@ -70,6 +75,9 @@ In the **final** invoice path (`:137-155`), read the capacity line's `additional
 ### 4. `_SAMPLE_` multi-polygon fixture — extend the bm42 capacity seed (`db/seeds/sample/**`)
 
 - **Canonical udr_keys.** Change the capacity profile's udr rows (bm42) to emit `udr_key` as the canonical cell `commercial_unit=<cu>|mno_public_id=<mno>|polygon_id=<poly>` (`lower`+`trim` values, sorted keys) — the shape the D2 join requires — instead of the generic JSON key. Spread one capacity account's usage across **≥ 4 polygons over ≥ 2 states and ≥ 2 districts**, plus **one card-missing polygon** (usage with no matching ratecard row) to exercise D3.
+
+  > **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+
 - **Ratecard version.** Seed (idempotently) a `ratecard_version` named by the capacity offering's `productCardLookUp` spec, ACTIVE, with `ratecard_ran_usage_lkp` rows for the mapped polygons carrying `state`/`district`/`service_code` (and `rate_per_unit` NULL per OV-2); omit the card-missing polygon's row. (The `sample-5g-rating.ts:490-522` ratecard-seed shape is the precedent.)
 - Keep the four bm42 anchor accounts intact (the appendix fixture is one additional multi-polygon account, so the 800/1000/2000/0 anchors and this appendix account are all in the `capacity` profile).
 
@@ -83,6 +91,9 @@ In the **final** invoice path (`:137-155`), read the capacity line's `additional
 
 - [ ] A posted capacity invoice for the multi-polygon fixture renders a usage appendix **below** the capacity charge, sectioned by state → district → polygon, with district and state subtotals rolling up to the capacity line's rated amount.
 - [ ] State/district come from the ratecard (not `udr_rated`): the join reconstructs the canonical cell from the ratecard columns and matches `ur.udr_key` — a fixture whose ratecard `state`/`district` differ from any feed value proves the values are card-sourced.
+
+  > **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+
 - [ ] A card-missing polygon (usage, no ratecard row) **appears** in the appendix under "Unmapped (no ratecard entry)" with its volume/amount — not silently dropped — and the account still bills (no HARD fail from the appendix).
 - [ ] The snapshot is at aggregation: the render path performs **no** `udr_rated`/ratecard join (it reads only `customer_bill_line.additional_info.appendix`); a rerun reproduces the same appendix.
 - [ ] The appendix uses the ACTIVE version of the `productCardLookUp`-named card; a test that re-versions the card after aggregation does **not** change an already-snapshotted invoice (rerun-stability), documenting the D4 residual.
@@ -91,3 +102,5 @@ In the **final** invoice path (`:137-155`), read the capacity line's `additional
 - [ ] `render-invoice-template.ts` stays pure (no DB/Playwright import); all external strings (state/district/polygon) are `escapeHtml`-escaped; money/dates via the shared formatters.
 - [ ] `tsc`/eslint/the DB-free unit suite (incl. the template test) green; the DB-gated appendix snapshot + render suites green on a disposable Postgres; the capacity `_SAMPLE_` profile seeds the ratecard + canonical-cell udr rows idempotently.
 - [ ] Docs: `bm00-build-plan.md` Part 3 Unit 45 unchanged; `billmgmt-ui-context.md` §6d names bm45; the D2 rating coupling + the D4 version residual are recorded in `billmgmt-known-issues.md` (or the architecture capacity deltas) as documented assumptions.
+
+  > **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.

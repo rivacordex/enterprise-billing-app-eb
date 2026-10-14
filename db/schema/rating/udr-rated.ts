@@ -58,7 +58,10 @@ export const udrRated = rating.table(
     // No FK to inventory.product_inventory (Inv #17) — plain text.
     udrSubscriptionRefId: text("udr_subscription_ref_id").notNull(),
     udrKey: text("udr_key").notNull(),
-    // Reserved, stays NULL in v1 (rm01-spec D10). Do not populate.
+    // Cell label written once at INSERT by RL: `state|district|polygon_start_date`
+    // of the matched ratecard cell (Inv 28; format in
+    // `validation/rating/udr-resource.schema.ts`). NULL only for a usage type
+    // that reads no ratecard.
     udrResource: text("udr_resource"),
     udrUsageQuantity: numeric("udr_usage_quantity", {
       mode: "string",
