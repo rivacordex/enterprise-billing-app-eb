@@ -22,7 +22,7 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 
 ## Customer Management Update Context — Invoice Template Binding (cm17–cm22)
 
-Current phase: Customer Management Phase 2, the Invoice Template Binding update (cm17–cm22, in progress).
+Current phase: none in progress. Customer Management Phase 2, the Invoice Template Binding update (cm17–cm22), is complete and signed off at the cm22 ship gate (2026-10-14). Phase 3 (template catalog selection; posting reads the binding) is not yet scoped.
 The Billing Invoice Template update (bm47–bm63) is complete and signed off at the bm63 ship gate.
 
 Read the following files in order before implementing

@@ -1,6 +1,55 @@
-# Customer Management — Progress Tracker
+# Customer Management — Completed Tracker
 
-Update this file after every meaningful implementation change.
+Archive of completed phases. The live tracker is `custmgmt-progress-tracker.md`.
+
+## Phases
+
+| Phase | Units     | Scope                                     | Ship gate         | Status    |
+| ----- | --------- | ----------------------------------------- | ----------------- | --------- |
+| 1     | cm01–cm16 | v1 full CRUD                              | cm16 (`8d80e6c`)  | Completed |
+| 2     | cm17–cm22 | Invoice Template Binding update           | cm22 (`e46ee32`)  | Completed (2026-10-14) |
+
+---
+
+# Phase 2 — Invoice Template Binding update (cm17–cm22) — COMPLETED 2026-10-14
+
+Plumbing only: a per-BAN invoice template reference (`billing.billing_account.ref_bill_template_version_id`, v1 always `NULL` = follow the active template), captured at onboarding, reset on Manage Customer, shown on a tabbed View Customer. Posting never reads it (D4, Inv. #18). Scope: `custmgmt-update-overview.md`; rules: `custmgmt-ai-workflow-rules.md` §9.
+
+| Unit | Name                                                        | Boundary | Commit    | Review / follow-up fixes   |
+| ---- | ----------------------------------------------------------- | -------- | --------- | -------------------------- |
+| cm17 | Billing Account template reference column                   | DB       | `c0b2f97` | `832597c`, `187d8cb`, `7508edb` |
+| cm18 | Onboarding wizard: "Invoice template" field                 | APP      | `12e9c03` | `832597c`, `7508edb`       |
+| cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | `6d243f9` | `1e2b91e`                  |
+| cm20 | View Customer: Accounts tab                                 | APP      | `e44f2c7` | `9eb25e8`                  |
+| cm21 | Manage Customer: Billing account panel + template reset     | APP      | `e2677bf` | `a329ff4`, `018f8a3` (Accounts arch doc) |
+| cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | `e46ee32` | `a3f2923` (guardrail tightening) |
+
+## Phase 2 per-unit notes
+
+**cm17** — Migration `0050_billing_account_template_ref.sql`: nullable `text` column, named FK `billing_account_ref_bill_template_version_id_fk` → `bill_template_version` (`NO ACTION`), column comment; Drizzle mirror in `db/schema/billing/accounts.ts`. No index, grant or backfill. DB-gated suite (6/6) covers the `0049` → `0050` upgrade with a pre-existing BAN. Review restored `billing-management/invoice-template/placeholder-catalog.md`, which `c0b2f97` had deleted.
+
+**cm18** — `assertBindableTemplate` (v1: `null` ok, any string → `TEMPLATE_NOT_BINDABLE`; takes `tx` for the Phase 3 signature). Optional `billTemplateVersionId` (`/^BTV\d{8}$/`) on the onboarding schema; validator runs inside the onboarding transaction; BAN insert and `ACCOUNTS_ONBOARDED.afterData` carry the ref. Read-only "Invoice template — Follow active template" wizard field. ac04 spec amended (user-approved, applied in cm22).
+
+**cm19** — `?tab=profile|contacts|accounts` (lenient, falls back to `profile`) on `/customers/view/[id]`; server-rendered `CustomerDetailTabs` link strip with focus ring; inconsistency banner above the strip on every tab (Inv. #14).
+
+**cm20** — Accounts tab: `getCustomerAccountsSummary` (FA + BANs + per-BAN receivables + paged documents), `resolveCurrentTemplateLabel` / `banTemplateLabel` (never calls the posting resolver), `CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE` seed (default 20, max 100). Gated by `accounts_*` permissions; document links require `accounts_transactions : READ`; failures stay inside the tab (`AccountsUnavailableCard`). **Deviations:** the async loader lives in `page.tsx` (ESLint `boundaries` forbids `components/**` → `services/**`); per-FA paging via a lenient `fa` param. New guardrail `customer-accounts-read-boundary.test.ts` (Inv. #11).
+
+**cm21** — `setBillingAccountTemplate` (CAS on the BAN's own `last_modified`, `party_role` never bumped; unchanged value → no write/audit), new audit type `BILLING_ACCOUNT_TEMPLATE_CHANGED` (category Change), dual-permission action (`customers : EDIT` + `accounts_transactions : EDIT`), `BillingAccountPanel` on Manage Customer. Accounts docs updated with user approval: `acctmgmt-code-standards.md` §9 result-code catalog 51 → 54 (`TEMPLATE_NOT_BINDABLE`, `BAN_CLOSED`, `BAN_NOT_FOUND`) and the `acctmgmt-architecture.md` `billing_account` row.
+
+**cm22** — Ship gate (tests + docs, no product code). `customer-accounts-binding-boundaries.test.ts` (5 checks: customer screens import only the two read services; read services make no writes; posting never reads the BAN column; `assertBindableTemplate` used only by onboarding + reset; the column written only by onboarding and `setTemplateRef`). `customer-accounts-journey.integration.test.ts` (8-step E2E). ac04 / ac23 Accounts spec edits applied (user-approved). Module docs (architecture, code standards, project overview, update overview, cm05) aligned with the code. **Deviations:** item 1 also allowlists `get-wizard-options` (a read); item 3 uses the file-level rule with two named exemptions (`customer-bill.repository.ts`, `invoice-render-input.ts`, which read `customer_bill`'s stamp).
+
+**Final verification (cm22, 2026-10-13):** full integration project 131 files / 1213 tests, 0 failed; full unit suite 4474 passed; posting-invariance suites (`customer-bill-stamps`, `invoice-default-resolution`, `invoice-version-pinning`, bm13/bm19 e2e) green on a disposable Postgres + Azurite. Baseline failures reported, not fixed (billmgmt known-issues §21): 7 unit files fail to load without env; `ratecard-parse-csv` and `pricing-component-guardrails` #31 time out because their repo scans walk the stale `.claude/worktrees/` copies.
+
+## Phase 2 key decisions
+
+- **Column shape (D9/D10).** Nullable, no default, no backfill; `NULL` = follow the current ACTIVE template, else the default. Stored as a version id for referential integrity; meaning is "follow the template line", kind `generated` only. Kind rule lives in `assertBindableTemplate`, not a `CHECK`.
+- **FK `ON DELETE NO ACTION`.** Template versions are never deleted (`bill_template_version_guard`, bm50).
+- **No index, no grant change.** Nothing filters or joins on the column in v1; add an index in Phase 3 if posting joins on it.
+- **Reset is BAN-scoped.** CAS on the BAN's `last_modified`; the customer's `party_role` lock is not involved.
+
+---
+
+# Phase 1 — v1 full CRUD (cm01–cm16) — COMPLETED
 
 ## Status
 

@@ -2,7 +2,7 @@
 
 **Source plan:** `_updatemodule-customer-accounts-invoice-template-binding-plan.md` (eng-reviewed 2026-10-10; decisions D1–D16 are authoritative).
 **Users:** Revenue Operations (RevOps).
-**Status:** Built, sign-off pending (cm17–cm22, ship gate cm22 2026-10-13). Moves to Delivered once the source plan §11 matrix is confirmed (the ac04 spec change was approved and applied 2026-10-13) (`custmgmt-progress-tracker.md` cm22). This is Phase 2 of Invoice Template management. Phase 1 (template editor, versions, company profile, in the billing module) is described in `billmgmt-project-overview.md`. Phase 3 (template catalog selection, posting reads the binding) is not part of this update.
+**Status:** Delivered 2026-10-14 (cm17–cm22, ship gate cm22 `e46ee32`). The source plan §11 matrix could not be checked row by row because the plan is not in the repo (carried forward in `custmgmt-progress-tracker.md`); the ac04 spec change was approved and applied 2026-10-13. Unit record: `custmgmt-completed-tracker.md` Phase 2. This is Phase 2 of Invoice Template management. Phase 1 (template editor, versions, company profile, in the billing module) is described in `billmgmt-project-overview.md`. Phase 3 (template catalog selection, posting reads the binding) is not part of this update.
 **Owning module:** Customer Management (View Customer and Manage Customer pages). **Also touched:** Accounting (onboarding wizard, `billing.billing_account`, the Accounts-tab read services) and Billing (template read helpers only; posting and rendering are unchanged).
 
 ---
