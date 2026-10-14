@@ -97,7 +97,9 @@ describe("buildRawUdrKey", () => {
       path.resolve(__dirname, "../../validation/rating/udr-key.ts"),
       "utf8",
     );
-    for (const call of ["trim", "toLowerCase", "toUpperCase", "normalize"]) {
+    // "LowerCase"/"UpperCase" also catch toLocaleLowerCase/toLocaleUpperCase,
+    // which "toLowerCase"/"toUpperCase" are not substrings of.
+    for (const call of ["trim", "LowerCase", "UpperCase", "normalize"]) {
       expect(source).not.toContain(call);
     }
   });

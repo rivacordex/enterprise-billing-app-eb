@@ -225,7 +225,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("catalog completeness", () => {
-      it("3. all twenty-eight codes are present after the seed runs", async () => {
+      it("3. all twenty-nine codes are present after the seed runs", async () => {
         const rows = await allRows();
         expect(rows).toHaveLength(29);
       });
@@ -295,7 +295,7 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
-      it("10. the seven human-resolved / informational codes are not auto-clearing", async () => {
+      it("10. the NON_AUTO_CLEARING human-resolved / informational codes are not auto-clearing", async () => {
         const rows = await allRows();
         const byCode = Object.fromEntries(rows.map((r) => [r.event_code, r]));
         for (const code of NON_AUTO_CLEARING) {
@@ -392,7 +392,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     describe("idempotency", () => {
-      it("17. running the seed twice leaves twenty-eight rows, not fifty-six", async () => {
+      it("17. running the seed twice leaves twenty-nine rows, not fifty-eight", async () => {
         await seedEventCatalog(db);
         const rows = await allRows();
         expect(rows).toHaveLength(29);
