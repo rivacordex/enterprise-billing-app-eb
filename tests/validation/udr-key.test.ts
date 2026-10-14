@@ -65,6 +65,18 @@ describe("buildRawUdrKey", () => {
     ).toBe(expected);
   });
 
+  it("sorts names by code unit, matching Python's sorted(), not locale collation", () => {
+    // Python: sorted(["SITE_B", "SITEA", "Site"]) == ["SITEA", "SITE_B", "Site"];
+    // localeCompare would give SITE_B, SITEA, Site.
+    expect(
+      buildRawUdrKey({ SITE_B: "2", SITEA: "1", Site: "3" }, [
+        "SITE_B",
+        "Site",
+        "SITEA",
+      ]),
+    ).toBe("SITEA=1|SITE_B=2|Site=3");
+  });
+
   it("does not mutate the keyColumns argument", () => {
     const keyColumns = ["polygon_id", "mno_public_id"];
     buildRawUdrKey({ polygon_id: "P1", mno_public_id: "M1" }, keyColumns);
