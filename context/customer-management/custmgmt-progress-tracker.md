@@ -33,9 +33,9 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
   committed; open: code review. Manage Customer Billing account panel +
   audited, CAS-guarded template reset.
 - **cm22 IN PROGRESS** (started 2026-10-13) — ship gate implemented and green
-  (guardrails, journey, posting re-run, full unit + integration runs, docs). Open:
-  the plan §11 matrix check (committed `e46ee32`), then status → Delivered. ac04 + ac23 doc
-  edits approved and applied 2026-10-13.
+  (guardrails, journey, posting re-run, full unit + integration runs, docs), committed
+  as `e46ee32`. Open: the plan §11 matrix check, then status → Delivered. ac04 + ac23
+  doc edits approved and applied 2026-10-13.
 
 | Unit | Name                                                        | Boundary | Status      | Commit |
 | ---- | ----------------------------------------------------------- | -------- | ----------- | ------ |
@@ -490,9 +490,8 @@ unit plan: `context/customer-management/specs/cm00-build-plan.md`; per-unit deta
 - **cm18:** the DB-gated item (1) passed during the cm21 run (2026-10-13); the ac04
   spec change was approved and applied 2026-10-13 (cm22).
 - **cm21:** committed (`e2677bf`); all tests green incl. DB-gated. Accounts `billing_account` row applied (user-approved). Code review fixes committed (`a329ff4`).
-- **cm22 IN PROGRESS** (started 2026-10-13, ship gate): all suites green; open are
-  committed (`e46ee32`); open are the plan §11 matrix check and the status move
-  to Delivered.
+- **cm22 IN PROGRESS** (started 2026-10-13, ship gate): all suites green; committed
+  as `e46ee32`. Open: the plan §11 matrix check and the status move to Delivered.
 
 ## Key decisions (durable)
 

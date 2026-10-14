@@ -118,6 +118,41 @@ function enclosingFunction(source: string, index: number): string | null {
   return name;
 }
 
+// Check 3 (Inv. #18). `billing_?account` with word boundaries matches the
+// table / its repository, never a `billingAccountId` / `billing_account_id` key.
+const BAN_TABLE = /\bbilling_?account(?:Repository)?\b/i;
+const TEMPLATE_COLUMN =
+  /\brefBillTemplateVersionId\b|\bref_bill_template_version_id\b/i;
+const BAN_TEMPLATE_PAIRINGS = [
+  /\bbillingAccount\s*\.\s*refBillTemplateVersionId\b/,
+  /\bbilling_account"?\s*\.\s*"?ref_bill_template_version_id\b/i,
+];
+const CUSTOMER_BILL_STAMP_FILES = [
+  "db/repositories/billing/customer-bill.repository.ts",
+  "db/repositories/billing/invoice-render-input.ts",
+];
+
+function readsBanTemplateColumn(relative: string, code: string): boolean {
+  if (BAN_TEMPLATE_PAIRINGS.some((re) => re.test(code))) return true;
+  if (CUSTOMER_BILL_STAMP_FILES.includes(relative)) return false;
+  return BAN_TABLE.test(code) && TEMPLATE_COLUMN.test(code);
+}
+
+// Check 5. A write whose column list the scan cannot see: a spread, a
+// pre-built object passed to the repository's generic `insert`, or a Drizzle
+// `.values(…)` / `.set(…)` that is not an inline object literal.
+function hidesColumns(
+  chain: string,
+  viaRepository: boolean,
+  method: string,
+): boolean {
+  if (/\.\.\.\s*[\w$(]/.test(chain)) return true;
+  if (viaRepository) {
+    return method === "insert" && !/^\(\s*[\w.]+\s*,\s*\{/.test(chain);
+  }
+  return /\.\s*(?:values|set)\s*\(\s*(?!\[?\s*\{)/.test(chain);
+}
+
 // The production tree is read and comment-stripped once, then shared by
 // checks 4 and 5 (re-reading it per check timed out under full-suite load).
 let sourceFiles:
@@ -137,17 +172,28 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
   // the template reset (cm21). The wizard's `get-wizard-options` read action
   // is also allowed: it is a read, not a mutation path (deviation from the
   // spec's literal list, recorded in custmgmt-progress-tracker.md cm22).
+  // Accounts services are held to Inv. #11's two read services: a page that
+  // imported a mutation service (e.g. close-billing-account) directly would
+  // skip the action's permission checks.
   it("customer screens import no Accounts mutation path, post-document, Accounts reversal UI or billing service", () => {
     const ALLOWED_ACCOUNTS_ACTIONS = [
       "actions/accounts/onboard-customer-accounts",
       "actions/accounts/set-billing-account-template",
       "actions/accounts/get-wizard-options",
     ];
+    const ALLOWED_ACCOUNTS_SERVICES = [
+      "services/accounts/get-customer-accounts-summary",
+      "services/accounts/list-customer-billing-accounts",
+    ];
     const FORBIDDEN: Array<[RegExp, string]> = [
       [/^services\/accounts\/post-document(\.ts)?$/, "post-document"],
       [/^components\/accounts\/reversal-dialog(\.tsx?)?$/, "reversal-dialog"],
       [/^components\/accounts\/documents-table(\.tsx?)?$/, "documents-table"],
-      [/^services\/billing\//, "a billing service"],
+      [/^services\/billing(\/|$)/, "a billing service"],
+      [
+        /^db\/repositories\/(accounts|billing)(\/|$)/,
+        "an Accounts/Billing repository",
+      ],
     ];
 
     const files = collectRelative([
@@ -165,6 +211,14 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
         ) {
           offenders.push(`${relative} → ${target}`);
         }
+        if (
+          /^services\/accounts(\/|$)/.test(target) &&
+          !ALLOWED_ACCOUNTS_SERVICES.includes(target.replace(/\.ts$/, ""))
+        ) {
+          offenders.push(
+            `${relative} → ${target} (not an Inv. #11 read service)`,
+          );
+        }
         for (const [pattern, what] of FORBIDDEN) {
           if (pattern.test(target)) {
             offenders.push(`${relative} → ${target} (${what})`);
@@ -177,12 +231,21 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
 
   // 2. The three Accounts read services behind the customer screens (cm20,
   // cm21) stay reads: no action, no posting, no ledger transfer, no
-  // posting-time template resolver.
+  // posting-time template resolver — and no other write call either (the
+  // ledger repository they read through also creates accounts).
   it("the new Accounts read services import no mutation path", () => {
     const READ_SERVICES = [
       "services/accounts/get-customer-accounts-summary.ts",
       "services/accounts/list-customer-billing-accounts.ts",
       "services/accounts/resolve-ban-template-label.ts",
+    ];
+    const WRITE_CALLS: Array<[RegExp, string]> = [
+      [/\.\s*(?:transaction|insert|update|delete)\s*\(/, "a Drizzle write"],
+      [
+        /Repository\s*\.\s*(?:insert\w*|update\w*|delete\w*|create\w*|close|setTemplateRef)\s*\(/,
+        "a repository write",
+      ],
+      [/\binsertAuditEvent\b/, "an audit write"],
     ];
 
     const offenders: string[] = [];
@@ -205,16 +268,21 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
           offenders.push(`${file} references ${name}`);
         }
       }
+      for (const [pattern, what] of WRITE_CALLS) {
+        if (pattern.test(code)) offenders.push(`${file} calls ${what}`);
+      }
     }
     expect(offenders).toEqual([]);
   });
 
   // 3. custmgmt Inv. #18 (binding plan D4) — posting never reads
-  // billing_account.ref_bill_template_version_id. The check keys on the table
-  // pairing: customer_bill's own stamp (`customerBill.refBillTemplateVersionId`,
-  // `customer_bill.ref_bill_template_version_id`) stays allowed even in a file
-  // that also joins billingAccount for name/currency (customer-bill.repository,
-  // invoice-render-input).
+  // billing_account.ref_bill_template_version_id. Spec rule: no scanned file
+  // names the column together with billingAccount / billing_account, so a
+  // read through a row variable or SQL alias (`ban.refBillTemplateVersionId`,
+  // `ba.ref_bill_template_version_id`) is caught. The two files that join
+  // billingAccount for name/currency next to customer_bill's own stamp are
+  // named exemptions, held to the direct-pairing rule instead (deviation
+  // recorded in custmgmt-progress-tracker.md cm22).
   it("posting never reads the billing_account template reference", () => {
     const files = [
       ...collectRelative(["services/billing", "db/repositories/billing"]),
@@ -222,17 +290,28 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
         ["workflow-management"],
         /\.(ts|tsx|js|mjs|py|sql|ya?ml)$/,
       ),
-    ];
+    ].map((file) => ({
+      ...file,
+      code: /\.(ts|tsx|js|mjs)$/.test(file.relative)
+        ? stripComments(file.content)
+        : file.content,
+    }));
     expect(files.length).toBeGreaterThan(20);
 
-    const PAIRINGS = [
-      /\bbillingAccount\s*\.\s*refBillTemplateVersionId\b/,
-      /\bbilling_account\s*\.\s*ref_bill_template_version_id\b/i,
-    ];
     const offenders = files
-      .filter(({ content }) => PAIRINGS.some((re) => re.test(content)))
+      .filter(({ relative, code }) => readsBanTemplateColumn(relative, code))
       .map(({ relative }) => relative);
     expect(offenders).toEqual([]);
+
+    // The exemptions name scanned files that still need them.
+    for (const exempt of CUSTOMER_BILL_STAMP_FILES) {
+      const file = files.find(({ relative }) => relative === exempt);
+      expect(file, exempt).toBeDefined();
+      expect(
+        BAN_TABLE.test(file!.code) && TEMPLATE_COLUMN.test(file!.code),
+        exempt,
+      ).toBe(true);
+    }
 
     // Not vacuous: the allowed customer_bill stamp is in the scanned set.
     expect(
@@ -270,7 +349,9 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
   // insert and by `setTemplateRef`, nowhere else. Every billing_account write
   // site outside db/schema and db/migrations is inspected: repository write
   // calls, and direct Drizzle `.insert(billingAccount)` / `.update(billingAccount)`
-  // chains.
+  // chains. A write that hides its column list (spread, pre-built object) is
+  // listed separately: only the repository's own generic `insert(tx, data)`
+  // may do that, and its callers are then held to inline literals.
   it("only onboarding's BAN insert and setTemplateRef write the template reference", () => {
     const files = productionSource().filter(
       ({ relative }) =>
@@ -278,25 +359,28 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
         !relative.startsWith("db/migrations/"),
     );
 
-    const WRITE_SITES = [
-      /\bbillingAccountRepository\s*\.\s*(insert|update\w*|setTemplateRef|close)\s*\(/g,
-      /\.\s*(insert|update)\s*\(\s*billingAccount\s*\)/g,
+    const WRITE_SITES: Array<[RegExp, boolean]> = [
+      [
+        /\bbillingAccountRepository\s*\.\s*(insert|update\w*|setTemplateRef|close)\s*\(/g,
+        true,
+      ],
+      [/\.\s*(insert|update)\s*\(\s*billingAccount\s*\)/g, false],
     ];
 
     const writers: string[] = [];
+    const opaque: string[] = [];
     for (const { relative, code } of files) {
-      for (const re of WRITE_SITES) {
+      for (const [re, viaRepository] of WRITE_SITES) {
         for (const m of code.matchAll(re)) {
           const openParen = m.index! + m[0].indexOf("(");
-          if (/\brefBillTemplateVersionId\b/.test(chainText(code, openParen))) {
-            writers.push(
-              `${relative}#${enclosingFunction(code, m.index!) ?? "?"}:${m[1]}`,
-            );
-          }
+          const chain = chainText(code, openParen);
+          const site = `${relative}#${enclosingFunction(code, m.index!) ?? "?"}:${m[1]}`;
+          if (/\brefBillTemplateVersionId\b/.test(chain)) writers.push(site);
+          else if (hidesColumns(chain, viaRepository, m[1]!)) opaque.push(site);
         }
       }
       if (
-        /\b(?:insert\s+into|update)\s+(?:billing\.)?billing_account\b[\s\S]{0,400}?\bref_bill_template_version_id\b/i.test(
+        /\b(?:insert\s+into|update)\s+(?:"?billing"?\s*\.\s*)?"?billing_account\b[\s\S]{0,400}?\bref_bill_template_version_id\b/i.test(
           code,
         )
       ) {
@@ -310,6 +394,9 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
         "services/accounts/onboard-customer-accounts.ts#onboardCustomerAccounts:insert",
       ].sort(),
     );
+    expect(opaque).toEqual([
+      "db/repositories/accounts/billing-account.repository.ts#insert:insert",
+    ]);
 
     const setTemplateRefCallers = files
       .filter(({ code }) =>
