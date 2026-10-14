@@ -19,6 +19,8 @@
 | G1 / X1 / C1 geo source | **Decided 2026-10-07: R9** | Geo is captured at rating time onto `udr_rated`; Inv #36 is amended |
 | G13 `udr_key` → ratecard cell mapping | **Decided 2026-10-08** (owner confirmation, recorded at build) | Reuse PRP's existing cell match (`canonical_udr_key`, `prp.py:576-588`) — the same match that today resolves `lkp_subscriber_ref_id` / `service_code`. No new mapping rule |
 
+> **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2. bm48's `state` / `district` columns are unchanged — still captured by PRP and written once by RL.
+
 > ~~**Build may not start until G13 is recorded as decided by rating**~~ — **G13 recorded as decided 2026-10-08** (owner confirmed the interim; also recorded in `billmgmt-ai-workflow-rules.md` §5 DECIDED item 5 and `ratemgmt-architecture.md` Inv #26). The evidence below shows the interim is what rating already does.
 >
 > **PR shape (owner decision, 2026-10-08):** one PR with ordered commits, under a recorded bm48-only waiver of `ratemgmt-ai-workflow-rules.md` §4.1/§4.3 (see that file's §4).
@@ -32,6 +34,9 @@
 >    WHERE v.card_name = %(card_name)s AND v.status = 'ACTIVE'
 >    ```
 >    `extract_ratecard` (`:440-480`) indexes the rows in memory by canonical cell into `RatecardCell{lkp_subscriber_ref_id, service_code}` (`:422-427`) and fails closed on a duplicate cell. **That is the matched row** — R9 still costs near zero, but the capture point is PRP, not "where rating reads `rate_per_unit`".
+>
+>    > **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+>
 > 2. **The flow is Python, and RL inserts by COPY.** `rl.py` `COPY_COLUMNS` (`:120-145`) is the insert column list; `build_chunk_rows` (`:219-271`) raises `KeyError` when a COPY column is absent from RP's Parquet, so the new columns must be produced in PRP, carried through RP's Parquet, and listed in `COPY_COLUMNS`.
 >
 > Other facts: `rating.udr_rated` DDL of record is `0034_rating.sql:37-103` (partitioned on `partition_period`); no later migration alters it. rm15 edited `0034` in place under a fresh-install regime — **not allowed now** (data exists), so this is a forward migration. `0042` is unused; **the next free number is `0045`**. `db/checks/rating-migration-boundary.ts:20` classes any `.sql` whose name matches `/rating/i` as a rating migration and forbids `billing.*` writes in it. `rating_runtime` holds table-level `INSERT` on `udr_rated` (`rating-db-roles.sql:91`) and `UPDATE ("status")` only (`:93`); `app_runtime` and `billrun_runtime` update exactly six claim columns. `product.ratecard_ran_usage_lkp.state` / `.district` are nullable text (`0041_ratecard_ran_usage_lkp.sql:68-70`). The RAN feed header carries a `district_name` column that **no runtime reads** — it is **not** the source (the card is).
@@ -112,6 +117,9 @@ Add `state: text("state")` and `district: text("district")` after `upsertDatetim
 ### 3. Python runtime
 
 - `prp.py`: SELECT + `RatecardCell` + record enrichment + output schema (D2). Keep the canonical-key logic (`canonical_udr_key`) byte-identical.
+
+  > **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+
 - `rp.py`: pass-through columns in the output schema.
 - `rl.py`: `COPY_COLUMNS` append; the named-optional allowlist for non-RAN profiles (D4).
 - Bump the flow's revision/`rating_engine_version` per rating's versioning rule so `udr_rated.rating_flow_revision` distinguishes geo-carrying rows.
@@ -152,6 +160,9 @@ Billing test premise to correct **in bm49, not here** (no billing code in this u
 - [ ] Re-versioning the card after rating does not change a rated row's geo.
 - [ ] No role can `UPDATE` `state`/`district` (asserted over `information_schema.column_privileges` / `pg_attribute`).
 - [ ] PRP's canonical-key function and duplicate-cell fail-closed are unchanged (diff + existing tests).
+
+  > **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+
 - [ ] The rating live-Kestra RAN journey (rm13) passes with the new columns populated.
 - [ ] No billing file changed (diff check against the billing paths listed in the boundary).
 - [ ] `npm run typecheck`, `npm run lint`, `npm test` and the rating integration suite green.

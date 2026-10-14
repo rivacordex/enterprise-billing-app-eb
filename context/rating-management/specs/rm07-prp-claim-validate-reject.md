@@ -2,6 +2,8 @@
 
 > **⚠ Forward reference — PER_UNIT RAN-usage update.** PRP's validations, dedup key, feed profile and `file_key_rule` are extended for `RAN_USAGE` by **Phase G (rm21)** of `rm00-build-plan.md` (`_change-rating-configuration-plan.md`, `ratemgmt-update-overview.md`) — the three-factor identity lock, `service_code` verify, ratecard↔input completeness, the 7-column `.udr` feed, dedup on `(partition_period, mno|cu|polygon)`. This spec remains the record of what shipped; the update is specified in Phase G, not by editing this file.
 
+> **Reversed 2026-10-13 (raw-key update).** The `udr_key` canonicalisation this spec describes (D2 and every other mention — lines 9, 12, 14, 20, 34, 40, 43, 86) is superseded: `udr_key` now holds the feed's raw values, key names sorted, `name=value` joined by `|`, no trimming or case folding (Inv 27); and `udr_resource` no longer stays NULL — it carries `state|district|polygon_start_date` of the matched ratecard cell (Inv 28). The "rm01 … §4.2" source cited below is a mis-citation: rm01 has no §4.2; the rule came from `_newmodule-rating-engine-plan.md` §4.2. See `_updatemodule-rating-udr-key-resource-plan.md` (R1/R5) and `ratemgmt-architecture.md` Inv 27/28.
+
 - **Unit:** rm07 of rm01–rm13 (`specs/rm00-build-plan.md`, Phase D)
 - **Repo:** rating repo · **Boundary:** `flows/**` — the `prp` section (replaces the rm06 stub)
 - **Builds:** file pickup from `landing/`, database-backed claiming from the **filename**, checksum/`DUPLICATE_BATCH`, CSV parse + map to `udr_rated` key fields, the canonical `udr_key`, record-level validation with a reject file, the per-`udr_type` threshold, and the batch counts.
@@ -40,6 +42,8 @@ Everything else on `udr_rated` (rating output, price provenance, the bill-run co
 - **The measured value is always excluded.** `USAGE_MBPS` is not identity — including it would let two readings of the *same* event with different measured values both go live: a double count (the same reasoning that excludes `batch_run_num`, rm01 D11).
 - **The canonicalisation rule is fixed (rm01 §4.2)** and applies to whatever columns the profile lists: sort the key names, trim and case-normalise values, UTC for any timestamp component, join as `k=v` pairs with a fixed separator — e.g. `COMMERCIAL_UNIT=<v>|PUBLIC_KEY=<v>|SITE=<v>`. Two logically identical records serialised differently must produce the **same** `udr_key`. The rule is fixed; only the **column list** is configured, and it must include whatever distinguishes a delivery's records (rm01 D12's distinguishing-key requirement).
 - The 512-char cap (rm01 `CHECK`) is untouched.
+
+> **Reversed 2026-10-13 (raw-key update).** `udr_key` is no longer canonicalised: PRP builds it from the feed's raw values — key names sorted, `name=value` joined by `|`, no trimming or case folding — so records that differ only in case or whitespace are different keys (Inv 27, an accepted risk). Citation correction: the "(rm01 §4.2)" above should read "`_newmodule-rating-engine-plan.md` §4.2" — rm01 has no §4.2. See `_updatemodule-rating-udr-key-resource-plan.md` (R1/R5) and `ratemgmt-architecture.md` Inv 27/28.
 
 ### D3. `file_key` from the **filename**, never the content
 

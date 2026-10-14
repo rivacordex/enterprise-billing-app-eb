@@ -10,7 +10,7 @@ These rules **supplement `context/ai-workflow-rules.md`** (the binding workflow 
 
 ## 0. PER_UNIT RAN-Usage Update — workflow rule deltas
 
-Supplements `context/ai-workflow-rules.md` and the module rules below; applies to the PER_UNIT RAN-usage update (`_change-rating-configuration-plan.md`, `ratemgmt-update-overview.md`, `ratemgmt-architecture.md`). Scope: Workstreams A+B+D. Obey these as rules, not guidelines.
+Supplements `context/ai-workflow-rules.md` and the module rules below; applies to the PER_UNIT RAN-usage update (`_change-rating-configuration-plan.md`, `ratemgmt-project-overview.md`, `ratemgmt-architecture.md`). Scope: Workstreams A+B+D. Obey these as rules, not guidelines.
 
 **Overall approach — spec-driven, incremental.**
 1. **Take the unit list from the build order in `_change-rating-configuration-plan.md` (steps 0–8). Do not restate it here** (§2.3 forbids copies).
@@ -26,7 +26,7 @@ Supplements `context/ai-workflow-rules.md` and the module rules below; applies t
 7. **Each build-order step is its own unit; never one PR.** The `udr_subscriber_ref_id` → `udr_subscription_ref_id` rename is **atomic within each repository, coordinated across rm15 and rm19** — never a half-rename inside either boundary. The app-repo call sites (migration + index, Drizzle, seeds, `rm01/08/09/13`, `db/repositories/billing/rated-lines.repository.ts`) land together in rm15; the wfm call sites — the runtime writers in `rp.py`/`rl.py`, including the `COPY` column list — land together in rm19. Do not land one repository's half without scheduling the other's in the same cycle (§2.2). The **X1/X2 DDL** (period_of TZ + live-row tighten) is its own unit, gated on rule 12.
 
 **Missing or ambiguous — these are RESOLVED. Do not re-ask or re-invent (cite the plan / `ratemgmt-architecture.md`):**
-8. `udr_key = mno|cu|polygon` (no datetime); identity = `(partition_period, udr_key)`; `udr_rate_type = PER_UNIT`; `period_of()` TZ = config (`Asia/Kuala_Lumpur`); live-row key = `(partition_period, udr_key, is_live)`; `singleSubInstPerCust` = one **RAN_USAGE** subscription per customer; `reject_threshold = "0"`; `ratecard_coverage_enforcement` default `HARD_STOP`.
+8. `udr_key = mno|cu|polygon` (no datetime; raw values — §0.1); identity = `(partition_period, udr_key)`; `udr_rate_type = PER_UNIT`; `period_of()` TZ = config (`Asia/Kuala_Lumpur`); live-row key = `(partition_period, udr_key, is_live)`; `singleSubInstPerCust` = one **RAN_USAGE** subscription per customer; `reject_threshold = "0"`; `ratecard_coverage_enforcement` default `HARD_STOP`.
 9. **Still open — stop and ask, do not invent:** whether a **non-monthly `udr_type`** will ever be added (it changes the X2 grain — a `udr_type`-scoped partial index); the real scope of the `TESTING` lifecycle stage (deferred).
 
 **Files you must not modify without explicit instruction (adds to §6).**
@@ -36,7 +36,7 @@ Supplements `context/ai-workflow-rules.md` and the module rules below; applies t
 13. **The two authorized §6 exceptions** are X2 (live-row key, §6.1) and X1 (`period_of` TZ, §6.4). They are authorized by this update; do not treat §6 as blocking them, and do not change either further without a new authorization.
 
 **Docs in sync.**
-14. **Ship the whole doc set together.** A PER_UNIT unit updates `ratemgmt-architecture.md` (Inv 20–25, X1/X2), `ratemgmt-code-standards.md` (§0), `ratemgmt-update-overview.md`, and pm57a's banner in the same change set.
+14. **Ship the whole doc set together.** A PER_UNIT unit updates `ratemgmt-architecture.md` (Inv 20–25, X1/X2), `ratemgmt-code-standards.md` (§0), `ratemgmt-project-overview.md`, and pm57a's banner in the same change set.
 15. **New event codes ship with their `event_catalog` seed row (rm02) + constant + emitting flow** (§7.3): `UNKNOWN_SUBSCRIBER`, `CARD_DRIVEN_RATING_UNSUPPORTED`, the three identity-lock failures, `SERVICE_CODE_MISMATCH`, the completeness/mapping hard-stops.
 16. **Reconcile bill-run.** X1 reverses the old *"bill-run selects by `start_datetime`, never `partition_period`"* rule — fix `billmgmt-architecture.md` / `_newmodule-billrun-rating-workflow-plan.md` (§7.6).
 
@@ -47,6 +47,60 @@ Supplements `context/ai-workflow-rules.md` and the module rules below; applies t
 20. **Regressions pass:** R1 (FLAT→PER_UNIT refresh), R2 (dedup widening), R3 (input→ratecard hard-stop).
 21. **Post-rename:** grep proves **zero** remaining `udr_subscriber_ref_id` references (especially the bill-run repo).
 22. **X1/X2 DDL:** fresh-install verified (rule 12); the live-row constraint rejects a second live row per `(partition_period, udr_key)`; `period_of()` behaves identically across ≥3 session timezones with the config-TZ literal.
+
+---
+
+## 0.1 Raw `udr_key` and `udr_resource` Update — workflow rule deltas
+
+Supplements `context/ai-workflow-rules.md`, §0 and the module rules below; applies to the raw-key update (`_updatemodule-rating-udr-key-resource-plan.md`, `ratemgmt-update-overview.md`, `ratemgmt-architecture.md` Inv 27–28, `ratemgmt-code-standards.md` §0.1). Where this section and an older rule disagree about `udr_key` or `udr_resource`, obey this section. Obey these as rules, not guidelines.
+
+**Overall approach — spec-driven, incremental.**
+1. **Cite a decision before you edit.** Name the plan's decision number (R1–R9) that authorizes the change. No decision number, no mandate — stop and ask (§5).
+2. **Read in this order before you start:** the plan → `ratemgmt-update-overview.md` → `ratemgmt-architecture.md` Inv 27–28 → `ratemgmt-code-standards.md` §0.1 and §10 tests 17–20.
+3. **Do the document amendments first.** Amend every rule and document listed in the plan §7 before you write code. A test or document that still says "canonical" or "reserved" will read the new behaviour as a regression.
+4. **Build one unit per pass.** Do not start the next until the current one passes §8 and the checks below, and is committed.
+
+**Scoping — one unit at a time, no speculative changes.**
+5. **Take the unit list from `specs/rm00-build-plan.md` Phase H (rm24–rm29). Do not restate it here** (§2.3). Build them in that order: reversal amendments, app-surface prerequisites, PRP, RP, RL, then seeds and the ship gate.
+6. **Do not add a column to `rating.udr_rated`, a migration file, or a grant** for this update. Polygon, State, District and start date travel in `udr_key` and `udr_resource` only.
+7. **Do not normalise any key value anywhere** — PRP, RP, RL, seeds, tests, indexes. Do not reintroduce `canonical_udr_key` or `_normalise_value`, and do not add `lower()`, `btrim()`, a functional index or a `udr_key_hash`.
+8. **Do not add a cutover guard, a backfill, or a legacy-key branch.** This round runs on a fresh DB. If you find a non-fresh database in scope, stop and ask (rule 12).
+9. **Do not add a normalised uniqueness backstop.** Case-variant duplicates both loading is the accepted risk (plan R4); assert it with a test, do not "fix" it.
+10. **Do not change `udr_rated.state` / `.district`, their write path or their consumers.** bm48 is not reversed.
+11. **Do not reorder, add or remove `udr_resource` segments, and do not change the `|` delimiter or the ISO date format.** Billing reads the segments by position.
+
+**When to split.**
+12. **Split PRP, RP and RL into three units.** §4.3 stands; this update gets no waiver (bm48's waiver is not precedent). Land RL last: it raises on a `RAN_USAGE` chunk without `udr_resource`, so landing it before PRP and RP produce and carry the column leaves the tree red (§4.8). Ship each guardrail test with the unit that introduces its behaviour: tests 17, 18 and 20 with PRP; the RL halves of 17 and 19 with RL.
+13. **Land the app-surface changes before the runtime that depends on them.** A flow that emits an event code missing from `main`'s `event_catalog` seed is not shippable.
+
+**Missing or ambiguous requirements.**
+14. **These are RESOLVED. Do not re-ask or re-invent (cite the plan / `ratemgmt-architecture.md`):** `udr_key` holds raw values in the sorted `name=value|…` shape (R1, R2); the card match is exact (R3); `udr_resource = state|district|polygon_start_date`, ISO date, empty segment for a blank label (R5); a `|` in a card label fails the batch (R9); no new column, migration or grant (R7); fresh DB, no backfill or cutover (R8); "partition_start_date" means `polygon_start_date`; the unmatched-record reason is `INPUT_UNMAPPED` (older specs call it `LOOKUP_MISS` — correct that wording when you amend them); the `|`-in-label event code is `RATECARD_LABEL_INVALID` (`MAJOR`, `PRP`, not self-clearing — decided 2026-10-14); the cross-batch `udr_key` trace (plan OI-R3) is done and recorded in the rm28 spec.
+15. **Still open — stop and ask, do not invent:** whether any other consumer reads `udr_resource` besides billing's usage query (plan OI-R4; confirm by search in rm29). Everything else in this update is decided.
+16. **If the database is not fresh, stop.** The cutover decision (plan §4, risk 3) is unresolved; do not proceed on the fresh-DB assumption.
+
+**Files you must not modify without explicit instruction (adds to §6).**
+17. **Do not edit applied migrations.** `0034_rating.sql` and `0045_rating_udr_rated_geo.sql` stay as they are, and no new migration is added.
+18. **Do not edit `db/bootstrap/rating-db-roles.sql`.** Step 7a already grants the ratecard reads; the diff must show no change there.
+19. **Do not edit RL's collision guard or its supersede logic** (`rl.py`). They must work unchanged on raw keys; prove it with tests only.
+20. **Do not rewrite the delivered specs** (rm01, rm07, rm08, rm09, rm21). Add a dated reversal note beneath `_newmodule-rating-engine-plan.md` §4.2, rm07 D2 and rm01 D10 (and the matching lines in the other documents the plan §7 lists); do not delete the original text.
+21. **Do not edit billing code or billing documents**, except the lines the plan §7 names (bm45 D2, bm48 G13/D2, billing Inv #36/#47, known-issues). Tell the billing owner which lines you changed.
+
+**Docs in sync.**
+22. **Ship the whole document set in one change set:** `ratemgmt-architecture.md` (Inv 3, 14, 19, 26, 27, 28), `ratemgmt-code-standards.md` (§0.1, §5.2, §5.4, §9, §10), `ratemgmt-project-overview.md`, this file, `ratemgmt-update-overview.md`, and the plan's §7 list.
+23. **A new event code ships with its `event_catalog` seed row (rm02), its `RATING_EVENT_CODES` constant, and the emitting flow** (§7.3). Do not emit `RATECARD_LABEL_INVALID` before all three exist.
+24. **Grep before you finish.** `canonical_udr_key`, `_normalise_value`, "canonical `udr_key`" and "`udr_resource` … reserved" must have zero hits outside the dated reversal notes.
+25. **Record outcomes in the plan:** close or update each OI-R item you resolve, and write the OI-R3 trace result.
+
+**Verification — before the next unit (adds to §8).**
+26. **Raw key:** a polygon with mixed case and a space loads with `udr_key` unchanged; two records differing only in case both load.
+27. **Exact match:** a case-different or space-different polygon is `INPUT_UNMAPPED` and refuses the whole batch under `HARD_STOP`.
+28. **`udr_resource`:** the value equals `state|district|YYYY-MM-DD` of the matched cell; a blank label is an empty segment; a `RAN_USAGE` chunk without it makes RL raise; a non-RAN chunk writes `NULL`.
+29. **Label delimiter:** a `|` in a card `state` or `district` fails the batch before rating, and the event code resolves in `event_catalog` (`INDETERMINATE` count zero).
+30. **No normalisation remains:** a search of `prp.py`, `rp.py` and `rl.py` for `casefold`, `.lower(` and `canonical_udr_key` finds nothing that touches a key value. The `service_code` strip is the only allowed normalisation.
+31. **No schema drift:** the diff contains no file under `db/migrations/**` or `db/bootstrap/**`, and no new `udr_rated` column.
+32. **Write-once:** the grants test shows `udr_resource` in no role's UPDATE list; an UPDATE is refused for `rating_runtime`, `app_runtime` and `billrun_runtime`.
+33. **Guardrails 17–20 and the existing 1–16 pass** against a live database, and the `rm13` journey passes with the raw key and the expected `udr_resource`.
+34. **Billing untouched:** the diff contains no file under `services/billing/**`, `db/repositories/billing/**` or `db/schema/billing/**`.
 
 ---
 
@@ -100,14 +154,14 @@ Split whenever any holds. When in doubt, split.
 
 Sequence within a unit: **DDL → grants → seed → flow section → logging → tests.** Finish each before the next.
 
-**Recorded waiver — billing bm48 only (owner decision, 2026-10-08).** bm48 (`udr_rated.state`/`.district`, migration `0045` + PRP/RP/RL) lands as **one PR** rather than the split §4.1 and §4.3 require, to reduce PR count. The waiver keeps the rule's intent through **ordered commits** in this file's dependency order — migration + Drizzle → PRP → RP → RL → seeds + tests → docs — so each step stays separately reviewable and revertable. It is scoped to bm48 and is **not precedent**: any other unit that needs the same exception records its own, by name, here.
+**Recorded waiver — billing bm48 only (owner decision, 2026-10-08).** bm48 (`udr_rated.state`/`.district`, migration `0045` + PRP/RP/RL) lands as **one PR** rather than the split §4.1 and §4.3 require, to reduce PR count. The waiver keeps the rule's intent through **ordered commits** in this file's dependency order — migration + Drizzle → PRP → RP → RL → seeds + tests → docs — so each step stays separately reviewable and revertable. It is scoped to bm48 and is **not precedent**: any other unit that needs the same exception records its own, by name, here. The raw-key update has no waiver (§0.1 rule 12).
 
 ---
 
 ## 5. Missing or Ambiguous Requirements
 
 1. **Never guess on any of these. Stop and ask, with the options stated:**
-   - The `udr_key` field list, or its canonicalisation ordering.
+   - The `udr_key` field list, the key-name order, or the key shape. Values are stored raw; there is no canonicalisation rule (§0.1).
    - Any change to the live-row uniqueness constraint.
    - The per-record rounding method (`HALF_UP`/`HALF_EVEN`/`TRUNCATE`) recorded in `udr_rounding_mode`. (Round-at-aggregation is the bill run's stage, not rating's.)
    - A grant, a `REVOKE`, or a column added to the six-column `app_runtime` grant.
@@ -115,7 +169,7 @@ Sequence within a unit: **DDL → grants → seed → flow section → logging �
    - Retention on any table or file location.
 2. **Resolve from the docs first**, in precedence order, and cite the section you followed.
 3. **Two known-open items must not be resolved by invention:**
-   - **The `udr_key` field list** is defined at PRP build (**rm07**) from the actual feed format. The canonicalisation *rule* is fixed (sorted keys, UTC, fixed numeric formats) and the length cap is fixed at 512 characters — do not change either to accommodate a field list.
+   - **The `udr_key` field list** is defined at PRP build (**rm07**) from the actual feed format. The key *shape* is fixed (sorted key names, `name=value`, joined by `|`, values raw — §0.1; the earlier "canonicalisation rule" was reversed by the raw-key update) and the length cap is fixed at 512 characters — do not change either to accommodate a field list.
    - **Price as-of resolution mechanism** (SQL predicate vs per-batch snapshot) is undecided. Ask before implementing; do not copy the existing pull-all-and-filter-in-JS repository pattern, which does not scale to 50,000 records.
 4. **Fail closed.** A conservative default is acceptable only for genuinely cosmetic choices — a log message's wording, a variable name. Anything touching money, uniqueness, grants, retention or alarm severity is never cosmetic.
 5. **Record the resolution in the owning document** (§7) before the unit ships, so the next agent does not re-ask.
@@ -127,7 +181,7 @@ Sequence within a unit: **DDL → grants → seed → flow section → logging �
 
 General §5 applies in full. In addition, do not edit, weaken, regenerate or "improve" any of these unless the request says to, by name:
 
-1. **The live-row uniqueness constraint** `UNIQUE (partition_period, udr_key, is_live)`. *(PER_UNIT update, X2 — `start_datetime` dropped; authorized. Do not restore `start_datetime`, and do not tighten or loosen it further without a new authorization.)* Do not drop it, make it deferrable, add `udr_batch_run_num` to it, or replace it with an application check — including temporarily, including to make a test pass.
+1. **The live-row uniqueness constraint** `UNIQUE (partition_period, udr_key, is_live)`. *(PER_UNIT update, X2 — `start_datetime` dropped; authorized. Do not restore `start_datetime`, and do not tighten or loosen it further without a new authorization.)* Do not drop it, make it deferrable, add `udr_batch_run_num` to it, or replace it with an application check — including temporarily, including to make a test pass. It compares raw `udr_key` values; do not add a normalising expression or index to it (§0.1).
 2. **The `is_live` generated column expression.** It is generated from `status` precisely so it cannot drift. Do not convert it to a maintained column.
 3. **`db/bootstrap/rating-db-roles.sql`.** Grants are the rating/billing boundary. Widening one is a spec change.
 4. **The `partition_period` CHECK and its single `rating.period_of()` helper, including its explicit `AT TIME ZONE` literal.** *(PER_UNIT update, X1 — the literal is now the config TZ `Asia/Kuala_Lumpur`, authorized by Khek 2026-09-30; `partition_period` is the billing month. Do not change the literal again without a new authorization.)* Removing the explicit zone makes the constraint session-dependent and silently wrong; changing the literal re-buckets stored periods (a re-partition, not an edit).
@@ -138,6 +192,7 @@ General §5 applies in full. In addition, do not edit, weaken, regenerate or "im
 9. **The pinned Kestra base image version** in the worker Dockerfile. Bumping it revalidates every flow and is its own unit.
 10. **`services/accounts/money.ts`.** Do not modify it to accept more than 2 dp. The rating carve-out exists precisely so this file stays unchanged (`ratemgmt-code-standards.md` §2.2).
 11. **Any `billing`, `product`, `ordering` or `inventory` table.** This module has `SELECT` only.
+12. **`build_udr_key`, and the `udr_resource` segment order, delimiter and date format** (`ratemgmt-architecture.md` Inv 27–28). Do not add normalisation to the key builder or reorder the segments; billing reads them by position. Change either only with an approved change to those Invariants and to the billing plan.
 
 If a unit genuinely requires touching one of these, stop, explain why, and get explicit confirmation before proceeding.
 

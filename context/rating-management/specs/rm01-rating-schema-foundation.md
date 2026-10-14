@@ -168,6 +168,8 @@ Each partitioned table gets a bootstrap `DEFAULT` partition so the parent is val
 
 Nullable, no defined semantics in v1 (Inv #16a). **Do not populate it.** A column filled with one implementer's assumption asserts a meaning that downstream consumers will read and that a migration cannot honestly undo, because the rows are financial and immutable. NULL is queryable and honest.
 
+> **Reversed 2026-10-13 (raw-key update).** `udr_resource` is now populated and has a defined meaning: `state|district|polygon_start_date` of the matched ratecard cell (Inv 28). D10's concern — one implementer's assumption asserted as meaning — is answered by the owner's explicit decision and by the format being specified in Inv 28. Note: rm01 has no §4.2; the canonical-`udr_key` rule that other documents cite as "rm01 §4.2" comes from `_newmodule-rating-engine-plan.md` §4.2 and rm07 D2. See `_updatemodule-rating-udr-key-resource-plan.md` (R1/R5) and `ratemgmt-architecture.md` Inv 27/28.
+
 ---
 
 ## Implementation
@@ -234,6 +236,8 @@ Columns, in the order they appear in `ratemgmt-project-overview.md`:
 | `rated_datetime` | `timestamptz(3)` | NULL | RP time |
 | `insert_datetime` | `timestamptz(3)` | NOT NULL | `DEFAULT now()` |
 | `upsert_datetime` | `timestamptz(3)` | NULL | written by bill run |
+
+> **Reversed 2026-10-13 (raw-key update).** `udr_resource` is no longer reserved: it carries `state|district|polygon_start_date` of the matched ratecard cell (Inv 28). See `_updatemodule-rating-udr-key-resource-plan.md` (R1/R5) and `ratemgmt-architecture.md` Inv 27/28.
 
 **Generated column** — declare in Drizzle and verify the emitted SQL matches:
 

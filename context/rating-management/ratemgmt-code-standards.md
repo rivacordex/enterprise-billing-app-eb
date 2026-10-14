@@ -1,6 +1,6 @@
 # Rating Management Module — Code Standards
 
-These standards **extend `context/code-standards.md`** (the platform-wide conventions and CI gates every module inherits) and record **only what the Rating Management module adds or does differently**. Technical design and the numbered Invariants live in `ratemgmt-architecture.md`; scope and flows in `ratemgmt-project-overview.md`; the design reasoning in `_newmodule-rating-engine-plan.md`.
+These standards **extend `context/code-standards.md`** (the platform-wide conventions and CI gates every module inherits) and record **only what the Rating Management module adds or does differently**. Technical design and the numbered Invariants live in `ratemgmt-architecture.md`; scope and flows in `ratemgmt-project-overview.md` (the raw-key update: `ratemgmt-update-overview.md`, standards in §0.1); the design reasoning in `_newmodule-rating-engine-plan.md`.
 
 **Status:** Planning. Every general standard holds unless a numbered rule below states otherwise.
 
@@ -10,13 +10,13 @@ These standards **extend `context/code-standards.md`** (the platform-wide conven
 
 ## 0. PER_UNIT RAN-Usage Update — code-standard deltas
 
-Extends `context/code-standards.md` and the module rules below; records **only** what the PER_UNIT RAN-usage update (`_change-rating-configuration-plan.md`, `ratemgmt-update-overview.md`, `ratemgmt-architecture.md`) changes or adds. Scope: Workstreams A+B+D; Workstream C (Product-management UI) is deferred — `_futurebuild-product-mgmt-ui-plan.md`.
+Extends `context/code-standards.md` and the module rules below; records **only** what the PER_UNIT RAN-usage update (`_change-rating-configuration-plan.md`, `ratemgmt-project-overview.md`, `ratemgmt-architecture.md`) changes or adds. Scope: Workstreams A+B+D; Workstream C (Product-management UI) is deferred — `_updatemodule-product-mgmt-ui-plan.md`.
 
 **General rules.** The engine computes **`PER_UNIT`** (`ratePerUnit × usage_volume`), not FLAT — the FLAT-only scoping in `ratemgmt-ai-workflow-rules.md §2.5/§3` + `ratemgmt-project-overview.md` is superseded (update those + banner the rm specs, build-order step 0). The subscriber resolver is **real** (`party_role_spec` → subscription), replacing the placeholder; the **three-factor identity lock** (party_role_spec + ratecard `lkp_subscriber_ref_id` + offering **family-id** pin) all hard-stop, and the DB constraint stays the guarantee (§1.3).
 
 **TypeScript.** Add `perUnitRateDetailSchema` to `validation/rating/udr-rate-detail.schema.ts` — `{ rateType: "PER_UNIT", ratePerUnit: moneyString, quantity: decimalString, amountRaw: moneyString }`, discriminated on `udr_rate_type`; the `rp.py` Python mirror must match field-for-field. Money/rate stay `string` (§2.1). `validation/product/pricing-component.schema.ts` is **untouched** — the ratecard reference is a **product spec** (`productCardLookUp`), not a component field, so the existing `usage_rate` invariant is not amended. Column rename: `udr_rated.udr_subscriber_ref_id` → **`udr_subscription_ref_id`** (holds a `product_inventory_id`), distinct from ratecard `lkp_subscriber_ref_id` (= `party_role_id`); re-derive Drizzle types after the rename (§2.7).
 
-**Next.js / Styling / API Routes — still N/A** (no application surface this phase; §4 stands). They return into force with the deferred Product-management UI (`_futurebuild-product-mgmt-ui-plan.md`), which is when §3/§4/§5 of the general standards and a `product_catalog` permission apply.
+**Next.js / Styling / API Routes — still N/A** (no application surface this phase; §4 stands). They return into force with the deferred Product-management UI (`_updatemodule-product-mgmt-ui-plan.md`), which is when §3/§4/§5 of the general standards and a `product_catalog` permission apply.
 
 **Data and Storage.** Live-row constraint and `period_of()` TZ change — see §5.2 and §5.7 (updated for X2/X1). `udr_usage_unit` comes from the product's `usage_rate.unit_of_measure`, never the feed (remove `feed_profile.usage_unit` + `_FEED_UNIT_TO_CATALOG`). New **plain-text, no-FK cross-schema reads**: `customer.party_role.party_role_specification` (resolver; pinned path `->>'mnoPublicKey1'`), `product.ratecard_ran_usage_lkp` + `ratecard_version`, `product.product_specifications`. Product specs (`udrType`, `singleSubInstPerCust`, `productCardLookUp`) are **product-owned config read like price** — not a `rating` config table (the "all rating config in Kestra" rule holds). The rename + the two X1/X2 DDLs are **edit-in-place on empty `udr_rated`** (fresh-install; no data migration).
 
@@ -25,6 +25,73 @@ Extends `context/code-standards.md` and the module rules below; records **only**
 **Per-page permission map — still N/A** (no `core.PERMISSIONS` rows this phase). The access delta is grants, not RBAC: `rating_runtime` `SELECT` extends the enumerated read set with `customer.party_role`, `product.product_specifications`, `product.ratecard_ran_usage_lkp`, `product.ratecard_version` — see §9. `product_catalog` lands with the future UI.
 
 **Price resolution & rating (extends §6).** Resolve the subscriber via `party_role_specification->>'mnoPublicKey1'` → `party_role_id` → the **RAN_USAGE-offering-filtered** subscription → `product_inventory_id`; empty `{}` → `UNKNOWN_SUBSCRIBER`. Rate from the **scalar `usage_rate` `ratePerUnit`** (as-of `start_datetime`, pinned version — §6.1/§6.2 hold); compute `PER_UNIT = ratePerUnit × usage_volume` **in the engine** (§2.2 carve-out holds — no app-side rate math), round once per `udr_rounding_mode`. A resolved **card-driven** `usage_rate` (`plaSpecId = 'PLA_USAGE_RATE'`) → loud `CARD_DRIVEN_RATING_UNSUPPORTED` (PER_UNIT-from-card is unbuilt).
+
+---
+
+## 0.1 Raw `udr_key` and `udr_resource` Update — code-standard deltas
+
+Extends `context/code-standards.md` and §0; records **only** what `_updatemodule-rating-udr-key-resource-plan.md` and `ratemgmt-update-overview.md` change. Where this section and an older rule disagree about `udr_key` or `udr_resource`, this section wins. It reverses `ratemgmt-architecture.md` Inv #19 and rm01 D10 (`udr_resource` was reserved) and the "fixed canonicalisation rule" in `ratemgmt-ai-workflow-rules.md`; those documents are amended in the same change set (plan §7).
+
+**General rules.**
+1. **`udr_key` holds the feed's values exactly as sent** — no trim, no case folding, no Unicode normalisation, in PRP, RP, RL, seeds, tests or billing. A function that normalises a key value is a review-blocking defect; `canonical_udr_key` and `_normalise_value` are deleted, with no alias kept.
+2. **The key shape does not change:** key names sorted once per profile, `name=value`, joined by `|` (for example `commercial_unit=CU-5G|mno_public_id=MNO-001|polygon_id=ABCD_25 DISTRICT2`). Do not reorder names or change the delimiter; billing reads the polygon from the `polygon_id=` segment.
+3. **Rate-card matching is exact.** No `.lower()`, `.strip()` or `.casefold()` on either side of the `mno | commercial_unit | polygon` match. A record with no exact match is the existing whole-batch `INPUT_UNMAPPED`. The `service_code` strip-and-empty-to-NULL rule (`prp.py:479-483`) is not a key dimension and stays.
+4. **`udr_resource` has one defined meaning:** `state|district|polygon_start_date` of the matched rate-card cell, in that order, date as ISO `YYYY-MM-DD`, an empty segment for a blank state or district. Billing reads the segments by position, so adding, removing or reordering a segment is a spec change in both plans.
+5. **A rate-card `state` or `district` containing `|` fails the batch before any record is rated.** No escaping scheme. The failure uses the catalogued event code `RATECARD_LABEL_INVALID` (`MAJOR`, component `PRP`, not self-clearing), added to the rm02 seed and `RATING_EVENT_CODES` in the same change set (§7.11; rm25).
+6. **No silent default.** A `RAN_USAGE` chunk without `udr_resource` raises in RL; only a usage type that reads no rate card writes NULL, through the named allowlist.
+7. **No legacy-key branching.** This round runs on a fresh DB, so no code path tests "is this an old lowercase key". If an existing DB is ever carried forward, add a cutover guard first (plan §4, risk 3).
+8. **The accepted risk is explicit.** Two records that differ only in case or whitespace are different keys and both load (plan R4). Do not "fix" this with a normalising index or helper; the test that asserts it must keep passing.
+
+**TypeScript conventions** (the TypeScript here is the Drizzle mirror, Zod, seeds and tests; the rating logic is Python).
+1. `udr_resource` stays `string | null` in `db/schema/rating/udr-rated.ts` (`text`), with no `.$type<T>()` (it is a delimited string, not JSON). Replace the comment "Reserved, stays NULL" (`udr-rated.ts:61`) with the format in rule 4 above.
+2. Add `validation/rating/udr-resource.schema.ts` exporting `udrResourceSchema` — `^[^|]*\|[^|]*\|\d{4}-\d{2}-\d{2}$` — and `formatUdrResource(state, district, polygonStartDate)`. Seeds and tests build the value only through that helper; no hand-written `'A|B|date'` literals.
+3. Seeds and tests build raw keys through one helper, `buildRawUdrKey(parts)`, that mirrors `build_udr_key` (sorted names, raw values). The JSON-shaped placeholder keys in `udr-rated-sample.ts` for non-RAN rows are unchanged.
+4. `polygon_start_date` is a calendar date: serialise it with `date.isoformat()` in Python and treat it as a `YYYY-MM-DD` string in TypeScript. Never pass it through a `Date` or a timezone conversion (general §2.13).
+5. Python names: `build_udr_key`, `build_udr_resource`. One function builds each value; no second implementation in `rp.py` or `rl.py`.
+
+**Next.js rules — N/A.** No pages, Server Actions or Route Handlers are added (§4 stands).
+
+**Styling — N/A.** No UI is added.
+
+**API routes — none; the interface is the table.** Rating exposes no HTTP surface. The contract with billing is read-only access to `rating.udr_rated` through `ratedLinesRepository`:
+
+| Consumer need | Source | Read by |
+|---|---|---|
+| Polygon name | `polygon_id=` segment of `udr_key`, as sent | billing usage query |
+| State-District label | segments 1 and 2 of `udr_resource` | billing usage query |
+| Polygon start date | segment 3 of `udr_resource` | billing usage query |
+| Rate per unit | `udr_usage_rate` | billing usage query |
+
+Billing splits `udr_resource` in SQL with `split_part(udr_resource, '|', n)`; it does not parse it a second way and does not read the rate card (billing Inv #47).
+
+**Data and Storage rules.**
+1. **No new `rating.udr_rated` column, no migration file, no grant change.** A PR that adds any of them for this update is rejected.
+2. **`udr_resource` is written once, at INSERT,** by RL through `COPY_COLUMNS` (appended after `"district"`). No role holds UPDATE on it; the `grants` test enumerates `pg_attribute` (§9.6) and asserts it is in no role's UPDATE list.
+3. **`state` and `district` columns are untouched** (bm48, migration `0045`). `udr_resource` repeats them by design; both are write-once, so they cannot drift.
+4. **The label is built once per rate-card cell** when PRP loads the card (`extract_ratecard`), not once per record.
+5. **`udr_key` is still `text` with `CHECK (char_length(udr_key) <= 512)`.** Padding or spaces in a raw value count toward the cap; the 512/513 test (§10.5) stays.
+6. **The live-row constraint and RL's billed/in-flight guard compare raw `udr_key` byte for byte.** No `lower()`, no expression index, no `udr_key_hash`.
+7. **PRP's rate-card query adds `l.polygon_start_date`.** `rating_runtime` already holds `SELECT` on `product.ratecard_ran_usage_lkp` (Step 7a, §9); no grant is added, and the read stays plain text with no FK (Inv #17).
+8. **`udr_resource` is a snapshot of the ACTIVE card version at rating time.** Re-versioning the card never changes a rated row, and no rating code reads a card version other than the ACTIVE one.
+9. **No backfill or data-migration code.** There are no rows to convert on a fresh DB, and no role may UPDATE `udr_rated` columns beyond the six lifecycle columns.
+10. **Bump `rating_flow_revision` and `rating_engine_version` in the same change** so rows written under the raw-key rule are identifiable.
+
+**File Organization.** One change set touches:
+- `workflow-management/worker/workflow-engine/runtime/prp.py` (key build, exact card index, label, `|` check), `rp.py` (`_GEO_COLUMNS` pass-through gains `udr_resource`), `rl.py` (`COPY_COLUMNS` and `_GEO_OPTIONAL_COLUMNS`).
+- `db/schema/rating/udr-rated.ts` (comment only), new `validation/rating/udr-resource.schema.ts`, `db/seeds/rating-event-catalog.ts` and `RATING_EVENT_CODES` (new event code).
+- `db/seeds/sample/udr-rated-sample.ts`, `seed-billrun-sample.ts`, `capacity-usage-card.ts`, `tests/helpers/rating-ran-harness.ts`.
+- `tests/rating/`: `rm01-schema`, `rm07-prp-claim-validate-reject`, `rm09-rl-guarded-transactional-load`, `rm13-e2e-journey`, `rm23-udr-geo-frozen`, `grants.integration.test.ts`; check `rm08` for key literals.
+- No file under `services/billing/**`, `db/repositories/billing/**` or `db/schema/billing/**` changes in this unit (workflow rules §3.8).
+
+**Per-page permission map — no rows.** This update adds no page, route or component, and no `core.PERMISSIONS` row (§4, §9 stand).
+
+| Page | Route | Component | Required permission |
+|---|---|---|---|
+| none | none | none | none |
+
+The only consumer screen is billing's invoice preview, and its permission (`billrun_view`) is defined in the billing plan §7, not here.
+
+**Guardrail tests.** This update adds tests 17–20 to §10 (live database, shipped with the unit that introduces the behaviour).
 
 ---
 
@@ -74,12 +141,12 @@ Rating logic lives in Kestra flow definitions. These are binding conventions for
 
 State these explicitly so their absence reads as a decision rather than an omission. Do not invent module equivalents.
 
-| General section | Status here | Why |
-| --- | --- | --- |
-| §3 Next.js Rules | **N/A** | No pages, no Server Actions, no Route Handlers. Replaced by §3 above. |
-| §4 Styling | **N/A** | No UI in v1. Billing Ops works in the Kestra UI. |
-| §5 API Routes | **N/A** | This module exposes no HTTP surface. The bill run's M2M ingest belongs to `billmgmt`. |
-| §8 Permission Naming / §9 Per-Page Permission Map | **N/A** | The module adds **no `core.PERMISSIONS` rows**. A module with no pages declares no page permissions. Replaced by the grant table in §9 below. |
+| General section                                   | Status here | Why                                                                                                                                           |
+| ------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| §3 Next.js Rules                                  | **N/A**     | No pages, no Server Actions, no Route Handlers. Replaced by §3 above.                                                                         |
+| §4 Styling                                        | **N/A**     | No UI in v1. Billing Ops works in the Kestra UI.                                                                                              |
+| §5 API Routes                                     | **N/A**     | This module exposes no HTTP surface. The bill run's M2M ingest belongs to `billmgmt`.                                                         |
+| §8 Permission Naming / §9 Per-Page Permission Map | **N/A**     | The module adds **no `core.PERMISSIONS` rows**. A module with no pages declares no page permissions. Replaced by the grant table in §9 below. |
 
 If a later phase adds a UI, these sections come back into force and this table is deleted — not amended.
 
@@ -88,13 +155,13 @@ If a later phase adds a UI, these sections come back into force and this table i
 ## 5. Data and Storage Rules (module-specific)
 
 1. **All module tables live in the `rating` schema** (general §6.3): `udr_rated`, `udr_batch`, `process_log`, `event_catalog`. No identity, RBAC, session, config or audit tables. **No FK into or out of `billing.*`, `product.*`, `ordering.*` or `inventory.*`** (Inv #17) — cross-schema references are plain text, so a resolved price reference survives the referenced row being retired.
-2. **The live-row uniqueness constraint is `UNIQUE (partition_period, udr_key, is_live)`** *(PER_UNIT update, X2 — `start_datetime` dropped; one live row per cell per **billing month**)*. `is_live` is `GENERATED ALWAYS` from `status`. **Do not drop, weaken, or make this constraint deferrable.** It is the only thing that makes double-billing structurally impossible (Inv #3). **Shared-table caveat:** this grain binds every `udr_type` on `udr_rated`; a future sub-monthly feed needs a `udr_type`-scoped partial index, not a change to this one.
-3. **`udr_rated` carries no run-number column**, so no run number can enter its uniqueness constraint (Inv #4). `batch_run_num` lives on `udr_batch` and *is* half of the file-claim key there. Including it makes run 2 unable to collide with run 1 — the constraint would fire on nothing.
-4. **`udr_key` is `text` with `CHECK (char_length(udr_key) <= 512)`.** Use `char_length`, matching the codebase's existing style (`product_offering_price_currency_check`). The cap keeps the index entry clear of Postgres's 2,704-byte btree row limit even at the worst case it permits (512 four-byte UTF-8 characters = 2,048 bytes). **Do not add a hash column**; `udr_key` is indexed directly.
+2. **The live-row uniqueness constraint is `UNIQUE (partition_period, udr_key, is_live)`** _(PER_UNIT update, X2 — `start_datetime` dropped; one live row per cell per **billing month**)_. `is_live` is `GENERATED ALWAYS` from `status`. **Do not drop, weaken, or make this constraint deferrable.** It is the only thing that makes double-billing structurally impossible (Inv #3). `udr_key` is compared byte for byte; it holds the feed's raw values (§0.1). **Shared-table caveat:** this grain binds every `udr_type` on `udr_rated`; a future sub-monthly feed needs a `udr_type`-scoped partial index, not a change to this one.
+3. **`udr_rated` carries no run-number column**, so no run number can enter its uniqueness constraint (Inv #4). `batch_run_num` lives on `udr_batch` and _is_ half of the file-claim key there. Including it makes run 2 unable to collide with run 1 — the constraint would fire on nothing.
+4. **`udr_key` is `text` with `CHECK (char_length(udr_key) <= 512)`.** Use `char_length`, matching the codebase's existing style (`product_offering_price_currency_check`). The cap keeps the index entry clear of Postgres's 2,704-byte btree row limit even at the worst case it permits (512 four-byte UTF-8 characters = 2,048 bytes). **Do not add a hash column**; `udr_key` is indexed directly. The stored value is the feed's text, unmodified (§0.1).
 5. **ID conventions are split by volume** (general §6.18): `udr_rated.udr_id` and `process_log.log_id` are `uuid` defaulting to `core.generate_ulid()`, matching `core.audit_log`. `udr_batch.batch_id` uses the prefix + 8-digit sequence convention (`UDRBAT`). Do not apply sequences to the high-volume tables or ULIDs to the low-volume one.
-5a. **Partitioned-table DDL follows general §6.20 without deviation** — hand-authored migration, Drizzle for typing only, composite PK including the partition key, bootstrap `DEFAULT` partition kept empty, separate `db/bootstrap/rating-partman-setup.{sql,ts}`, no second cron job, version preflight assertion, grants on the parent only. That rule was written from this module's findings and the `audit_log` precedent; it is platform-wide, not rating-specific.
+   5a. **Partitioned-table DDL follows general §6.20 without deviation** — hand-authored migration, Drizzle for typing only, composite PK including the partition key, bootstrap `DEFAULT` partition kept empty, separate `db/bootstrap/rating-partman-setup.{sql,ts}`, no second cron job, version preflight assertion, grants on the parent only. That rule was written from this module's findings and the `audit_log` precedent; it is platform-wide, not rating-specific.
 6. **`udr_rated` and `process_log` are partitioned on `partition_period`**, a `date` control column derived from `start_datetime`. **Do not partition on a `timestamptz` column** — `pg_partman` generates every bound, and a `timestamptz` control column leaves bound generation to the server timezone.
-7. **The `partition_period` CHECK uses an explicit `AT TIME ZONE` literal, centralised in the `IMMUTABLE` helper `rating.period_of()`** (Inv #15). *(PER_UNIT update, X1 — the literal is the config TZ `Asia/Kuala_Lumpur` (fixed `+8`), so `partition_period` **is** the billing month, superseding the earlier UTC-physical-bucket choice; amendment authorized by Khek, module owner, 2026-09-30. Bill-run may now prune by `partition_period` — reconcile `billmgmt-architecture.md`.)* An explicit zone is mandatory regardless: `date_trunc` on a `timestamptz` without one is not immutable — it accepts a row in one session and rejects the identical row in another.
+7. **The `partition_period` CHECK uses an explicit `AT TIME ZONE` literal, centralised in the `IMMUTABLE` helper `rating.period_of()`** (Inv #15). _(PER_UNIT update, X1 — the literal is the config TZ `Asia/Kuala_Lumpur` (fixed `+8`), so `partition_period` **is** the billing month, superseding the earlier UTC-physical-bucket choice; amendment authorized by Khek, module owner, 2026-09-30. Bill-run may now prune by `partition_period` — reconcile `billmgmt-architecture.md`.)_ An explicit zone is mandatory regardless: `date_trunc` on a `timestamptz` without one is not immutable — it accepts a row in one session and rejects the identical row in another.
 8. **Partitioning is registered, not hand-rolled** — a `partman.part_config` row per partitioned table (`pg_partman`, monthly, **`udr_rated` 7-year / `process_log` 24-month** retention, **detach-and-archive**, matching the billing convention rather than `audit_log`'s drop-on-expiry). Register on the **existing** daily maintenance job; **do not add a second `cron.schedule_in_database`.**
 9. **Money columns:** amounts `numeric(18,2)`, rates `numeric(18,6)` — both mapped to `string`. Store **both** `udr_rated_price_raw` (full precision) and `udr_rated_price` (rounded), and record `udr_rounding_mode`. Never store a rate at 2 dp; never compute a billable amount from `_raw` at read time.
 10. **Financial content is immutable after insert** (Inv #2, refining platform Inv #18). Only lifecycle columns may be updated, and the list is exactly six distinct columns: `status` (both roles), the bill run's four `billrun_*` columns and `upsert_datetime` (`app_runtime` only). **`superseded_by_udr_id` and `supersede_reason` are not on `udr_rated`** — the lineage is batch-level, on `udr_batch` (rm01 D11). This is enforced by **column-scoped grants**, not by convention. **No role holds `DELETE` on `udr_rated`** — a rated row leaves the table only by partition detach.
@@ -119,8 +186,8 @@ If a later phase adds a UI, these sections come back into force and this table i
 
 1. **Two orthogonal columns, never blended.** `log_level` (`DEBUG`/`INFO`/`WARN`/`ERROR`) is verbosity. `perceived_severity` (ITU X.733: `CRITICAL`/`MAJOR`/`MINOR`/`WARNING`/`INDETERMINATE`/`CLEARED`) is alarm severity and is **nullable** — populated only on alarm-worthy rows.
 2. **Severity is never hardcoded at a call site.** Every emitted event carries an `event_code`; severity, X.733 event type and probable cause are resolved from `rating.event_catalog` (Inv #14). Re-tuning what counts as `MAJOR` is a migration, not a release.
-2a. **Whether an event alarms at all is also the catalog's decision, not the emitter's.** `event_catalog.default_severity` is **nullable**; NULL means the code is logged and never alarms. Resolution has three outcomes — severity value, NULL, or `INDETERMINATE` for a code with **no catalog row**. The resolver tests **row presence**, never severity nullity. `COALESCE(default_severity,'INDETERMINATE')` is the specific wrong implementation: it reclassifies every deliberately-non-alarming event as unclassified and permanently voids §7.3's metric.
-2b. **`log_level` is the emitter's, and the catalog does not carry one.** The emitting task states `DEBUG`/`INFO`/`WARN`/`ERROR`; the sweep passes it through unchanged. Level and severity are orthogonal (§7.1) and neither is derived from the other.
+   2a. **Whether an event alarms at all is also the catalog's decision, not the emitter's.** `event_catalog.default_severity` is **nullable**; NULL means the code is logged and never alarms. Resolution has three outcomes — severity value, NULL, or `INDETERMINATE` for a code with **no catalog row**. The resolver tests **row presence**, never severity nullity. `COALESCE(default_severity,'INDETERMINATE')` is the specific wrong implementation: it reclassifies every deliberately-non-alarming event as unclassified and permanently voids §7.3's metric.
+   2b. **`log_level` is the emitter's, and the catalog does not carry one.** The emitting task states `DEBUG`/`INFO`/`WARN`/`ERROR`; the sweep passes it through unchanged. Level and severity are orthogonal (§7.1) and neither is derived from the other.
 3. **Every `event_code` must exist in `event_catalog`.** An unclassified event resolves to `INDETERMINATE`; that count **is zero**, asserted in CI (§10.11).
 4. **Per-record rejects go to the reject file. Never one log row each.** A 20%-reject 50,000-record file emits **one** summarised row with counts and a pointer (Inv #11). A per-record log write is a review-blocking defect.
 5. **Every alarm-worthy event carries an `alarm_key`** (e.g. `FILE_NOT_RECEIVED:RAN_USAGE:2026-08-21`) so a later success can emit `CLEARED` against the same key. Each catalog row declares whether its code is self-clearing.
@@ -162,6 +229,8 @@ db/seeds/
 validation/rating/
   udr-rate-detail.schema.ts    # discriminated union keyed on udr_rate_type
                                # (ships with rm01, which declares the column)
+  udr-resource.schema.ts       # udrResourceSchema + formatUdrResource: the
+                               # state|district|date contract (§0.1; Inv 28)
 infra/docs/
   db-role-verification.md      # EXTENDED, not created: the rating provisioning
                                # order and the manual ALTER ROLE ... PASSWORD steps
@@ -210,30 +279,30 @@ The module's authoritative access table. Every grant below is asserted by a test
 
 **Per-table grants — `rating` schema**
 
-| Table | `rating_runtime` | `app_runtime` | `app_migrate` |
-| --- | --- | --- | --- |
-| `udr_rated` | `SELECT`, `INSERT`, `UPDATE (status)` | `SELECT`, `UPDATE` on **six** columns: `status`, `billrun_ref_id`, `billrun_ban_id`, `billrun_attempt`, `billrun_checksum`, `upsert_datetime` | `ALL` |
-| `udr_batch` | `SELECT`, `INSERT`, `UPDATE` on the lifecycle, count and outcome columns — **never** `batch_id`, `file_key`, `source_file`, `file_key_rule`, `udr_type`, `batch_run_num` or `received_at` | `SELECT` | `ALL` |
-| `process_log` | `SELECT`, `INSERT` | `SELECT` | `ALL` |
-| `event_catalog` | **`SELECT` only** (seeded under `app_migrate`) | `SELECT` | `ALL` |
-| any `rating` table | **no `DELETE`, no `TRUNCATE`, ever** | **no `INSERT`, no `DELETE`, no `TRUNCATE`** | — |
+| Table              | `rating_runtime`                                                                                                                                                                          | `app_runtime`                                                                                                                                 | `app_migrate` |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `udr_rated`        | `SELECT`, `INSERT`, `UPDATE (status)`                                                                                                                                                     | `SELECT`, `UPDATE` on **six** columns: `status`, `billrun_ref_id`, `billrun_ban_id`, `billrun_attempt`, `billrun_checksum`, `upsert_datetime` | `ALL`         |
+| `udr_batch`        | `SELECT`, `INSERT`, `UPDATE` on the lifecycle, count and outcome columns — **never** `batch_id`, `file_key`, `source_file`, `file_key_rule`, `udr_type`, `batch_run_num` or `received_at` | `SELECT`                                                                                                                                      | `ALL`         |
+| `process_log`      | `SELECT`, `INSERT`                                                                                                                                                                        | `SELECT`                                                                                                                                      | `ALL`         |
+| `event_catalog`    | **`SELECT` only** (seeded under `app_migrate`)                                                                                                                                            | `SELECT`                                                                                                                                      | `ALL`         |
+| any `rating` table | **no `DELETE`, no `TRUNCATE`, ever**                                                                                                                                                      | **no `INSERT`, no `DELETE`, no `TRUNCATE`**                                                                                                   | —             |
 
 **Everything outside `rating`**
 
-| Grantee | Grant |
-| --- | --- |
-| `rating_runtime` | `USAGE` on `rating`, `product`, `ordering`, `inventory`, `billing`, `core`. `SELECT` on **seven enumerated tables only**: `product.product_offering`, `product.product_offering_price`, `ordering.product_order_item`, `ordering.order_item_price_override`, `inventory.product_inventory`, `billing.billing_account`, `billing.bill_cycle`. **Never `ON ALL TABLES IN SCHEMA`** — that widens silently every time another module ships a table. Explicit `REVOKE` of every write on `billing.*`. `CONNECT` on the billing database, granted explicitly after `PUBLIC` loses it. Connection limit set. |
-| `rating_runtime` — functions and sequences | `USAGE ON SEQUENCE rating.udr_batch_seq`; `EXECUTE ON rating.period_of(timestamptz)` (called from a `CHECK`) and `core.generate_ulid()` (called from a `DEFAULT`). **Omit any one and every insert fails.** Granted explicitly, never inherited from `PUBLIC`. |
-| `app_runtime` | `USAGE ON SCHEMA rating`; `EXECUTE ON rating.period_of(timestamptz)`. Unchanged elsewhere. |
-| `app_migrate` | Owns the `rating` DDL. `ALTER DEFAULT PRIVILEGES **FOR ROLE app_migrate**` grants **`SELECT` and nothing else** on future `rating` tables, to both `rating_runtime` and `app_runtime`, plus `USAGE, SELECT` on future sequences to `rating_runtime`. |
-| `PUBLIC` | **`CONNECT` revoked** on the billing database and on the `kestra` database. **`EXECUTE` revoked** on the four `billing` `SECURITY DEFINER` pgledger functions. |
-| `kestra_engine` | `CONNECT` + `CREATE` on the `kestra` database only. **No `CONNECT`** on the billing database. Connection limit set. |
+| Grantee                                    | Grant                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `rating_runtime`                           | `USAGE` on `rating`, `product`, `ordering`, `inventory`, `billing`, `core`, `customer`. `SELECT` on **eleven enumerated tables only**: `product.product_offering`, `product.product_offering_price`, `ordering.product_order_item`, `ordering.order_item_price_override`, `inventory.product_inventory`, `billing.billing_account`, `billing.bill_cycle`, plus the four added by the PER_UNIT update (`rating-db-roles.sql` Step 7a): `customer.party_role`, `product.product_specifications`, `product.ratecard_ran_usage_lkp`, `product.ratecard_version`. **Never `ON ALL TABLES IN SCHEMA`** — that widens silently every time another module ships a table. Explicit `REVOKE` of every write on `billing.*`. `CONNECT` on the billing database, granted explicitly after `PUBLIC` loses it. Connection limit set. |
+| `rating_runtime` — functions and sequences | `USAGE ON SEQUENCE rating.udr_batch_seq`; `EXECUTE ON rating.period_of(timestamptz)` (called from a `CHECK`) and `core.generate_ulid()` (called from a `DEFAULT`). **Omit any one and every insert fails.** Granted explicitly, never inherited from `PUBLIC`.                                                                                                                                                                                                                                                                                                                                         |
+| `app_runtime`                              | `USAGE ON SCHEMA rating`; `EXECUTE ON rating.period_of(timestamptz)`. Unchanged elsewhere.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `app_migrate`                              | Owns the `rating` DDL. `ALTER DEFAULT PRIVILEGES **FOR ROLE app_migrate**` grants **`SELECT` and nothing else** on future `rating` tables, to both `rating_runtime` and `app_runtime`, plus `USAGE, SELECT` on future sequences to `rating_runtime`.                                                                                                                                                                                                                                                                                                                                                   |
+| `PUBLIC`                                   | **`CONNECT` revoked** on the billing database and on the `kestra` database. **`EXECUTE` revoked** on the four `billing` `SECURITY DEFINER` pgledger functions.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `kestra_engine`                            | `CONNECT` + `CREATE` on the `kestra` database only. **No `CONNECT`** on the billing database. Connection limit set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
-0. **Grant on the parent table, never on a partition.** Partitions have an empty ACL; access via the parent covers partitions created later, so `pg_partman` never breaks the grant model. A query that names a partition directly is refused — that is expected, and the fix is to query the parent, not to add a grant. *(Verified: column-scoped `GRANT UPDATE` on a partitioned table is accepted, updating a base column recomputes its `GENERATED` column with no separate grant, and a non-granted column is still refused.)*
+0. **Grant on the parent table, never on a partition.** Partitions have an empty ACL; access via the parent covers partitions created later, so `pg_partman` never breaks the grant model. A query that names a partition directly is refused — that is expected, and the fix is to query the parent, not to add a grant. _(Verified: column-scoped `GRANT UPDATE` on a partitioned table is accepted, updating a base column recomputes its `GENERATED` column with no separate grant, and a non-granted column is still refused.)_
 1. **`ALTER DEFAULT PRIVILEGES` attaches to `app_migrate`, not the bootstrap superuser.** Default privileges must hang off the role that creates future tables. This is already documented in `bootstrap-db-roles.sql`; repeating the mistake silently leaves new tables ungranted.
 2. **Add a grant with the table that needs it,** in the same change set. A new `rating` table shipped without its grant line is rejected at review.
 3. **Widening a grant is a spec change.** Do not add a column to the six-column `app_runtime` grant, do not add a column to `rating_runtime`'s single-column `udr_rated` grant, and do not add `DELETE` to any role, without an approved change to `ratemgmt-architecture.md` Inv #2.
-4. **`ALTER DEFAULT PRIVILEGES` may never carry `UPDATE` in `rating`.** Postgres rejects a column-scoped default outright (*"default privileges cannot be set for columns"*), so any default carrying `UPDATE` is necessarily table-wide and would grant a future rating table's money columns the moment it is created. Defaults grant `SELECT`; a table needing more gets an explicit grant in the migration that creates it.
+4. **`ALTER DEFAULT PRIVILEGES` may never carry `UPDATE` in `rating`.** Postgres rejects a column-scoped default outright (_"default privileges cannot be set for columns"_), so any default carrying `UPDATE` is necessarily table-wide and would grant a future rating table's money columns the moment it is created. Defaults grant `SELECT`; a table needing more gets an explicit grant in the migration that creates it.
 5. **Revoking a `PUBLIC` grant from a role is a no-op.** If a role reaches a privilege through `PUBLIC`, `REVOKE … FROM <role>` changes nothing — the revoke must name `PUBLIC`. Verified.
 6. **The per-column assertion enumerates `pg_attribute`; it is not a hand-written list.** A column added to `udr_rated` in a later migration is then covered automatically, and lands on the correct side of the boundary or fails the build.
 
@@ -243,24 +312,28 @@ The module's authoritative access table. Every grant below is asserted by a test
 
 Each ships with the unit that introduces the behavior; **rm13 assembles and runs the suite and owns only test #15 (the ship-gate no-per-record-fan-out guard), whose assertion mechanism is settled at the ship gate** — earlier wording had rm13 "building the full guardrail suite", which overstated its role. Where a test spans two units, both halves are named below and each unit ships its half. All are assertions against a live database, not mocks.
 
-| # | Test | Owning unit(s) |
-| --- | --- | --- |
-| 1 | Grant isolation | rm03 |
-| 2 | Column-scoped update | rm03 |
-| 3 | No cross-schema FK | rm01 |
-| 4 | Live-row uniqueness | rm01 (the constraint) + rm10 (the skipped-supersede case) |
-| 5 | Key length | rm01 |
-| 6 | Partition correctness | rm01 |
-| 7 | Supersession scope | rm10 |
-| 8 | Approved-record guard | rm09 |
-| 9 | Batch claim | rm01 (the constraint) + rm07 (two filenames → one `file_key`; two periods → never the same key) |
-| 10 | Reconciliation | rm09 (`RECON_IMBALANCE`) + rm10 (`SHRINKING_REISSUE`) |
-| 11 | Event catalog completeness | rm02 |
-| 12 | Log proportionality | **rm07** — it writes the reject file, so it owns proving one summarised row regardless of reject count |
-| 13 | Price snapshot reproducibility | rm08 |
-| 14 | Archive ordering | rm09 (file + rows) + rm11 (the stranded batch it resolves) |
-| 15 | No per-record fan-out | rm13 |
-| 16 | **Log-line contract and sweep idempotency** | **rm06** — the format round-trips an error message containing quotes, newlines and delimiters; sweeping one file twice leaves the row count unchanged; an alarming code, a non-alarming code and an uncatalogued code resolve to a severity, NULL and `INDETERMINATE` respectively |
+| #   | Test                                        | Owning unit(s)                                                                                                                                                                                                                                                                     |
+| --- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Grant isolation                             | rm03                                                                                                                                                                                                                                                                               |
+| 2   | Column-scoped update                        | rm03                                                                                                                                                                                                                                                                               |
+| 3   | No cross-schema FK                          | rm01                                                                                                                                                                                                                                                                               |
+| 4   | Live-row uniqueness                         | rm01 (the constraint) + rm10 (the skipped-supersede case)                                                                                                                                                                                                                          |
+| 5   | Key length                                  | rm01                                                                                                                                                                                                                                                                               |
+| 6   | Partition correctness                       | rm01                                                                                                                                                                                                                                                                               |
+| 7   | Supersession scope                          | rm10                                                                                                                                                                                                                                                                               |
+| 8   | Approved-record guard                       | rm09                                                                                                                                                                                                                                                                               |
+| 9   | Batch claim                                 | rm01 (the constraint) + rm07 (two filenames → one `file_key`; two periods → never the same key)                                                                                                                                                                                    |
+| 10  | Reconciliation                              | rm09 (`RECON_IMBALANCE`) + rm10 (`SHRINKING_REISSUE`)                                                                                                                                                                                                                              |
+| 11  | Event catalog completeness                  | rm02                                                                                                                                                                                                                                                                               |
+| 12  | Log proportionality                         | **rm07** — it writes the reject file, so it owns proving one summarised row regardless of reject count                                                                                                                                                                             |
+| 13  | Price snapshot reproducibility              | rm08                                                                                                                                                                                                                                                                               |
+| 14  | Archive ordering                            | rm09 (file + rows) + rm11 (the stranded batch it resolves)                                                                                                                                                                                                                         |
+| 15  | No per-record fan-out                       | rm13                                                                                                                                                                                                                                                                               |
+| 16  | **Log-line contract and sweep idempotency** | **rm06** — the format round-trips an error message containing quotes, newlines and delimiters; sweeping one file twice leaves the row count unchanged; an alarming code, a non-alarming code and an uncatalogued code resolve to a severity, NULL and `INDETERMINATE` respectively |
+| 17  | **Raw key preserved** (raw-key update)     | **rm07** (PRP builds the key) + rm09 (RL loads and guards on the raw key)                                                                                                                                                                                                          |
+| 18  | **Exact card match** (raw-key update)      | **rm07**                                                                                                                                                                                                                                                                           |
+| 19  | **`udr_resource` write-once and frozen** (raw-key update) | rm13 (the end-to-end row) + rm23 (re-version and UPDATE refusal) + `grants` (no role may UPDATE it)                                                                                                                                                       |
+| 20  | **Label delimiter** (raw-key update)       | **rm07**                                                                                                                                                                                                                                                                           |
 
 1. **Grant isolation** — `rating_runtime` attempting an `INSERT`/`UPDATE`/`DELETE` on any `billing` table raises a permission error. `rating_runtime` has no `DELETE` on `udr_rated`.
 2. **Column-scoped update** — `app_runtime` can update each of the six permitted `udr_rated` columns and is refused on every other column, asserted **per column** so a widened grant fails the build.
@@ -276,4 +349,9 @@ Each ships with the unit that introduces the behavior; **rm13 assembles and runs
 12. **Log proportionality** — a batch with N rejected records emits exactly one `process_log` row for those rejects, independent of N.
 13. **Price snapshot reproducibility** — a record rated, then re-rated after the underlying price row and override have changed, produces the same amount from its snapshotted inputs.
 14. **Archive ordering** — a simulated failure during the RL transaction leaves the source file in `landing/`, zero rows in `udr_rated`, and a `udr_batch` row that stranded-batch reconciliation resolves.
-15. **No per-record fan-out** — a 50,000-record file's execution task count is bounded by chunk count, not record count. *(Assertion mechanism to be settled at the ship-gate spec; this is a design guard, not a release blocker.)*
+15. **No per-record fan-out** — a 50,000-record file's execution task count is bounded by chunk count, not record count. _(Assertion mechanism to be settled at the ship-gate spec; this is a design guard, not a release blocker.)_
+16. **Log-line contract and sweep idempotency** — the JSON Lines format round-trips an error message containing quotes, newlines and delimiters; sweeping one file twice leaves the `process_log` row count unchanged; an alarming code, a non-alarming code and an uncatalogued code resolve to a severity, NULL and `INDETERMINATE` respectively.
+17. **Raw key preserved** — a polygon `ABCD_25 DISTRICT2` loads with `polygon_id=ABCD_25 DISTRICT2` in `udr_key`, case and space intact; two records that differ only in case both load; an identical raw-key batch colliding with a live `BILL_APPROVED` row is still refused whole.
+18. **Exact card match** — a polygon that differs from the ratecard only by case or a trailing space is `INPUT_UNMAPPED` and refuses the whole batch under `HARD_STOP`.
+19. **`udr_resource` write-once and frozen** — a matched cell gives `state|district|date`; a blank label gives an empty segment; re-versioning the card afterwards leaves the rated row unchanged; an `UPDATE` of `udr_resource` is refused for `rating_runtime`, `app_runtime` and `billrun_runtime`; a `RAN_USAGE` chunk missing it makes RL raise, and a non-RAN chunk writes `NULL`.
+20. **Label delimiter** — a ratecard `state` or `district` containing `|` fails the batch before any record is rated, with the catalogued event code.
