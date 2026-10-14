@@ -18,7 +18,7 @@ Decomposition of the Rating Management module into build units. Sources: `ratemg
 - **Visible result:** the constraint suite passes on a live DB — second live row rejected; four supersede cycles leave one live and four superseded rows; 513-character key rejected by the CHECK; mismatched `partition_period` rejected under three session timezones; next month's partitions created on the existing schedule.
 - **Depends on:** platform Postgres with `pg_partman`/`pg_cron`; `core.generate_ulid()`.
 - **Parity note:** local dev was PG 17 vs Azure 16. Pin the local image to `postgres:16-bookworm` (PGDG ships `pg_partman` 5.0.1 for 16, so the major does not change; the break is v4→v5). Add a **preflight assertion** to the partman setup that fails if the installed major is below 5; verify Azure's version once (`_risk-database-extension-version-drift.md`).
-- _Later phases changed:_ live-row key and `period_of()` literal → rm15; `udr_key` canonical rule → rm26.
+- _Later phases changed:_ live-row key and `period_of()` literal → rm15; `udr_resource` reserved (D10) → populated by Phase H (rm26–rm28). The canonical `udr_key` rule was never rm01's (it is rm07 D2 / `_newmodule-rating-engine-plan.md` §4.2) and is reversed by rm26.
 
 ### rm02 — `event_catalog` seed
 - **Boundary:** `db/seeds/`.
@@ -132,7 +132,7 @@ Supersedes the "`FLAT` only" scope of rm08. Implements `PER_UNIT`, the real subs
 
 ### rm15 — `udr_rated` shape migration (rename + X1 + X2)
 - **Repo:** app. **Boundary:** `db/migrations/0034_rating.sql`, `udr-rated.ts`, `rated-lines.repository.ts`.
-- **Builds:** gated on a recorded **fresh-install check**; edit-in-place: `udr_subscriber_ref_id` → `udr_subscription_ref_id` (+ index); `period_of()` literal → `Asia/Kuala_Lumpur` so `partition_period` is the billing month (X1); live-row key → `UNIQUE (partition_period, udr_key, is_live)` (X2); Drizzle journal/snapshot regenerated; seed and bill-run read path updated. If any environment holds rated data, ship as a forward migration instead.
+- **Builds:** gated on a recorded **fresh-install check**; edit-in-place: `udr_subscriber_ref_id` → `udr_subscription_ref_id` (+ index); `period_of()` literal → `Asia/Kuala_Lumpur` so `partition_period` is the billing month (X1); live-row key → `UNIQUE (partition_period, udr_key, is_live)` (X2); **no Drizzle meta regeneration** (a no-op here — `migrate()` reads neither a `_journal.json` hash nor `00XX_snapshot.json` for hand-authored migrations; validated by applying cleanly to an empty database, per the rm15 record); seed and bill-run read path updated. If any environment holds rated data, ship as a forward migration instead.
 - **Visible result:** a second live row per `(partition_period, udr_key)` is rejected; `period_of()` behaves identically across three timezones; zero `udr_subscriber_ref_id` left. **Depends on:** rm01, rm14.
 
 ### rm16 — `rating_runtime` grant extension
@@ -191,7 +191,7 @@ Implements `_updatemodule-rating-udr-key-resource-plan.md` and `ratemgmt-update-
 ### rm25 — App-surface prerequisites: `udr_resource` contract and event code
 - **Spec:** `rm25-udr-resource-contract-and-event-code.md`
 - **Repo:** app. **Boundary:** `validation/rating/`, `db/seeds/`, `db/schema/rating/udr-rated.ts` (comment only).
-- **Builds:** `udr-resource.schema.ts` (`udrResourceSchema`, `formatUdrResource`); a `buildRawUdrKey` helper for seeds and tests; the `RATECARD_LABEL_INVALID` event-catalog row and `RATING_EVENT_CODES` constant (name, severity and self-clearing flag to confirm — open item 11); the `udr_resource` comment in `udr-rated.ts` replaced with the format.
+- **Builds:** `udr-resource.schema.ts` (`udrResourceSchema`, `formatUdrResource`); a `buildRawUdrKey` helper for seeds and tests; the `RATECARD_LABEL_INVALID` event-catalog row and `RATING_EVENT_CODES` constant (`MAJOR`, `PRP`, not self-clearing — open item 11, closed 2026-10-14); the `udr_resource` comment in `udr-rated.ts` replaced with the format.
 - **Visible result:** the Zod suite passes — `state|district|date` and blank-segment values validate, a wrong segment count or a non-ISO date is rejected, `formatUdrResource` round-trips; the new code resolves in `event_catalog` (`INDETERMINATE` count zero).
 - **Depends on:** rm02, rm24. The helper, event code and comment have no standalone result, so they are one unit.
 

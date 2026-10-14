@@ -19,7 +19,7 @@ Supplements `context/ai-workflow-rules.md` and the module rules below; applies t
 
 **Scoping — no speculative changes.**
 4. **`PER_UNIT` is in scope; nothing beyond it is.** `TIERED_*`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` stay out (§3.1, updated). Do not build **card-driven** `usage_rate` rating — raise `CARD_DRIVEN_RATING_UNSUPPORTED`.
-5. **Do not build Workstream C** (Product-management UI, `product_catalog` permission, the `singleSubInstPerCust`/MNO-key ordering guards). It is deferred to `_futurebuild-product-mgmt-ui-plan.md`. Raise the gap; do not fill it.
+5. **Do not build Workstream C** (Product-management UI, `product_catalog` permission, the `singleSubInstPerCust`/MNO-key ordering guards). It is deferred to `_updatemodule-product-mgmt-ui-plan.md`. Raise the gap; do not fill it.
 6. **Do not store `party_role_id` on `udr_rated`.** The rated row's subscription anchor is `udr_subscription_ref_id` (a `product_inventory_id`); `party_role_id` is resolved transiently for the factor-2 cross-check only.
 
 **When to split.**
@@ -83,7 +83,7 @@ Supplements `context/ai-workflow-rules.md`, §0 and the module rules below; appl
 18. **Do not edit `db/bootstrap/rating-db-roles.sql`.** Step 7a already grants the ratecard reads; the diff must show no change there.
 19. **Do not edit RL's collision guard or its supersede logic** (`rl.py`). They must work unchanged on raw keys; prove it with tests only.
 20. **Do not rewrite the delivered specs** (rm01, rm07, rm08, rm09, rm21). Add a dated reversal note beneath `_newmodule-rating-engine-plan.md` §4.2, rm07 D2 and rm01 D10 (and the matching lines in the other documents the plan §7 lists); do not delete the original text.
-21. **Do not edit billing code or billing documents**, except the lines the plan §7 names (bm45 D2, bm48 G13/D2, billing Inv #36/#47, known-issues). Tell the billing owner which lines you changed.
+21. **Do not edit billing code or billing documents**, except the lines the plan §7 names (bm45 D2, bm48 G13/D2, billing Inv #36/#47, known-issues, `billmgmt-code-standards.md`). Tell the billing owner which lines you changed.
 
 **Docs in sync.**
 22. **Ship the whole document set in one change set:** `ratemgmt-architecture.md` (Inv 3, 14, 19, 26, 27, 28), `ratemgmt-code-standards.md` (§0.1, §5.2, §5.4, §9, §10), `ratemgmt-project-overview.md`, this file, `ratemgmt-update-overview.md`, and the plan's §7 list.

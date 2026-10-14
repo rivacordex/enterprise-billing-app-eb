@@ -596,6 +596,8 @@ Per the header, this document is a delta to `../code-standards.md`; this section
 - **`product_offering_price` is read as components** (PC14: one row per `component_type` + `price_component jsonb`; `amount`/`pricing_model`/`price_type` removed); the shared as-of reader is partitioned by `(product_offering_id, component_type, unit_of_measure)`.
 - **The per-polygon appendix is snapshotted at `aggregation`** (so the render does no cross-schema join); its state/district come from the `productCardLookUp` ratecard, **never from `udr_rated`**.
 
+  > **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+
 ### File organization (adds to §7)
 
 - **Capacity logic lives in the flow, not `services/`.** `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml` (`aggregation` + `verification` steps). No new `services/billing/**` compute file (Inv #17); no DB function; no Python.
@@ -622,6 +624,9 @@ The `billrun_runtime`/`app_runtime` grant additions (above) must land or Custome
 39. **Verification catches a tampered** `rated_amount`/`gross`/`discount`/`calc.total` via **both** detectors; every capacity line holds `discount_amount ≥ 0` and `net_amount ≥ 0`.
 40. **Altering `rated_amount` on a posted line changes the recomputed `charge_checksum`** (the append-tuple).
 41. **The invoice usage appendix** renders per-polygon by state/district from the `productCardLookUp` ratecard, load-tested to 10,000 rows/account; a card-missing polygon surfaces (not dropped).
+
+    > **Superseded 2026-10-14.** rating now stores `udr_key` raw; the invoice reads the polygon from the `polygon_id=` segment of `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31). The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
+
 42. **DB suites run the SQL extracted from `bill_run_processing.yml`** (no hand-copied double); a **live-Kestra** capacity run drives `SCHEDULED → COMPLETED`; the destructive-DB preflight **refuses a non-disposable target**.
 
 ---

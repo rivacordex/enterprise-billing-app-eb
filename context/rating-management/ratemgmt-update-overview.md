@@ -4,6 +4,7 @@
 **Scope of this update:** the RAN-usage rating runtime — PRP (`prp.py`), RP (`rp.py`), RL (`rl.py`) of the `rating-engine-ran-usage` flow — plus sample seeds, rating tests and the rule/document amendments listed in the plan §7. No schema change, no migration, no grant change, no billing code.
 **Operated by:** BSS IT Operations.
 **Rollout:** fresh database this round (decided 2026-10-14): no rows exist that predate this change.
+**Earlier update:** until rm24 this file described the PER_UNIT RAN-usage update (Phase G). That content now lives in `ratemgmt-project-overview.md`, in the sections marked "PER_UNIT RAN-usage update (Phase G)": its goals 1–9 are the overview's goals 11–19, its core user flow is "RAN_USAGE PER_UNIT flow (Phase G)", and its success criteria 1–10 are the overview's 22–31. Delivered specs that cite this file for PER_UNIT content (the rm01/rm06/rm07/rm08 banners, rm18 "core user flow steps 1–3") mean those sections.
 
 ## Overview
 
@@ -70,7 +71,7 @@ Worked example. Rate-card row: `mno_public_key = MNO-001`, `commercial_unit_publ
 - Rating tests are extended in `rm01`, `rm07`, `rm09`, `rm13`, `rm23` and `grants`, as listed in the plan §5.
 
 **Documentation amendments**
-- The plan §7 lists every rule to amend in the same change set: `_newmodule-rating-engine-plan.md` §4.2, rm07 D2 and rm01 D10, `ratemgmt-architecture.md` Inv #19 and the Inv #20(b)/#26 wording, `ratemgmt-ai-workflow-rules.md` lines 110 and 118, `ratemgmt-code-standards.md` §6, `ratemgmt-project-overview.md`, the rm07 and rm21 specs, `rm00-build-plan.md`, plus the billing-side bm45, bm48, Inv #36/#47 and known-issues entries.
+- The plan §7 lists every rule to amend in the same change set: `_newmodule-rating-engine-plan.md` §4.2, rm07 D2 and rm01 D10, `ratemgmt-architecture.md` Inv #19 and the Inv #20(b)/#26 wording, `ratemgmt-ai-workflow-rules.md` lines 110 and 118, `ratemgmt-code-standards.md` §0.1 (with pointers in §5.2 and §5.4), `ratemgmt-project-overview.md`, the rm07 and rm21 specs, `rm00-build-plan.md`, plus the billing-side bm45, bm48, Inv #36/#47, known-issues and `billmgmt-code-standards.md` entries.
 
 ## In scope (what we are building)
 
@@ -99,7 +100,7 @@ Worked example. Rate-card row: `mno_public_key = MNO-001`, `commercial_unit_publ
 ## Success criteria (what "done" looks like)
 
 1. A `RAN_USAGE` row for polygon `ABCD_25 DISTRICT2` loads with a `udr_key` containing exactly `polygon_id=ABCD_25 DISTRICT2`, with case and the space preserved.
-2. Two records that differ only in the case of the polygon produce two different keys and both load; the test that asserts this passes.
+2. Two records that differ only in the case of the polygon produce two different keys and both load; the test that asserts this passes. (End to end this needs a card that carries both case-variant cells; a feed variant with no exact card cell is refused as in criterion 3. RL's half injects the pair directly, rm28.)
 3. A feed record whose polygon differs from the rate card only by case or a trailing space is refused as `INPUT_UNMAPPED`, and the whole batch is refused under `HARD_STOP`.
 4. For the matched cell above, the loaded row has `udr_resource = SELANGOR|PETALING|2026-01-01`; a card row with a blank district gives `SELANGOR||2026-01-01`; the date is always `YYYY-MM-DD`.
 5. A rate card with `|` in a `state` or `district` label fails the batch before any record is rated.

@@ -58,6 +58,8 @@ The runtime the flows call. Every entry is pinned; the whole set is chosen for *
 
 - **`decimal.Decimal` for every money and rate value — never `float`.** This mirrors `services/accounts/money.ts` (integer sen) and the `numeric(18,6)` rate columns. A float silently zeroes a sub-cent rate (`$0.0035/MB → 0.00`). Set an explicit `decimal` context (precision, `ROUND_HALF_UP`/`ROUND_HALF_EVEN`/`ROUND_DOWN` mapped from `udr_rounding_mode`), and round **once, per record** (rm08; `_newmodule-rating-engine-plan.md` §4.5).
 - **`datetime` + `timezone.utc`** for `udr_key` canonicalization and any period math, consistent with `rating.period_of()` (rm01 D3). The UTC decision must hold on the Python side too.
+
+  > **Reversed 2026-10-13 (raw-key update).** `udr_key` is no longer canonicalised and carries no timestamp: PRP builds it from the feed's raw values — key names sorted, `name=value` joined by `|`, no trimming or case folding (Inv 27). (Period math moved to `Asia/Kuala_Lumpur` earlier, rm15 X1.) See `_updatemodule-rating-udr-key-resource-plan.md` (R1/R5) and `ratemgmt-architecture.md` Inv 27/28.
 - **`hashlib`** for the receipt checksum that discards a byte-identical redelivery as `DUPLICATE_BATCH` (rm07).
 - **`json`** (or `orjson` for throughput) to emit the JSON Lines log contract (rm06).
 
