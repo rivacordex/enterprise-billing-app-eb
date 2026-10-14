@@ -42,6 +42,9 @@ export const RATING_EVENT_CODES = [
   "UDRTYPE_MISMATCH",
   "CARD_DRIVEN_RATING_UNSUPPORTED",
   "MNO_KEY_NOT_UNIQUE",
+  // rm25-spec §Implementation §3 — a ratecard label that would break
+  // udr_resource (Inv 28). Emitted by PRP from rm26.
+  "RATECARD_LABEL_INVALID",
   "BATCH_COMPLETE",
   "CLEARED",
 ] as const;
@@ -263,6 +266,17 @@ export const EVENT_CATALOG_SEED: readonly EventCatalogInsert[] = [
     eventType: "processingErrorAlarm",
     probableCause: "inputUnmapped",
     description: "An input row maps to no ratecard entry.",
+  }),
+  // rm25-spec §Implementation §3 — not auto-clearing: a card fix plus a
+  // re-drop is the remedy, and a later clean batch must not clear it.
+  event({
+    eventCode: "RATECARD_LABEL_INVALID",
+    component: "PRP",
+    defaultSeverity: "MAJOR",
+    eventType: "processingErrorAlarm",
+    probableCause: "ratecardLabelInvalid",
+    description:
+      "A ratecard state or district label contains the '|' delimiter, so udr_resource cannot be split into three segments; the whole batch is refused.",
   }),
   event({
     eventCode: "UDRTYPE_MISMATCH",
