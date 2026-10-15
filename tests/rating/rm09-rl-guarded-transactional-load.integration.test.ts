@@ -9,7 +9,7 @@ import {
   existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -40,8 +40,10 @@ import { udrBatch } from "@/db/schema/rating/udr-batch";
 import {
   createRatingPipeline,
   dropModuleSchemas,
-  pythonRuntimeReady as harnessPythonRuntimeReady,
+  pythonRuntimeReady,
+  ratingPython3,
   readManifest as readHarnessManifest,
+  runSqlFile,
   seedSample5gRatingGraph,
   type RatingPipeline,
 } from "@/tests/helpers/rating-ran-harness";
@@ -72,8 +74,9 @@ import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 // and that rl.py uses COPY, not per-record INSERT. The
 // DB-gated describe shells out to the REAL `python3 -m runtime.prp` -> runtime.rp
 // -> runtime.rl exactly as the flow's three tasks invoke them — a black-box test
-// of the actual loader, not a TS reimplementation. Requires `python3` on PATH
-// with the worker's requirements (psycopg + polars); skipped loudly, like the
+// of the actual loader, not a TS reimplementation. Requires the harness's
+// absolute python3 (`RATING_PYTHON3` or the fixed system path — never a PATH
+// lookup) with the worker's requirements (psycopg + polars); skipped loudly, like the
 // DATABASE_URL gate, when unavailable — same posture as the rm06/rm07/rm08 suites
 // (see ratemgmt-progress-tracker.md: not run in a session without a live test
 // Postgres + the worker deps).
@@ -85,17 +88,9 @@ const workerDir = join(
   "workflow-engine",
 );
 
-function pythonRuntimeReady(): boolean {
-  try {
-    execFileSync("python3", ["-c", "import runtime, polars, psycopg"], {
-      cwd: workerDir,
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
+// One interpreter for every python call in this file: the harness's (rm29
+// review — gating on one python3 and reading Parquet with another let a
+// suite run and then fail on a missing module).
 const pythonReady = pythonRuntimeReady();
 
 const ROLE_PW = "rm09-test-only-pw";
@@ -144,21 +139,111 @@ function usageRateEnvelope(
   };
 }
 
-function statements(path: string): string[] {
-  return readFileSync(path, "utf8")
-    .split("--> statement-breakpoint")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-async function runSqlFile(client: postgresjs.Sql, path: string): Promise<void> {
-  for (const statement of statements(path)) {
-    await client.unsafe(statement);
-  }
+// Every row of one Parquet file as JSON — nulls kept, datetimes as UTC ISO
+// strings — so values reach the test byte for byte.
+function parquetRows(path: string): Record<string, string | null>[] {
+  const out = execFileSync(
+    ratingPython3(),
+    [
+      "-c",
+      [
+        "import json,sys,datetime,polars",
+        "def s(v):",
+        "  if v is None: return None",
+        "  if isinstance(v, datetime.datetime): return v.astimezone(datetime.timezone.utc).isoformat()",
+        "  return str(v)",
+        "f=polars.read_parquet(sys.argv[1])",
+        "print(json.dumps([{k:s(v) for k,v in r.items()} for r in f.iter_rows(named=True)]))",
+      ].join("\n"),
+      path,
+    ],
+    { cwd: workerDir, encoding: "utf8" },
+  );
+  return JSON.parse(out) as Record<string, string | null>[];
 }
 function firstLine(lines: readonly string[]): string {
   const line = lines.at(0);
   if (line === undefined) throw new Error("expected at least one log line");
   return line;
+}
+
+// Shared by both DB-gated blocks below: a freshly migrated database with the
+// event catalog seeded (roles are applied by each block).
+async function openMigratedDb(): Promise<{
+  sql: postgresjs.Sql;
+  db: Database;
+}> {
+  assertTestDatabaseUrl(databaseUrl as string);
+  const sql = postgres(databaseUrl as string, { max: 1 });
+  try {
+    await dropModuleSchemas(sql);
+    const db = drizzle(sql, { schema });
+    await migrate(db, {
+      migrationsFolder: "./db/migrations",
+      migrationsSchema: "drizzle",
+    });
+    await seedEventCatalog(db);
+    return { sql, db };
+  } catch (error) {
+    // The caller never receives `sql` on failure, so its afterAll cannot
+    // close it — close it here rather than leak the connection.
+    await sql.end();
+    throw error;
+  }
+}
+async function countRated(db: Database, batchId: string): Promise<number> {
+  const rows = await db
+    .select({ n: dsql<number>`count(*)::int` })
+    .from(udrRated)
+    .where(eq(udrRated.udrRefBatchId, batchId));
+  return rows[0]!.n;
+}
+async function readBatch(db: Database, batchId: string) {
+  const rows = await db
+    .select()
+    .from(udrBatch)
+    .where(eq(udrBatch.batchId, batchId));
+  return rows[0]!;
+}
+function monthBucket(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+}
+// A live udr_rated row a bill run holds, built from a rated Parquet row so
+// udr_key is read back, never reimplemented.
+function heldRowValues(
+  src: Record<string, string | null>,
+  opts: {
+    status: "BILL_DRAFT" | "BILL_APPROVED";
+    rateType: "FLAT" | "PER_UNIT";
+    refBatchId: string;
+    sourceFile: string;
+    engineVersion: string;
+    billrunRefId: string;
+  },
+) {
+  return {
+    partitionPeriod: monthBucket(src.start_datetime as string),
+    udrType: src.udr_type as string,
+    startDatetime: new Date(src.start_datetime as string),
+    endDatetime: new Date(src.end_datetime as string),
+    status: opts.status,
+    udrSubscriptionRefId: src.udr_subscription_ref_id as string,
+    udrKey: src.udr_key as string,
+    udrUsageQuantity: src.udr_usage_quantity as string,
+    udrUsageUnit: src.udr_usage_unit as string,
+    udrRateType: opts.rateType,
+    udrRatedPrice: src.udr_rated_price as string,
+    udrRatedPriceRaw: src.udr_rated_price_raw as string,
+    udrRoundingMode: src.udr_rounding_mode as string,
+    udrCurrency: src.udr_currency as string,
+    udrRefBatchId: opts.refBatchId,
+    udrSourceFile: opts.sourceFile,
+    ratingEngineVersion: opts.engineVersion,
+    ratingFlowRevision: 1,
+    billrunRefId: opts.billrunRefId,
+    udrResource: src.udr_resource ?? null,
+  };
 }
 
 // ---------------------------------------------------------------------
@@ -259,8 +344,10 @@ const BUILD_ROW_SCRIPT = [
   "    'state': row[rl.COPY_COLUMNS.index('state')],",
   "    'district': row[rl.COPY_COLUMNS.index('district')],",
   "    'udr_resource': row[rl.COPY_COLUMNS.index('udr_resource')]}))",
-  "except (KeyError, ValueError):",
-  "  print(json.dumps({'ok': False}))",
+  // The guard that fired is reported (type + message) so each fail-loud case
+  // can assert it is THIS guard, not another KeyError/ValueError (rm29 review).
+  "except (KeyError, ValueError) as e:",
+  "  print(json.dumps({'ok': False, 'error': type(e).__name__, 'message': str(e)}))",
 ].join("\n");
 
 const COPY_TAIL = ["state", "district", "udr_resource"];
@@ -271,7 +358,7 @@ describe.skipIf(!pythonReady)(
   () => {
     function buildRow(udrType: string, withGeo: boolean, resource: string) {
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         ["-c", BUILD_ROW_SCRIPT, udrType, withGeo ? "1" : "0", resource],
         { cwd: workerDir, encoding: "utf8" },
       );
@@ -281,7 +368,21 @@ describe.skipIf(!pythonReady)(
         state?: string | null;
         district?: string | null;
         udr_resource?: string | null;
+        error?: string;
+        message?: string;
       };
+    }
+
+    // A fail-loud case: the named exception, from the guard whose message
+    // carries `fragment`.
+    function expectGuard(
+      result: ReturnType<typeof buildRow>,
+      error: "KeyError" | "ValueError",
+      fragment: string,
+    ) {
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe(error);
+      expect(result.message).toContain(fragment);
     }
 
     it("appends state/district last and copies them as-is (NULL stays NULL)", () => {
@@ -295,7 +396,11 @@ describe.skipIf(!pythonReady)(
     });
 
     it("a RAN_USAGE chunk missing the geo columns fails loud (KeyError guard)", () => {
-      expect(buildRow("RAN_USAGE", false, RESOURCE)).toEqual({ ok: false });
+      expectGuard(
+        buildRow("RAN_USAGE", false, RESOURCE),
+        "KeyError",
+        "has no 'state' column",
+      );
     });
 
     it("a usage type that reads no ratecard writes NULL geo when the columns are absent", () => {
@@ -315,15 +420,31 @@ describe.skipIf(!pythonReady)(
     });
 
     it("rm28 2. a RAN_USAGE chunk without udr_resource fails loud", () => {
-      expect(buildRow("RAN_USAGE", true, "absent")).toEqual({ ok: false });
+      expectGuard(
+        buildRow("RAN_USAGE", true, "absent"),
+        "KeyError",
+        "has no 'udr_resource' column",
+      );
     });
 
     it.each(["null", "empty"])(
       "rm28 3. a RAN_USAGE chunk whose udr_resource is %s fails loud",
       (mode) => {
-        expect(buildRow("RAN_USAGE", true, mode)).toEqual({ ok: false });
+        expectGuard(
+          buildRow("RAN_USAGE", true, mode),
+          "ValueError",
+          "has an empty 'udr_resource'",
+        );
       },
     );
+
+    it("rm28 4b. a usage type that reads no ratecard but carries a udr_resource value fails loud (broken handoff)", () => {
+      expectGuard(
+        buildRow("SMS_USAGE", false, RESOURCE),
+        "ValueError",
+        "carries 'udr_resource'",
+      );
+    });
 
     it.each(["absent", "null"])(
       "rm28 4. a usage type that reads no ratecard writes NULL udr_resource (column %s)",
@@ -357,22 +478,6 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     let invA: string; // pinned to OFF1, MYR account
     let invB: string; // pinned to OFF1, MYR account, usage override
     let invC: string; // pinned to OFF1 (MYR price) but a USD account -> mismatch
-
-    const dropAll = async (client: postgresjs.Sql) => {
-      for (const s of [
-        "inventory",
-        "ordering",
-        "billing",
-        "customer",
-        "product",
-        "rating",
-        "core",
-        "drizzle",
-        "partman",
-      ]) {
-        await client.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-      }
-    };
 
     async function seedProductGraph(): Promise<void> {
       const userId = crypto.randomUUID();
@@ -519,15 +624,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     }
 
     beforeAll(async () => {
-      assertTestDatabaseUrl(databaseUrl as string);
-      sql = postgres(databaseUrl as string, { max: 1 });
-      await dropAll(sql);
-      db = drizzle(sql, { schema });
-      await migrate(db, {
-        migrationsFolder: "./db/migrations",
-        migrationsSchema: "drizzle",
-      });
-      await seedEventCatalog(db);
+      ({ sql, db } = await openMigratedDb());
       await runSqlFile(sql, RATING_ROLES_SQL);
       await sql.unsafe(`ALTER ROLE rating_runtime WITH PASSWORD '${ROLE_PW}'`);
       await seedProductGraph();
@@ -551,7 +648,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 
     afterAll(async () => {
       if (!sql) return;
-      await dropAll(sql);
+      await dropModuleSchemas(sql);
       await sql.end();
     });
 
@@ -570,7 +667,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 
     function runPrp(sourcePath: string, execId: string): string {
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         [
           "-m",
           "runtime.prp",
@@ -600,7 +697,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 
     function runRp(manifestUri: string, execId: string): string {
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         [
           "-m",
           "runtime.rp",
@@ -626,7 +723,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 
     function runRl(manifestUri: string, execId: string): string {
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         [
           "-m",
           "runtime.rl",
@@ -665,21 +762,8 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     function readManifest(uri: string): Record<string, unknown> {
       return JSON.parse(readFileSync(uriToPath(uri), "utf8"));
     }
-    function readParquetRows(fileUri: string): Record<string, string | null>[] {
-      const path = uriToPath(fileUri);
-      const out = execFileSync(
-        "python3",
-        [
-          "-c",
-          "import sys, json, polars as pl\n" +
-            "df = pl.read_parquet(sys.argv[1])\n" +
-            "print(json.dumps([{k:(str(v) if v is not None else None) for k,v in r.items()} for r in df.iter_rows(named=True)]))",
-          path,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      return JSON.parse(out);
-    }
+    const readParquetRows = (fileUri: string) =>
+      parquetRows(uriToPath(fileUri));
 
     function writeCsv(name: string, rows: string[]): string {
       const header = "DATETIME,PUBLIC_KEY,COMMERCIAL_UNIT,SITE,USAGE_MBPS";
@@ -694,24 +778,8 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         .split("\n")
         .filter((l) => l.trim().length > 0);
     }
-    function monthBucket(iso: string): string {
-      const d = new Date(iso);
-      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
-    }
-    async function ratedCount(batchId: string): Promise<number> {
-      const rows = await db
-        .select({ n: dsql<number>`count(*)::int` })
-        .from(udrRated)
-        .where(eq(udrRated.udrRefBatchId, batchId));
-      return rows[0]!.n;
-    }
-    async function batchRow(batchId: string) {
-      const rows = await db
-        .select()
-        .from(udrBatch)
-        .where(eq(udrBatch.batchId, batchId));
-      return rows[0]!;
-    }
+    const ratedCount = (batchId: string) => countRated(db, batchId);
+    const batchRow = (batchId: string) => readBatch(db, batchId);
 
     // prp -> rp for one CSV, returning the rp rated-manifest URI + parsed rows.
     function prepRated(
@@ -849,27 +917,15 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       status: "BILL_DRAFT" | "BILL_APPROVED",
       sentinel: string,
       billrunRefId: string,
-    ) => ({
-      partitionPeriod: monthBucket(src.start_datetime as string),
-      udrType: src.udr_type as string,
-      startDatetime: new Date(src.start_datetime as string),
-      endDatetime: new Date(src.end_datetime as string),
-      status,
-      udrSubscriptionRefId: src.udr_subscription_ref_id as string,
-      udrKey: src.udr_key as string,
-      udrUsageQuantity: src.udr_usage_quantity as string,
-      udrUsageUnit: src.udr_usage_unit as string,
-      udrRateType: "FLAT" as const,
-      udrRatedPrice: src.udr_rated_price as string,
-      udrRatedPriceRaw: src.udr_rated_price_raw as string,
-      udrRoundingMode: src.udr_rounding_mode as string,
-      udrCurrency: src.udr_currency as string,
-      udrRefBatchId: sentinel,
-      udrSourceFile: "prior-run.csv",
-      ratingEngineVersion: ENGINE_VERSION,
-      ratingFlowRevision: 1,
-      billrunRefId,
-    });
+    ) =>
+      heldRowValues(src, {
+        status,
+        rateType: "FLAT",
+        refBatchId: sentinel,
+        sourceFile: "prior-run.csv",
+        engineVersion: ENGINE_VERSION,
+        billrunRefId,
+      });
 
     it("bm25. a BILL_DRAFT collision refuses the whole batch: zero rows, REFUSED, LOAD_BLOCKED_INFLIGHT naming the bill run", async () => {
       const { rpManifestUri, manifest, rated } = prepRated(
@@ -1125,7 +1181,6 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 // live-row key (partition_period, udr_key, is_live) holds one live row per cell
 // per month and writeUdr's rows are all dated 2026-08-14.
 // ---------------------------------------------------------------------
-const harnessPythonReady = harnessPythonRuntimeReady();
 const RM28_ROLE_PW = "rm28-test-only-pw";
 const RM28_ENGINE_VERSION = "rm28-test-engine@sha256:deadbeef";
 const RM28_VOLUMES = [100, 200, 300] as const;
@@ -1133,36 +1188,36 @@ const RM28_VOLUMES = [100, 200, 300] as const;
 // (§0.1 rule 7: no case function is applied to a key value, even in a test).
 const CASE_VARIANT_POLYGON = "pcu-042_04";
 
-// The interpreter the harness runs the modules with (as rm27 does).
-const RM28_PYTHON3 =
-  process.env.RATING_PYTHON3 && isAbsolute(process.env.RATING_PYTHON3)
-    ? process.env.RATING_PYTHON3
-    : "python3";
+function ratedChunkUris(rpManifestUri: string): string[] {
+  return readHarnessManifest(rpManifestUri).rated_chunk_uris as string[];
+}
 
-// The rated rows of an RP manifest, as JSON, datetimes as UTC ISO strings.
+// The rated rows of an RP manifest.
 function readRatedRows(rpManifestUri: string): Record<string, string | null>[] {
-  const chunks = readHarnessManifest(rpManifestUri)
-    .rated_chunk_uris as string[];
-  return chunks.flatMap((uri) => {
-    const out = execFileSync(
-      RM28_PYTHON3,
+  return ratedChunkUris(rpManifestUri).flatMap((uri) =>
+    parquetRows(fileURLToPath(uri)),
+  );
+}
+
+// rm28 checklist — break the RP→RL handoff in place: drop udr_resource from
+// every rated chunk ("absent") or blank it on every row ("empty").
+function breakRatedChunks(rpManifestUri: string, mode: "absent" | "empty") {
+  const transform =
+    mode === "absent"
+      ? "f.drop('udr_resource')"
+      : "f.with_columns(polars.lit('').alias('udr_resource'))";
+  for (const uri of ratedChunkUris(rpManifestUri)) {
+    const path = fileURLToPath(uri);
+    execFileSync(
+      ratingPython3(),
       [
         "-c",
-        [
-          "import json,sys,datetime,polars",
-          "def s(v):",
-          "  if v is None: return None",
-          "  if isinstance(v, datetime.datetime): return v.astimezone(datetime.timezone.utc).isoformat()",
-          "  return str(v)",
-          "f=polars.read_parquet(sys.argv[1])",
-          "print(json.dumps([{k:s(v) for k,v in r.items()} for r in f.iter_rows(named=True)]))",
-        ].join("\n"),
-        fileURLToPath(uri),
+        `import polars,sys;f=polars.read_parquet(sys.argv[1]);${transform}.write_parquet(sys.argv[1])`,
+        path,
       ],
-      { cwd: workerDir, encoding: "utf8" },
+      { cwd: workerDir, stdio: "ignore" },
     );
-    return JSON.parse(out) as Record<string, string | null>[];
-  });
+  }
 }
 
 function expectedResource(district: string | null): string {
@@ -1173,7 +1228,7 @@ function expectedResource(district: string | null): string {
   });
 }
 
-describe.skipIf(!databaseUrl || !harnessPythonReady)(
+describe.skipIf(!databaseUrl || !pythonReady)(
   "rm28 — RL writes udr_resource; guard + supersession on raw keys (rm28-spec §2, requires DATABASE_URL and python3+runtime)",
   () => {
     let sql: postgresjs.Sql;
@@ -1181,15 +1236,7 @@ describe.skipIf(!databaseUrl || !harnessPythonReady)(
     let ratingRuntime: postgresjs.Sql | undefined;
 
     beforeAll(async () => {
-      assertTestDatabaseUrl(databaseUrl as string);
-      sql = postgres(databaseUrl as string, { max: 1 });
-      await dropModuleSchemas(sql);
-      db = drizzle(sql, { schema });
-      await migrate(db, {
-        migrationsFolder: "./db/migrations",
-        migrationsSchema: "drizzle",
-      });
-      await seedEventCatalog(db);
+      ({ sql, db } = await openMigratedDb());
       await runSqlFile(sql, BOOTSTRAP_ROLES_SQL);
       await runSqlFile(sql, RATING_ROLES_SQL);
       await sql.unsafe(
@@ -1208,20 +1255,8 @@ describe.skipIf(!databaseUrl || !harnessPythonReady)(
       await sql.end();
     });
 
-    async function ratedCount(batchId: string): Promise<number> {
-      const rows = await db
-        .select({ n: dsql<number>`count(*)::int` })
-        .from(udrRated)
-        .where(eq(udrRated.udrRefBatchId, batchId));
-      return rows[0]!.n;
-    }
-    async function batchRow(batchId: string) {
-      const rows = await db
-        .select()
-        .from(udrBatch)
-        .where(eq(udrBatch.batchId, batchId));
-      return rows[0]!;
-    }
+    const ratedCount = (batchId: string) => countRated(db, batchId);
+    const batchRow = (batchId: string) => readBatch(db, batchId);
 
     // One Sample-5G graph + its pipeline per case, keyed by `tag`.
     async function graph(
@@ -1293,30 +1328,15 @@ describe.skipIf(!databaseUrl || !harnessPythonReady)(
       src: Record<string, string | null>,
       status: "BILL_DRAFT" | "BILL_APPROVED",
       billrunRefId: string,
-    ) => ({
-      partitionPeriod: `${(src.start_datetime as string).slice(0, 7)}-01`,
-      udrType: src.udr_type as string,
-      startDatetime: new Date(src.start_datetime as string),
-      endDatetime: new Date(src.end_datetime as string),
-      status,
-      udrSubscriptionRefId: src.udr_subscription_ref_id as string,
-      udrKey: src.udr_key as string,
-      udrUsageQuantity: src.udr_usage_quantity as string,
-      udrUsageUnit: src.udr_usage_unit as string,
-      udrRateType: "PER_UNIT" as const,
-      udrRatedPrice: src.udr_rated_price as string,
-      udrRatedPriceRaw: src.udr_rated_price_raw as string,
-      udrRoundingMode: src.udr_rounding_mode as string,
-      udrCurrency: src.udr_currency as string,
-      udrRefBatchId: `SENTINEL-${status}`,
-      udrSourceFile: "prior-run.udr",
-      ratingEngineVersion: RM28_ENGINE_VERSION,
-      ratingFlowRevision: 1,
-      billrunRefId,
-      udrResource: src.udr_resource,
-    });
-
-    let loadedBatchId: string;
+    ) =>
+      heldRowValues(src, {
+        status,
+        rateType: "PER_UNIT",
+        refBatchId: `SENTINEL-${status}`,
+        sourceFile: "prior-run.udr",
+        engineVersion: RM28_ENGINE_VERSION,
+        billrunRefId,
+      });
 
     it("6. a clean RAN_USAGE load writes udr_resource = formatUdrResource(cell) on every row", async () => {
       const { pipeline } = await graph("load");
@@ -1327,7 +1347,6 @@ describe.skipIf(!databaseUrl || !harnessPythonReady)(
       );
       const rated = readRatedRows(rpUri);
       pipeline.runRl(rpUri, "rl-load");
-      loadedBatchId = batchId;
 
       const rows = await ratedRows(batchId);
       expect(rows).toHaveLength(SAMPLE_5G_LKP_ROWS.length);
@@ -1471,14 +1490,34 @@ describe.skipIf(!databaseUrl || !harnessPythonReady)(
     }, 120_000);
 
     it("10. UPDATE … SET udr_resource is refused for rating_runtime", async () => {
+      // Self-contained (rm29 review): its own row, not one left by case 6.
       const [row] = await db
-        .select({
+        .insert(udrRated)
+        .values({
+          partitionPeriod: "2026-08-01",
+          udrType: "RAN_USAGE",
+          startDatetime: new Date("2026-08-14T02:00:00Z"),
+          endDatetime: new Date("2026-08-14T02:00:00Z"),
+          status: "RATED",
+          udrSubscriptionRefId: "rm28-case10",
+          udrKey: "commercial_unit=CU-10|mno_public_id=MNO-10|polygon_id=P-10",
+          udrUsageQuantity: "1.000000",
+          udrUsageUnit: "Mbps",
+          udrRateType: "PER_UNIT",
+          udrRatedPrice: "1.00",
+          udrRatedPriceRaw: "1.000000",
+          udrRoundingMode: "HALF_UP",
+          udrCurrency: "MYR",
+          udrRefBatchId: "SENTINEL-CASE10",
+          udrSourceFile: "case10.udr",
+          ratingEngineVersion: RM28_ENGINE_VERSION,
+          ratingFlowRevision: 1,
+          udrResource: RESOURCE,
+        })
+        .returning({
           partitionPeriod: udrRated.partitionPeriod,
           udrId: udrRated.udrId,
-        })
-        .from(udrRated)
-        .where(eq(udrRated.udrRefBatchId, loadedBatchId))
-        .limit(1);
+        });
       expect(row).toBeDefined();
       await expect(
         ratingRuntime!.unsafe(
@@ -1487,5 +1526,42 @@ describe.skipIf(!databaseUrl || !harnessPythonReady)(
         ),
       ).rejects.toThrow(/permission denied/);
     });
+
+    it.each([
+      ["absent", "202608140286"],
+      ["empty", "202608140287"],
+    ] as const)(
+      "11. a RAN_USAGE rated chunk with udr_resource %s makes RL exit non-zero: zero rows, batch left PROCESSING, nothing archived",
+      async (mode, stamp) => {
+        const { pipeline } = await graph(`handoff-${mode}`);
+        const path = pipeline.writeUdr(
+          `rating-input-file-${stamp}.udr`,
+          RM28_VOLUMES,
+        );
+        const { rpUri, batchId } = prepRated(pipeline, path, `handoff-${mode}`);
+        breakRatedChunks(rpUri, mode);
+
+        let stderr = "";
+        try {
+          pipeline.runRl(rpUri, `rl-handoff-${mode}`);
+        } catch (error) {
+          stderr = String((error as { stderr?: unknown }).stderr ?? "");
+        }
+        // RL's own guard fired (not some other failure).
+        expect(stderr).toContain(
+          mode === "absent"
+            ? "has no 'udr_resource' column"
+            : "has an empty 'udr_resource'",
+        );
+        // Uncaught by main(): the transaction rolled back and the batch is left
+        // for rm11's stranded-batch reconciliation (rm28 spec, Design).
+        expect(await ratedCount(batchId)).toBe(0);
+        const batch = await batchRow(batchId);
+        expect(batch.status).toBe("PROCESSING");
+        expect(batch.archiveFilePath).toBeNull();
+        expect(existsSync(path)).toBe(true); // still in landing/
+      },
+      120_000,
+    );
   },
 );

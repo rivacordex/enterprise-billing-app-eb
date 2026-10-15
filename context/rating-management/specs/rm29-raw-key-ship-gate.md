@@ -12,7 +12,7 @@ Make the sample data and the end-to-end tests speak the raw-key / `udr_resource`
 ## Design
 
 - **Seeds bypass rating, so they must write the contract themselves.** `buildSampleUdrRatedRow` (`db/seeds/sample/udr-rated-sample.ts:126`) inserts `udr_rated` rows directly. Its `buildUdrKey` (`:94-109`) lower-cases and trims the polygon cell; it must become a call to `buildRawUdrKey` (rm25), and the spec gains an optional `udrResource` field written through. Rows seeded from a card cell carry `formatUdrResource(...)`; deliberately unmapped rows carry `NULL`.
-- **One sample row stays `NULL`.** The capacity appendix profile's card-missing polygon (`POLY-APX-UNMAPPED`, `seed-billrun-sample.ts:155`) keeps `NULL` `udr_resource`, `state` and `district`: it exercises billing's fail-loud path (billing D29) and is the only `NULL` in the sample set.
+- **One capacity row stays `NULL`.** The capacity appendix profile's card-missing polygon (`POLY-APX-UNMAPPED`, `seed-billrun-sample.ts:155`) keeps `NULL` `udr_resource`, `state` and `district`: it exercises billing's fail-loud path (billing D29) and is the only `NULL` among the capacity profile's rows. **Amended 2026-10-15 (code review, user decision):** every other capacity RAN row must look like a row real rating could produce (Inv 28), so the anchor scenarios' synthetic polygons are seeded onto the usage card too, with placeholder labels (`STATE-ANCHOR` / `DIST-ANCHOR`), and carry that cell's `state`, `district` and `udr_resource`. The `ci`/`volume` profiles (billing-owned, bm26) are out of scope and flagged for the billing owner.
 - **Start dates come from the cards.** The Sample-5G card's polygon start date is `SAMPLE_5G_START_DATE` (`2026-01-01`, `sample-5g-fixture.ts:42,395`); the capacity usage card hard-codes `2020-01-01` (`capacity-usage-card.ts:62`). The seeded `udr_resource` must use the same date as the card row it mirrors.
 - **The tests that assumed lower-case keys are updated, not deleted.** `rm23-udr-geo-frozen` finds a row by `r.udrKey.includes(cell.polygonId.toLowerCase())` (`:156`); under raw keys that match fails. It becomes an exact match on the key's last segment (`key.endsWith("|polygon_id=" + cell.polygonId)`), and gains the `udr_resource` assertions.
 - **Write-once is proved per role.** The existing rm23 test refuses `UPDATE` of `state`/`district` for `rating_runtime`, `app_runtime`, `billrun_runtime`; the same loop covers `udr_resource`. `grants.integration.test.ts` enumerates `pg_attribute`, so a new column would already be covered; it also asserts `udr_resource` appears in **no** role's column `UPDATE` list.
@@ -24,8 +24,8 @@ Make the sample data and the end-to-end tests speak the raw-key / `udr_resource`
 
 ### 1. Seeds and harness
 - `db/seeds/sample/udr-rated-sample.ts`: `buildUdrKey` → `buildRawUdrKey` for the `polygonCell` shape (keep the JSON shape for non-RAN rows, unchanged); update the comments at `:44-50` and `:84-93` (they describe "CANONICAL … lower+trim"); add `udrResource?: string | null` to `SampleChargeSpec` and write `udrResource: spec.udrResource ?? null` in the returned row (the Drizzle column already exists, `udr-rated.ts:62`).
-- `db/seeds/sample/seed-billrun-sample.ts`: in `seedSampleCapacityCharges` (`:1476-1596`), pass `udrResource: cell.mapped ? formatUdrResource({ state: cell.state ?? null, district: cell.district ?? null, polygonStartDate: "2020-01-01" }) : null` for the appendix cells (`:1527-1552`); the per-row synthetic anchor polygons (`:1584-1588`) stay unmapped and `NULL`. Update the comments at `:94` and `:1465-1471`.
-- `db/seeds/sample/capacity-usage-card.ts`: no change (its start date is the source of truth); add a one-line comment that `udr_resource` mirrors it.
+- `db/seeds/sample/seed-billrun-sample.ts`: in `seedSampleCapacityCharges`, every row whose cell is on the usage card mirrors that cell **as stored** (read back from the card, so a cell kept from an earlier seed cannot drift): `state`, `district` and `udrResource = formatUdrResource(cell)`. The appendix's card-missing polygon is the only row not on the card and stays `NULL`. **Amended 2026-10-15 (code review, user decision):** the per-row synthetic anchor polygons are seeded onto the card (placeholder labels) under stable ids `POLY-ANC-<scenario>-<n>` instead of staying unmapped. Update the comments at `:94` and `:1465-1471`.
+- `db/seeds/sample/capacity-usage-card.ts`: its start date stays the source of truth. **Amended 2026-10-15 (code review):** `ensureSampleCapacityUsageCard` returns the ACTIVE version's cells as stored (read back after the insert), so the seed builds `udr_resource` from the card, not from constants; the insert is chunked (the anchors add 3,800 cells).
 - `tests/helpers/rating-ran-harness.ts`: no logic change (it already writes feed polygons as the card holds them); update the file comment to say keys are raw.
 
 ### 2. Tests
@@ -45,12 +45,12 @@ Rebuild and tag the worker image; set `RATING_ENGINE_VERSION` to the new digest 
 
 ## Dependencies
 
-None. Reuses the existing seed helpers, the shared harness and `validation/rating/*` (rm25).
+rm24–rm28 (the whole Phase H chain must be in place before the gate). Reuses the existing seed helpers, the shared harness and `validation/rating/*` (rm25).
 
 ## Verification checklist
 
 - [ ] Guardrail tests 1–20 pass against a live database with `python3` and the worker runtime; the `rm13` journey's rated row has the raw key and the expected `udr_resource`.
-- [ ] The sample seeds write raw keys; every mapped appendix row has `udr_resource` equal to its card cell's `state|district|date`; exactly one sample row (`POLY-APX-UNMAPPED`) has `NULL`.
+- [ ] The sample seeds write raw keys; every capacity row on the usage card (mapped appendix cells and the anchor cells) has `state`/`district`/`udr_resource` equal to its card cell's values; exactly one capacity row (`POLY-APX-UNMAPPED`) has `NULL`.
 - [ ] `UPDATE … udr_resource` is refused with `permission denied` for `rating_runtime`, `app_runtime` and `billrun_runtime`; the grants test shows it in no role's UPDATE list.
 - [ ] After a card re-version, an already-rated row's `udr_resource` is unchanged.
 - [ ] The grep gates in §3 find nothing; the diff gates show no migration, no bootstrap change, no billing file.

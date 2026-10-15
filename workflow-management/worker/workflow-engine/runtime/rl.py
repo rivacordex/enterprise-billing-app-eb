@@ -307,26 +307,32 @@ def _geo_value(cols: dict[str, list[Any]], name: str, i: int, udr_type: str) -> 
 
 
 def _resource_value(cols: dict[str, list[Any]], i: int, udr_type: str) -> str | None:
-    """``udr_resource`` for one row (Inv 28). RAN_USAGE: required and non-empty;
-    other usage types: NULL. Absent column for RAN_USAGE raises KeyError, like
-    the geo columns."""
-    if "udr_resource" not in cols:
-        if udr_type == _GEO_REQUIRED_UDR_TYPE:
-            raise KeyError(
-                f"rated chunk for {udr_type} has no 'udr_resource' column (row {i}) — "
-                "PRP stamps the matched ratecard cell's label and RP carries it; the "
-                "handoff is broken."
+    """``udr_resource`` for one row (Inv 28). RAN_USAGE: required and non-empty
+    (absent column → KeyError, like the geo columns; NULL/empty → ValueError).
+    Other usage types read no ratecard, so they write NULL — and a value carried
+    on one is a broken handoff (PRP only stamps it on a matched RAN cell), so it
+    raises rather than being dropped silently (user decision 2026-10-15)."""
+    if udr_type != _GEO_REQUIRED_UDR_TYPE:
+        carried = _opt_str(cols["udr_resource"][i]) if "udr_resource" in cols else None
+        if carried:
+            raise ValueError(
+                f"rated chunk for {udr_type} carries 'udr_resource' {carried!r} at "
+                f"row {i} — only {_GEO_REQUIRED_UDR_TYPE} reads a ratecard (Inv 28)."
             )
         return None
+    if "udr_resource" not in cols:
+        raise KeyError(
+            f"rated chunk for {udr_type} has no 'udr_resource' column (row {i}) — "
+            "PRP stamps the matched ratecard cell's label and RP carries it; the "
+            "handoff is broken."
+        )
     value = _opt_str(cols["udr_resource"][i])
-    if value:
-        return value
-    if udr_type == _GEO_REQUIRED_UDR_TYPE:
+    if not value:
         raise ValueError(
             f"rated chunk for {udr_type} has an empty 'udr_resource' at row {i} "
             f"({value!r}) — it is never NULL or empty for {udr_type} (Inv 28)."
         )
-    return None
+    return value
 
 
 def _money(value: Any, column: str) -> Decimal:

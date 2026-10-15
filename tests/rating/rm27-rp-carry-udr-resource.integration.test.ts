@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import {
   createRatingPipeline,
   dropModuleSchemas,
   pythonRuntimeReady,
+  ratingPython3,
   readManifest,
   runSqlFile,
   seedSample5gRatingGraph,
@@ -59,13 +60,6 @@ const BLANK_PRODUCT_NAME = "Sample 5G Services rm27 blank";
 const BLANK_CARD_NAME = "RATECARD_RM27_BLANK";
 const VOLUMES = [100, 200, 300] as const;
 
-// The interpreter the harness ran the modules with when RATING_PYTHON3 is an
-// absolute override, else python3 (as rm07's readParquetColumn does).
-const PYTHON3 =
-  process.env.RATING_PYTHON3 && isAbsolute(process.env.RATING_PYTHON3)
-    ? process.env.RATING_PYTHON3
-    : "python3";
-
 interface ParquetColumn {
   columns: string[];
   // null when the column is absent; a null cell stays null.
@@ -76,7 +70,7 @@ interface ParquetColumn {
 // (and nulls) come back byte for byte.
 function readParquetColumn(parquetUri: string, column: string): ParquetColumn {
   const out = execFileSync(
-    PYTHON3,
+    ratingPython3(),
     [
       "-c",
       [
@@ -103,7 +97,7 @@ function columnValues(parquetUri: string, column: string): (string | null)[] {
 // `udr_resource`, leaving every other column as PRP wrote it.
 function dropUdrResource(parquetUri: string): void {
   execFileSync(
-    PYTHON3,
+    ratingPython3(),
     [
       "-c",
       "import polars,sys;p=sys.argv[1];polars.read_parquet(p).drop('udr_resource').write_parquet(p)",

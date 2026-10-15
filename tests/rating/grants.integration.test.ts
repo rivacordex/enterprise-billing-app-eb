@@ -42,6 +42,10 @@ const RATING_ROLES_SQL = join(
   process.cwd(),
   "db/bootstrap/rating-db-roles.sql",
 );
+const BILLRUN_ROLES_SQL = join(
+  process.cwd(),
+  "db/bootstrap/billrun-db-roles.sql",
+);
 
 // The six columns app_runtime may UPDATE on udr_rated (rm03-spec D1); `status`
 // is the only one rating_runtime may also update.
@@ -158,9 +162,13 @@ describe.skipIf(!databaseUrl)(
       });
 
       // Provisioning order (infra/docs/db-role-verification.md): the platform
-      // roles first, then the rating boundary that references them.
+      // roles first, then the rating boundary that references them, then the
+      // bill run's role — so the write-once checks (10a) cover billrun_runtime
+      // on every cluster, not only when an earlier suite happened to create it
+      // (rm29 review; §0.1 rule 32).
       await runSqlFile(sql, BOOTSTRAP_ROLES_SQL);
       await runSqlFile(sql, RATING_ROLES_SQL);
+      await runSqlFile(sql, BILLRUN_ROLES_SQL);
 
       // Give the login roles a password so the suite can connect as each. A
       // no-grant probe role exercises the Inv #18 CONNECT boundary.
@@ -337,9 +345,11 @@ describe.skipIf(!databaseUrl)(
           SELECT rolname FROM pg_roles
           WHERE rolname IN ('app_runtime', 'rating_runtime', 'billrun_runtime')
         `;
-        expect(roles.map((r) => r.rolname)).toEqual(
-          expect.arrayContaining(["app_runtime", "rating_runtime"]),
-        );
+        expect(roles.map((r) => r.rolname).sort()).toEqual([
+          "app_runtime",
+          "billrun_runtime",
+          "rating_runtime",
+        ]);
         for (const { rolname } of roles) {
           for (const col of ["state", "district", "udr_resource"]) {
             const [row] = await sql<{ p: boolean }[]>`

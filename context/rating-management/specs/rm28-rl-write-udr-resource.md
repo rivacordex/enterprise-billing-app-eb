@@ -29,10 +29,10 @@ Every place that compares `udr_key` across batches, read from the code:
 
 - **One new COPY column, appended last.** `"udr_resource"` goes after `"district"` in `COPY_COLUMNS` (`rl.py:120-148`). `db.copy_insert(..., COPY_COLUMNS, rows)` (`:851`) and `build_chunk_rows` (`:228-285`) both derive from that tuple, so the insert and the row builder cannot disagree.
 - **Stricter than the geo columns, deliberately.** `state`/`district` are `NULL` legitimately (a blank card label) and `_geo_value` (`:288-299`) copies a present `NULL` through. `udr_resource` is never `NULL` for a `RAN_USAGE` row — the card's start date is `NOT NULL`, so the value is at least `||<date>` (plan R5) — so RL checks the **value**, not only the column's presence:
-  - column present, non-empty string → copied as is;
+  - `RAN_USAGE`, column present, non-empty string → copied as is;
   - column present but `NULL` or empty, `RAN_USAGE` → raise;
   - column absent, `RAN_USAGE` → raise `KeyError` (the same loud guard as the geo columns: PRP stamped it and RP carried it, so a gap means the handoff is broken);
-  - any other usage type → `NULL`, whether the column is absent or present-but-null.
+  - any other usage type → `NULL` when the column is absent or NULL; a non-empty value on a non-RAN row is a broken handoff and raises `ValueError` (user decision 2026-10-15, superseding the PR-review reading "NULL whatever the column holds").
   A new function `_resource_value(cols, i, udr_type)` (beside `_geo_value`) holds this; `_GEO_OPTIONAL_COLUMNS` is **not** extended, so `state`/`district` semantics are untouched.
 - **Failure shape is the existing one.** `build_chunk_rows` errors are not caught by `main()` (only `BatchRefused` and `ReconImbalance` are, `:1201`, `:1229`): the process exits non-zero, the transaction rolls back, nothing is archived, and the batch is left at `PROCESSING` for stranded-batch reconciliation (rm11), exactly like the existing missing-geo `KeyError`. No new event code.
 - **No change to the guard, supersession or the constraint** (§0.1 rule 19): the unit proves them on raw keys with tests.
@@ -70,7 +70,7 @@ Every place that compares `udr_key` across batches, read from the code:
 
 ## Dependencies
 
-None.
+rm27 (RP carries `udr_resource` into the rated Parquet; see the header's "Depends on").
 
 ## Verification checklist
 

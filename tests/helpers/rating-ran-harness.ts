@@ -48,6 +48,13 @@ const PYTHON3: string | undefined = (() => {
   return PYTHON3_CANDIDATES.find((p) => existsSync(p));
 })();
 
+// The interpreter every rating suite must use for its own Parquet reads too,
+// so a suite never gates on one python3 and reads with another.
+export function ratingPython3(): string {
+  if (!PYTHON3) throw new Error("no absolute python3 (set RATING_PYTHON3)");
+  return PYTHON3;
+}
+
 export function pythonRuntimeReady(): boolean {
   if (!PYTHON3) return false;
   try {

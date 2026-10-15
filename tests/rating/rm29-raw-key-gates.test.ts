@@ -28,15 +28,45 @@ const SCANNED = [
   join(ROOT, "tests/helpers"),
 ];
 
+// Every case conversion, upper or lower, plus the retired canonical helpers.
 const FORBIDDEN =
-  /casefold|\.lower\(|\.toLowerCase\(|canonical_udr_key|_normalise_value/;
+  /casefold|\.lower\(|\.upper\(|\.to(?:Locale)?(?:Lower|Upper)Case\(|canonical_udr_key|_normalise_value/;
 
-// Lower-casing that never touches a key value (spec §3: "unrelated
-// lower-casing is allowed"). Each entry names the file and why.
-const ALLOWED: Record<string, string> = {
-  // Lower-cases a blob-store connection-string field, not a udr_key.
-  "tests/helpers/assert-test-blob-store.ts": "connection-string parsing",
-};
+// The SQL forms of the same normalisation (§0.1 rule 7: "do not add lower(),
+// btrim()"), as they would appear inside a Python query string or a seed's
+// raw SQL: a bare function call, not a method. `.strip()`/`.trim()` method
+// calls are deliberately NOT gated — the service_code and MNO-resolution
+// strips are sanctioned (rm26 / 2026-10-05 decision) and header/label
+// trimming is not a key value; key-value trimming is caught by the tests that
+// assert raw keys byte for byte (rm07, rm13, rm28).
+const FORBIDDEN_SQL = /(?<![.\w])(?:lower|upper|btrim|ltrim|rtrim|trim)\s*\(/i;
+
+// §0.1 rule 24 — the retired wording must not survive in the RAN-usage flow
+// definitions either.
+const FLOWS = join(ROOT, "workflow-management/flows/rating-engine");
+const FORBIDDEN_FLOW_TEXT =
+  /canonical_udr_key|_normalise_value|canonical\s+`?udr_key/i;
+
+// Case conversions that never touch a key value (spec §3: "unrelated
+// lower-casing is allowed"). Each exemption is ONE exact line (trimmed) in ONE
+// file, so any other conversion in the same file is still caught.
+const ALLOWED_LINES: readonly { file: string; line: string; why: string }[] = [
+  {
+    file: "tests/helpers/assert-test-blob-store.ts",
+    line: ".toLowerCase();",
+    why: "lower-cases a blob connection-string field name, not a udr_key",
+  },
+  {
+    file: "tests/helpers/rating-ran-harness.ts",
+    line: "registrationNumber: `_SAMPLE_-${tag.toUpperCase()}`,",
+    why: "builds a fixture registration number from the test tag, not a udr_key",
+  },
+];
+
+function isAllowed(rel: string, line: string): boolean {
+  const trimmed = line.trim();
+  return ALLOWED_LINES.some((a) => a.file === rel && a.line === trimmed);
+}
 
 function files(path: string): string[] {
   if (!statSync(path).isDirectory()) return [path];
@@ -48,11 +78,28 @@ function hits(): string[] {
     .filter((f) => /\.(py|ts)$/.test(f))
     .flatMap((f) => {
       const rel = relative(ROOT, f).split("\\").join("/");
-      if (rel in ALLOWED) return [];
       return readFileSync(f, "utf8")
         .split(/\r?\n/)
         .flatMap((line, i) =>
-          FORBIDDEN.test(line) ? [`${rel}:${i + 1}: ${line.trim()}`] : [],
+          (FORBIDDEN.test(line) || FORBIDDEN_SQL.test(line)) &&
+          !isAllowed(rel, line)
+            ? [`${rel}:${i + 1}: ${line.trim()}`]
+            : [],
+        );
+    });
+}
+
+function flowHits(): string[] {
+  return files(FLOWS)
+    .filter((f) => /\.ya?ml$/.test(f))
+    .flatMap((f) => {
+      const rel = relative(ROOT, f).split("\\").join("/");
+      return readFileSync(f, "utf8")
+        .split(/\r?\n/)
+        .flatMap((line, i) =>
+          FORBIDDEN_FLOW_TEXT.test(line)
+            ? [`${rel}:${i + 1}: ${line.trim()}`]
+            : [],
         );
     });
 }
@@ -67,9 +114,46 @@ describe("rm29 raw-key grep gate (rm29-spec §3, Inv 27)", () => {
     expect(hits()).toEqual([]);
   });
 
-  it("allow-listed files still exist (a stale entry would hide a moved file)", () => {
-    for (const rel of Object.keys(ALLOWED)) {
-      expect(statSync(join(ROOT, rel)).isFile(), rel).toBe(true);
+  it("each exempted line still exists verbatim (a stale exemption is removed, not kept)", () => {
+    for (const { file, line } of ALLOWED_LINES) {
+      const lines = readFileSync(join(ROOT, file), "utf8")
+        .split(/\r?\n/)
+        .map((l) => l.trim());
+      expect(lines, `${file}: ${line}`).toContain(line);
     }
+  });
+
+  it("the pattern catches upper- and lower-case conversions", () => {
+    for (const sample of [
+      "v.toLowerCase()",
+      "v.toUpperCase()",
+      "v.toLocaleLowerCase()",
+      "v.toLocaleUpperCase()",
+      "v.lower()",
+      "v.upper()",
+      "v.casefold()",
+    ]) {
+      expect(FORBIDDEN.test(sample), sample).toBe(true);
+    }
+  });
+
+  it("the SQL pattern catches lower()/upper()/btrim()/trim() but not a .strip()/.trim() method", () => {
+    for (const sample of [
+      "ON lower(i.udr_key) = lower(ur.udr_key)",
+      "lower(btrim(l.polygon_id))",
+      "UPPER(x)",
+      "rtrim(x)",
+      "trim(x)",
+    ]) {
+      expect(FORBIDDEN_SQL.test(sample), sample).toBe(true);
+    }
+    for (const sample of ["value.strip()", "v.trim()", "header.lower_bound"]) {
+      expect(FORBIDDEN_SQL.test(sample), sample).toBe(false);
+    }
+  });
+
+  it("the RAN-usage flow definitions carry no retired canonical-key wording (§0.1 rule 24)", () => {
+    expect(files(FLOWS).length).toBeGreaterThan(0);
+    expect(flowHits()).toEqual([]);
   });
 });
