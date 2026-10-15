@@ -41,6 +41,7 @@ import {
   type SampleUdrRatedRow,
 } from "@/db/seeds/sample/udr-rated-sample";
 import { ensureSampleCapacityUsageCard } from "@/db/seeds/sample/capacity-usage-card";
+import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 import {
   assertNonProductionUrl,
@@ -91,7 +92,8 @@ const SAMPLE_CAPACITY_CARD_NAME = "_SAMPLE_ Capacity Service Card";
 const SAMPLE_CAPACITY_UDR_TYPE = "RAN_USAGE";
 
 // bm45-spec §Implementation §4 — every capacity PER_UNIT row now carries a
-// canonical cell (D2), so even the four anchors below get a synthetic,
+// raw cell key (D2; raw values since rm29, Inv 27), so even the four anchors
+// below get a synthetic,
 // per-row-unique polygon identity (never seeded on the usage card — they
 // render "Unmapped" if their invoice's appendix is ever viewed, which is
 // correct per D3, not a defect; they exist for the aggregation/guard
@@ -1462,13 +1464,15 @@ function sampleRanGeo(sequence: number): {
 // bm42-spec §Implementation §7 — the capacity profile's charges: PER_UNIT
 // rows only (the factory extension, udr-rated-sample.ts §Implementation §7),
 // never the FLAT shape `seedSampleCharges` emits. Every row now also carries
-// a D2 canonical `polygonCell` (bm45-spec §Implementation §4) — an anchor
-// scenario (`capacityUsageEa`) gets one synthetic, per-row-unique polygon
-// (never seeded onto the usage card, so it renders "Unmapped" if ever
-// viewed — correct, not a defect); the appendix scenario
+// a D2 `polygonCell` (bm45-spec §Implementation §4), keyed raw (rm29, Inv 27)
+// — an anchor scenario (`capacityUsageEa`) gets one synthetic, per-row-unique
+// polygon (never seeded onto the usage card, so it renders "Unmapped" if ever
+// viewed — correct, not a defect; `udr_resource` NULL); the appendix scenario
 // (`capacityAppendixCells`) gets one row PER POLYGON at that polygon's own
-// quantity, and its mapped cells ARE seeded onto the usage card first so the
-// aggregation flow's D2 join resolves them. Σ udr_usage_quantity = EA and
+// quantity, and its mapped cells ARE seeded onto the usage card first. A
+// mapped appendix row carries `udr_resource` = `state|district|date` of its
+// card cell (Inv 28); the card-missing polygon keeps it NULL (billing D29's
+// fail-loud fixture). Σ udr_usage_quantity = EA and
 // Σ udr_rated_price = EA × base rate either way, so bm42's capacity
 // aggregation reproduces every anchor exactly. Zero EA (the TC15 anchor)
 // seeds no rows: the capacity line is generated from the subscription, never
@@ -1548,6 +1552,14 @@ async function seedSampleCapacityCharges(
             // cell; the card-missing polygon has none (NULL).
             state: cell.mapped ? (cell.state ?? null) : null,
             district: cell.mapped ? (cell.district ?? null) : null,
+            // rm29 — mirrors the usage card row's labels and start date.
+            udrResource: cell.mapped
+              ? formatUdrResource({
+                  state: cell.state ?? null,
+                  district: cell.district ?? null,
+                  polygonStartDate: "2020-01-01",
+                })
+              : null,
           }),
         );
       }
@@ -1580,7 +1592,8 @@ async function seedSampleCapacityCharges(
           rateType: "PER_UNIT",
           usageUnit: SAMPLE_CAPACITY_UNIT,
           // bm45-spec §Implementation §4 — a synthetic, per-row-unique
-          // canonical polygon (D2 shape), never seeded onto the usage card.
+          // raw polygon (D2 shape), never seeded onto the usage card, so
+          // udr_resource stays NULL.
           polygonCell: {
             mnoPublicKey: SAMPLE_CAPACITY_ANCHOR_MNO,
             commercialUnitPublicKey: SAMPLE_CAPACITY_ANCHOR_COMMERCIAL_UNIT,

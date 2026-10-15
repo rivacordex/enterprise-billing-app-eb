@@ -141,7 +141,7 @@ Options weighed in the review: new `udr_rated` columns (rejected by the owner), 
 | ~~OI-R1~~ | **Closed 2026-10-14:** operational rule only; this round runs on a fresh DB, so there is no pre-cutover period (R8, R10 dropped). | — |
 | ~~OI-R2~~ | **Closed 2026-10-13 (owner confirmed):** the key shape stays sorted `name=value\|...`; only value normalisation is removed (R2). | — |
 | ~~OI-R3~~ | **Closed 2026-10-14:** traced (table in the rm28 spec). Supersession keys on batch lineage, not `udr_key`; every `udr_key` comparison (guard SQL, cross-period set, completeness check, in-file dedup, unique constraint) is exact-match, so raw keys behave consistently in a fresh DB. No RL change is needed for raw keys. | — |
-| OI-R4 | `udr_resource` segment order and delimiter (`state\|district\|date`) are accepted; confirm no other consumer (billing UI, exports) will read the column. | Rating + Billing |
+| ~~OI-R4~~ | **Closed 2026-10-15 (rm29):** `udr_resource` segment order and delimiter (`state\|district\|date`) are accepted. A search of `services/**`, `db/repositories/**`, `app/**`, `lib/**`, `components/**` and `workflow-management/flows/**` finds no reader of `udr_resource` or `udrResource`; billing's usage query (bm49) still reads `udr_rated.state/district`, so billing slice 2 will be the first and only consumer. Any new consumer must read the segments by position (§0.1 rule 11). | — |
 | ~~OI-R5~~ | **Closed:** "partition_start_date" means `polygon_start_date`. | — |
 | ~~OI-R6~~ | **Closed 2026-10-14:** a rate-card label containing `\|` fails the batch (R9). | — |
 

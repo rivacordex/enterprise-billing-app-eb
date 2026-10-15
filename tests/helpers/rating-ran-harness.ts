@@ -27,7 +27,9 @@ import {
 
 // Shared harness for the DB+python-gated RAN_USAGE rating suites (rm13, rm23):
 // shells the real PRP/RP/RL runtime modules exactly as the flow's tasks do,
-// against a disposable database seeded with the Sample-5G graph.
+// against a disposable database seeded with the Sample-5G graph. Feed
+// polygons are written exactly as the card holds them, so the rated udr_key is
+// the raw key (Inv 27) and udr_resource is the matched cell's label (Inv 28).
 
 export const RATING_WORKER_DIR = join(
   process.cwd(),

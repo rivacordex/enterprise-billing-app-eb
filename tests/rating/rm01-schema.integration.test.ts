@@ -384,20 +384,26 @@ describe.skipIf(!databaseUrl)(
         expect(indexesOnRated).toHaveLength(0);
       });
 
-      // bm48-spec D1 (0045) — the ratecard geo columns: nullable text on the
-      // partitioned parent, propagated to every partition by the ALTER.
-      it("15b. udr_rated carries nullable text state / district on the parent and on a partition (bm48)", async () => {
+      // bm48-spec D1 (0045) + rm29 (Inv 28) — the ratecard geo columns and
+      // udr_resource (rm01's column, populated since Phase H): nullable text on
+      // the partitioned parent and on every partition.
+      it("15b. udr_rated carries nullable text state / district / udr_resource on the parent and on a partition (bm48, rm29)", async () => {
         const parentCols = await sql<
           { column_name: string; data_type: string; is_nullable: string }[]
         >`
           SELECT column_name, data_type, is_nullable FROM information_schema.columns
           WHERE table_schema = 'rating' AND table_name = 'udr_rated'
-            AND column_name IN ('state', 'district')
+            AND column_name IN ('state', 'district', 'udr_resource')
           ORDER BY column_name
         `;
         expect(parentCols).toEqual([
           { column_name: "district", data_type: "text", is_nullable: "YES" },
           { column_name: "state", data_type: "text", is_nullable: "YES" },
+          {
+            column_name: "udr_resource",
+            data_type: "text",
+            is_nullable: "YES",
+          },
         ]);
 
         const [partition] = await sql<{ relname: string }[]>`
@@ -412,7 +418,7 @@ describe.skipIf(!databaseUrl)(
         >`
           SELECT column_name, data_type, is_nullable FROM information_schema.columns
           WHERE table_schema = 'rating' AND table_name = ${partition!.relname}
-            AND column_name IN ('state', 'district')
+            AND column_name IN ('state', 'district', 'udr_resource')
           ORDER BY column_name
         `;
         expect(partitionCols).toEqual(parentCols);

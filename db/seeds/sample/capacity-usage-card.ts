@@ -59,6 +59,7 @@ export async function ensureSampleCapacityUsageCard(
             mnoPublicKey: p.mnoPublicKey,
             commercialUnitPublicKey: p.commercialUnitPublicKey,
             polygonId: p.polygonId,
+            // The seeded udr_resource date mirrors this (rm29, Inv 28).
             polygonStartDate: "2020-01-01",
             polygonEndDate: null,
             state: p.state,
