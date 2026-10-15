@@ -1,13 +1,25 @@
 # Customer Management — Completed Tracker
 
-Archive of completed phases. The live tracker is `custmgmt-progress-tracker.md`.
+Archive of delivered work for the Customer Management module. Single tracker since 2026-10-15: `custmgmt-progress-tracker.md` was merged in and removed. Per-unit narrative, review-fix logs and test enumerations are trimmed to key facts and decisions. Full history: `git log -- context/customer-management/custmgmt-progress-tracker.md` (the 542-line pre-archive Phase 2 narrative is at `185455e^`). Per-unit detail: `context/customer-management/specs/cm*.md`.
 
 ## Phases
 
-| Phase | Units     | Scope                                     | Ship gate         | Status    |
-| ----- | --------- | ----------------------------------------- | ----------------- | --------- |
-| 1     | cm01–cm16 | v1 full CRUD                              | cm16 (`8d80e6c`)  | Completed |
-| 2     | cm17–cm22 | Invoice Template Binding update           | cm22 (`e46ee32`)  | Completed (2026-10-14) |
+| Phase | Units     | Scope                           | Ship gate                                  | Status                 |
+| ----- | --------- | ------------------------------- | ------------------------------------------ | ---------------------- |
+| 1     | cm01–cm16 | v1 full CRUD                    | cm16 (`8d80e6c`)                           | Completed (2026-07-17) |
+| 2     | cm17–cm22 | Invoice Template Binding update | cm22 (`e46ee32`, tightening `a3f2923`)     | Completed (2026-10-14) |
+
+**No phase in progress.** Phase 3 (template catalog selection; posting reads the BAN binding) is not yet scoped.
+
+## Carried forward (not blocking)
+
+- **Template label format (cm20).** The label joins the *layout* code with the *generated* version number (e.g. "INVTPL-STD-A4 v2"), which can name a layout version that does not exist — in tension with Inv. #18. Kept as the spec mandates; decide the wording before Phase 3.
+- **`EDIT_DISABLED_TITLE` copy (cm21).** Reads "accounts configuration edit access" but the panel gates on `accounts_transactions`; used unchanged per spec.
+- **Binding plan §11 matrix.** The source plan (`_updatemodule-…-binding-plan.md`) is not in the repo, so §11 was not checked row by row; §12 O1/O3/O4 were closed in `custmgmt-architecture.md` / workflow rules §9.5 instead.
+- **Baseline test failures** (billmgmt known-issues §21, fix as their own change): 7 unit files fail to load without env (`lib/config`: `manage-products-*` ×3, `company-profile-form`, `run-detail-tabs`, `selection-region`, `trigger-run.service`); `ratecard-parse-csv` and `pricing-component-guardrails` #31 time out because their repo scans walk the stale `.claude/worktrees/` copies (skip `.claude` or remove the worktrees).
+- **cm22 guardrail check 4** can approach its 30 s timeout under heavy machine load (~3.5 s idle).
+- **Cleanup candidates (cm19/cm20 reviews):** fourth verbatim copy of the tab-strip markup (bill-run list, run detail, invoice settings); every tab still loads the full `getCustomerDetail`; shared positive-int config parser (4 copies); one shared account-state chip with Accounts Overview; structured template label instead of the card's regex split; unused reads in `getFinancialAccountDetail` and serial `findActive` → `findDefault`; redundant BAN re-sort.
+- **`CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE` seed** was never run on its own; the service falls back to 20 when the key is absent.
 
 ---
 
@@ -15,139 +27,97 @@ Archive of completed phases. The live tracker is `custmgmt-progress-tracker.md`.
 
 Plumbing only: a per-BAN invoice template reference (`billing.billing_account.ref_bill_template_version_id`, v1 always `NULL` = follow the active template), captured at onboarding, reset on Manage Customer, shown on a tabbed View Customer. Posting never reads it (D4, Inv. #18). Scope: `custmgmt-update-overview.md`; rules: `custmgmt-ai-workflow-rules.md` §9.
 
-| Unit | Name                                                        | Boundary | Commit    | Review / follow-up fixes   |
-| ---- | ----------------------------------------------------------- | -------- | --------- | -------------------------- |
-| cm17 | Billing Account template reference column                   | DB       | `c0b2f97` | `832597c`, `187d8cb`, `7508edb` |
-| cm18 | Onboarding wizard: "Invoice template" field                 | APP      | `12e9c03` | `832597c`, `7508edb`       |
-| cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | `6d243f9` | `1e2b91e`                  |
-| cm20 | View Customer: Accounts tab                                 | APP      | `e44f2c7` | `9eb25e8`                  |
+| Unit | Name                                                        | Boundary | Commit    | Review / follow-up fixes                 |
+| ---- | ----------------------------------------------------------- | -------- | --------- | ---------------------------------------- |
+| cm17 | Billing Account template reference column                   | DB       | `c0b2f97` | `832597c`, `187d8cb`, `7508edb`          |
+| cm18 | Onboarding wizard: "Invoice template" field                 | APP      | `12e9c03` | `832597c`, `7508edb`                     |
+| cm19 | View Customer: tab shell (Profile · Contacts · Accounts)    | APP      | `6d243f9` | `1e2b91e`                                |
+| cm20 | View Customer: Accounts tab                                 | APP      | `e44f2c7` | `9eb25e8`                                |
 | cm21 | Manage Customer: Billing account panel + template reset     | APP      | `e2677bf` | `a329ff4`, `018f8a3` (Accounts arch doc) |
-| cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | `e46ee32` | `a3f2923` (guardrail tightening) |
+| cm22 | Binding update ship gate: guardrails, end-to-end flow, docs | TESTS    | `e46ee32` | `a3f2923` (guardrail tightening)         |
 
 ## Phase 2 per-unit notes
 
-**cm17** — Migration `0050_billing_account_template_ref.sql`: nullable `text` column, named FK `billing_account_ref_bill_template_version_id_fk` → `bill_template_version` (`NO ACTION`), column comment; Drizzle mirror in `db/schema/billing/accounts.ts`. No index, grant or backfill. DB-gated suite (6/6) covers the `0049` → `0050` upgrade with a pre-existing BAN. Review restored `billing-management/invoice-template/placeholder-catalog.md`, which `c0b2f97` had deleted.
+**cm17** — Migration `0050_billing_account_template_ref.sql`: nullable `text` column, named FK `billing_account_ref_bill_template_version_id_fk` → `bill_template_version` (`NO ACTION`), column comment; Drizzle mirror in `db/schema/billing/accounts.ts` (optional on `BillingAccountInsert`, so onboarding compiled unchanged). No index, grant or backfill. DB-gated suite (6/6) covers the `0049` → `0050` upgrade with a pre-existing BAN reading `NULL`. Review restored `billing-management/invoice-template/placeholder-catalog.md`, which `c0b2f97` had deleted.
 
-**cm18** — `assertBindableTemplate` (v1: `null` ok, any string → `TEMPLATE_NOT_BINDABLE`; takes `tx` for the Phase 3 signature). Optional `billTemplateVersionId` (`/^BTV\d{8}$/`) on the onboarding schema; validator runs inside the onboarding transaction; BAN insert and `ACCOUNTS_ONBOARDED.afterData` carry the ref. Read-only "Invoice template — Follow active template" wizard field. ac04 spec amended (user-approved, applied in cm22).
+**cm18** — `assertBindableTemplate` (v1: `null` ok, any string → `TEMPLATE_NOT_BINDABLE`; takes `tx` for the Phase 3 signature, no DB call). Optional `billTemplateVersionId` (`/^BTV\d{8}$/`) on the onboarding schema; validator runs inside the onboarding transaction after the cycle check; BAN insert and `ACCOUNTS_ONBOARDED.afterData` carry the ref. Read-only "Invoice template — Follow active template" wizard field after Currency. ac04 spec amended (user-approved, applied in cm22).
 
-**cm19** — `?tab=profile|contacts|accounts` (lenient, falls back to `profile`) on `/customers/view/[id]`; server-rendered `CustomerDetailTabs` link strip with focus ring; inconsistency banner above the strip on every tab (Inv. #14).
+**cm19** — `?tab=profile|contacts|accounts` (lenient, falls back to `profile`) on `/customers/view/[id]`; server-rendered `CustomerDetailTabs` link strip (`aria-current`, §9.1 focus ring); Accounts panel is a `<section aria-label>` region; inconsistency banner above the strip on every tab (Inv. #14), tested over `CUSTOMER_DETAIL_TABS`.
 
-**cm20** — Accounts tab: `getCustomerAccountsSummary` (FA + BANs + per-BAN receivables + paged documents), `resolveCurrentTemplateLabel` / `banTemplateLabel` (never calls the posting resolver), `CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE` seed (default 20, max 100). Gated by `accounts_*` permissions; document links require `accounts_transactions : READ`; failures stay inside the tab (`AccountsUnavailableCard`). **Deviations:** the async loader lives in `page.tsx` (ESLint `boundaries` forbids `components/**` → `services/**`); per-FA paging via a lenient `fa` param. New guardrail `customer-accounts-read-boundary.test.ts` (Inv. #11).
+**cm20** — Accounts tab: `getCustomerAccountsSummary` (FA + BANs + per-BAN receivables via one grouped `receivablesByFinancialAccount` read + paged documents), `resolveCurrentTemplateLabel` / `banTemplateLabel` (never calls the posting resolver), `CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE` seed (default 20, max 100). Gated by `accounts_*` permissions; document links require `accounts_transactions : READ` (else plain ids); failures stay inside the tab (`AccountsUnavailableCard`). Review: out-of-range page clamped to the last page; FA receivable = sum of the BAN cards; each BAN formatted in its own currency; FA state chip. **Deviations:** the async loader lives in `page.tsx` (ESLint `boundaries` forbids `components/**` → `services/**`); per-FA paging via a lenient `fa` param (no `fa` → `page` applies to every FA, so spec links still work). New guardrail `customer-accounts-read-boundary.test.ts` (Inv. #11).
 
-**cm21** — `setBillingAccountTemplate` (CAS on the BAN's own `last_modified`, `party_role` never bumped; unchanged value → no write/audit), new audit type `BILLING_ACCOUNT_TEMPLATE_CHANGED` (category Change), dual-permission action (`customers : EDIT` + `accounts_transactions : EDIT`), `BillingAccountPanel` on Manage Customer. Accounts docs updated with user approval: `acctmgmt-code-standards.md` §9 result-code catalog 51 → 54 (`TEMPLATE_NOT_BINDABLE`, `BAN_CLOSED`, `BAN_NOT_FOUND`) and the `acctmgmt-architecture.md` `billing_account` row.
+**cm21** — `setBillingAccountTemplate` (CAS on the BAN's own `last_modified`, `state <> 'closed'`; `party_role` never read or bumped; unchanged value → no write/audit; BAN of another party role → `BAN_NOT_FOUND`), new audit type `BILLING_ACCOUNT_TEMPLATE_CHANGED` (category Change), dual-permission action (`customers : EDIT` + `accounts_transactions : EDIT`), `listCustomerBillingAccounts`, `BillingAccountPanel` on Manage Customer. `VALIDATION_ERROR` shows the module's generic error copy (none spec'd). Accounts docs updated with user approval: `acctmgmt-code-standards.md` §9 result-code catalog 51 → 54 (`TEMPLATE_NOT_BINDABLE`, `BAN_CLOSED`, `BAN_NOT_FOUND`) and the `acctmgmt-architecture.md` `billing_account` row.
 
-**cm22** — Ship gate (tests + docs, no product code). `customer-accounts-binding-boundaries.test.ts` (5 checks: customer screens import only the two read services; read services make no writes; posting never reads the BAN column; `assertBindableTemplate` used only by onboarding + reset; the column written only by onboarding and `setTemplateRef`). `customer-accounts-journey.integration.test.ts` (8-step E2E). ac04 / ac23 Accounts spec edits applied (user-approved). Module docs (architecture, code standards, project overview, update overview, cm05) aligned with the code. **Deviations:** item 1 also allowlists `get-wizard-options` (a read); item 3 uses the file-level rule with two named exemptions (`customer-bill.repository.ts`, `invoice-render-input.ts`, which read `customer_bill`'s stamp).
+**cm22** — Ship gate (tests + docs, no product code). `customer-accounts-binding-boundaries.test.ts` (5 checks: customer screens import only the two read services and no `db/repositories/{accounts,billing}/**`; read services make no writes; posting never reads the BAN column; `assertBindableTemplate` used only by onboarding + reset; the column written only by onboarding and `setTemplateRef`, with hidden-column-list BAN writes reported). `customer-accounts-journey.integration.test.ts` (8-step E2E). ac04 / ac23 Accounts spec edits applied (user-approved). Module docs (architecture, code standards, project overview, update overview, cm05) aligned with the code. **Deviations:** check 1 also allowlists `get-wizard-options` (a read); check 3 uses the file-level rule with two named exemptions (`customer-bill.repository.ts`, `invoice-render-input.ts`, which read `customer_bill`'s stamp).
 
-**Final verification (cm22, 2026-10-13):** full integration project 131 files / 1213 tests, 0 failed; full unit suite 4474 passed; posting-invariance suites (`customer-bill-stamps`, `invoice-default-resolution`, `invoice-version-pinning`, bm13/bm19 e2e) green on a disposable Postgres + Azurite. Baseline failures reported, not fixed (billmgmt known-issues §21): 7 unit files fail to load without env; `ratecard-parse-csv` and `pricing-component-guardrails` #31 time out because their repo scans walk the stale `.claude/worktrees/` copies.
+**Final verification (cm22, 2026-10-13):** full integration project 131 files / 1213 tests, 0 failed; full unit suite 4474 passed; posting-invariance suites (`customer-bill-stamps`, `invoice-default-resolution`, `invoice-version-pinning`, bm13/bm19 e2e) green on a disposable Postgres + Azurite. Baseline failures reported, not fixed (see Carried forward).
 
 ## Phase 2 key decisions
 
 - **Column shape (D9/D10).** Nullable, no default, no backfill; `NULL` = follow the current ACTIVE template, else the default. Stored as a version id for referential integrity; meaning is "follow the template line", kind `generated` only. Kind rule lives in `assertBindableTemplate`, not a `CHECK`.
 - **FK `ON DELETE NO ACTION`.** Template versions are never deleted (`bill_template_version_guard`, bm50).
-- **No index, no grant change.** Nothing filters or joins on the column in v1; add an index in Phase 3 if posting joins on it.
+- **No index, no grant change.** Nothing filters or joins on the column in v1; add an index in Phase 3 if posting joins on it. `billrun_runtime` / `rating_runtime` can read it but never do (Inv. #18).
 - **Reset is BAN-scoped.** CAS on the BAN's `last_modified`; the customer's `party_role` lock is not involved.
 
 ---
 
-# Phase 1 — v1 full CRUD (cm01–cm16) — COMPLETED
+# Phase 1 — v1 full CRUD (cm01–cm16) — COMPLETED 2026-07-17
 
-## Status
+All 16 units committed; ship-gate-verified (cm16) at the DB/test level. SAST/DAST and live-browser sign-off are CI/manual steps outside this tooling.
 
-All 16 units implemented and committed. Module is ship-gate-verified (cm16) at the DB/test level; SAST/DAST and live-browser sign-off are CI/manual steps outside this tooling.
+| Unit | Name                                                                    | Commit                | Spec            |
+| ---- | ----------------------------------------------------------------------- | --------------------- | --------------- |
+| cm01 | DB foundation (`customer` schema, migration, seed, permission registry) | `4426342`             | `specs/cm01.md` |
+| cm02 | Validation schemas + read repositories + read services                  | `3347d04`             | `specs/cm02.md` |
+| cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | `47c0f68`             | `specs/cm03.md` |
+| cm04 | View search page                                                        | `d37c875`             | `specs/cm04.md` |
+| cm05 | View detail page                                                        | `b1d0d8a`             | `specs/cm05.md` |
+| cm06 | Manage search page                                                      | `53f9a62`             | `specs/cm06.md` |
+| cm07 | Create customer                                                         | `9665074`             | `specs/cm07.md` |
+| cm08 | Edit page + update organization                                         | `ff2dbc4`             | `specs/cm08.md` |
+| cm09 | Transition organization status                                          | `9aae48c`             | `specs/cm09.md` |
+| cm10 | Transition customer status                                              | `00a865a`             | `specs/cm10.md` |
+| cm11 | Add contact                                                             | `0d80df8`             | `specs/cm11.md` |
+| cm12 | Update contact                                                          | `12240ce` (with cm11) | `specs/cm12.md` |
+| cm13 | Delete contact                                                          | `a8e22ff`             | `specs/cm13.md` |
+| cm14 | Set preferred contact                                                   | `2e505cb`             | `specs/cm14.md` |
+| cm15 | Set preferred contact method                                            | `b349cf7`             | `specs/cm15-set-preferred-contact-method.md` |
+| cm16 | Authz guardrail sweep (ship gate)                                       | `8d80e6c`             | `specs/cm16-authz-guardrail-sweep.md` |
 
-| Unit | Name                                                                    | Commit                |
-| ---- | ----------------------------------------------------------------------- | --------------------- |
-| cm01 | DB foundation (`customer` schema, migration, seed, permission registry) | `4426342`             |
-| cm02 | Validation schemas + read repositories + read services                  | `3347d04`             |
-| cm03 | Nav ("Customer" `NAV_SECTIONS` entry + locked-item `AdminNav` state)    | `47c0f68`             |
-| cm04 | View search page                                                        | `d37c875`             |
-| cm05 | View detail page                                                        | `b1d0d8a`             |
-| cm06 | Manage search page                                                      | `53f9a62`             |
-| cm07 | Create customer                                                         | `9665074`             |
-| cm08 | Edit page + update organization                                         | `ff2dbc4`             |
-| cm09 | Transition organization status                                          | `9aae48c`             |
-| cm10 | Transition customer status                                              | `00a865a`             |
-| cm11 | Add contact                                                             | `0d80df8`             |
-| cm12 | Update contact                                                          | `12240ce` (with cm11) |
-| cm13 | Delete contact                                                          | `a8e22ff`             |
-| cm14 | Set preferred contact                                                   | `2e505cb`             |
-| cm15 | Set preferred contact method                                            | `b349cf7`             |
-| cm16 | Authz guardrail sweep (ship gate)                                       | `8d80e6c`             |
+Review fixes for cm11–cm16: `15a3220`.
 
-**Docs completed:** `custmgmt-project-overview.md`, `custmgmt-architecture.md`, `custmgmt-code-standards.md`, `custmgmt-ai-workflow-rules.md`, `custmgmt-ui-context.md`, `specs/cm00-build-plan.md`, all 16 unit specs (`cm01`–`cm16`).
+## Recurring patterns (not repeated per unit)
 
-## Recurring patterns (apply across units — not repeated per-unit below)
+- **Audit event type ripple:** a new `AUDIT_EVENT_TYPES` entry (cm07–cm13, cm15, cm21) needs `types/audit-log.ts`'s `AUDIT_EVENT_CATEGORY_MAP` (`tsc`-caught) and the counts/optgroups in `tests/components/audit-log-filters.test.tsx` (**not** `tsc`-caught). See `[[audit-event-type-addition-ripple]]`.
+- **Route manifest ripple:** every new `app/**/page.tsx` must be added to `tests/app/route-manifest.test.ts`'s frozen `ROUTE_MANIFEST`.
+- **Mutation shape (cm07–cm15):** action → service → repository; guard → `safeParse` → one service call → `revalidatePath`; services run `compareAndBumpLock` (cm08) first inside a transaction, short-circuiting to `CONFLICT` before any write/audit.
+- **`db` import convention:** services import the `db` singleton (cm02's `db`-as-parameter shape was a bug, fixed in cm04).
+- **Integration DB:** Phase 1 ran against the local dev container (with user confirmation; re-provision with `down -v && up -d --build`). Phase 2 used a disposable Postgres (billmgmt known-issues §13).
 
-- **Audit event type ripple:** adding a new `AUDIT_EVENT_TYPES` entry (needed by nearly every mutation unit: cm07–cm13, cm15) always requires updating `types/audit-log.ts`'s `AUDIT_EVENT_CATEGORY_MAP` (`tsc`-caught) and bumping the event/option counts + optgroup assertions in `tests/components/audit-log-filters.test.tsx` (**not** `tsc`-caught). See `[[audit-event-type-addition-ripple]]`.
-- **Route manifest ripple:** every new `app/**/page.tsx` (cm04, cm05, cm06, cm08) must be added to `tests/app/route-manifest.test.ts`'s frozen `ROUTE_MANIFEST` or the guardrail trips by design.
-- **Dev-DB integration protocol:** integration runs always go against the local Docker dev container's `DATABASE_URL` and require user confirmation first (per `[[local-docker-dev-stack]]`); the stack is re-provisioned via `down -v && up -d --build` afterward (`down` without `-v` hits a known non-idempotent `setup-partman` failure).
-- **Mutation shape:** every mutation unit (cm07–cm15) follows the same action → service → repository pattern established in cm07: guard → `safeParse` → one service call → `revalidatePath`; services run `compareAndBumpLock` (cm08) first inside a transaction, short-circuiting to `CONFLICT` before any write/audit.
-- **`db` import convention:** services import the `db` singleton internally (not passed as a parameter) — cm02's original `db`-as-parameter shape was a bug, corrected in cm04; every later spec assumes single-argument service calls.
+## Phase 1 per-unit notes
 
-## Per-unit notes
+- **cm01** — `customer` schema (`organization`/`party_role`/`contact_medium`, 3 sequences, all constraints), `0009_customer.sql`, seed (`customers` permission, `CUSTOMER_SEARCH_RESULT_LIMIT`), `types/customer.ts`. Composite deferrable FK hand-authored in SQL. Later fix: seed grants `ADMIN → customers:EDIT`.
+- **cm02** — Validation schemas, three finder-only repositories, `searchCustomers`/`getCustomerDetail`, keyed by `party_role_id`.
+- **cm03** — "Customer" nav entry + `AdminNav` locked/greyed items (fails closed without `permissionMap`); `getCurrentUserIdentity` exposes `userId` (beyond the spec's file list).
+- **cm04** — `/customers/view`: READ guard, `q`-only search, results table, status badges.
+- **cm05** — `/customers/view/[id]`: read-only sections + `InconsistencyBanner` (`isStatusInconsistent`: ACTIVE customer + non-ACTIVE org; DISSOLVED/MERGED org + non-CLOSED customer). Semantic CSS token aliases; Tailwind arbitrary values instead of inline `style`.
+- **cm06** — `/customers/manage`: EDIT guard, reuses cm04's search, "Add new customer" CTA.
+- **cm07** — `create-customer`: two-step similar-name confirm, one transaction (org → audit → party_role → audit), `isUniqueViolation` checks `err.cause` (Drizzle wraps `PostgresError` in `DrizzleQueryError`).
+- **cm08** — `compareAndBumpLock` (CAS on `party_role.last_modified_datetime`, Inv. #6); field-only `organizationRepository.update`; edit-page container.
+- **cm09** — `StatusTransitionControl`; transition validity checked against `ORGANIZATION_TRANSITIONS` before the transaction.
+- **cm10** — Same control for the customer; `compareAndUpdateStatus`/`compareAndUpdateSpecification`; `CustomerRoleForm`; folds in `update-party-role-specification`.
+- **cm11** — First contact mutation; Inv. #4 (first contact auto-preferred) and Inv. #5 (`resolvePreferredMethod`, PHONE → EMAIL → ADDRESS); `ContactManagerPanel`.
+- **cm12** — `resolveUpdatedPreferredMethod` (auto-assign / untouched / `PREFERRED_METHOD_STILL_POPULATED` / clear-to-zero allowed); shared `ContactFieldsFieldset`.
+- **cm13** — The one physical delete: `CONTACT_NOT_FOUND` / `CANNOT_DELETE_PREFERRED_CONTACT`; audit `afterData: null`; structural test pins `deleteById` callers; `AlertDialog` confirm.
+- **cm14** — `setPreferredContact` (escape hatch for cm13's blocked delete); same-contact reassignment not special-cased.
+- **cm15** — `setPreferredContactMethod` among populated methods; spec typo fixed (`gaAddressLine1`); distinct `aria-label`s vs cm14's button.
+- **cm16** — Tests-only ship gate: route × level matrix, Server Action USER-denial for all 10 actions, `customer-core-flow` E2E, `customer-module-boundaries` (6 checks), `customer-audit-completeness`. Fixed doc gaps (code-standards §7 missing an action; architecture route typo); spec worked examples corrected to the real transition maps.
 
-**cm01** — `db/schema/customer.ts` (`customer` schema: `organization`/`party_role`/`contact_medium`, 3 sequences, all constraints), migration `0009_customer.sql`, seed (`customers` permission, `CUSTOMER_SEARCH_RESULT_LIMIT`), `types/customer.ts` domain unions. Composite deferrable FK hand-authored in migration SQL (drizzle-kit can't express `DEFERRABLE`). Retroactively fixed (post-cm08): seed was missing an `ADMIN` grant for `customers` (Product Management's seed pattern grants ADMIN; customer's didn't) — added `ADMIN → customers:EDIT`, updated cm01-spec and architecture doc §4 accordingly.
+**Final verification (cm16):** unit 155 files / 1408 tests; integration 37 files / 327 tests, all green.
 
-**cm02** — Validation schemas (`transitions`/`specification`/`organization`/`party-role`/`contact-medium`), three finder-only repositories, `searchCustomers`/`getCustomerDetail` services, read-model types. Search/detail keyed by `party_role_id` (an org can have >1 party_role historically). `db`-as-parameter service signature later corrected in cm04.
-
-**cm03** — "Customer" `NAV_SECTIONS` entry + new `AdminNav` locked/greyed-item capability (fails closed when `permissionMap` omitted). Required extending `getCurrentUserIdentity` to expose `userId` and threading a `permissionMap` through `AdminSidebar` into `AdminNav`, beyond the spec's stated file list.
-
-**cm04** — `/customers/view` page: READ guard, `q`-only search, `CustomerSearchPanel`/`CustomerResultsTable`, `OrganizationStatusBadge`/`CustomerStatusBadge`. Fixed cm02's `db`-as-parameter service bug here (first real consumer tripped the `boundaries/dependencies` ESLint rule).
-
-**cm05** — `/customers/view/[id]` detail page: 3 fixed-order read-only sections + `InconsistencyBanner` (authoritative `isStatusInconsistent` rule: Rule 1 = ACTIVE customer + non-ACTIVE org; Rule 2 = DISSOLVED/MERGED org + non-CLOSED customer). New CSS tokens are semantic aliases onto existing colors (no literal-hex duplication). Inline `style` prop from spec's code block replaced with Tailwind arbitrary-value classes (repo bans inline `style`).
-
-**cm06** — `/customers/manage` search page: EDIT guard, reuses cm04's search panel/table unchanged, "Add new customer" CTA → cm07 (interim 404 until cm07 shipped).
-
-**cm07** — First mutation unit: `create-customer` action/service/repository, two-step similar-name confirm (`SIMILAR_NAMES_FOUND` before any write), one transaction writing organization → audit → party_role → audit, `isUniqueViolation` on `registration_number` (`lib/db-errors.ts`). Integration testing caught a real bug: Drizzle wraps driver errors in `DrizzleQueryError`, exposing the real `PostgresError` on `.cause` — `isUniqueViolation` now checks both `err` and `err.cause`.
-
-**cm08** — First optimistic-lock implementation: `compareAndBumpLock` (atomic compare-and-swap on `party_role.last_modified_datetime`, Module Inv. #6), reused by every later mutation. `organizationRepository.update` (field-only, no `status`). Edit page container built here; `cm09`/`cm10`/`cm11` extend the same page via seam comments.
-
-**cm09** — First status-transition mutation + `StatusTransitionControl` (the module's one status-dropdown component, reused unchanged by cm10). Transition validity checked in-memory against `ORGANIZATION_TRANSITIONS` before the transaction opens; `compareAndBumpLock` still runs first inside it.
-
-**cm10** — Reuses `StatusTransitionControl` unchanged for the customer entity (`entityKind="customer"`, `CUSTOMER_TRANSITIONS`). Added `compareAndUpdateStatus`/`compareAndUpdateSpecification` — same-row refinement of `compareAndBumpLock` since these write directly to `party_role`. `CustomerRoleForm` added as the edit page's second section; status and specification save independently with their own local lock state.
-
-**cm11** — First contact mutation + first real exercise of cm01's composite deferrable FK. `contactMediumRepository` graduates out of finder-only (last of the module's three repos to do so). `addContact` implements Module Inv. #4 (auto-preferred-contact on first add) and Inv. #5 (`resolvePreferredMethod`, fixed PHONE→EMAIL→ADDRESS priority) as independent checks. `ContactManagerPanel` added as the edit page's third/final section. Live Playwright verification confirmed both invariants render correctly end-to-end as `admin@example.com`.
-
-**cm12** — `resolveUpdatedPreferredMethod`: three-way case set (nothing preferred yet → auto-assign; still-populated → untouched; cleared while another remains → `PREFERRED_METHOD_STILL_POPULATED`; cleared to zero → allowed). `ContactFieldsFieldset` factored out, shared by add/edit forms. Live Playwright verification confirmed the clear/reject and clear-to-zero paths.
-
-**cm13** — The module's one physical delete. `deleteContact`: `CONTACT_NOT_FOUND` / `CANNOT_DELETE_PREFERRED_CONTACT` (Inv. #4's one enforcement point) checked before the transaction; audit row records full pre-delete data with `afterData: null`. New structural guardrail (`tests/structure/contact-medium-delete-callers.test.ts`) asserts `deleteById` is only called from `contact-mutations.ts`. `DeleteContactDialog` uses `AlertDialog` (non-backdrop-dismissible) as the module's one irreversible-action confirm.
-
-**cm14** — Explicit `setPreferredContact` reassignment (the escape hatch for cm13's delete-blocked case). Reuses cm11's repository function unchanged; reassigning to the already-preferred contact is not special-cased (still bumps lock, audits identical before/after). No audit-type ripple — `PREFERRED_CONTACT_CHANGED` already existed from cm11.
-
-**cm15** — Last of the module's mutation actions: explicit `setPreferredContactMethod` among currently-populated methods on one contact (narrower sibling to cm12's `resolveUpdatedPreferredMethod`). Fixed a spec typo (`contact.addressLine1` → `contact.gaAddressLine1`, the actual DB column name). Method-row "Make preferred" buttons needed a distinguishing `aria-label` to avoid an accessible-name collision with cm14's contact-level button of the same visible label.
-
-**cm16** — Ship gate (tests-only diff). Confirmed all 5 inherited guardrails present/green, then added: extended `guard.integration.test.ts` (dedicated MANAGER/USER principals, route×level matrix, direct Server Action USER-denial for all 10 actions), `customer-core-flow.integration.test.ts` (chained E2E), `customer-module-boundaries.test.ts` (6 checks), `customer-audit-completeness.test.ts` (pins per-function `eventType` mapping). Found and fixed real doc/spec gaps rather than working around them: `custmgmt-code-standards.md` §7 was missing `update-party-role-specification` from its file-tree listing (10 actions, not 9); `custmgmt-architecture.md` still had the pre-cm03 singular route typo (`/customer/...`); cm16-spec's own worked examples (step 4/5 status values, "one eventType per mutation" rule) were factually wrong against the real transition maps and were implemented per the actual code instead.
-
-**Final verification (cm16):** full unit suite 155 files / 1408 tests green; full integration suite 37 files / 327 tests green. SAST/DAST and live-browser spot checks are CI/manual steps, deferred consistently across every unit.
-
-## Open Questions
-
-- None yet.
-
-## Architecture Decisions
+## Phase 1 architecture decisions
 
 - Soft delete only via status (Organization → DISSOLVED, Customer → CLOSED); no physical deletes except contact rows.
-- `contact_medium` is flattened (one row per contact person, inline phone/email/address) rather than normalized child tables.
-- Preferred contact and preferred contact method enforced at the database level (composite deferrable FK / constraints), not by operator discipline.
-- Reuses existing platform as-is: better-auth RBAC (USER/MANAGER), `system_config`, pg_partman audit schema, conventions from User Management and Product Management.
-
-## Per-unit specs
-
-| Unit | Spec file       | Summary                                                                                                                                                                                                                                                   |
-| ---- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| cm01 | `specs/cm01.md` | DB foundation: `customer` schema (3 tables, 3 sequences, all constraints), migration `0009_customer.sql`, seed (`customers` permission + `CUSTOMER_SEARCH_RESULT_LIMIT`), permission registry wiring, `types/customer.ts` domain unions, guardrail tests. |
-| cm02 | `specs/cm02.md` | Validation schemas (transitions, specification, organization, party-role, contact-medium) + three finder-only repositories + `services/customer` (`searchCustomers`, `getCustomerDetail`) + read-model types. No `app/**`, `actions/customer/`, or UI.    |
-| cm03 | `specs/cm03.md` | "Customer" `NAV_SECTIONS` entry (View/Manage) + new `AdminNav` locked/greyed-item capability for a permission the viewer lacks.                                                                                                                           |
-| cm04 | `specs/cm04.md` | `app/(app)/customers/view/page.tsx`: READ guard, `q`-only search, `CustomerSearchPanel` + `CustomerResultsTable`, `OrganizationStatusBadge`/`CustomerStatusBadge`.                                                                                        |
-| cm05 | `specs/cm05.md` | `app/(app)/customers/view/[id]/page.tsx`: three read-only sections (organization/role/contacts), `OrganizationTypeBadge`/`PreferredIndicator`/`InconsistencyBanner`, authoritative `isStatusInconsistent` rule.                                           |
-| cm06 | `specs/cm06.md` | `app/(app)/customers/manage/page.tsx`: EDIT guard, reuses `cm04`'s search panel/table, "Add new customer" CTA → `cm07`.                                                                                                                                   |
-| cm07 | `specs/cm07.md` | First mutation unit: create-customer action/service/repository shape, two-step similar-name confirm, registration-number uniqueness DB check, `SpecificationEditor`.                                                                                      |
-| cm08 | `specs/cm08.md` | Edit-page container + first optimistic-lock implementation (`compareAndBumpLock`), reused through `cm15`.                                                                                                                                                 |
-| cm09 | `specs/cm09.md` | `StatusTransitionControl` (reused by `cm10`); `transition-organization-status` action/service.                                                                                                                                                            |
-| cm10 | `specs/cm10.md` | Reuses `StatusTransitionControl` for the customer entity; `CustomerRoleForm`; folds in `update-party-role-specification`; `compareAndUpdateStatus`/`compareAndUpdateSpecification`.                                                                       |
-| cm11 | `specs/cm11.md` | First contact mutation: `contact-mutations.ts`, `ContactManagerPanel`, first-contact-auto-preferred + phone>email>address priority rules.                                                                                                                 |
-| cm12 | `specs/cm12.md` | `resolveUpdatedPreferredMethod` — preferred-method preservation/clearing rules on contact update.                                                                                                                                                         |
-| cm13 | `specs/cm13.md` | The module's one physical delete (contact), with a convention + structural-test-enforced precondition.                                                                                                                                                    |
-| cm14 | `specs/cm14.md` | Explicit set-preferred-contact reassignment; escape hatch for `cm13`'s delete-blocked case.                                                                                                                                                               |
-| cm15 | `specs/cm15.md` | Explicit set-preferred-contact-method reassignment among currently-populated methods.                                                                                                                                                                     |
-| cm16 | `specs/cm16.md` | Ship gate: authz-matrix route × role matrix, Server-Action USER-denial loop, chained core-flow E2E, module-boundary + audit-completeness guardrail sweeps.                                                                                                |
+- `contact_medium` is flattened (one row per contact, inline phone/email/address).
+- Preferred contact and preferred method are enforced in the database (composite deferrable FK / constraints).
+- Reuses the platform as-is: better-auth RBAC (USER/MANAGER), `system_config`, pg_partman audit schema, User/Product Management conventions.

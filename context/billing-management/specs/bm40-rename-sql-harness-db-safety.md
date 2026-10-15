@@ -50,6 +50,8 @@ The fix is two-pronged and deliberately so: **correct the flow** (so it runs) an
   1. `process.env.DESTRUCTIVE_DB_OK === "1"` (explicit opt-in), **and**
   2. the target DB carries a disposable sentinel (e.g. a `_meta.disposable = true` row the provisioning writes) — **not** a name match, which is spoofable.
      On either miss, `throw` a clear message and exit before any `db/client.ts` import. This also fixes the skip-loudly bug (the gate now runs before `@/lib/config` throws on an unset `DATABASE_URL`).
+
+> **As built (2026-10-12, dev1 `614743a`):** the preflight is `tests/integration-global-setup.ts` (wired as `globalSetup` in `vitest.integration.config.ts`); it refuses on an unset `DATABASE_URL`, a missing `DESTRUCTIVE_DB_OK=1`, or a missing sentinel. The sentinel is the table `public._test_disposable_sentinel` (written/checked by `tests/helpers/disposable-database.ts`), not a `_meta.disposable` row.
 - `tests/db/billrun-db-roles.integration.test.ts:351` — remove the cross-cluster `DROP DATABASE IF EXISTS "kestra" WITH (FORCE)`: drop the `FORCE` (never terminate other connections), and reset a _schema_ inside the disposable DB rather than the whole `kestra` _database_; keep the teardown gated behind the §3 preflight.
 
 ## Dependencies
@@ -60,11 +62,11 @@ The fix is two-pronged and deliberately so: **correct the flow** (so it runs) an
 
 ## Verification checklist
 
-- [ ] `grep -r udr_subscriber_ref_id workflow-management/flows/bill-run-processor` returns **nothing** (flow, template, README all on `udr_subscription_ref_id`); the flow redeploys to `billrun`.
-- [ ] A live-Kestra run on the `_SAMPLE_` `ci` seed reaches `PROCESSED`: Collection's join resolves against `udr_subscription_ref_id`, proving the **deployed** flow runs on the current schema (not only the double).
-- [ ] The `aggregation` / `recurring` / `volume` / `verification` / `checksum` DB suites run the **extracted** flow SQL; `tests/db/helpers/billrun-aggregate.ts` and `billrun-verify.ts` no longer hold hand-copied SQL bodies; the harness self-tests pass.
-- [ ] **Drift guard:** renaming one identifier in the flow only (and not the schema) now **fails** a DB suite — the mask is gone.
-- [ ] `vitest.integration.config.ts` `globalSetup` refuses a non-disposable target (missing `DESTRUCTIVE_DB_OK` **or** missing sentinel → a clear throw) before any `db/client.ts` import; an unset `DATABASE_URL` refuses loudly rather than crashing inside `@/lib/config`.
-- [ ] No `DROP DATABASE … WITH (FORCE)` remains anywhere under `tests/**`; the roles suite's teardown stays inside the disposable DB and cannot reach a co-located engine.
-- [ ] `tsc` / eslint / the DB-free unit suite green; the DB-gated suite green against a **disposable** Postgres with `DESTRUCTIVE_DB_OK=1`.
-- [ ] Docs synced: the capacity plan's Unit-0/TC44 note and `bm00-build-plan.md` Part 3 record "resolver repair already shipped; bm40 = flow rename straggler + extracted-SQL harness + DB-test safety."
+- [x] `grep -r udr_subscriber_ref_id workflow-management/flows/bill-run-processor` returns **nothing** (flow, template, README all on `udr_subscription_ref_id`); the flow redeploys to `billrun`. _(grep empty at `614743a`; redeploy is the `deploy_workflow_flows` ops step.)_
+- [ ] A live-Kestra run on the `_SAMPLE_` `ci` seed reaches `PROCESSED`: Collection's join resolves against `udr_subscription_ref_id`, proving the **deployed** flow runs on the current schema (not only the double). _(not done — no live-Kestra run recorded in the progress tracker, 2026-10-12)_
+- [x] The `aggregation` / `recurring` / `volume` / `verification` / `checksum` DB suites run the **extracted** flow SQL; `tests/db/helpers/billrun-aggregate.ts` and `billrun-verify.ts` no longer hold hand-copied SQL bodies; the harness self-tests pass. _(both doubles deleted; `tests/db/helpers/extract-flow-sql.ts` + `extract-flow-sql.test.ts`.)_
+- [x] **Drift guard:** renaming one identifier in the flow only (and not the schema) now **fails** a DB suite — the mask is gone. _(the suites execute the flow's own SQL via the harness.)_
+- [x] `vitest.integration.config.ts` `globalSetup` refuses a non-disposable target (missing `DESTRUCTIVE_DB_OK` **or** missing sentinel → a clear throw) before any `db/client.ts` import; an unset `DATABASE_URL` refuses loudly rather than crashing inside `@/lib/config`. _(`tests/integration-global-setup.ts`.)_
+- [x] No `DROP DATABASE … WITH (FORCE)` remains anywhere under `tests/**`; the roles suite's teardown stays inside the disposable DB and cannot reach a co-located engine. _(only a historical comment remains; teardown is `resetKestraSchema` in `billrun-db-roles.integration.test.ts`.)_
+- [x] `tsc` / eslint / the DB-free unit suite green; the DB-gated suite green against a **disposable** Postgres with `DESTRUCTIVE_DB_OK=1`. _(per tracker: bm42a run integration 1165/0, unit 4077/0; bm63 run unit 4378/0, integration 1219/0, `tsc` clean.)_
+- [x] Docs synced: the capacity plan's Unit-0/TC44 note and `bm00-build-plan.md` Part 3 record "resolver repair already shipped; bm40 = flow rename straggler + extracted-SQL harness + DB-test safety." _(capacity plan "Re-scope" paragraph; bm00 Part 3 Unit 40.)_

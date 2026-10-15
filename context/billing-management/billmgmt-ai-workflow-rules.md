@@ -1,164 +1,248 @@
 # Billing Management — AI Workflow Rules (Module Supplement)
 
-Read `context/ai-workflow-rules.md` first and obey it in full. This supplement changes nothing there. It records only the Billing Management deltas to it for the two in-flight updates in `billmgmt-update-overview.md` (**Part 1, Target Capacity Pricing** and **Part 2, Invoice Template**), plus the rules from delivered phases that still bind both updates. Where a facet is not mentioned here, the general rule applies unchanged. If anything here appears to weaken the general rules or a Module Invariant, stop and treat it as a bug.
+Read `context/ai-workflow-rules.md` first and obey it in full. This supplement never weakens it. Where §6 below pre-authorizes an edit to a file the general §5 protects, that is the recorded instruction general §5 asks for. It does not skip general §5's "stop, explain why, and get explicit confirmation" step, which you still run at the start of that unit. It records only the Billing Management deltas for the in-flight update, **Invoice Template Phase 3** (the bill run uses the BAN's invoice template, plus the new Standard layout written into v1), and the rules from delivered work that still bind it. Where a facet is not mentioned here, the general rule applies unchanged. If anything here appears to weaken a general rule or a Module Invariant, stop and treat it as a bug.
 
 **Companion docs (authoritative; do not restate or contradict them):**
 
-- `billmgmt-update-overview.md`: the functional scope, in/out of scope and success criteria for Part 1; Part 2 there is a pointer. `billmgmt-project-overview.md` describes the delivered phases 1–4 (bm01–bm39), Target Capacity, and the Invoice Template update (Part 2, delivered bm47–bm63, folded 2026-10-11, with its success criteria 1–12).
-- `billmgmt-architecture.md`: **50 Module Invariants (§6)**. #15 is a retired tombstone, #29–#38 belong to Part 1 and #39–#50 to Part 2. It also holds the dated Part 1 and Part 2 delta sections and the cross-update conflicts **X1–X4, all resolved**.
-- `billmgmt-code-standards.md`: §1–§9 and its two dated delta sections. Part 1 guardrails are §9 items **36–42**. Part 2 guardrails are items **43–56**, and conflicts **C1–C4** (all resolved) are listed there.
-- `specs/bm00-build-plan.md`: the authority on unit numbering, unit boundaries and build order. Part 1 is **bm40–bm46**. Part 2 is **bm47–bm63** (delivered).
-- Design authority: for Part 1, `_updatemodule-billing-billrun-target-capacity-plan.md` (TC1–TC58, open set O-TC*). For Part 2, `_updatemodule-billing-invoice-template-merged-plan.md`, where **§15 (R1–R11) overrides §§1–14**. Also `invoice-template/placeholder-catalog.md` (placeholder roots and field formats).
-- `context/rating-management/ratemgmt-ai-workflow-rules.md`: **binding on you** for any rating-side change (§3.5).
+- `billmgmt-update-overview.md`: the in-flight update, with its goals, flow, features, scope and success criteria 1–15. `billmgmt-project-overview.md` holds everything delivered: phases 1–4 (bm01–bm39), Target Capacity Pricing (Part 1, bm40–bm46) and the Invoice Template update (Part 2, bm47–bm63).
+- `_updatemodule-billing-invoice-template-phase3-billrun-plan.md`: the design authority, decisions **D1–D60**. Later decisions amend earlier ones; each amendment names what it amends.
+- `billmgmt-architecture.md`:
+  - **58 Module Invariants (§6)**. **#51–#58** are this update's (planned); #15 is a retired tombstone.
+  - The 2026-10-15 amendment notes under #36, #40, #41, #42, #44 and #46.
+  - The dated section _Invoice Template Phase 3 — architecture deltas_, including its contradiction table **P1–P11**.
+- `billmgmt-code-standards.md`:
+  - The dated section _Invoice Template Phase 3 — code-standards deltas_.
+  - **Guardrail items 57–67**.
+  - Its _Rules superseded by this update_ and _Existing inconsistencies_ tables.
+- `specs/bm00-build-plan.md`: the authority on unit numbering, boundaries and build order. Phase 3 is units **bm64–bm73**; all ten specs are written (`specs/bm64`–`bm73`, 2026-10-15).
+- `_updatemodule-rating-udr-key-resource-plan.md` and `context/rating-management/specs/rm24`–`rm29` (rating Phase H): the rating prerequisite. `context/rating-management/ratemgmt-ai-workflow-rules.md` is **binding on you** for any rating-side change.
 
-**Precedence:** the general order stands (architecture **Invariants** → overview → architecture → code-standards → this supplement → general rules). Two module additions:
+**Naming:** "Phase 3" in this file always means **Invoice Template Phase 3**. It never means the bill run's own Phase 3 (bm14–bm35). Write "Invoice Template Phase 3" in every spec, commit and doc you produce.
 
-1. For in-flight work, `billmgmt-update-overview.md` is the overview.
-2. Inside the Part 2 plan, §15 wins over the body. Never build the four superseded body items: the legacy-template fallback, the rendered-HTML hash, the watermark move, and `kind = xml`.
+**Precedence:** the general order stands (architecture **Invariants** → overview → architecture → code-standards → this supplement → general rules). One module addition: for in-flight work, `billmgmt-update-overview.md` is the overview, and the plan's later decision wins over its earlier one.
 
-**Current state:** `billmgmt-progress-tracker.md` is the only status source. This file keeps no dated status snapshot. Check the tracker against `git log` on `dev1` before you start.
-
----
-
-## 0. Carried-Forward Module Rules (Delivered Phases, Still Binding)
-
-These rules come from phases 1–4. They are **permanent**, and both updates touch the code they protect. A unit that violates one is a review-blocking defect.
-
-1. **Compute lives in the flow, not the app.** All bill-data computation runs in `workflow-management/flows/bill-run-processor/` as `billrun_runtime`, including capacity pricing. The app writes run-state, posting and posting stamps, and nothing else (Inv #17, #29). `billing-trial-bill-compute-boundary.test.ts` enforces this. Never weaken it.
-2. **Rendering lives in the app, not the flow.** The engine never renders, never reads the invoice-template or asset containers, and gets no grant on the Part 2 tables. Part 2 makes **no change** to `workflow-management/**`.
-3. **Three reversed rules stay reversed.** `customer_bill_line` **is** the charge record (Inv #3). Recurring derivation **is** sanctioned billing compute, and usage-rating is not (Inv #1). `BILLRUN_PLACEHOLDER_MODE` is retired and Inv #15 is a tombstone. If a unit touches a file that quotes an old rule, correct the quote in the same diff.
-4. **Cross-schema writes are fixed.** In `rating`, the only permitted writes are the six claim columns, written through `udr-status.repository.ts` (Inv #2). Grants are enumerated per table and never `ON ALL TABLES` (Inv #23).
-5. **The finalization boundary is fixed.** Once `ref_inv_document_id` is set, the header cannot change (Inv #4, migration `0033`). Posting is per-account, in one transaction (Inv #6). Four-eyes is enforced on the money gate (Inv #8).
-6. **Treat decided policies as decided.** Unresolvable subscriber (D32, Inv #25), recurring-price miss (D33, Inv #28), `EXCLUDED` forgoes the month (Inv #26), and "Uncharged means no charge line" (Inv #22). Build to them and do not re-litigate them.
+**Current state:** `billmgmt-progress-tracker.md` is the only status source. This file keeps no status snapshot. Check the tracker against `git log` on `dev1` before you start.
 
 ---
 
-## 1. Operating Approach — Update Specifics
+## 0. Carried-Forward Module Rules (Delivered Work, Still Binding)
 
-1. **Name the authorizing source before you write anything.** Cite one of: a `bm` spec, an Invariant (#1–#50), a code-standards rule or guardrail item, or a plan decision (TC*, D*, R*). For Part 2, cite the **Invariant**, not the bare R#/D#. Code-standards' Part 2 section predates Inv #39–#50 (§7.4).
-2. **Finish Part 1 before Part 2 touches the render path.** Commit bm45 and pass bm46 before any Part 2 unit edits `render-invoice-template.ts`, `render-invoice.ts`, `post-run.ts` or `customer-bill-line.repository.ts`. Both updates rewrite those files (X4). Part 2's binder must then **carry** the bm45 appendix into the generated layout and never drop it.
-3. **Build Part 2 binder-first (R10, Inv #39).** The first Part 2 behavior unit re-points the renderer to `customer_bill_line` and asserts `Σ net_amount = customer_bill.subtotal` before it renders. Until that unit is green, no editor page, action or component merges.
-4. **Delete the legacy path; never flag it (Inv #40).** `buildDraftInvoiceHtml`, `buildFinalInvoiceHtml` and their `udr_rated` read are removed in the binder unit. Do not keep them behind a flag, an env var or a "fallback".
-5. **Bill Model 1; use Model 2 only to check (Inv #29).** No code path bills from `max(Q, target) × baseRate`.
-6. **Treat Inv #29–#50 as permanent cross-unit rules.** Each one is checked on every unit that touches its surface, not only in the unit that introduced it.
-7. **Prove behavior at the right layer.** Logic-green is not run-green (Inv #38). Part 1 capacity changes need both the extracted-SQL harness **and** a live-Kestra execution. Part 2 render changes need both unit and golden-render tests **and** the Playwright e2e.
+These come from phases 1–4, Part 1 and Part 2. They are **permanent**, and Phase 3 touches the code they protect. A unit that violates one is a review-blocking defect.
+
+1. **Compute lives in the flow; rendering lives in the app.**
+   - All bill-data computation runs in `workflow-management/flows/bill-run-processor/` as `billrun_runtime` (Inv #17, #29), enforced by `billing-trial-bill-compute-boundary.test.ts`.
+   - The app writes run-state, posting and posting stamps only.
+   - The engine never renders and never reads the template or asset containers.
+2. **Reversed rules stay reversed.** `customer_bill_line` **is** the charge record (Inv #3). Recurring derivation is billing compute; usage rating is not (Inv #1). Inv #15 is a tombstone.
+3. **Cross-schema writes are fixed.** In `rating`, write only the six claim columns, through `udr-status.repository.ts` (Inv #2). Grant per table, never `ON ALL TABLES` (Inv #23).
+4. **The finalization boundary is fixed.**
+   - Once `ref_inv_document_id` is set, the bill header never changes (Inv #4, migration `0033`).
+   - Posting is per account, in one transaction (Inv #6).
+   - Four-eyes guards the money gate (Inv #8).
+   - Every posting stamp lands in the same `UPDATE` as `ref_inv_document_id` (Inv #41).
+5. **Capacity pricing is settled.**
+   - Bill Model 1; Model 2 only checks (Inv #29).
+   - `capacity_rate_matching` defaults ON and code never ships it OFF (Inv #30). OFF logs a WARN and bills Model 1; the flag state is not stored.
+   - `capacity_max_bands = 1` in production.
+   - One capacity subscription per `(customer, product)` (Inv #37).
+   - The `charge_checksum` tuple is append-only with `rated_amount` last; `additional_info` is never hashed (Inv #35).
+   - Flow SQL is tested from the extracted YAML **and** by a live-Kestra run (Inv #38).
+6. **The invoice pipeline is settled.**
+   - The binder reconciles `Σ net_amount = subtotal` before rendering (Inv #39).
+   - A failure parks the account on the existing render-pending surface, with no legacy fallback (Inv #40).
+   - Reprint is a byte download (Inv #43).
+   - Blobs are write-once (Inv #44) and checksum-verified on load (Inv #45).
+   - Handlebars is locked down: auto-escape on, `knownHelpersOnly`, nine helpers (Inv #46).
+   - The render does no network fetch and no ratecard query (Inv #47).
+   - The compiled-template memo is the only cache.
+7. **Decided policies stay decided:**
+   - unresolvable subscriber (Inv #25);
+   - recurring-price miss (Inv #28);
+   - `EXCLUDED` forgoes the month (Inv #26);
+   - "Uncharged means no charge line" (Inv #22);
+   - no four-eyes on profile activation (G14);
+   - no `ONE_TIME` source (G5);
+   - partial-period capacity billing (**O-TC7**) is an open business decision; never build a method for it.
+
+---
+
+## 1. Operating Approach — Phase 3 Specifics
+
+1. **Name the authorizing source before you write anything.** Cite a `bm` spec (bm64+), an Invariant (#51–#58, or an amended #36/#40–#46), a guardrail item (57–67), or a plan decision (D#). Cite the Invariant over the bare D# whenever one exists.
+2. **Do not write code before its `bm` spec exists.** The Phase 3 specs exist (`specs/bm64`–`bm73`, listed in `bm00-build-plan.md` Part 5). Build only what a unit's spec specifies; if a spec turns out wrong or a codebase fact has moved, correct the spec in this planning repo first, then build.
+3. **Confirm the fresh-DB round before any seed or migration work.**
+   - The plan edits `0046` and the v1 seed files **in place** (D26, D41, Inv #57). That is safe **only** on an environment rebuilt from an empty database **and** an empty `invoice-templates` blob container (T11).
+   - Before you run `db:setup` or any seed, verify both are empty.
+   - If either is not empty, stop and ask. Never "fix" a checksum mismatch by overwriting a blob or editing a journal.
+4. **Resolve once, read stamps everywhere (Inv #51, #53).** Never add a call to the live resolver on a run path, not even temporarily, and not behind a flag. Only `captureTemplateStamps` and the editor's `preview-family` mode may resolve "current ACTIVE".
+5. **Treat Customer Management as read-only (D46, Inv #54).** Read `billing_account.ref_bill_template_version_id` inside the capture statement. Write nothing else there.
+6. **Put money in SQL (code-standards Phase 3 General rule 6).** Every derived figure is computed in SQL as `numeric` and arrives as a string. If a figure seems to need TypeScript arithmetic, stop and ask.
+7. **Prove behavior at the right layer.**
+   - Flow YAML changes need the extracted-SQL harness **and** a live-Kestra run (Inv #38).
+   - Render changes need unit tests, the structural golden **and** a real Chromium render.
+   - Capture and freeze need DB-backed integration tests that activate a version mid-run.
 
 ---
 
 ## 2. Units and Sequencing
 
-1. **Part 1: follow bm40–bm46 exactly** as `bm00-build-plan.md` defines them. Do not renumber, merge or reorder them. bm46 is verification only and adds no new behavior.
-2. **Part 2: do not start a build unit until its `bm` spec exists in `specs/` and `bm00-build-plan.md` lists it.** Part 2 units continue the sequence from **bm47**. Do not restart at 1 and do not invent a unit number. Writing those specs is planning work, done in this planning repo.
-3. **Do not write Part 2 build specs until X1–X4 are decided** (architecture _Open cross-update conflicts_). Each spec must cite the resolution it builds on.
-4. **Part 2 load-bearing order.** Each item below comes before anything that depends on it:
-   1. binder + reconciliation (R10)
-   2. schema + seed migration (tables, `INVOICE` row, default layout and generated versions, `invoice_settings` permission row)
-   3. blob-store generalization (R4)
-   4. resolution, load and checksum verification
-   5. posting-time stamps
-   6. generator
-   7. profile + logo services
-   8. read pages
-   9. EDIT actions
-   10. CSV output
+1. **Build the units in `specs/bm00-build-plan.md` Part 5 (bm64–bm73), in that order (D59).** It is the unit authority. Do not renumber, merge, split or reorder them, and never reopen bm01–bm63 to absorb Phase 3 scope. If a unit turns out too large, stop and ask before changing `bm00`.
 
-   The rating-side geo change (X1 → R9) lands **before** any binder reads geo from `udr_rated`.
-5. **Never reopen a delivered unit to absorb new scope.** A change to delivered bm01–bm44 behavior belongs in a new unit with its own spec, even when the edit is small.
+   | Unit | Visible result |
+   |---|---|
+   | bm64 | Standard family in the catalog |
+   | bm65 | template captured at run start and on rerun |
+   | bm66 | drafts render from the captured template |
+   | bm67 | posted invoices use the captured template |
+   | bm68 | the flow stops writing the appendix |
+   | bm69 | DD/MM/YYYY and Mbps formats |
+   | bm70 | page 1 summary |
+   | bm71 | detail pages |
+   | bm72 | Total Amount page + footnote editor, then the v1 pin |
+   | bm73 | ship gate |
+2. **Keep each unit green on its own (general §3.7).** In particular:
+   - **bm66:** replace the `draft` render kind with `run` and `preview-family` while posting still resolves live.
+   - **bm67:** delete `resolveVersionsForPosting` only there, once nothing else calls it.
+3. **Never change the binder shape without the v1 pages that render it (D57, kept by D59).**
+   - **bm70** adds the summary fields and rewrites page 1, leaving `usage` and the old annex in place.
+   - **bm71** replaces `usage` with the detail regions and rewrites the detail pages.
+   - **bm72** adds the Total Amount page and the footnote.
+4. **Do not start bm71 until rating Phase H (rm24–rm29) is deployed** and its raw-key format is confirmed in the rm26 spec. Use that spec's delimiter, not a guess. bm64–bm70 and bm72's prerequisites do not need it.
+5. **Re-seed v1 from empty for every unit that edits it (bm70, bm71, bm72).** Empty the database and the `invoice-templates` container per the bm64 runbook before running render tests. Add the checksum pin only in bm72; from then on v1 is immutable (Inv #57).
+6. **bm68 is independent.** Land it any time before bm73. It removes the SQL from `local-dev/bill_run_processing.yml` (the only copy with SQL), corrects the comments in `bill_run_processing.template.yml`, updates the extracted-SQL tests, revokes the two ratecard grants only the appendix used, and needs a live-Kestra run.
+7. **bm73 is last and builds nothing.** It audits Inv #51–#58 and guardrail items 57–67, runs success criteria 1–15 on your sample data, and folds the update into `billmgmt-project-overview.md`.
 
 ---
 
 ## 3. Scoping — No Speculative Changes
 
-Apply the general §2. In addition, do not build any of the following. Each one is out of scope in `billmgmt-update-overview.md`:
+Apply the general §2. In addition, do not build any of the following. Each is out of scope in `billmgmt-update-overview.md`:
 
-1. **Proration or partial-period capacity billing.** This waits on a **business** decision (O-TC7). Partial-period accounts stay `EXCLUDED`.
-2. **More than one capacity subscription per `(customer, product)`, or multiple billing accounts per customer for one capacity product** (Inv #37).
-3. **Production multi-step motivation.** Ship the N-band SQL with `capacity_max_bands = 1`. Also out of scope: negotiated overrides on capacity offerings, rate-card item pricing, district summarisation, an appendix beyond 10,000 rows per account, and any UI or invoice display of `additional_info`.
-4. **Code that disables `CAPACITY_RATE_MATCHING`.** It is an ops flag, default ON. Code never ships it OFF (Inv #30).
-5. **Out-of-scope Part 2 features:** credit notes, debit notes, a separate pro-forma document type, per-MNO or per-customer templates, admin control of order, position, labels, wording, colours inside the template, fonts or page setup, an admin code editor or drag-and-drop designer, multi-entity issuing, account summary or balance brought forward, per-line tax, `kind = xml`, MyInvois or `einvoice.*`, a shared asset library, DuitNow QR, bilingual invoices, re-render for reprint, and a `udr_rated` geo backfill.
-6. **Admin-authored markup of any kind.** The only admin template input is the boolean `structure` map (Inv #46).
-7. **A new `ChargeSource` member.** Do not add `ONE_TIME` to a CHECK, union, label or fixture (C2). The binder groups by the existing `USAGE | RECURRING | OCC` union.
-8. **Real taxation.** The ratified `0.00` interim stands for both parts.
-9. **A second cache.** The compiled-template memo keyed by immutable version id is the only sanctioned in-memory cache. Never cache the "current ACTIVE" resolution, a profile, a logo or a bill.
-10. **Changes beyond the authorized platform firsts.** Part 2 is authorized to add exactly these: the first user-uploaded file (the logo), the compiled-template memo, Handlebars 4.7 as a direct dependency, and the `invoice_settings` permission. Do not extend any of them into a general mechanism, such as a generic upload service or a generic cache.
+1. **Any Customer Management change:**
+   - the family dropdown;
+   - a family-aware `assertBindableTemplate`;
+   - a family column on `billing_account`;
+   - any edit to the "Reset to follow active template" button, onboarding or `0050`.
+2. **Create-family or retire-family screens, and the retire/bind row locks and parallel test** (D45). Seed exactly one family, Standard. Add no `INSERT`/`UPDATE` grant on `bill_template_family`.
+3. **Any second family, any per-BAN version pin, any non-NULL binding path in a UI.**
+4. **Bespoke or In-building rating or products** (D6). Build for N types from the data; never hard-code a type name or list.
+5. **A "(continued)" marker, Paged.js or measured pre-pagination** (D48).
+6. **A visible discount line or any line reconciling detail Sub Totals to Total Amount** (D43).
+7. **Adjustments or OCC creation, real tax, credit or debit notes, MyInvois/UBL, CSV export changes** (§23j stays open).
+8. **Freezing customer contact, address or organisation name** (D36, D51), or anything after the PDF is handed to loopback or SFTP.
+9. **RBAC grant changes** (D53). Add no permission.
+10. **A layout v2, a second generated version in the seed, a tenth Handlebars helper, or an admin toggle beyond Payment information** (D56). The footnote is the only admin-authored text: 1–5 plain-text lines (Inv #46 amended).
+11. **A larger DB seed** (D52). The seed stays at 1 MNO, 1 rate-card entry and 2–3 polygons. Build large and edge cases as test fixtures under `tests/`.
+12. **A rating cutover guard or any `udr_rated` backfill** (D3, D32).
 
 ---
 
 ## 4. When to Split Into Smaller Steps
 
-Apply the general §3 triggers. In addition, these splits are mandatory:
+Apply the general §3 triggers. The bm64–bm73 boundaries already apply them, together with the module's merge rules: one visible result per unit, units always done together are merged, and a unit with no visible result merges into its neighbour. Inside a unit, these orderings are mandatory:
 
-1. **Land each schema change and its grants alone, before any consumer:**
-   - Part 1: bm41.
-   - Part 2: the four new tables, the two new `customer_bill` columns, the seed rows, the `app_runtime` grants, and the **revoke** of `billrun_runtime`'s grants on `ref_bill_format_id` / `ref_bill_template_version_id` (Inv #41).
-2. **Add the Handlebars dependency as its own change.** It is the only dependency add Part 2 authorizes (general §5.6).
-3. **Split the blob-store generalization (`putObject`/`getObject`, `putInvoice` refactor) from any feature that uses it.** The refactor must leave invoice PDF writes byte-for-byte unchanged.
-4. **Split the infrastructure from the code.** Provisioning the `invoice-templates` and `invoice-assets` prod containers in `infra/**` is its own isolated unit, as general §2.8 requires.
-5. **Split the posting-time stamp (`stampPosted` + `post-run.ts`) from the renderer.** It touches the money transaction and needs its own pinning tests (guardrail 46).
-6. **Split each Part 2 screen's read path from its mutations.** Build Company profile READ, then its save-draft, logo upload and activate actions. Build Invoice template READ (with preview), then its save-draft and activate actions. Each action is its own unit with its own audit event and route × level tests.
-7. **Split the logo upload and SVG sanitization from profile activation.**
-8. **Keep the rating geo change set whole.** If X1 resolves to R9, the rating migration, the rating flow write and the Inv #36 amendment land together under rating's rules. Do not split them, and do not mix in any billing change.
-9. **Split the usage appendix from money-correctness.** In Part 1 it stays its own unit after the pricing core (bm45 after bm42–bm44). In Part 2, the usage section ships after the binder's charge reconciliation is green.
+1. **Schema first inside a unit.** Land the migration, Drizzle mirror and grants as the unit's first commit, before any consumer code: `0046` in bm64, `0051` in bm65, `0052` in bm67.
+2. **The platform change first inside bm69.** Its first commit adds the numeric option to the shared `lib/` calendar-date formatter, changes no default, and proves in CI that every other module's output is unchanged (general §2.8). Only then switch `helpers.ts`.
+3. **The money transaction alone in bm67.** bm67 touches nothing outside posting and its migration (Inv #6, #41); its freeze tests (guardrail items 57, 58, 60) land with it.
+4. **The flow edit alone in bm68.** No TypeScript change rides with the YAML edit.
+5. **Read before write in the editor.** The preview's `familyId` (read) lands in bm66; the footnote and toggle changes (write) land in bm72 (general §3.2).
+6. **Keep the rating Phase H change set whole and separate.** Never mix a billing change into a rating unit.
+
+If a unit grows beyond its `bm00` entry, stop and ask (general §2.3). Do not split or merge units on your own.
 
 ---
 
 ## 5. Missing or Ambiguous Requirements
 
-Apply the general §4. Never guess on money, the render source, a stamp, or a permission.
+Apply the general §4. Never guess on money, the render source, a stamp, a permission, or what the invoice prints.
 
-**DECIDED. Build to these and do not re-litigate them:**
+**DECIDED. Build to these and do not re-litigate them** (plan decision → invariant / guardrail). This list is an index, not the source (general §6.4, §6.6): if a summary here and its owning D# or Inv # differ, the owning doc wins and this line is a bug to fix.
 
-1. Part 1 rate-match model: Model 1 is billed, Model 2 checks, the gate defaults ON, and OFF logs, records the flag state and bills Model 1 (Inv #29–#30). Single-subscription grain is per `(customer, product)` (O-TC5, Inv #37).
-2. Part 1 build opens are resolved in their owning specs: O-TC1 and O-TC2 in bm42/bm43, O-TC6 in bm45. Cite the spec. Do not re-decide.
-3. Part 2: everything in Plan §15 R1–R11 and Inv #39–#50. This includes binder-first, no fallback, park via the existing render-pending surface, pinned → ACTIVE → default resolution, reprint as a byte download, and reproducibility through `charge_checksum`.
-4. Field formats are those in `invoice-template/placeholder-catalog.md` §B. If code-standards disagrees, the catalog wins.
-5. Usage-section geo source (X1 / C1 / overview _Overlap_): **R9** — rating persists the matched ratecard cell's `state`/`district` onto `rating.udr_rated` at INSERT (bm48, migration `0045`); Inv #36 is amended. The `udr_key` → ratecard-cell mapping (G13) reuses PRP's existing canonical cell match — no new mapping rule (decided 2026-10-08).
-6. Usage-section scope, row bound and over-limit behaviour (X2 / G2): **delivered by bm49** — the annex lists every billed `udr_rated` row for the account (all USAGE lines), grouped state → district, bounded to 10,000 rows/account; over the bound the bind fails `INVOICE_USAGE_OVER_LIMIT` and the account parks (INV stays posted). Part 2's multi-page tests use this 10,000-row bound (decided 2026-10-07, delivered 2026-10-08).
-7. Four-eyes on company-profile activation (G14; was the architecture _Noted gap_ versus code-standards): **no four-eyes** — one `invoice_settings : EDIT` signature, bank changes included (decided 2026-10-11 by the owner, superseding option C of 2026-10-10; the bm61 four-eyes code was removed).
+1. **Template choice and freeze:**
+   - the BAN's NULL reference means Standard (D46, Inv #54);
+   - capture at run start (D12, D23, D35, Inv #51);
+   - rerun re-captures only the rerun BANs (D13, Inv #52);
+   - one resolver (D33, Inv #53);
+   - both `BILL_RUN_TRIGGERED` and `BILL_RUN_RERUN` record the stamps (D35, as extended 2026-10-15).
+2. **Missing template:** a family with no ACTIVE version stamps a NULL version. The draft throws `TEMPLATE_VERSION_NOT_FOUND` (`FAMILY_HAS_NO_ACTIVE_VERSION`); posting skips the account **before** the INV and never copies the NULL to `customer_bill`; a rerun recovers it. Never exclude the BAN and never block the trigger (D55, D58, Inv #58).
+3. **Amounts:**
+   - Unutilised = `gross − rated`; Utilised = `net − Unutilised`; no new columns (D28);
+   - discount is folded into Utilised and not itemised (D30, D43);
+   - Total Amount = Σ Utilised (D22);
+   - Utilised < 0 fails `INVOICE_NEGATIVE_UTILISED` (D42, Inv #55).
+4. **Detail:**
+   - polygon from the `udr_key` segment; State, District and start date from `udr_resource`; never `udr_rated.state/district` (D8);
+   - one source, the live query (D31);
+   - per-type reconciliation and the 10,000-row limit (D37);
+   - missing data fails `INVOICE_POLYGON_DATA_MISSING` (D29, D54, Inv #56).
+5. **Layout:**
+   - ordering, label and format rules (D21);
+   - pagination: each type on a new page, groups may split, no "(continued)" (D17, D48);
+   - "Page X of Y" bottom-right (D18);
+   - footnote after Total Amount (D19);
+   - Other charges block, hidden when empty, and "Total charges" label (D47);
+   - Adjustments always shown (D14);
+   - tax at 0% (D15, D52).
+6. **v1:** rewritten once in place, then pinned. Every later change is a new version (D41, D49, Inv #57).
+7. **Editor:** only the Payment toggle, plus 1–5 footnote lines of ≤ 200 characters (D56).
+8. **Scope:** only Standard (D45); Customer Management untouched (D46); PDF only (D51); no RBAC change (D53).
 
 **OPEN. Stop and ask one precise question with the options. Never pick a default:**
 
-| Topic | Where it is tracked (same issue, three IDs) | Interim rule |
+| Topic | Where it is tracked | Interim rule |
 | --- | --- | --- |
-| Partial-period billing | O-TC7 | A **business** decision. Never build a method |
+| Partial-period capacity billing | O-TC7 | A **business** decision. Partial-period accounts stay `EXCLUDED`. |
+| The final raw `udr_key` delimiter and `polygon_id=` form | rating rm26 spec | Read the rm26 spec. If it is ambiguous, ask; never infer the format from sample data. |
 
-**Decided 2026-10-11 (owner, no longer open):** C2/G5 (no `ONE_TIME` in v1; the §3.7 rule stands until a sourcing spec), O4/G8 (IBM Plex embedded; no external font fetch, ever; layout v1 has placeholder sources, layout v2 ships the real fonts), O5/G9 (customer SST no., PO and contract fragments stay hidden while blank; add no columns), C5/G16 (Managed Identity; the `appBlobAuth` flip is a cloud-cutover ops step).
+**Also stop and ask** when a unit seems to need any of these:
+- a second family, or a write to `billing_account`;
+- TypeScript money arithmetic;
+- a new error code beyond `INVOICE_POLYGON_DATA_MISSING` and `INVOICE_NEGATIVE_UTILISED`;
+- a new audit event type;
+- a change to printed wording beyond the code-standards labels;
+- a v1 file change after the rewrite unit.
 
-**Decided and delivered (no longer open):** X3/C3 (`is_default` vs one-ACTIVE — the one-ACTIVE index excludes the default), X4 (same-file two-rewrites — carried by the bm47–bm49 binder), O2/C4/G6 (SHA-256 for template/asset blobs, md5 for invoice PDFs, algorithm recorded per row), O3/G7 (notes & footer are fixed layout text), O10/G10 (nothing deletes a version), G11 (role grants ADMIN/MANAGER EDIT, USER READ), G12 (CSV version on `customer_bill.ref_csv_template_version_id`) — all delivered by bm50 (2026-10-08). The seeded `invoice_settings` role grants are confirmed in the bm50 spec and applied by `db:seed-billing`.
-
-**Record every resolution in all three places that track it,** in the same change (§7.2).
+**Record every resolution in the plan (as a new D#) and in each companion doc that cites it, in the same change** (§7).
 
 ---
 
 ## 6. Files You Must Not Modify Without Explicit Instruction
 
-The general §5 list applies in full. Stop, explain why, and get confirmation before touching any of the files below:
+The general §5 list applies in full. Stop, explain why, and get confirmation before touching any of these:
 
 1. **Carried forward:**
    - `components/ui/`
-   - applied migrations (now including `0044`)
    - `udr-status.repository.ts` (the only `rating` writer)
-   - `rated-lines.repository.ts`, which **stays read-only**. If X1 resolves to R9, the usage-row read goes here as a read
-   - `db/bootstrap/billrun-db-roles.sql` and `rating-db-roles.sql`
+   - `db/bootstrap/rating-db-roles.sql`
    - `billrun_delete_trial_bill`, `customer_bill_finalization_guard`, `rating.billrun_status_guard`
    - `postDocument`, pgledger and the INV reason code
    - Better-Auth tables
    - `tsconfig`, lint and CI configuration
    - lockfiles
-2. **Deployed flow YAML is never edited in the Kestra UI.** Every flow change is a repo commit (Inv #38 also depends on the YAML being the source of truth). Part 1's capacity SQL lives in `bill_run_processing.yml` only. Never put it in a DB function or a Python task.
-3. **The checksum tuple is append-only.** `rated_amount` stays last. Never reorder the tuple, never hash `additional_info`, and never re-anchor the tuple for Part 2 (Inv #35, #43).
-4. **The destructive-DB preflight from bm40 stays.** Never remove or weaken it, and never reintroduce a cross-cluster `DROP DATABASE … WITH (FORCE)`.
-5. **`product.ratecard_ran_usage_lkp` and `product.ratecard_version` are owned by the product module.** Read them only.
-6. **Do not edit seeded layout versions.** Once `db/seeds/invoice-templates/INVTPL-STD-A4/v1/**` is seeded, it is immutable. A layout change is a new `v{n}` directory and a new version row (Inv #44).
-7. **Stored blobs are write-once.** Never overwrite a template, asset or invoice blob. Never delete an orphan inline.
-8. **`customer_bill_finalization_guard` is not relaxed to allow a late stamp.** Stamps land in the same `UPDATE` as `ref_inv_document_id` or not at all (Inv #41).
-9. **Invoice rendering orchestration in `render-invoice.ts`:** the semaphore, the concurrency cap and `BROWSER_CLOSE_TIMEOUT_MS` stay unchanged. Only the `page_setup` read and `footerTemplate` are added.
-10. **`next.config.ts` `serverActions.bodySizeLimit` is not raised** for the logo upload.
-11. **The application branding logo is untouched:** `getBrandingLogo()` and `app`/`app_logo_path`.
-12. **The generic System Config page:** the only authorized change is excluding the `invoice.profile` group from its editable list.
-13. **No new dependency beyond Handlebars.** `sharp` is **not** a usable dependency (only an optional transitive of `next`); logo dimensions come from pure parsers (bm60, guarded by `tests/guardrails/no-image-library.test.ts`). An SVG sanitizer library, an image library or any other addition is a stop-and-ask.
-14. **Rating module files** (schema, flow, `rating-db-roles.sql`) change only after X1 resolves to R9, and only under `ratemgmt-ai-workflow-rules.md`.
-15. **`workflow-management/**` gets no Part 2 change.** A Part 2 diff touching it is off-plan.
+   - `next.config.ts` `serverActions.bodySizeLimit`
+   - `getBrandingLogo()` and `app`/`app_logo_path`
+   - the destructive-DB preflight (bm40)
+   - `product.ratecard_ran_usage_lkp` / `ratecard_version` (product-owned; read only)
+2. **Customer Management — off limits for this whole update (D46):**
+   - `services/accounts/**`
+   - `components/customers/**`
+   - `app/(app)/customers/**`
+   - `actions/accounts/**`
+   - `db/migrations/0050_billing_account_template_ref.sql`
+3. **Applied migrations (now through `0050`; there is no `0042`).**
+   - **Authorized exceptions, fresh-DB round only:** bm64 edits `0046_invoice_template_catalog.sql` in place for the family schema and seed (D26), and bm70–bm72 update only its v1 seed literals (the two checksums and, in bm71/bm72, the `BTV00000002` `structure`) to match the rewritten v1 files (D41). Change only the `.sql`; leave its `_journal.json` entry.
+   - Every other schema change is a new migration with a hand-added journal entry, like `0047`–`0050`.
+   - After that unit, `0046` is applied and protected again.
+4. **The v1 seed directories** `db/seeds/invoice-templates/INVTPL-STD-A4/v1/**` and `db/seeds/invoice-templates/generated/INVOICE/v1/**`.
+   - **Authorized exception:** bm70, bm71 and bm72 rewrite v1 in place (D41, D59); the checksum pin lands in bm72.
+   - Regenerate `checksums.json` only with `scripts/invoice-templates/write-checksums.ts`.
+   - After that unit the checksum pin (guardrail 65) makes them immutable. Every later change is a new version.
+5. **Flow YAML.** The only authorized Phase 3 change is removing the `appendix` build and the `CAPACITY_APPENDIX_OVER_LIMIT` guard from `local-dev/bill_run_processing.yml`, plus correcting the comments in `bill_run_processing.template.yml` (D31). Commit it to the repo; never edit it in the Kestra UI. Any other flow change is off-plan.
+6. **`services/billing/invoice-template/helpers.ts`.** The only authorized change is the `date`/`period` (DD/MM/YYYY) and `qty` (whole or 2 decimals) formats, through the shared formatter. Register no helper; remove none.
+7. **`services/billing/render-invoice.ts` orchestration.** The semaphore, the 2-render cap and `BROWSER_CLOSE_TIMEOUT_MS` stay unchanged. Only the footer alignment changes.
+8. **Role bootstraps.** Authorized changes only: `db/bootstrap/bootstrap-db-roles.sql` limits `app_runtime` to SELECT on `bill_template_family` (bm64); `db/bootstrap/billrun-db-roles.sql` revokes `billrun_runtime`'s SELECT on `product.ratecard_ran_usage_lkp` and `product.ratecard_version` (bm68) and updates its Step 5 comment (bm67). Give `billrun_runtime` nothing new.
+9. **Stored blobs.** Never overwrite a template, asset or invoice blob, and never delete one inline. Emptying the `invoice-templates` container is a runbook step (T11) for an operator, not code you write or run.
+10. **`rated-lines.repository.ts` stays read-only.** Add the detail query as a read; add no write.
 
 ---
 
@@ -166,64 +250,90 @@ The general §5 list applies in full. Stop, explain why, and get confirmation be
 
 Apply the general §6. In addition:
 
-1. **Keep three docs aligned on every Part 1 or Part 2 change:** `billmgmt-architecture.md`, `billmgmt-code-standards.md` and `billmgmt-progress-tracker.md`. Both overviews' success criteria require it.
-2. **Close an open item everywhere it is tracked, in one change set.** The same issue appears under different IDs: X1 = C1 = the overview _Overlap_ item, X3 = C3, and O2 = C4. Remove it from the overview's _Open items_, the architecture conflict table and the code-standards C-table together. If X1 resolves to R9, **amend Inv #36's "never from `udr_rated`" clause** in the same change.
-3. **Update the progress tracker with each unit.** Its Part 3 status ("bm40–bm46 planned, not delivered") is already stale against `dev1`. Correct it the next time you touch the tracker.
-4. **Replace R#/D# citations with Invariant numbers.** Code-standards' Part 2 section says the architecture "has no Part 2 invariants yet". That is no longer true (#39–#50 exist). When you touch that section, cite the Invariants and delete the stale sentence.
-5. **Never reuse a number.** Invariants run to #50 and guardrails to item 56. #15 is a tombstone. New rules take new numbers.
-6. **Fold each part into `billmgmt-project-overview.md` at its ship gate:**
-   - Part 1 at bm46, Part 2 at its own gate.
-   - Remove the folded part from `billmgmt-update-overview.md` in the same change.
-   - Do not fold early.
-7. **The permission map moves as one set.** `invoice_settings` changes ship together: the `PERMISSIONS` migration row, `PERMISSIONS.INVOICE_SETTINGS`, the `PermissionName` member, the architecture §4 and code-standards §8 map rows, the `NAV_REGISTRY` entry and its `NAV_ICONS` glyph.
-8. **Binding names are binding.** Create the component, file, union, error-code and audit-event names exactly as code-standards writes them. If a spec needs a different name, update code-standards first.
-9. **Placeholder roots and the `InvoiceRenderInput` shape change in pairs.** A new or renamed placeholder updates `invoice-template/placeholder-catalog.md` and `InvoiceRenderInput` together.
+1. **Keep five docs aligned on every Phase 3 unit:**
+   - `billmgmt-update-overview.md`
+   - `billmgmt-architecture.md`
+   - `billmgmt-code-standards.md`
+   - `billmgmt-progress-tracker.md`
+   - the plan, when a decision changes
+2. **Flip "planned" to "built" as you go.** When a unit delivers an invariant (#51–#58) or a guardrail item (57–67), change its "planned" marker to "built (bmNN)" in the same change, and note the test file that proves it.
+3. **Close each item everywhere it is tracked, in one change set:**
+   - When bm67 ships, close known-issues §19 (mid-run activation splits a run).
+   - Update `TODOS.md`'s Phase 3 entry to say the binding UI is deferred to the second-family phase (D46). Do not mark the entry fully done.
+4. **Never reuse a number.** Invariants run to #58 and guardrail items to 67; #15 is a tombstone. New rules take #59 and item 68 onward, and new decisions take D61 onward.
+5. **Keep the superseded tables current.** If a unit changes a Part 1 or Part 2 rule not yet listed in code-standards' _Rules superseded by this update_ or architecture's P1–P11, add a row in the same change.
+6. **Bind names exactly as code-standards writes them:**
+   - `captureTemplateStamps`
+   - `RenderMode` kinds
+   - `RunTemplateStamps`
+   - `serviceTypes` / `otherCharges`
+   - error codes
+   - stamp columns as plain keys with no FK (the `0029`/`0046` stamp rule)
+   - file paths
+
+   If a spec needs a different name, update code-standards first.
+7. **Change `InvoiceRenderInput` and the layout placeholders together.** The bind shape, the v1 partials and `sample-data.json` move in one unit (§2.5).
+8. **Fold at the ship gate only.** The Phase 3 ship gate folds the update into `billmgmt-project-overview.md` and empties `billmgmt-update-overview.md` back to pointers in the same change. Do not fold early.
 
 ---
 
 ## 8. Verification Checklist — Before the Next Unit
 
-Run the full general §8 checklist, then the module guardrails for every surface the unit touched (code-standards §9). **Run the checks; do not assume.** Additionally:
+Run the full general §8 checklist, then every module guardrail covering the files the unit touched. **Run the checks; do not assume.** Additionally:
 
-1. **Part 1 units:**
-   - guardrails **36–42** pass
-   - DB suites run the **extracted** flow SQL
-   - a live-Kestra capacity run reaches `SCHEDULED → COMPLETED` (required at bm46, and on any unit that changes flow YAML)
-   - no migration exists beyond `0044`
-2. **Part 2 units:** the guardrails the unit introduces (**43–56**) land **with** the unit and are never deferred to the ship gate. In particular:
-   - the binder reconciles (43)
-   - no legacy render caller remains (44)
-   - stamps and pinning hold (46)
-   - tamper fails the render (47)
-   - escaping holds (50)
-3. **Earlier guardrails still green.** Re-run guardrails 1–35 that cover the touched files: the compute boundary, the rating write boundary, the finalization guard, the checksum, the three-handler route inventory, and seed integrity.
-4. **Render-path changes:**
-   - golden-render snapshots pass
-   - bm18/bm19 tests are rewritten against the binder, not kept on legacy builders
-   - the bm45 appendix still renders after any Part 2 change to the render files
-   - a parked render leaves the INV posted and blocks distribution `COMPLETED`
-5. **Grants:**
-   - `billrun_runtime` has no grant on the Part 2 tables and has lost its column grants on the two reserved stamps
-   - `app_runtime` has no `DELETE` on the Part 2 tables
-   - Part 1 read grants are enumerated
-   - all of the above is asserted over `information_schema`
-6. **Authz:**
-   - the route × level matrix covers every new route and action
-   - an `invoice_settings` READ user cannot save, activate or upload
-   - previewing a posted bill also requires `billrun_view`
-7. **Audit:** each save, activation and logo upload writes exactly one `AUDIT_LOG` row in its transaction, with the event types code-standards defines.
-8. **Open items:** the unit depends on no open item from §5, or it cites the recorded resolution.
-9. **Docs:** the §7 docs are updated in the same change set, including the progress tracker and every place a closed item was tracked.
+1. **Guardrails land with their unit.** The items the unit introduces (57–67) pass in that unit and are never deferred to the ship gate:
 
-If any item fails, the unit is not done. Fix it before moving on. Never defer a failure to a later unit or to a ship gate.
+   | Unit | Guardrail items |
+   |---|---|
+   | bm64 | 61 |
+   | bm65 | 59; the capture half of 60 |
+   | bm67 | 57, 58, 60 |
+   | bm68 | 66 |
+   | bm70 | 62 |
+   | bm71 | 63; the detail half of 64 |
+   | bm72 | 64 (final), 65, 67 |
+2. **Earlier guardrails still green.** Re-run every guardrail covering touched files, at minimum:
+   - compute boundary (§9);
+   - rating write boundary;
+   - finalization guard;
+   - checksum (items 35, 46);
+   - three-handler route inventory;
+   - default resolution (45);
+   - tamper (47);
+   - escaping (50);
+   - authz matrix (56).
+3. **Freeze holds.** Any unit touching draft, posting, rerun or the resolver activates a new version mid-run in a test and proves the run's PDFs did not change, except for rerun BANs.
+4. **Customer Management unchanged.** `git diff --stat` shows no file under the §6.2 paths, and guardrail 66 passes.
+5. **Money unchanged where it should be.** `charge_checksum` recomputes for every posted bill, and `Σ net_amount = subtotal` still holds (Inv #39). No amount is computed in TypeScript (grep the diff for `Number(`, `parseFloat`, `+` on amount fields).
+6. **Fresh-DB proof for schema and seed units.**
+   - The migrations apply on an empty database.
+   - The seed uploads to an empty container.
+   - A second run of the seed is a no-op that succeeds, because the seed is idempotent (`onExists: 'returnExisting'`, `db/seeds/invoice-templates.ts`).
+   - A container still holding an old-v1 blob with different bytes fails with `SEED_BLOB_CONFLICT` and overwrites nothing.
+   - **General §8.8 ("no edits to applied migrations") for bm64 and bm70–bm72:** it passes only when the diff edits `0046_invoice_template_catalog.sql` alone among existing migrations (bm70–bm72: its v1 seed literals only), cites D26, records the general §5 confirmation, and the empty-database apply above is green. Every other unit must pass §8.8 as written.
+7. **Flow units.** The extracted-SQL harness passes, and a live-Kestra run reaches `SCHEDULED → COMPLETED` on the `ci` seed with no `appendix` key on any capacity line.
+8. **Render units.**
+   - The structural golden passes on a fixture of about 900 polygons.
+   - A real Chromium render produces the PDF.
+   - A parked render leaves the INV posted and blocks distribution `COMPLETED` (Inv #40).
+9. **Grants.** Asserted over `information_schema`:
+   - `app_runtime` has `SELECT` only on `bill_template_family`;
+   - `billrun_runtime` has no grant on it and none on the new stamp columns.
+10. **Audit.** `BILL_RUN_TRIGGERED` and `BILL_RUN_RERUN` carry `afterData.templateStamps`, written in the capture's transaction. No new audit event type exists.
+11. **Docs.** The §7 docs are updated in the same change set, with "planned" markers flipped and the progress tracker current.
+
+If any item fails, the unit is not done. Fix it before moving on. Never defer a failure to a later unit or to the ship gate.
 
 ---
 
-## What Changed in This Revision (2026-10-07)
+## What Changed in This Revision (2026-10-15)
 
 | Was | Now | Why |
 | --- | --- | --- |
-| Phase-3 supplement (bm22–bm35 unit table, bm22 environmental gate, phase-3 verification items) with Target Capacity appended | Re-scoped to the two in-flight updates. The still-binding phase 1–4 rules are condensed into §0 | Phase 3 is delivered. Its checks now live as code-standards guardrails 1–35 |
-| "38 Module Invariants"; `billmgmt-update-overview.md` "folded in 2026-10-04" | **50** Invariants. The update-overview is live and holds Part 1 and Part 2 | Invoice Template update added #39–#50 |
-| Capacity Unit 0 = "repair the recurring resolver"; "do not invent capacity unit numbers" | Resolver repair already shipped (bm00, bm40 re-scope). Part 1 is bm40–bm46, with bm40–bm44 committed | Build plan and codebase |
-| No Invoice Template rules | Part 2 rules: binder-first, no fallback, sequencing after Part 1, mandatory splits, protected files, open-item stop list | `billmgmt-update-overview.md` Part 2, Inv #39–#50 |
+| Scoped to two in-flight updates, Part 1 (Target Capacity) and Part 2 (Invoice Template), with their sequencing, splits and open-item lists | Re-scoped to **Invoice Template Phase 3**. The still-binding Part 1 and Part 2 rules are condensed into §0 | Both parts are delivered and folded into `billmgmt-project-overview.md` |
+| "50 Module Invariants"; guardrails to item 56; applied migrations through `0049` | **58** Invariants (#51–#58 planned); guardrail items to **67**; applied migrations through **`0050`** | Phase 3 architecture and code-standards sections |
+| "Do not edit seeded layout versions"; "never edit an applied migration"; "`workflow-management/**` gets no change" | One authorized in-place edit each for `0046` and the v1 seeds (fresh-DB round, then pinned); one authorized flow edit (appendix removal) | D26, D31, D41 |
+| "The only admin template input is the boolean `structure` map" | Plus 1–5 plain-text footnote lines; only the Payment toggle remains | D20, D56, Inv #46 amended |
+| Part 1 rate gate: "OFF logs, records the flag state" | OFF logs a WARN and bills Model 1; the flag state is **not** stored | Corrected against dev1 (bm43) |
+| D40: three slices, with the binder shape in slice 2 | Units bm64–bm73 in `bm00` (D59): the binder and the matching v1 pages change together, page by page (bm70–bm72) | The current v1 cannot render the new shape (D34), so the binder must never run ahead of the layout (general §3.7); the module's merge rules remove repository-only units |
+| Rerun audit only records the stamps | Trigger **and** rerun audits record the stamps | Owner-approved fix 9 (2026-10-15), D35 extended |

@@ -27,8 +27,10 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
   order of ops: `infra/docs/db-role-verification.md` "Production cutover".
 - **wfm01** (`0b31f50`): `rating-engine/` → `workflow-management/`; flow paths are
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
-- **Next update:** not yet scoped — `billmgmt-update-overview.md` still describes the
-  delivered Invoice Template update.
+- **Next update:** Bill Run uses the BAN's invoice template (Phase 3,
+  `_updatemodule-billing-invoice-template-phase3-billrun-plan.md`), specced 2026-10-15 as bm64–bm73 (`specs/bm64`–`bm73`), not yet built;
+  its overview is `billmgmt-update-overview.md`. Parts 1 and 2 (earlier updates) are
+  folded into `billmgmt-project-overview.md` (Part 1 fully rolled up 2026-10-15).
 
 ## Delivered units
 
@@ -277,7 +279,13 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
 
 ## Known residuals
 
-- **Zero-charge account (OPEN; known-issues §11/§12).** The processor writes a
+- **Zero-charge account (Mitigated — skip shipped in `aa6f20a`; durable fix still OPEN;
+  known-issues §11/§12).** _(Updated 2026-10-12, verified against dev1 `614743a`: the
+  owner-decided skip is in code — `services/billing/post-run.ts` (~l.320–340) sets a
+  zero-subtotal, zero-total bill's account to `SKIPPED` with `ZERO_TOTAL_NOT_INVOICED`, and
+  `pre-approval-checks.ts` (~l.161) carries the informational `zero_total_bills` check. The
+  durable fix — a conditional `ins_header` in `bill_run_processing.yml` (~l.1170, still
+  unconditional) — remains OPEN.)_ The processor writes a
   `subtotal-0.00` header for a line-less account. **Owner decision (2026-09-17):**
   loosen the approval gate (`positive_totals` excludes line-less bills; informational
   `zero_total_bills` added) and have posting SKIP a bill whose subtotal AND total are
@@ -293,7 +301,9 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
 - **First full DB-gated run (2026-09-17; known-issues §4c).** 2 E2E suites fail at the
   post→distribute assertion (`INVOICED` vs `DISTRIBUTING`) because `triggerDistribution`
   rolls back with `ENGINE_UNREACHABLE` when the engine is absent. First-execution
-  results, untriaged — not a known regression.
+  results, untriaged — not a known regression. _(Updated 2026-10-12: no longer
+  reproducing — the bm42a run (integration 1165/0) and the bm63 run (integration 1219
+  passed / 0 failed, 75 skipped) were green. The original root cause was never triaged.)_
 
 ## Environment / test-safety gotchas
 
@@ -329,6 +339,11 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
 - **Receiver hardening deferred (out of bm36 scope).** The run-level `PROCESSING_FAILED`
   `/status` push has no attempt/stale-execution guard (unlike `DISTRIBUTION_*`), and
   `handle-status-push.ts`'s 409 messages are inverted. Fold into a receiver-touching unit.
+  _(Updated 2026-10-12, reviewed against dev1 `614743a`: the missing attempt guard on the
+  `PROCESSING_FAILED` push is still OPEN. The "inverted messages" claim did not reproduce —
+  a distribution push to a `PROCESSING` run returns "Bill run is not DISTRIBUTING." and a
+  `PROCESSING_FAILED` push to a `DISTRIBUTING` run returns "Bill run is not PROCESSING.",
+  each naming the state the pushed status requires.)_
 - **OPEN (bm46) — TC54's harness doesn't exist.** Extend `billrun-live-kestra-smoke.ts` with a
   seed-profile parameter, or add a sibling script — owner decision pending a live stack.
 - **OPEN (bm46) — O-TC7, partial-period capacity billing.** Unresolved **business** decision
