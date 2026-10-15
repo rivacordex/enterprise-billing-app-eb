@@ -142,15 +142,21 @@ COPY_COLUMNS: tuple[str, ...] = (
     "rating_engine_version",
     "rating_flow_revision",
     "rated_datetime",
-    # bm48 — appended last so the existing column order is untouched.
+    # bm48 — appended last so the existing column order is untouched; rm28 appends
+    # udr_resource after them on the same rule.
     "state",
     "district",
+    "udr_resource",
 )
 
-# bm48 D4 — the ONLY COPY columns a rated chunk may omit, and only for a usage type
+# bm48 D4 — the geo COPY columns a rated chunk may omit, and only for a usage type
 # that reads no ratecard (they are then written NULL). A named allowlist, not a
 # general default: a RAN_USAGE chunk without them still fails loud, which is the
-# guard that PRP stamped and RP carried the matched cell's geo.
+# guard that PRP stamped and RP carried the matched cell's geo. state/district may
+# themselves be NULL (a blank card label). udr_resource (rm28, Inv 28) is stricter
+# and is NOT in this list: for RAN_USAGE it is required and non-empty (the card's
+# start date is NOT NULL, so the value is at least ``||<date>``) — see
+# _resource_value.
 _GEO_OPTIONAL_COLUMNS: tuple[str, ...] = ("state", "district")
 _GEO_REQUIRED_UDR_TYPE = "RAN_USAGE"
 
@@ -281,6 +287,7 @@ def build_chunk_rows(frame: pl.DataFrame) -> list[tuple[Any, ...]]:
         }
         for name in _GEO_OPTIONAL_COLUMNS:
             row[name] = _geo_value(cols, name, i, udr_type)
+        row["udr_resource"] = _resource_value(cols, i, udr_type)
         rows.append(tuple(row[name] for name in COPY_COLUMNS))
     return rows
 
@@ -295,6 +302,29 @@ def _geo_value(cols: dict[str, list[Any]], name: str, i: int, udr_type: str) -> 
         raise KeyError(
             f"rated chunk for {udr_type} has no {name!r} column — PRP stamps the "
             "matched ratecard cell's geo and RP carries it; the handoff is broken."
+        )
+    return None
+
+
+def _resource_value(cols: dict[str, list[Any]], i: int, udr_type: str) -> str | None:
+    """``udr_resource`` for one row (Inv 28). RAN_USAGE: required and non-empty;
+    other usage types: NULL. Absent column for RAN_USAGE raises KeyError, like
+    the geo columns."""
+    if "udr_resource" not in cols:
+        if udr_type == _GEO_REQUIRED_UDR_TYPE:
+            raise KeyError(
+                f"rated chunk for {udr_type} has no 'udr_resource' column (row {i}) — "
+                "PRP stamps the matched ratecard cell's label and RP carries it; the "
+                "handoff is broken."
+            )
+        return None
+    value = _opt_str(cols["udr_resource"][i])
+    if value:
+        return value
+    if udr_type == _GEO_REQUIRED_UDR_TYPE:
+        raise ValueError(
+            f"rated chunk for {udr_type} has an empty 'udr_resource' at row {i} "
+            f"({value!r}) — it is never NULL or empty for {udr_type} (Inv 28)."
         )
     return None
 
