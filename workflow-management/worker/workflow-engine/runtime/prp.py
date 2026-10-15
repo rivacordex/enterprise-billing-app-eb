@@ -25,8 +25,9 @@ rm21-spec — PER_UNIT resolution + identity locks + completeness):
    ``UDRTYPE_MISMATCH`` (rm21 §3).
 5. **Parses + maps** the CSV per a config-driven **feed profile** (D1) — the
    7-column ``.udr`` shape, ``udr_key_columns = [mno|cu|polygon]``, no
-   ``usage_unit`` (product-sourced, rm19/rm20) — and computes the canonical
-   ``udr_key`` (D2): sorted key names, normalised values, ``k=v`` joined by ``|``.
+   ``usage_unit`` (product-sourced, rm19/rm20) — and builds the raw ``udr_key``
+   (Inv 27, rm26): sorted key names, each value exactly as sent, ``k=v`` joined
+   by ``|``. The ratecard cell match is exact (R3).
 6. **Resolves factor 1 per distinct MNO (rm21 §2)** —
    ``mno → party_role_specification->>'mnoPublicKey1' → party_role_id → the
    RAN_USAGE subscription → product_inventory_id`` (+ its offering family id) —
@@ -175,8 +176,8 @@ class FeedProfile:
     # A DATETIME beyond now + this tolerance is OUT_OF_RANGE (D6).
     future_tolerance_seconds: int = 300
     subscriber_ref: SubscriberRef | None = None
-    # Derived once at construction (frozen dataclass): the canonical key-name
-    # order, so canonical_udr_key does not re-sort per row.
+    # Derived once at construction (frozen dataclass): the sorted key-name
+    # order, so build_udr_key does not re-sort per row.
     sorted_key_columns: tuple[str, ...] = field(init=False, default=(), repr=False)
 
     def __post_init__(self) -> None:
@@ -422,18 +423,22 @@ def resolve_pin(conn: psycopg.Connection, subscription_product_name: str) -> Pin
 class RatecardCell:
     """One ACTIVE ratecard ``mno|cu|polygon`` cell (rm21 §1) — the factor-2 and
     service_code references the per-record checks compare against, plus the
-    cell's ``state``/``district`` labels (bm48), stamped onto every record that
-    matches it so geo is frozen at rating time."""
+    cell's ``state``/``district`` labels (bm48) and its ``udr_resource`` label
+    (Inv 28, built once per cell), stamped onto every record that matches it so
+    geo is frozen at rating time."""
 
     lkp_subscriber_ref_id: str
     service_code: str | None
     state: str | None
     district: str | None
+    polygon_start_date: date
+    udr_resource: str
 
 
 _RATECARD_SQL = """
 SELECT l.mno_public_key, l.commercial_unit_public_key, l.polygon_id,
-       l.lkp_subscriber_ref_id, l.service_code, l.state, l.district
+       l.lkp_subscriber_ref_id, l.service_code, l.state, l.district,
+       l.polygon_start_date
 FROM   product.ratecard_version v
 JOIN   product.ratecard_ran_usage_lkp l
        ON l.ratecard_version_id = v.ratecard_version_id
@@ -445,14 +450,15 @@ def extract_ratecard(
     conn: psycopg.Connection, profile: FeedProfile, card_name: str
 ) -> dict[str, RatecardCell]:
     """Load the ACTIVE ratecard's lkp rows for ``card_name`` and index them in
-    memory by the canonical ``mno|cu|polygon`` cell (rm21 §1) — the same canonical
-    form ``canonical_udr_key`` produces for a record, so the per-record match is a
-    dict lookup, never a per-record query (Inv #10). A card with no ACTIVE version
-    yields an empty index (every input row then fails ``INPUT_UNMAPPED``)."""
+    memory by the raw ``mno|cu|polygon`` cell (rm21 §1, Inv 27) — built by the same
+    ``build_udr_key`` a record's key is, so the per-record match is an exact dict
+    lookup, never a per-record query (Inv #10). Each cell's ``udr_resource`` label
+    is built here, once per cell (Inv 28). A card with no ACTIVE version yields an
+    empty index (every input row then fails ``INPUT_UNMAPPED``)."""
     rows = db.fetch(conn, _RATECARD_SQL, {"card_name": card_name})
     index: dict[str, RatecardCell] = {}
     for r in rows:
-        cell = canonical_udr_key(
+        cell = build_udr_key(
             profile,
             {
                 profile.mno_column: str(r["mno_public_key"]),
@@ -460,20 +466,22 @@ def extract_ratecard(
                 profile.polygon_column: str(r["polygon_id"]),
             },
         )
-        # The canonical cell casefolds + trims, so two ACTIVE lkp rows that differ
-        # only by case/whitespace (both accepted by the raw row-key UNIQUE index)
-        # collapse to one key. Fail CLOSED on a collision rather than silently
+        # Case/whitespace variants are distinct raw cells, and exact duplicates are
+        # refused by ratecard_ran_usage_lkp_row_key_unique, so this guard fires only
+        # on a serialisation collision (a key value containing `|` or `=` can make
+        # two different cells serialise identically). Fail CLOSED rather than
         # overwrite — an overwrite would compare factor-2/service_code against an
         # arbitrary winner AND drop the loser's cell from the completeness set
         # (silently suppressing a RATECARD_COVERAGE_GAP). An ambiguous ratecard is
         # a data error to fix, not to guess through (§5.4).
         if cell in index:
             raise ValueError(
-                f"ACTIVE ratecard {card_name!r} has two lkp rows mapping to the same "
-                f"canonical cell {cell!r} (case/whitespace-variant mno|cu|polygon) — "
+                f"two ACTIVE lkp rows serialise to the same udr_key {cell!r} — "
                 "the ratecard is ambiguous; fix the ratecard data."
             )
         sc = r["service_code"]
+        state = _geo_label(r["state"])
+        district = _geo_label(r["district"])
         index[cell] = RatecardCell(
             lkp_subscriber_ref_id=str(r["lkp_subscriber_ref_id"]),
             # Normalise the same way the input side does (strip, '' -> None) so a
@@ -481,10 +489,33 @@ def extract_ratecard(
             # hard-stop the whole batch SERVICE_CODE_MISMATCH (rm21 §4). Case is
             # kept exact per the spec's '==' agreement.
             service_code=(str(sc).strip() or None if sc is not None else None),
-            state=_geo_label(r["state"]),
-            district=_geo_label(r["district"]),
+            state=state,
+            district=district,
+            polygon_start_date=r["polygon_start_date"],
+            udr_resource=build_udr_resource(state, district, r["polygon_start_date"]),
         )
     return index
+
+
+def build_udr_resource(
+    state: str | None, district: str | None, polygon_start_date: date
+) -> str:
+    """``state|district|polygon_start_date`` (Inv 28): ISO date, an empty segment
+    for a blank label."""
+    return f"{state or ''}|{district or ''}|{polygon_start_date.isoformat()}"
+
+
+def invalid_label_cells(ratecard: dict[str, RatecardCell]) -> list[dict[str, str]]:
+    """Cells whose state or district contains ``|`` (R9), sorted by cell for a stable log.
+    Only the offenders are sorted — a clean card (the normal case) costs one pass."""
+    offenders: list[dict[str, str]] = []
+    for cell, entry in ratecard.items():
+        for column, value in (("state", entry.state), ("district", entry.district)):
+            if value is not None and "|" in value:
+                offenders.append({"cell": cell, "column": column, "value": value})
+    # A stable sort by cell keeps a cell's state entry before its district entry.
+    offenders.sort(key=lambda o: o["cell"])
+    return offenders
 
 
 def _geo_label(value: Any) -> str | None:
@@ -517,10 +548,12 @@ class MnoResolution:
 # The `AT TIME ZONE` literal is interpolated from _CONFIG_TZ_NAME (a trusted
 # constant, not user input) so the as-of window and the Python period/date math
 # share one zone. The MNO match is EXACT/case-sensitive (owner decision 2026-10-05,
-# spec §2): the mno|cu|polygon cell casefolds for the ratecard match, but MNO keys
-# are controlled identifiers kept case-consistent between the feed and
-# party_role_specification (seed-discipline, same class as Inv #21); a case drift
-# resolves to 0 rows → UNKNOWN_SUBSCRIBER.
+# spec §2): MNO keys are controlled identifiers kept case-consistent between the
+# feed and party_role_specification (seed-discipline, same class as Inv #21); a
+# case drift resolves to 0 rows → UNKNOWN_SUBSCRIBER. The caller strips the feed
+# MNO for this resolution only; the mno|cu|polygon ratecard cell match is exact on
+# the raw value (Inv 27), so a padded MNO resolves here but misses its card cell
+# (INPUT_UNMAPPED).
 _RESOLVE_SQL = f"""
 SELECT pr.party_role_id, pi.product_inventory_id,
        COALESCE(po.family_offering_id, po.product_offering_id) AS family_id
@@ -574,32 +607,18 @@ def resolve_mno(
 
 
 # ---------------------------------------------------------------------------
-# Canonical udr_key (D2) — the rule is fixed; only the column list is config.
+# Raw udr_key (Inv 27, rm26 / R1-R3) — the shape is fixed; only the column list is
+# config. The earlier value-normalisation rule (_newmodule-rating-engine-plan.md
+# §4.2, rm07 D2) is reversed: values are stored exactly as the feed sent them.
 # ---------------------------------------------------------------------------
 
 
-def _normalise_value(value: str) -> str:
-    """Trim + case-normalise a key value (D2).
-
-    The rule is fixed (rm01 §4.2): two logically identical records serialised
-    differently must produce the SAME ``udr_key``. Only the column *list* is
-    configured, never this rule (code-standards §6 forbidden edit). The same
-    normalisation is applied to the ratecard cell index, so an input cell matches
-    its ratecard entry regardless of case/whitespace drift."""
-    return value.strip().casefold()
-
-
-def canonical_udr_key(profile: FeedProfile, row: dict[str, str]) -> str:
-    """Serialise the profile's configured key columns into the canonical
-    ``udr_key`` / cell (D2, rm21): sorted key names, normalised values, ``k=v``
-    joined by ``|`` — e.g. ``commercial_unit=<v>|mno_public_id=<v>|polygon_id=<v>``.
-    The measured value is excluded by construction (it is not a key column). The
-    key-name order is sorted ONCE at profile construction, not per row."""
-    parts = [
-        f"{name}={_normalise_value(row[name])}"
-        for name in profile.sorted_key_columns
-    ]
-    return "|".join(parts)
+def build_udr_key(profile: FeedProfile, row: dict[str, str]) -> str:
+    """Serialise the profile's key columns into ``udr_key`` / the ratecard cell:
+    key names in sorted order, each value EXACTLY as supplied (no trim, no case
+    fold - Inv 27), ``name=value`` joined by ``|``, e.g.
+    ``commercial_unit=<v>|mno_public_id=<v>|polygon_id=<v>``."""
+    return "|".join(f"{name}={row[name]}" for name in profile.sorted_key_columns)
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +713,8 @@ class ParsedRow:
     # bm48 — the matched ratecard cell's geo labels, carried to udr_rated.
     state: str | None = None
     district: str | None = None
+    # rm26 — the matched cell's `state|district|polygon_start_date` label (Inv 28).
+    udr_resource: str | None = None
 
     @property
     def rejected(self) -> bool:
@@ -762,10 +783,10 @@ def validate_row(
         if ref and ref not in subscriber_ok:
             row.reasons.append("UNKNOWN_SUBSCRIBER")
 
-    # Compose the canonical key only when the row has valid, present key
-    # dimensions (a NULL key dimension cannot form identity).
+    # Compose the raw key only when the row has present key dimensions (a blank
+    # key dimension cannot form identity); a non-blank value is kept as sent.
     if "MISSING_KEY_FIELD" not in row.reasons:
-        row.udr_key = canonical_udr_key(profile, values)
+        row.udr_key = build_udr_key(profile, values)
 
     return row
 
@@ -859,6 +880,9 @@ def _chunk_frame(profile: FeedProfile, udr_type: str, chunk: list[ParsedRow]) ->
         # RL's COPY onto udr_rated.state/district.
         "state": pl.Series([r.state for r in chunk], dtype=pl.Utf8),
         "district": pl.Series([r.district for r in chunk], dtype=pl.Utf8),
+        # rm26 — the matched cell's label (Inv 28), passed through RP to RL's COPY
+        # onto udr_rated.udr_resource.
+        "udr_resource": pl.Series([r.udr_resource for r in chunk], dtype=pl.Utf8),
     }
     # The opaque key dimensions, kept for forensics (D1) — the engine does not map
     # them to typed business columns here.
@@ -1146,6 +1170,7 @@ def process_file(
             # bm48 — freeze the matched cell's geo onto the record.
             row.state = ratecard_cell.state
             row.district = ratecard_cell.district
+            row.udr_resource = ratecard_cell.udr_resource
             chunk_buffer.append(row)
             if len(chunk_buffer) >= chunk_size:
                 flush()
@@ -1454,6 +1479,61 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _refuse_claimed_batch(
+    conn: psycopg.Connection,
+    *,
+    args: argparse.Namespace,
+    event_code: str,
+    specific_problem: str,
+    additional_info: dict[str, Any],
+    batch_id: str,
+    batch_run_num: int,
+    file_key: str,
+    source_file: str,
+    started_at: datetime,
+    engine_version: str | None,
+) -> int:
+    """Refuse a just-claimed batch before any parse (``UDRTYPE_MISMATCH``,
+    ``RATECARD_LABEL_INVALID``): stamp the REFUSED counts (all zero — nothing was
+    parsed), emit the one summarised ``ERROR`` line (Inv #11), write the stderr
+    diagnostic and return the non-zero exit. No chunk is written and the file
+    stays in ``landing/``."""
+    outcome = Outcome(
+        status="REFUSED",
+        event_code=event_code,
+        log_level="ERROR",
+        parsed=0,
+        rejected=0,
+        discarded=0,
+        specific_problem=specific_problem,
+        additional_info=additional_info,
+        alarm_key=_batch_alarm_key(event_code, args.udr_type, file_key, batch_run_num),
+        managed_object=file_key,
+    )
+    stamp_counts(
+        conn,
+        batch_id=batch_id,
+        outcome=outcome,
+        started_at=started_at,
+        workflow_execution_id=args.workflow_execution_id,
+        flow_revision=args.flow_revision,
+        engine_version=engine_version,
+    )
+    emit_summary(
+        event_code=event_code,
+        log_level="ERROR",
+        source_file=source_file,
+        batch_id=batch_id,
+        workflow_execution_id=args.workflow_execution_id,
+        specific_problem=specific_problem,
+        additional_info=additional_info,
+        alarm_key=outcome.alarm_key,
+        managed_object=file_key,
+    )
+    print(f"{event_code}: batch {batch_id} REFUSED", file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     engine_version = args.engine_version or os.environ.get("RATING_ENGINE_VERSION")
@@ -1619,16 +1699,13 @@ def main(argv: list[str] | None = None) -> int:
         # udrType confirmation (rm21 §3): the flow udr_type must equal the pinned
         # offering's udrType spec, or the whole batch hard-stops.
         if pin.udr_type_value != args.udr_type:
-            udrtype_outcome = Outcome(
-                status="REFUSED",
+            return _refuse_claimed_batch(
+                conn,
+                args=args,
                 event_code="UDRTYPE_MISMATCH",
-                log_level="ERROR",
-                parsed=0,
-                rejected=0,
-                discarded=0,
                 specific_problem=(
-                    f"flow udr_type {args.udr_type!r} != pinned offering udrType spec "
-                    f"{pin.udr_type_value!r} ({args.subscription_product_name!r})"
+                    f"flow udr_type {args.udr_type!r} != pinned offering udrType "
+                    f"spec {pin.udr_type_value!r} ({args.subscription_product_name!r})"
                 ),
                 additional_info={
                     "file_key": file_key,
@@ -1636,33 +1713,50 @@ def main(argv: list[str] | None = None) -> int:
                     "offering_udr_type": pin.udr_type_value,
                     "subscription_product_name": args.subscription_product_name,
                 },
-                alarm_key=_batch_alarm_key(
-                    "UDRTYPE_MISMATCH", args.udr_type, file_key, batch_run_num
-                ),
-                managed_object=file_key,
-            )
-            stamp_counts(
-                conn,
                 batch_id=batch_id,
-                outcome=udrtype_outcome,
+                batch_run_num=batch_run_num,
+                file_key=file_key,
+                source_file=source_file,
                 started_at=started_at,
-                workflow_execution_id=args.workflow_execution_id,
-                flow_revision=args.flow_revision,
                 engine_version=engine_version,
             )
-            emit_summary(
-                event_code="UDRTYPE_MISMATCH",
-                log_level="ERROR",
-                source_file=source_file,
+
+        # Card-label delimiter (rm26 / R9, Inv 28): a ratecard state or district
+        # containing `|` would corrupt udr_resource's positional segments, so the
+        # whole batch is refused before any record is rated — post-claim, so Ops
+        # gets a batch row and a catalogued MAJOR line. Remedy: fix the card, then
+        # re-deliver. NOTE a byte-identical re-drop of the same file is discarded
+        # as DUPLICATE_BATCH, because is_duplicate_redelivery matches
+        # (file_key, checksum) whatever the earlier batch's status (rm11 open item
+        # 1) — only changed bytes claim the next batch_run_num. Owner decision
+        # pending (see ratemgmt-progress-tracker, rm26).
+        offenders = invalid_label_cells(ratecard)
+        if offenders:
+            # One entry per offending LABEL, so a cell with both labels bad counts
+            # twice in `n`; the message names distinct cells.
+            n = len(offenders)
+            n_cells = len({o["cell"] for o in offenders})
+            return _refuse_claimed_batch(
+                conn,
+                args=args,
+                event_code="RATECARD_LABEL_INVALID",
+                specific_problem=(
+                    f"{n_cells} ratecard cell(s) in card {pin.card_name!r} have a "
+                    "state or district containing '|'"
+                ),
+                additional_info={
+                    "file_key": file_key,
+                    "card_name": pin.card_name,
+                    "invalid_label_count": n,
+                    "sample": offenders[:20],
+                },
                 batch_id=batch_id,
-                workflow_execution_id=args.workflow_execution_id,
-                specific_problem=udrtype_outcome.specific_problem or "",
-                additional_info=udrtype_outcome.additional_info,
-                alarm_key=udrtype_outcome.alarm_key,
-                managed_object=udrtype_outcome.managed_object,
+                batch_run_num=batch_run_num,
+                file_key=file_key,
+                source_file=source_file,
+                started_at=started_at,
+                engine_version=engine_version,
             )
-            print(f"UDRTYPE_MISMATCH: batch {batch_id} REFUSED", file=sys.stderr)
-            return 1
 
         # 5-9. Parse, validate, resolve, check, chunk, threshold.
         outcome = process_file(

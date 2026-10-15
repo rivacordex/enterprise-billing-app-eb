@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,10 +32,14 @@ import {
   insertRanBillingAccount,
   insertRanSubscription,
   insertRanRatecard,
+  type RanLkpRow,
   SAMPLE_5G_LKP_ROWS,
   SAMPLE_5G_COMMERCIAL_UNIT,
   SAMPLE_5G_RATECARD_STATE,
+  SAMPLE_5G_START_DATE,
 } from "@/db/seeds/sample/sample-5g-fixture";
+import { buildRawUdrKey } from "@/validation/rating/udr-key";
+import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 
 // rm21-spec §8 — the rm07 suite refreshed for the PER_UNIT RAN-usage shape.
 //   #9  Batch claim — a well-named `.udr` file claims run 1; a `_v2` reissue
@@ -108,6 +119,7 @@ const FILE_KEY_RULE =
 const NOW = "2026-09-01T00:00:00Z";
 const UDR_HEADER =
   "mno_public_id,commercial_unit,polygon_id,datetime_YYYYMMDDHHMI,usage_volume,district_name,service_code";
+const UDR_KEY_COLUMNS = ["mno_public_id", "commercial_unit", "polygon_id"];
 
 function statements(path: string): string[] {
   return readFileSync(path, "utf8")
@@ -376,16 +388,22 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       });
     }
 
+    // The card's cells and its card-wide `state` label; defaults to the three
+    // Sample-5G cells and SAMPLE_5G_RATECARD_STATE.
+    type CardContent = { rows?: readonly RanLkpRow[]; state?: string | null };
+
     async function seedRatecard(
       cardName: string,
       mno: string,
       lkpSubscriberRefId: string,
+      content: CardContent = {},
     ): Promise<void> {
       await insertRanRatecard(db, {
         cardName,
         mnoPublicKey: mno,
         lkpSubscriberRefId,
-        rows: SAMPLE_5G_LKP_ROWS,
+        rows: content.rows ?? SAMPLE_5G_LKP_ROWS,
+        ...(content.state === undefined ? {} : { state: content.state }),
         actorId,
       });
     }
@@ -396,6 +414,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     async function seedBaseScenario(
       tag: string,
       mno: string,
+      content: CardContent = {},
     ): Promise<{
       productName: string;
       card: string;
@@ -412,7 +431,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         billingAccountId,
         offeringId,
       );
-      await seedRatecard(card, mno, partyRoleId);
+      await seedRatecard(card, mno, partyRoleId, content);
       return {
         productName: `Sample 5G Services ${tag}`,
         card,
@@ -554,6 +573,10 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         .trim()
         .split(/\r?\n/)
         .filter((l) => l.length > 0);
+    }
+
+    function readManifest(manifestUri: string) {
+      return JSON.parse(readFileSync(fileURLToPath(manifestUri), "utf8"));
     }
 
     // -----------------------------------------------------------------
@@ -943,20 +966,23 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // -----------------------------------------------------------------
     // bm48-spec D2 — PRP stamps the matched ratecard cell's state/district.
     // -----------------------------------------------------------------
+    // polygon -> one chunk column, keyed by the raw key__polygon_id segment.
     // polars prints a null as the string "None".
-    function polygonToGeo(manifestUri: string): Map<string, [string, string]> {
-      const manifest = JSON.parse(
-        readFileSync(fileURLToPath(manifestUri), "utf8"),
-      );
-      const chunk = manifest.chunk_uris[0] as string;
+    function polygonToColumn(
+      manifestUri: string,
+      column: string,
+    ): Map<string, string> {
+      const chunk = readManifest(manifestUri).chunk_uris[0] as string;
       const polygons = readParquetColumn(chunk, "key__polygon_id");
-      const states = readParquetColumn(chunk, "state");
-      const districts = readParquetColumn(chunk, "district");
+      const values = readParquetColumn(chunk, column);
+      return new Map(polygons.map((p, i) => [p, values[i]!]));
+    }
+
+    function polygonToGeo(manifestUri: string): Map<string, [string, string]> {
+      const states = polygonToColumn(manifestUri, "state");
+      const districts = polygonToColumn(manifestUri, "district");
       return new Map(
-        polygons.map((p, i) => [
-          p,
-          [states[i]!, districts[i]!] as [string, string],
-        ]),
+        [...states].map(([p, state]) => [p, [state, districts.get(p)!]]),
       );
     }
 
@@ -973,64 +999,335 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       }
     });
 
-    it("bm48. a ratecard cell with blank state/district labels yields NULL geo, not ''", async () => {
-      const tag = "geoblank";
+    it("bm48. a ratecard cell with blank state/district labels yields NULL geo, not '' (rm26: udr_resource has empty segments)", async () => {
       const mno = "MNO-GEOBLANK";
-      const card = `RATECARD_${tag}`;
-      const { offeringId } = await seedOffering(tag, "RAN_USAGE", card);
-      const partyRoleId = await seedCustomer(tag, { mnoPublicKey1: mno });
-      const billingAccountId = await seedBillingAccount(tag, partyRoleId);
-      await seedSubscription(partyRoleId, billingAccountId, offeringId);
-      await insertRanRatecard(db, {
-        cardName: card,
-        mnoPublicKey: mno,
-        lkpSubscriberRefId: partyRoleId,
+      const s = await seedBaseScenario("geoblank", mno, {
         rows: SAMPLE_5G_LKP_ROWS.map((r) => ({ ...r, district: "   " })),
         state: "",
-        actorId,
       });
       const path = writeUdr(udrName(), cleanRows(mno));
-      const { manifestUri } = runPrp(path, {
-        productName: `Sample 5G Services ${tag}`,
-      });
+      const { manifestUri } = runPrp(path, { productName: s.productName });
       for (const [, [state, district]] of polygonToGeo(manifestUri)) {
         expect(state).toBe("None");
         expect(district).toBe("None");
       }
+      // rm26 / Inv 28 — both blank labels are empty segments: "||2026-01-01".
+      const blank = formatUdrResource({
+        state: null,
+        district: null,
+        polygonStartDate: SAMPLE_5G_START_DATE,
+      });
+      const resources = polygonToColumn(manifestUri, "udr_resource");
+      expect(resources.size).toBe(SAMPLE_5G_LKP_ROWS.length);
+      for (const [, resource] of resources) {
+        expect(resource).toBe(blank);
+      }
     });
 
-    it("bm48. a duplicate canonical cell on the ACTIVE card still fails closed before any claim", async () => {
-      const tag = "geodup";
-      const mno = "MNO-GEODUP";
-      const card = `RATECARD_${tag}`;
-      const { offeringId } = await seedOffering(tag, "RAN_USAGE", card);
-      const partyRoleId = await seedCustomer(tag, { mnoPublicKey1: mno });
-      const billingAccountId = await seedBillingAccount(tag, partyRoleId);
-      await seedSubscription(partyRoleId, billingAccountId, offeringId);
-      const first = SAMPLE_5G_LKP_ROWS[0]!;
-      await insertRanRatecard(db, {
-        cardName: card,
-        mnoPublicKey: mno,
-        lkpSubscriberRefId: partyRoleId,
-        // A case-variant of cell 0: distinct to the raw-row UNIQUE index, the
-        // same canonical cell to PRP.
-        rows: [
-          ...SAMPLE_5G_LKP_ROWS,
-          {
-            ...first,
-            polygonId: first.polygonId.toLowerCase(),
-            district: "OTHER",
-          },
-        ],
-        actorId,
+    // -----------------------------------------------------------------
+    // rm26 — raw udr_key (Inv 27, R1/R2), exact card match (R3), the cell
+    // label udr_resource (Inv 28, R5) and the `|`-in-label refusal (R9).
+    // code-standards §10 tests 17 (PRP half), 18, 20.
+    // -----------------------------------------------------------------
+    describe("rm26 — raw key and cell label", () => {
+      // One feed row, every field explicit (the raw-value cases vary the key).
+      function feedRow(
+        mno: string,
+        polygon: string,
+        serviceCode: string | null,
+        datetime: string,
+        volume = "100",
+      ): string {
+        return [
+          mno,
+          COMMERCIAL_UNIT,
+          polygon,
+          datetime,
+          volume,
+          "DIST-X",
+          serviceCode ?? "",
+        ].join(",");
+      }
+
+      type BatchRow = {
+        batch_id: string;
+        batch_run_num: number;
+        status: string;
+      };
+      async function batchesFor(path: string): Promise<BatchRow[]> {
+        const rows = await sql<BatchRow[]>`
+          SELECT batch_id, batch_run_num, status FROM rating.udr_batch
+           WHERE file_key = ${fileKeyOf(path)}
+           ORDER BY batch_run_num`;
+        return [...rows];
+      }
+
+      // The batch's Parquet chunks (a refusal discards its work dir).
+      function chunkFiles(batchId: string): string[] {
+        const dir = join(workDir, batchId);
+        if (!existsSync(dir)) return [];
+        return readdirSync(dir).filter((f) => f.endsWith(".parquet"));
+      }
+
+      async function expectWholeBatchRefused(
+        path: string,
+        execId: string,
+        code: string,
+      ): Promise<string> {
+        const batch = firstRow(await batchesFor(path));
+        expect(batch.status).toBe("REFUSED");
+        expect(chunkFiles(batch.batch_id)).toEqual([]);
+        expect(eventCodes(execId)).toContain(code);
+        return batch.batch_id;
+      }
+
+      it("17. the raw udr_key is stored as sent — PCU-042_04 keeps its upper case", async () => {
+        const mno = "MNO-RAWKEY";
+        const s = await seedBaseScenario("rawkey", mno);
+        const rows = cleanRows(mno);
+        const path = writeUdr(udrName(), rows);
+        const { manifestUri } = runPrp(path, { productName: s.productName });
+        const chunk = readManifest(manifestUri).chunk_uris[0] as string;
+        const keys = readParquetColumn(chunk, "udr_key");
+        const keyPolygons = readParquetColumn(chunk, "key__polygon_id");
+        expect(keys).toEqual(
+          rows.map((r) => {
+            const [m, cu, polygon] = r.split(",");
+            return buildRawUdrKey(
+              { mno_public_id: m!, commercial_unit: cu!, polygon_id: polygon! },
+              UDR_KEY_COLUMNS,
+            );
+          }),
+        );
+        expect(keys[0]).toContain("polygon_id=PCU-042_04");
+        // key__polygon_id equals the key's polygon_id= segment.
+        keys.forEach((k, i) => {
+          expect(k.split("|").at(-1)).toBe(`polygon_id=${keyPolygons[i]}`);
+        });
       });
-      const path = writeUdr(udrName(), cleanRows(mno));
-      expect(() =>
-        runPrp(path, { productName: `Sample 5G Services ${tag}` }),
-      ).toThrow();
-      const batches = await sql`
-        SELECT 1 FROM rating.udr_batch WHERE file_key = ${fileKeyOf(path)}`;
-      expect(batches).toHaveLength(0);
+
+      it("17. a mixed-case polygon with an inner space keeps both in udr_key", async () => {
+        const mno = "MNO-MIXED";
+        const s = await seedBaseScenario("mixed", mno, {
+          rows: [
+            { polygonId: "Ab C_1", district: "DIST-1", serviceCode: "SVL-100" },
+          ],
+        });
+        const path = writeUdr(udrName(), [
+          feedRow(mno, "Ab C_1", "SVL-100", "2026-08-14T10:00:00"),
+        ]);
+        const { manifestUri } = runPrp(path, { productName: s.productName });
+        const keys = readParquetColumn(
+          readManifest(manifestUri).chunk_uris[0],
+          "udr_key",
+        );
+        expect(keys).toHaveLength(1);
+        expect(keys[0]).toContain("polygon_id=Ab C_1");
+      });
+
+      it.each([
+        ["case", "exactcase", "pcu-042_04"],
+        ["a trailing space", "exactspace", "PCU-042_04 "],
+      ])(
+        "18. a feed polygon differing from the card only by %s refuses the whole batch INPUT_UNMAPPED",
+        async (_label, tag, polygon) => {
+          const mno = `MNO-${tag.toUpperCase()}`;
+          const s = await seedBaseScenario(tag, mno);
+          const rows = cleanRows(mno);
+          rows[0] = feedRow(
+            mno,
+            polygon,
+            SERVICE_CODES[0] ?? null,
+            "2026-08-14T10:00:00",
+          );
+          const path = writeUdr(udrName(), rows);
+          const execId = `exec-${tag}`;
+          expect(() =>
+            runPrp(path, { productName: s.productName, execId }),
+          ).toThrow();
+          await expectWholeBatchRefused(path, execId, "INPUT_UNMAPPED");
+        },
+      );
+
+      it("18. a padded feed MNO resolves the subscriber but misses the card — INPUT_UNMAPPED", async () => {
+        const mno = "MNO-PAD";
+        const s = await seedBaseScenario("mnopad", mno);
+        // MNO resolution strips (owner decision 2026-10-05); the card match does not.
+        const path = writeUdr(udrName(), cleanRows(`${mno} `));
+        const execId = "exec-mnopad";
+        expect(() =>
+          runPrp(path, { productName: s.productName, execId }),
+        ).toThrow();
+        expect(eventCodes(execId)).not.toContain("UNKNOWN_SUBSCRIBER");
+        await expectWholeBatchRefused(path, execId, "INPUT_UNMAPPED");
+      });
+
+      it("17. case-variant card cells are distinct cells, each stamped with its own district (R4 accepted risk)", async () => {
+        const mno = "MNO-CASEVAR";
+        const first = SAMPLE_5G_LKP_ROWS[0]!;
+        const variant = first.polygonId.toLowerCase();
+        const s = await seedBaseScenario("casevar", mno, {
+          rows: [
+            ...SAMPLE_5G_LKP_ROWS,
+            { ...first, polygonId: variant, district: "OTHER" },
+          ],
+        });
+        const path = writeUdr(udrName(), [
+          ...cleanRows(mno),
+          feedRow(mno, variant, first.serviceCode, "2026-08-14T10:15:00"),
+        ]);
+        const { manifestUri } = runPrp(path, { productName: s.productName });
+        const manifest = readManifest(manifestUri);
+        expect(manifest.status).toBe("PROCESSING");
+        expect(manifest.rejected_count).toBe(0); // no DUPLICATE_IN_FILE
+        const keys = readParquetColumn(manifest.chunk_uris[0], "udr_key");
+        expect(new Set(keys).size).toBe(4);
+        const districts = polygonToColumn(manifestUri, "district");
+        expect(districts.get(first.polygonId)).toBe(first.district);
+        expect(districts.get(variant)).toBe("OTHER");
+      });
+
+      it("the chunk carries udr_resource = state|district|polygon_start_date for every Sample-5G cell", async () => {
+        const s = await seedBaseScenario("resource", "MNO-RESOURCE");
+        const path = writeUdr(udrName(), cleanRows("MNO-RESOURCE"));
+        const { manifestUri } = runPrp(path, { productName: s.productName });
+        const resources = polygonToColumn(manifestUri, "udr_resource");
+        for (const lkp of SAMPLE_5G_LKP_ROWS) {
+          expect(resources.get(lkp.polygonId)).toBe(
+            formatUdrResource({
+              state: SAMPLE_5G_RATECARD_STATE,
+              district: lkp.district,
+              polygonStartDate: SAMPLE_5G_START_DATE,
+            }),
+          );
+        }
+      });
+
+      it.each([
+        ["state", "A|B"],
+        ["district", "X|Y"],
+      ])(
+        "20. a card %s containing '|' refuses the batch RATECARD_LABEL_INVALID; fixing the card lets a re-drop run as run 2",
+        async (column, value) => {
+          const tag = `label${column}`;
+          const mno = `MNO-LABEL-${column.toUpperCase()}`;
+          const rows =
+            column === "district"
+              ? SAMPLE_5G_LKP_ROWS.map((r, i) =>
+                  i === 0 ? { ...r, district: value } : r,
+                )
+              : SAMPLE_5G_LKP_ROWS;
+          const s = await seedBaseScenario(
+            tag,
+            mno,
+            column === "state" ? { rows, state: value } : { rows },
+          );
+          const name = udrName();
+          const path = writeUdr(name, cleanRows(mno));
+          const execId = `exec-${tag}`;
+          expect(() =>
+            runPrp(path, { productName: s.productName, execId }),
+          ).toThrow();
+          // Exactly one summarised line (Inv #11), status REFUSED, zero chunks.
+          expect(eventCodes(execId)).toEqual(["RATECARD_LABEL_INVALID"]);
+          const batchId = await expectWholeBatchRefused(
+            path,
+            execId,
+            "RATECARD_LABEL_INVALID",
+          );
+          const rated = await sql`
+            SELECT count(*)::int AS n FROM rating.udr_rated
+             WHERE udr_ref_batch_id = ${batchId}`;
+          expect(firstRow(rated).n).toBe(0);
+
+          // Fix the card, then re-drop the same filename. The content changes
+          // (volumes): a byte-identical re-drop is DUPLICATE_BATCH by checksum
+          // whatever the earlier batch's status (rm11 open item 1).
+          await sql`
+            UPDATE product.ratecard_ran_usage_lkp l
+               SET state = replace(l.state, '|', '-'),
+                   district = replace(l.district, '|', '-')
+              FROM product.ratecard_version v
+             WHERE v.ratecard_version_id = l.ratecard_version_id
+               AND v.card_name = ${s.card}`;
+          writeUdr(name, [
+            cleanRow(mno, 0, "2026-08-14T10:00:00", "101"),
+            cleanRow(mno, 1, "2026-08-14T10:05:00", "102"),
+            cleanRow(mno, 2, "2026-08-14T10:10:00", "103"),
+          ]);
+          const { manifestUri } = runPrp(path, {
+            productName: s.productName,
+            execId: `${execId}-fixed`,
+          });
+          expect(readManifest(manifestUri).status).toBe("PROCESSING");
+          const batches = await batchesFor(path);
+          expect(batches.map((b) => b.batch_run_num)).toEqual([1, 2]);
+          expect(batches[1]!.status).toBe("PROCESSING");
+        },
+      );
+
+      it("a genuine serialisation collision on the ACTIVE card still fails closed before any claim", async () => {
+        const mno = "MNO-SERCOL";
+        const s = await seedBaseScenario("sercol", mno);
+        // Two cells that differ only in where a `|`/`=` run sits — one MNO
+        // swallows the other's polygon prefix — serialise to ONE udr_key.
+        const a = { mno: `${mno}|polygon_id=P`, polygon: "Q" };
+        const b = { mno, polygon: "P|polygon_id=Q" };
+        const keyOf = (c: { mno: string; polygon: string }) =>
+          buildRawUdrKey(
+            {
+              mno_public_id: c.mno,
+              commercial_unit: COMMERCIAL_UNIT,
+              polygon_id: c.polygon,
+            },
+            UDR_KEY_COLUMNS,
+          );
+        expect(keyOf(a)).toBe(keyOf(b));
+        for (const c of [a, b]) {
+          await sql`
+            INSERT INTO product.ratecard_ran_usage_lkp
+              (ratecard_version_id, mno_public_key, commercial_unit_public_key,
+               polygon_id, polygon_start_date, state, district,
+               lkp_subscriber_ref_id, service_code)
+            SELECT ratecard_version_id, ${c.mno}, ${COMMERCIAL_UNIT}, ${c.polygon},
+                   ${SAMPLE_5G_START_DATE}, ${SAMPLE_5G_RATECARD_STATE}, 'DIST-1',
+                   ${s.partyRoleId}, 'SVL-100'
+              FROM product.ratecard_version WHERE card_name = ${s.card}`;
+        }
+        const path = writeUdr(udrName(), cleanRows(mno));
+        // The failure must be the collision guard itself (execFileSync puts the
+        // child's stderr in the error message), not any other pre-claim exit.
+        expect(() => runPrp(path, { productName: s.productName })).toThrow(
+          /serialise to the same udr_key/,
+        );
+        expect(await batchesFor(path)).toHaveLength(0);
+      });
+
+      it("a blank or whitespace-only key field is still MISSING_KEY_FIELD — raw keys keep only non-blank values", async () => {
+        const mno = "MNO-BLANKKEY";
+        const s = await seedBaseScenario("blankkey", mno);
+        const rows = [
+          ...cleanRows(mno),
+          feedRow(mno, "   ", SERVICE_CODES[0] ?? null, "2026-08-14T10:20:00"),
+        ];
+        const path = writeUdr(udrName(), rows);
+        const execId = "exec-blankkey";
+        expect(() =>
+          runPrp(path, { productName: s.productName, execId }),
+        ).toThrow();
+        // A structural reject under reject_threshold 0, not a key built from "   ".
+        expect(eventCodes(execId)).toEqual(["PARSE_FAILURE"]);
+        const batch = firstRow(
+          await sql`
+            SELECT status, rejected_count, reject_file_path FROM rating.udr_batch
+             WHERE file_key = ${fileKeyOf(path)}`,
+        );
+        expect(batch.status).toBe("REFUSED");
+        expect(batch.rejected_count).toBe(1);
+        expect(readFileSync(batch.reject_file_path, "utf8")).toContain(
+          "MISSING_KEY_FIELD",
+        );
+      });
     });
   },
 );

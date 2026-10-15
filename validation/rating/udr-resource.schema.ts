@@ -10,17 +10,12 @@ import { z } from "zod";
 // card — no trim, no case change (bm48 D2).
 export const UDR_RESOURCE_DELIMITER = "|";
 
+// polygon_start_date is the card's `date NOT NULL` column (0041), carried as
+// the text PRP writes with `date.isoformat()`: the date of interest is the one
+// on the card. Only its `YYYY-MM-DD` shape is checked here — the column already
+// guarantees a real day — and it never passes through a `Date`
+// (code-standards §0.1 TypeScript rule 4).
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-// Strict `YYYY-MM-DD` naming a real calendar day (`2026-02-30` is refused).
-// The round trip is pinned to UTC midnight, so no timezone can move the day.
-function isIsoCalendarDate(value: string): boolean {
-  if (!ISO_DATE_RE.test(value)) return false;
-  const date = new Date(`${value}T00:00:00Z`);
-  return (
-    !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
-  );
-}
 
 // Exactly the code points Python's `str.strip()` removes (`str.isspace()`), so
 // "blank" here means what it means to PRP's `_geo_label`. Deliberately not JS
@@ -45,14 +40,9 @@ export const udrResourceSchema = z
   .string()
   .regex(/^[^|]*\|[^|]*\|\d{4}-\d{2}-\d{2}$/, {
     message: "Must be state|district|YYYY-MM-DD with no '|' inside a label",
-    // A value of the wrong shape has no date or labels to check below.
+    // A value of the wrong shape has no labels to check below.
     abort: true,
   })
-  .refine(
-    // The regex pins the date to the last 10 characters.
-    (value) => isIsoCalendarDate(value.slice(-10)),
-    "polygon_start_date must be a real calendar date",
-  )
   .refine(
     // Inv 28: a blank label is an EMPTY segment, never a whitespace one.
     (value) =>
@@ -92,9 +82,9 @@ export function formatUdrResource(parts: {
 }): string {
   const state = segment("state", parts.state);
   const district = segment("district", parts.district);
-  if (!isIsoCalendarDate(parts.polygonStartDate)) {
+  if (!ISO_DATE_RE.test(parts.polygonStartDate)) {
     throw new Error(
-      `udr_resource polygonStartDate is not a valid YYYY-MM-DD date: ${parts.polygonStartDate}`,
+      `udr_resource polygonStartDate is not YYYY-MM-DD: ${parts.polygonStartDate}`,
     );
   }
   return udrResourceSchema.parse(

@@ -25,16 +25,16 @@ The Rating Management module reads raw RAN (Radio Access Network) usage files fo
 
 ## Core user flow (start to finish)
 
-Worked example. Rate-card row: `mno_public_key = MNO-001`, `commercial_unit_public_key = CU-5G`, `polygon_id = ABCD_25 DISTRICT2`, `state = SELANGOR`, `district = PETALING`, `polygon_start_date = 2026-01-01`.
+Worked example. Rate-card row: `mno_public_key = MNO-001`, `commercial_unit_public_key = CU-5G`, `polygon_id = ABCD_25 DISTRICT2`, `state = STATE-1`, `district = DISTRICT-1`, `polygon_start_date = 2026-01-01`.
 
 1. **Provision the rate card.** An operator uploads and activates a `ratecard_version`. If any row's `state` or `district` contains `|`, PRP stops the batch when it loads the card (goal 7).
-2. **File arrives.** `rating-input-file-202608151200.udr` lands in `/data/landing`. It has no header and 7 columns: `mno_public_id, commercial_unit, polygon_id, datetime_YYYYMMDDHHMI, usage_volume, district_name, service_code`. One row is `MNO-001,CU-5G,ABCD_25 DISTRICT2,202608151200,350.000000,PETALING,SVC-01`. The `district_name` column in the feed is not used.
+2. **File arrives.** `rating-input-file-202608151200.udr` lands in `/data/landing`. It has no header and 7 columns: `mno_public_id, commercial_unit, polygon_id, datetime_YYYYMMDDHHMI, usage_volume, district_name, service_code`. One row is `MNO-001,CU-5G,ABCD_25 DISTRICT2,202608151200,350.000000,DISTRICT-1,SVC-01`. The `district_name` column in the feed is not used.
 3. **PRP claims the batch** (`UNIQUE (file_key, batch_run_num)`, unchanged) and parses each row. It builds `udr_key` from the raw field values: `commercial_unit=CU-5G|mno_public_id=MNO-001|polygon_id=ABCD_25 DISTRICT2`. A blank key field is still `MISSING_KEY_FIELD`.
 4. **PRP matches the record to its rate-card cell.** It loads the ACTIVE version of the card named by the offering's `productCardLookUp` once per batch and indexes it in memory by the same raw serialisation. For each record it does one dictionary lookup. If the feed had sent `abcd_25 district2`, there would be no match: `INPUT_UNMAPPED`, and the whole batch is refused.
-5. **PRP stamps the record** with the matched cell's `state`, `district` and `udr_resource = SELANGOR|PETALING|2026-01-01`. The label was built once for that card cell when the card was loaded, not once per record. A blank state or district becomes an empty segment, for example `|PETALING|2026-01-01`. PRP writes these columns to the chunk Parquet.
+5. **PRP stamps the record** with the matched cell's `state`, `district` and `udr_resource = STATE-1|DISTRICT-1|2026-01-01`. The label was built once for that card cell when the card was loaded, not once per record. A blank state or district becomes an empty segment, for example `|DISTRICT-1|2026-01-01`. PRP writes these columns to the chunk Parquet.
 6. **RP passes the value through** unchanged, as it does for `state` and `district`, and prices the record `PER_UNIT` (unchanged).
 7. **RL loads the batch.** It copies the rows into `rating.udr_rated` at status `RATED` in one transaction, including `udr_resource`. The live-row constraint `UNIQUE (partition_period, udr_key, is_live)` and the billed/in-flight collision guard compare the raw keys. RL then archives the file.
-8. **Billing builds the invoice.** For this row it prints the polygon name `ABCD_25 DISTRICT2` from the `polygon_id=` segment, the group label `SELANGOR - PETALING` and the start date `01/01/2026` from `udr_resource`. It never reads the rate card.
+8. **Billing builds the invoice.** For this row it prints the polygon name `ABCD_25 DISTRICT2` from the `polygon_id=` segment, the group label `STATE-1 - DISTRICT-1` and the start date `01/01/2026` from `udr_resource`. It never reads the rate card.
 9. **Operator recovery.** If a batch hard-stops, the operator fixes the feed or the rate card and re-drops the same filename. The same `file_key` gets the next `batch_run_num` and supersedes the prior attempt (unchanged).
 
 ## Features (by category)
@@ -102,7 +102,7 @@ Worked example. Rate-card row: `mno_public_key = MNO-001`, `commercial_unit_publ
 1. A `RAN_USAGE` row for polygon `ABCD_25 DISTRICT2` loads with a `udr_key` containing exactly `polygon_id=ABCD_25 DISTRICT2`, with case and the space preserved.
 2. Two records that differ only in the case of the polygon produce two different keys and both load; the test that asserts this passes. (End to end this needs a card that carries both case-variant cells; a feed variant with no exact card cell is refused as in criterion 3. RL's half injects the pair directly, rm28.)
 3. A feed record whose polygon differs from the rate card only by case or a trailing space is refused as `INPUT_UNMAPPED`, and the whole batch is refused under `HARD_STOP`.
-4. For the matched cell above, the loaded row has `udr_resource = SELANGOR|PETALING|2026-01-01`; a card row with a blank district gives `SELANGOR||2026-01-01`; the date is always `YYYY-MM-DD`.
+4. For the matched cell above, the loaded row has `udr_resource = STATE-1|DISTRICT-1|2026-01-01`; a card row with a blank district gives `STATE-1||2026-01-01`; the date is always `YYYY-MM-DD`.
 5. A rate card with `|` in a `state` or `district` label fails the batch before any record is rated.
 6. `rating.udr_rated` has no new column and no migration file was added; `udr_resource` appears in no role's column UPDATE privilege, and an UPDATE of it by `rating_runtime`, `app_runtime` and `billrun_runtime` is refused with a permission error.
 7. After rating, activating a new rate-card version with different labels or a different start date leaves the already-rated row's `udr_resource` unchanged.

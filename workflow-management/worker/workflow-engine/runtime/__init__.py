@@ -23,8 +23,8 @@ needed it.
 rm07 (rating-management/specs/rm07-prp-claim-validate-reject.md) adds ``prp``
 — the real Pre-Rating Processor entry point that replaces the ``prp`` flow stub:
 claim-before-parse from the filename, the config-driven feed profile, the
-canonical ``udr_key``, record-level validation to a reject file, the reject
-threshold, and the chunked Parquet handoff to RP.
+``udr_key`` (raw feed values since rm26, Inv 27), record-level validation to a
+reject file, the reject threshold, and the chunked Parquet handoff to RP.
 
 rm08 (rating-management/specs/rm08-rp-price-resolution-snapshot.md) adds ``rp``
 — the real Rating Processor entry point that replaces the ``rp`` flow stub:

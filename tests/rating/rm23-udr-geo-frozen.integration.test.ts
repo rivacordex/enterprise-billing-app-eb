@@ -56,7 +56,7 @@ const BILLRUN_ROLES_SQL = join(
 const MNO = "MNO-GEO-FROZEN";
 const PRODUCT_NAME = "Sample 5G Services geo-frozen";
 const CARD_NAME = "RATECARD_GEO_FROZEN";
-const REVISED_STATE = "Johor";
+const REVISED_STATE = "STATE-2";
 const revisedDistrict = (i: number) => `REVISED-${i + 1}`;
 
 function roleUrl(base: string, user: string): string {
@@ -138,7 +138,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     }
 
     // polygon -> [state, district] for one batch's rows. udr_key carries the
-    // canonical cell, lowercased (`...|polygon_id=<v>`).
+    // raw cell, its last segment `polygon_id=<v>` exactly as sent (Inv 27, rm26).
     async function geoByPolygon(
       batchId: string,
     ): Promise<Map<string, [string | null, string | null]>> {
@@ -153,7 +153,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const out = new Map<string, [string | null, string | null]>();
       for (const cell of SAMPLE_5G_LKP_ROWS) {
         const row = rows.find((r) =>
-          r.udrKey.includes(cell.polygonId.toLowerCase()),
+          r.udrKey.endsWith(`|polygon_id=${cell.polygonId}`),
         );
         expect(row, `a rated row for ${cell.polygonId}`).toBeDefined();
         out.set(cell.polygonId, [row!.state, row!.district]);

@@ -116,9 +116,10 @@ _RAW_SCALE = 6
 # fractional digits (so this quantize never rounds, D8 "round once").
 _RAW_UNIT = Decimal("0.000001")
 
-# bm48 — the ratecard geo columns PRP stamps on a matched RAN record; RP passes
-# them through to the rated Parquet untouched.
-_GEO_COLUMNS: tuple[str, ...] = ("state", "district")
+# bm48 / rm27 — the ratecard-cell columns PRP stamps on a matched RAN record
+# (`state`, `district`, `udr_resource`); RP passes them through to the rated
+# Parquet untouched.
+_GEO_COLUMNS: tuple[str, ...] = ("state", "district", "udr_resource")
 
 
 def _exceeds_scale(value: Decimal, scale: int) -> bool:
@@ -740,9 +741,10 @@ def process_chunks(
         udr_keys = [str(v) for v in frame["udr_key"].to_list()]
         quantities = [str(v) for v in frame["udr_usage_quantity"].to_list()]
         subscriber_refs = subscriber_series(frame, subscriber_ref_column)
-        # bm48 — PRP's matched-cell geo, passed through unchanged (RP does no geo
-        # logic). Carried only when PRP emitted it, so RL's COPY KeyError guard
-        # still catches a RAN chunk that lost it somewhere upstream.
+        # bm48 / rm27 — PRP's matched-cell columns (geo and `udr_resource`), passed
+        # through unchanged (RP does no cell logic). Carried only when PRP emitted
+        # them, so RL's missing-column guard still catches a RAN chunk that lost
+        # one somewhere upstream.
         geo_in = {
             name: frame[name].to_list()
             for name in _GEO_COLUMNS

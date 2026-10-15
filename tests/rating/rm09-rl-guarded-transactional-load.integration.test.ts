@@ -221,7 +221,7 @@ const BUILD_ROW_SCRIPT = [
   "  'rating_engine_version': ['v'], 'rating_flow_revision': [1],",
   "  'rated_datetime': [ts]}",
   "if with_geo:",
-  "  data['state'] = ['Selangor']",
+  "  data['state'] = ['STATE-1']",
   "  data['district'] = pl.Series('district', [None], dtype=pl.Utf8)",
   "try:",
   "  row = rl.build_chunk_rows(pl.DataFrame(data))[0]",
@@ -253,7 +253,7 @@ describe.skipIf(!pythonReady)(
       expect(buildRow("RAN_USAGE", true)).toEqual({
         ok: true,
         tail: ["state", "district"],
-        state: "Selangor",
+        state: "STATE-1",
         district: null,
       });
     });
