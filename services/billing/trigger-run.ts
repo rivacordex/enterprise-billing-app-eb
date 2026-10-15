@@ -7,6 +7,7 @@ import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-acc
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { billRunProcessingForceFail } from "@/lib/config";
 import { getBusinessToday } from "@/services/billing/business-today";
+import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
@@ -28,6 +29,12 @@ import { scopeAccounts } from "@/services/billing/scope-accounts";
 // (architecture Inv. #5 — the idempotency latch is keyed by attempt). The
 // SCHEDULED (first-ever trigger) path is untouched: no prior snapshot exists,
 // so the extra queries are skipped and `attempt` stays the literal `1`.
+//
+// bm65-spec §6 (Inv #51/#52) — right after the snapshot insert, and before the
+// engine is triggered, every PENDING account's template family and versions
+// are captured onto its row; the BILL_RUN_TRIGGERED audit lists them. An
+// engine failure rolls the stamps back with the snapshot. The CANCELLED
+// re-trigger path rebuilds the rows, so capture runs on the fresh rows.
 
 export type TriggerRunResult =
   | {
@@ -133,6 +140,7 @@ export async function triggerRun(
       await billRunAccountRepository.insertSnapshot(tx, snapshotRows);
 
       const banIds = pending.map((p) => p.refBillingAccountId);
+      const stamps = await captureTemplateStamps(tx, run.billRunId, banIds);
       let executionRef;
       try {
         executionRef = await engineRegistry.trigger(
@@ -177,6 +185,7 @@ export async function triggerRun(
           banCount: pending.length,
           excludedCount: excluded.length,
           executionId: executionRef.executionId,
+          templateStamps: stamps,
         },
       });
 

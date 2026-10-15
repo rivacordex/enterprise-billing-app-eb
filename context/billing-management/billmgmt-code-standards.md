@@ -1131,7 +1131,7 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
 
 57. **[CRITICAL] No live resolution on a run path (Inv #53).** A grep/AST test fails if `resolveVersionsForPosting` exists anywhere, or if `post-run.ts`, `render-invoice-template.ts`, `invoice-csv.ts` or the `draft-invoice` route constructs a `preview-family` mode.
 58. **[CRITICAL] Capture and freeze (Inv #51).** Trigger a run, activate a new Standard version, then render the draft and post. Every draft and posted PDF uses the captured version; `customer_bill` stamps equal `bill_run_account` stamps; `EXCLUDED` rows have NULL stamps; a cancelled-then-re-triggered run has no orphaned stamps.
-59. **Rerun re-capture (Inv #52).** After a new activation, rerunning one BAN changes only that BAN's stamps. Its posted PDF shows the new footnote and the others show the old one. The `BILL_RUN_RERUN` `afterData.templateStamps` lists that BAN.
+59. **Rerun re-capture (Inv #52).** Built (bm65) for the stamps and the audit: `tests/db/run-template-capture.integration.test.ts`; the posted-PDF footnote half needs the bm67 posting reader. After a new activation, rerunning one BAN changes only that BAN's stamps. Its posted PDF shows the new footnote and the others show the old one. The `BILL_RUN_RERUN` `afterData.templateStamps` lists that BAN.
 60. **No ACTIVE version (Inv #58, D58).** A fixture family with no ACTIVE version:
     - the trigger succeeds and the stamp is NULL;
     - the draft render throws `TEMPLATE_VERSION_NOT_FOUND` (`FAMILY_HAS_NO_ACTIVE_VERSION`);

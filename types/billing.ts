@@ -4,6 +4,7 @@
 // (db/schema/billing/bill-run.ts). Composed here in `types/` and returned by
 // the service so the page never re-derives operability (code-standards §2.7).
 
+import type { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import type { billTemplateFamily } from "@/db/schema/billing/bill-template-family";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import type { ConfigStatus } from "@/types/system-config";
@@ -950,6 +951,26 @@ export interface PostingVersionStamps {
   refInvoiceProfileVersion: number | null;
   refCsvTemplateVersionId: string;
 }
+
+// bm65-spec §2 (Inv #51/#52) — the run-start template stamps on one
+// `bill_run_account` row (read by bm66 drafts and bm67 posting). All nullable:
+// EXCLUDED rows are never captured, and a family with no ACTIVE or default
+// generated version captures a NULL version (D55, Inv #58).
+export type RunTemplateStamps = Pick<
+  typeof billRunAccount.$inferSelect,
+  | "refBillTemplateFamilyId"
+  | "refBillTemplateVersionId"
+  | "refInvoiceProfileVersion"
+  | "refCsvTemplateVersionId"
+>;
+
+// bm65-spec §Design — one captured BAN, as listed in the BILL_RUN_TRIGGERED /
+// BILL_RUN_RERUN audit `afterData.templateStamps`. `versionId` may be null (D55).
+export type CapturedTemplateStamp = {
+  banId: string;
+  familyId: string;
+  versionId: string | null;
+};
 
 // D1 — a draft (pro-forma, editor sample preview) resolves the current
 // versions; a final render and the editor preview of a posted bill resolve the

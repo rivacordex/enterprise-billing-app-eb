@@ -4,6 +4,7 @@ import { billRunRepository } from "@/db/repositories/billing/bill-run.repository
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
+import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import { computeRunCounters } from "@/services/billing/compute-run-status";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
@@ -13,6 +14,8 @@ import type { RerunStage } from "@/validation/billing/rerun-run.schema";
 // bm08-spec §Design/§Implementation §1, revised bm16-spec §Design "Fork B —
 // Phase-1 app-side compute retired". The rerun transaction — pre-approval
 // only. In one `db.transaction`, in this order:
+//   0. capture template stamps (bm65, Inv #52) — the rerun BANs' family and
+//      versions are re-captured from the current catalog; the audit lists them.
 //   1. AUDIT FIRST — write the `BILL_RUN_RERUN` row (prior totals + reason)
 //      BEFORE any re-trigger (architecture Inv.; code-standards §1.10).
 //   2. `attempt_count += 1` for the selected accounts; drop them to PROCESSING.
@@ -118,6 +121,10 @@ export async function rerunRun(
         banIds,
       );
 
+      // 0. Re-capture the template stamps for exactly the rerun BANs (bm65,
+      // Inv #52), before the audit that lists them and the engine re-trigger.
+      const stamps = await captureTemplateStamps(tx, run.billRunId, banIds);
+
       // 1. AUDIT FIRST — committed before the engine is re-triggered.
       await insertAuditEvent(tx, {
         eventType: "BILL_RUN_RERUN",
@@ -130,6 +137,7 @@ export async function rerunRun(
           fromStage: params.fromStage,
           attempt: newAttempt,
           reason: params.reason,
+          templateStamps: stamps,
         },
       });
 

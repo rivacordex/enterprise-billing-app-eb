@@ -9,7 +9,8 @@ import { stripComments } from "@/tests/helpers/strip-code-comments";
 // Turns the update's negative-space rules into permanent CI facts: customer
 // screens and the new Accounts read services never import a mutation path
 // (custmgmt Inv. #11), posting never reads billing_account's template
-// reference (Inv. #18), one validator, and two writers of the column. Pure
+// reference (Inv. #18) — run-start capture is the one reader (billing Inv #54,
+// bm65) — one validator, and two writers of the column. Pure
 // node:fs/node:path static-source assertions over production source (never
 // tests/) — no jsdom, no DB. Same shape as customer-module-boundaries.test.ts.
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -132,7 +133,15 @@ const CUSTOMER_BILL_STAMP_FILES = [
   "db/repositories/billing/invoice-render-input.ts",
 ];
 
+// bm65 (billing Inv #54, D46) — the one sanctioned billing reader of the BAN
+// template reference: the run-start capture SELECT (`listBanFamilies`). It is
+// exempt from the whole check; posting files stay held to "never reads".
+const RUN_START_CAPTURE_FILES = [
+  "db/repositories/billing/bill-run-account.repository.ts",
+];
+
 function readsBanTemplateColumn(relative: string, code: string): boolean {
+  if (RUN_START_CAPTURE_FILES.includes(relative)) return false;
   if (BAN_TEMPLATE_PAIRINGS.some((re) => re.test(code))) return true;
   if (CUSTOMER_BILL_STAMP_FILES.includes(relative)) return false;
   return BAN_TABLE.test(code) && TEMPLATE_COLUMN.test(code);
@@ -312,6 +321,25 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
         exempt,
       ).toBe(true);
     }
+
+    // bm65 — the run-start capture exemption is scanned and still reads the
+    // column (not vacuous), and posting is still held to "never reads".
+    for (const exempt of RUN_START_CAPTURE_FILES) {
+      const file = files.find(({ relative }) => relative === exempt);
+      expect(file, exempt).toBeDefined();
+      expect(
+        BAN_TEMPLATE_PAIRINGS.some((re) => re.test(file!.code)) ||
+          (BAN_TABLE.test(file!.code) && TEMPLATE_COLUMN.test(file!.code)),
+        exempt,
+      ).toBe(true);
+    }
+    const postRun = files.find(
+      ({ relative }) => relative === "services/billing/post-run.ts",
+    );
+    expect(postRun).toBeDefined();
+    expect(readsBanTemplateColumn(postRun!.relative, postRun!.code)).toBe(
+      false,
+    );
 
     // Not vacuous: the allowed customer_bill stamp is in the scanned set.
     expect(

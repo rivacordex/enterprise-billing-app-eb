@@ -23,6 +23,9 @@ import {
 //                             then (nothing is activatable before bm58).
 //   posting (bm54)          → `resolveVersionsForPosting`: the same "current"
 //                             as draft, returned as the four stamp values.
+//   run start (bm65)        → `resolveCurrentVersionsForFamily`: "current"
+//                             within one template family, captured onto
+//                             `bill_run_account` at trigger and rerun.
 //
 // "No template" cannot occur: the default rows are trigger-protected (bm50 D2).
 // If one is missing anyway (corrupted DB) this throws
@@ -111,6 +114,31 @@ export async function resolveVersionsForPosting(
     refInvoiceProfileVersion: profileVersion,
     refCsvTemplateVersionId: csv.billTemplateVersionId,
   };
+}
+
+// bm65-spec §3 (Inv #51, #53) — the versions a BAN in `familyId` is captured
+// with at run start: the only live resolution on a run path, run at capture.
+// `generated` is the family's non-default ACTIVE, else the family's default,
+// else `null` — no throw (D55, Inv #58: a family with no ACTIVE version is
+// stamped NULL and acted on by render/posting). CSV and profile are global
+// and use the same "current" as above.
+export async function resolveCurrentVersionsForFamily(
+  db: Database,
+  familyId: string,
+): Promise<{
+  generated: BillTemplateVersion | null;
+  csv: BillTemplateVersion;
+  profileVersion: number | null;
+}> {
+  const [active, csv, profileVersion] = await Promise.all([
+    billTemplateVersionRepository.findActiveInFamily(db, { familyId }),
+    currentVersion(db, "csv"),
+    invoiceProfileRepository.findActiveVersion(db),
+  ]);
+  const generated =
+    active ??
+    (await billTemplateVersionRepository.findDefaultInFamily(db, { familyId }));
+  return { generated, csv, profileVersion };
 }
 
 export async function resolveTemplate(

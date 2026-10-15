@@ -36,7 +36,37 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
 
 | Unit | What | Status |
 | --- | --- | --- |
-| bm64 | Standard template family in the catalog (`bill_template_family`, `0046` edited in place per D26) | **Built, awaiting review/commit** (2026-10-15) — tsc/ESLint/Prettier clean; unit 4593/0; integration 1239/0 (110 skipped); `db:setup` chain ×2 on a fresh disposable DB OK; checklist queries match |
+| bm64 | Standard template family in the catalog (`bill_template_family`, `0046` edited in place per D26) | **Built** (2026-10-15, `0e65a57`) — tsc/ESLint/Prettier clean; unit 4593/0; integration 1239/0 (110 skipped); `db:setup` chain ×2 on a fresh disposable DB OK; checklist queries match |
+| bm65 | Template captured at run start and on rerun (`bill_run_account` stamps, migration `0051`) | **Built, awaiting review/commit** (2026-10-15) — tsc/ESLint/Prettier clean; unit 4596/0; integration 1245/0 (110 skipped) |
+
+**bm65 notes (2026-10-15):**
+
+- Migration `0051` (five nullable plain-key stamp columns, no FK) + journal `idx 51`; Drizzle
+  mirror on `bill-run-account.ts`. No grant change.
+- `resolveCurrentVersionsForFamily` (the one run-path resolver, Inv #51/#53) on top of new
+  `findActiveInFamily`/`findDefaultInFamily`; `resolveVersionsForPosting` and draft mode untouched.
+- `billRunAccountRepository.listBanFamilies` (the one sanctioned billing read of the BAN template
+  reference, Inv #54), `captureTemplateStamps` (one `unnest` UPDATE per 1,000-row chunk, never
+  EXCLUDED) and `readStamps`. Array params use the repo's `ARRAY[…]::text[]` idiom (Drizzle
+  expands a bare JS array into a value list).
+- `services/billing/capture-template-stamps.ts` resolves once per distinct family; NULL version
+  for a family with no ACTIVE/default (D55). Wired into `triggerRun` (after `insertSnapshot`,
+  before the engine) and `rerunRun` (step 0, before the audit); both audits carry
+  `templateStamps`.
+- cm22 guardrail: one exemption (`bill-run-account.repository.ts`), asserted non-vacuous;
+  `post-run.ts` asserted never to read the column.
+- Tests: `run-template-capture.integration.test.ts` (activation-after-trigger, rerun re-capture,
+  no-ACTIVE family → NULL never EXCLUDED); `trigger-run.integration` (PENDING stamped, EXCLUDED
+  NULL, audit, cancel → re-trigger fresh); `billrun-db-roles` 17j (billrun_runtime SELECT-only on
+  `bill_run_account`); service unit tests (order + afterData); schema test.
+- `trigger-run.integration` simulates the EXCLUDED account by wrapping the real
+  `scopeAccounts` (the e2e journey's simulated-exclusion precedent); a genuine partial-period
+  exclusion needs the full product-inventory fixture chain.
+- Docs: architecture Inv #51 (capture half), #52, #54 and the `bill_run_account` storage row
+  marked built (storage row now states "no FK"; Inv #52 corrected from `setAttemptForRerun` to
+  `rerunRun` → `captureTemplateStamps`, which is where the code re-captures); code-standards
+  guardrail 59 marked built for the stamp/audit half; custmgmt-architecture Inv #18 note added.
+  Code-standards Data rules 4/5 already carried the spec's corrections.
 
 **bm64 notes (2026-10-15):**
 

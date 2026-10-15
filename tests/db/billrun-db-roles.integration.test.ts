@@ -935,6 +935,26 @@ describe.skipIf(!databaseUrl)(
           billrunRuntime`INSERT INTO billing.document DEFAULT VALUES`,
         ).rejects.toThrow(/permission denied for table document/);
       });
+
+      // bm65-spec §Design "Grants" (Inv #23) — the run-start template stamps on
+      // bill_run_account are app-written. billrun_runtime keeps its table-level
+      // SELECT (so the flow may read them) and holds no write privilege at all.
+      it("17j. bm65 — billrun_runtime reads the bill_run_account template stamps but holds no write on the table", async () => {
+        const privs = await sql<{ privilege_type: string }[]>`
+          SELECT privilege_type FROM information_schema.role_table_grants
+          WHERE grantee = 'billrun_runtime' AND table_schema = 'billing'
+            AND table_name = 'bill_run_account'`;
+        expect(privs.map((p) => p.privilege_type).sort()).toEqual(["SELECT"]);
+        await expect(
+          billrunRuntime`SELECT ref_bill_template_family_id, ref_bill_template_version_id,
+                                ref_invoice_profile_version, ref_csv_template_version_id,
+                                template_captured_at
+                         FROM billing.bill_run_account WHERE ref_bill_run_id = ${runId}`,
+        ).resolves.toBeDefined();
+        await expect(
+          billrunRuntime`UPDATE billing.bill_run_account SET ref_bill_template_version_id = NULL WHERE false`,
+        ).rejects.toThrow(/permission denied for table bill_run_account/);
+      });
     });
 
     // ---- inventory.product_inventory — read-only correlation input (bm27) ---

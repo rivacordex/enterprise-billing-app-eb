@@ -84,6 +84,49 @@ export const billTemplateVersionRepository = {
     return row ?? null;
   },
 
+  // bm65-spec §3 — the family's non-default ACTIVE `generated` version, or
+  // `null`. `btv_one_active_family_uq` guarantees at most one.
+  async findActiveInFamily(
+    db: Database,
+    { familyId }: { familyId: string },
+  ): Promise<BillTemplateVersion | null> {
+    const [row] = await db
+      .select()
+      .from(billTemplateVersion)
+      .where(
+        and(
+          eq(billTemplateVersion.refBillFormatId, INVOICE),
+          eq(billTemplateVersion.kind, "generated"),
+          eq(billTemplateVersion.refBillTemplateFamilyId, familyId),
+          eq(billTemplateVersion.status, "ACTIVE"),
+          eq(billTemplateVersion.isDefault, false),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  },
+
+  // bm65-spec §3 — the family's default `generated` version, or `null`. Only
+  // the default family holds one (`btv_one_default_uq`, architecture P7).
+  async findDefaultInFamily(
+    db: Database,
+    { familyId }: { familyId: string },
+  ): Promise<BillTemplateVersion | null> {
+    const [row] = await db
+      .select()
+      .from(billTemplateVersion)
+      .where(
+        and(
+          eq(billTemplateVersion.refBillFormatId, INVOICE),
+          eq(billTemplateVersion.kind, "generated"),
+          eq(billTemplateVersion.refBillTemplateFamilyId, familyId),
+          eq(billTemplateVersion.isDefault, true),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  },
+
   // Version history, newest first, with `usedByCount` = the number of
   // `customer_bill` rows stamped with this version id (as either the template
   // or the CSV stamp). Counted in SQL (no JS reduce).

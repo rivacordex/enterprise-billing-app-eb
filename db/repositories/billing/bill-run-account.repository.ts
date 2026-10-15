@@ -9,13 +9,111 @@ import { billingAccount } from "@/db/schema/billing/accounts";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
-import type { AccountStatus, ErrorClass, Stage } from "@/types/billing";
+import type {
+  AccountStatus,
+  ErrorClass,
+  RunTemplateStamps,
+  Stage,
+} from "@/types/billing";
+
+// Postgres caps one statement at 65535 bind parameters; the bm65 capture
+// statements bind up to three per account, so they run in chunks.
+const CAPTURE_CHUNK_SIZE = 1000;
+
+function textArray(values: (string | null)[]) {
+  return sql`ARRAY[${sql.join(
+    values.map((v) => sql`${v}`),
+    sql`, `,
+  )}]::text[]`;
+}
 
 // bm03-spec §Design/§6/§7 — the scoping snapshot write: one INSERT of every
 // row (`PENDING` + `EXCLUDED`) built by `scopeAccounts`, inside the trigger
 // transaction. bm04 adds the per-account status read/write the stage handler
 // needs as the engine progresses.
 export const billRunAccountRepository = {
+  // bm65-spec §4 — the family each BAN is captured with: the family of the
+  // version its `ref_bill_template_version_id` names (follow-the-line, 0050),
+  // else the default family. This is the one sanctioned billing read of the BAN
+  // template reference (Inv #54, D46); posting never reads it.
+  async listBanFamilies(
+    tx: Database,
+    banIds: string[],
+  ): Promise<{ banId: string; familyId: string }[]> {
+    const out: { banId: string; familyId: string }[] = [];
+    for (let i = 0; i < banIds.length; i += CAPTURE_CHUNK_SIZE) {
+      const chunk = banIds.slice(i, i + CAPTURE_CHUNK_SIZE);
+      const rows = await tx.execute<{ ban_id: string; family_id: string }>(sql`
+        SELECT ba.billing_account_id AS ban_id,
+               COALESCE(btv.ref_bill_template_family_id, dft.bill_template_family_id) AS family_id
+        FROM billing.billing_account ba
+        LEFT JOIN billing.bill_template_version btv
+          ON btv.bill_template_version_id = ba.ref_bill_template_version_id
+        CROSS JOIN (
+          SELECT bill_template_family_id FROM billing.bill_template_family WHERE is_default
+        ) dft
+        WHERE ba.billing_account_id = ANY(${textArray(chunk)})`);
+      for (const r of rows)
+        out.push({ banId: r.ban_id, familyId: r.family_id });
+    }
+    return out;
+  },
+
+  // bm65-spec §4 (Inv #51/#52) — write the run-start template stamps for the
+  // given BANs in one set-based UPDATE per chunk (parallel `unnest` arrays, no
+  // per-BAN statement). The profile and CSV versions are global, so they are
+  // shared by every row. EXCLUDED rows are never stamped.
+  async captureTemplateStamps(
+    tx: Database,
+    billRunId: string,
+    rows: { banId: string; familyId: string; versionId: string | null }[],
+    shared: { profileVersion: number | null; csvVersionId: string },
+  ): Promise<void> {
+    for (let i = 0; i < rows.length; i += CAPTURE_CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + CAPTURE_CHUNK_SIZE);
+      await tx.execute(sql`
+        UPDATE ${billRunAccount} AS bra
+        SET ref_bill_template_family_id = u.family_id,
+            ref_bill_template_version_id = u.version_id,
+            ref_invoice_profile_version = ${shared.profileVersion}::integer,
+            ref_csv_template_version_id = ${shared.csvVersionId},
+            template_captured_at = now()
+        FROM unnest(
+          ${textArray(chunk.map((r) => r.banId))},
+          ${textArray(chunk.map((r) => r.familyId))},
+          ${textArray(chunk.map((r) => r.versionId))}
+        ) AS u(ban_id, family_id, version_id)
+        WHERE bra.ref_bill_run_id = ${billRunId}
+          AND bra.ref_billing_account_id = u.ban_id
+          AND bra.status <> 'EXCLUDED'`);
+    }
+  },
+
+  // bm65-spec §4 — one BAN's run-start stamps (bm66 drafts, bm67 posting), or
+  // `null` when the BAN is not in the run.
+  async readStamps(
+    tx: Database,
+    billRunId: string,
+    banId: string,
+  ): Promise<RunTemplateStamps | null> {
+    const [row] = await tx
+      .select({
+        refBillTemplateFamilyId: billRunAccount.refBillTemplateFamilyId,
+        refBillTemplateVersionId: billRunAccount.refBillTemplateVersionId,
+        refInvoiceProfileVersion: billRunAccount.refInvoiceProfileVersion,
+        refCsvTemplateVersionId: billRunAccount.refCsvTemplateVersionId,
+      })
+      .from(billRunAccount)
+      .where(
+        and(
+          eq(billRunAccount.refBillRunId, billRunId),
+          eq(billRunAccount.refBillingAccountId, banId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  },
+
   async insertSnapshot(
     tx: Database,
     rows: BillRunAccountInsert[],
