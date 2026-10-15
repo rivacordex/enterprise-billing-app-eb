@@ -61,7 +61,18 @@ consume `results` directly instead of re-fetching. Low priority.
 
 ---
 
-## 2. 🔴 No DB-level "one INV per bill" latch (review #9)
+## 2. 🟢 RESOLVED (bm19) — No DB-level "one INV per bill" latch (review #9)
+
+**Update (2026-10-12, verified against dev1 `614743a`):** resolved as
+recommended below. Migration `db/migrations/0037_document_customer_bill_latch.sql`
+adds `document.ref_customer_bill_id` + `period_partition` (schema
+`db/schema/billing/documents.ts`), a composite FK to
+`customer_bill (customer_bill_id, period_partition)`, paired/INV-only CHECKs and
+the partial unique index `document_ref_customer_bill_id_unique`
+(`WHERE ref_customer_bill_id IS NOT NULL`), so a second INV for one bill is
+structurally refused. The app-layer `IS NULL` guard in `stampPosted`
+(`customer-bill.repository.ts` ~l.414) is demoted to a friendly early-return
+(bm19 Phase-2 review fold T5). The text below is the original finding.
 
 **Where:** `db/schema/billing/customer-bill.ts` (`ref_inv_document_id`) +
 `services/billing/post-run.ts` / `customer-bill.repository.ts`.
@@ -120,6 +131,12 @@ the app-layer checks to a friendly early-return.
   (`FORBIDDEN` / `VALIDATION_ERROR` / fallback) is re-declared in
   `approve-and-post-panel.tsx`, `posting-progress-view.tsx`,
   `trigger-run-dialog.tsx`, and `rerun-dialog.tsx`.
+  **Update (2026-10-12, verified against dev1 `614743a`):** the copies have
+  grown — `describeError` is now declared in **10 billing components**
+  (the four above plus `cancel-run-dialog`, `reject-dialog`, `stall-banner`,
+  `force-complete-distribution-dialog`, `rerun-distribution-control`,
+  `start-distribution-control`) and **2 accounts components**
+  (`close-period-button`, `wizard-defaults-form`). Still open.
 - **`periodKeyFor`** (a `YYYY-MM` accounting-period key) exists in both
   `services/billing/pre-approval-checks.ts` and
   `services/accounts/post-document.ts` (plus two `to_char(..,'YYYY-MM')` SQL
@@ -145,14 +162,22 @@ a `PostingStatusBadge` component.
 
 ---
 
-## 4. 🔴 Pre-existing integration-test failures surfaced during testing
+## 4. 🟢 Pre-existing integration-test failures surfaced during testing (4a/4b RESOLVED by bm21; 4c no longer reproducing as of 2026-10-12)
 
 Discovered while running the full integration suite against a throwaway
 Postgres. These **fail identically on the base commit** (`2efa01b`) and are
 **not** caused by the bm09–bm11 review fixes — but they are real and worth a
 follow-up. All are outside the bm09–bm11 scope (they live in bm02/bm03).
 
-### 4a. Materialize / trigger generate an invalid `2026-02-29` date
+### 4a. 🟢 RESOLVED (bm21 T7 #4a) — Materialize / trigger generate an invalid `2026-02-29` date
+
+**Update (2026-10-12, verified against dev1 `614743a`):** the diagnosis below
+was wrong. It was a **test-fixture bug, not a production one**: the fixture
+built plain calendar-date strings per loop iteration (day 29 in February).
+`currentDuePeriod` already clamps correctly via `Date.UTC`. The fixture now
+uses `period_end` day 27 / `scheduled_run_date` day 28 in every month (see the
+comment in `tests/db/materialize-runs.integration.test.ts` ~l.69-84). No
+production date-clamping change was needed.
 
 **Where:** `tests/db/materialize-runs.integration.test.ts`,
 `tests/db/billing-schema.integration.test.ts` (bill-run insert path).
@@ -167,7 +192,12 @@ month-end/day-clamping bug in the bill-run period/scheduled-date derivation
 that day doesn't exist (2026 isn't a leap year), so the database refused it. The
 date math needs to clamp to the last real day of the month.
 
-### 4b. `trigger-run` double-trigger test hits a duplicate-key
+### 4b. 🟢 RESOLVED (bm21 T7 #4b) — `trigger-run` double-trigger test hits a duplicate-key
+
+**Update (2026-10-12, verified against dev1 `614743a`):** fixed in the test as
+diagnosed. The double-trigger case now uses its own period `2026-07-01`
+(`tests/db/trigger-run.integration.test.ts` ~l.197-207), so it no longer
+collides with the previous case's `2026-06-01` row.
 
 **Where:** `tests/db/trigger-run.integration.test.ts` — "rejects a second
 trigger while the run is already PROCESSING".
@@ -180,10 +210,17 @@ step in the file created the row and it isn't reset between cases).
 **ELI5.** A test tries to create the same bill run twice and trips over the
 "no duplicates" rule — a test-setup cleanup gap, not a product bug.
 
-### 4c. Both full-journey E2E suites fail at post → distribute (UNTRIAGED)
+### 4c. ⚪ NO LONGER REPRODUCING — Both full-journey E2E suites fail at post → distribute (never triaged)
 
 **Where:** `tests/db/billing-e2e-happy-path.integration.test.ts:776`,
-`tests/db/billrun-phase3-journey.integration.test.ts:747`.
+`tests/db/billrun-phase3-journey.integration.test.ts:764` (was `:747`).
+
+**Update (2026-10-12, verified against dev1 `614743a`):** no longer
+reproducing. The bm42a/pm46a full integration run (1165 passed / 0 failed) and
+the bm63 run (1219 passed / 0 failed, 75 skipped) were both green, including
+both suites' `expect(…status).toBe("DISTRIBUTING")` assertions. No targeted fix
+commit exists and the root cause was never triaged, so if it recurs, start from
+the analysis below.
 
 **Technical.** Surfaced on 2026-09-17 by the **first full DB-gated run** against a
 disposable Postgres (89 files passed, 2 skipped, 2 failed; 813 tests passed).
@@ -209,9 +246,14 @@ dates to the month's real last day (fixes 4a), and (2) fix the trigger test's
 per-case isolation (fixes 4b). Both are date/fixture issues, unrelated to the
 approve/post work.
 
+**Update (2026-10-12, verified against dev1 `614743a`):** both done in bm21
+T7, and (1) turned out to be unnecessary in production code: `currentDuePeriod`
+already clamps, and only the 4a test fixture was wrong (see 4a). 4b was fixed
+by per-case period isolation.
+
 **4c is separate and untriaged** - it is a post→distribute lifecycle question,
 not a date/fixture issue, and needs its own investigation before a ticket can
-name a fix.
+name a fix. (As of 2026-10-12 it no longer reproduces; see 4c.)
 
 ---
 
@@ -237,7 +279,9 @@ heavily-tested approval-check module now.
   `findLatestActorForEvents(db, runId, TRIGGER_EVENT_TYPES)` returning just the
   name + timestamp.
 - **No partition pruning on approval reads.** `listPostableCurrencies` /
-  `countNonPositivePostable` / `sumPostableTotalForRun` join the two
+  `countNegativePostable` (formerly `countNonPositivePostable`; updated
+  2026-10-12) / `countZeroTotalPostable` (added with the sign-based rule, §11) /
+  `sumPostableTotalForRun` join the two
   `PARTITION BY RANGE(period_partition)` tables WITHOUT the `period_partition`
   predicate `lockBillForPosting` now has, so they scan every monthly partition.
   Fix: add the `firstOfMonth(run.periodStart)` predicate (a signature change to
@@ -253,7 +297,7 @@ wrong — it's just slower than it needs to be, and it gets slower as more month
 of data pile up. Worth batching later; not urgent.
 
 **Recommendation.** One perf pass: dedup the approval reads (thread
-currencies/statuses), add the partition predicate to the three approval reads,
+currencies/statuses), add the partition predicate to the four approval reads,
 add the `gl_event_at` index + sargable close guard, and a targeted latest-actor
 read.
 
@@ -425,13 +469,34 @@ recommendation before each mitigation; the owner chose the mitigations to unbloc
 the demo. Keep the posting skip afterwards as a second line of defence, and
 revisit the approval narrowing (§12) at the same time.
 
+**Update (2026-10-12, verified against dev1 `614743a`):** the first interim
+mitigation has changed shape. `countNonPositivePostable` no longer exists; the
+approval check is now **sign-based** (commit `aa6f20a`):
+`countNegativePostable` counts strictly `< 0` bills and blocks via
+`checkNegativeTotals` in `services/billing/pre-approval-checks.ts` (check name
+still `positive_totals`); `countZeroTotalPostable` feeds the informational
+`zero_total_bills` check and counts every zero bill, line-less or not. The
+posting skip is unchanged (`ZERO_TOTAL_NOT_INVOICED`,
+`services/billing/post-run.ts` ~l.320-341). The durable fix — a conditional
+`ins_header` (`bill_run_processing.yml` ~l.1170) — is **still OPEN**.
+
 ---
 
-## 12. 🟡 The zero-total predicates will misfire on a fully-discounted bill
+## 12. 🟡 The zero-total predicates will misfire on a fully-discounted bill (PARTIALLY RESOLVED)
 
 **Where:** `services/billing/post-run.ts` (`postAccount`'s zero-total skip) and
 `db/repositories/billing/customer-bill.repository.ts`
-(`countNonPositivePostable`).
+(`countNegativePostable` / `countZeroTotalPostable`; formerly
+`countNonPositivePostable`).
+
+**Update (2026-10-12, verified against dev1 `614743a`): item 1 RESOLVED.** The
+`EXISTS(lines)` predicate is gone; approval now blocks only on a strictly
+negative bill, and a zero bill (with or without lines) is informational only
+(`customer-bill.repository.ts` ~l.210-216, whose comment cites this section).
+A fully-discounted account no longer wedges the run. **Items 2 and 3 remain
+open** (the posting skip is still `subtotal == 0 AND total_amount == 0` with no
+line check, so a fully-discounted account gets no INV and is indistinguishable
+from an idle one), as does the RevOps decision below.
 
 **Not a revenue-recognition issue — corrected 2026-09-17.** An earlier draft of
 this entry claimed the skip would "suppress real revenue". That was wrong, and
@@ -551,6 +616,14 @@ credential — remains open.
 
 **Where:** `services/billing/post-run.ts`; plan §13 (out of scope).
 
+**Update (2026-10-12, verified against dev1 `614743a`):** a negative bill no
+longer reaches posting. It is now **blocked at approval** by `positive_totals`
+(`checkNegativeTotals`, `services/billing/pre-approval-checks.ts` ~l.130-139)
+with the remediation "A bill is never a negative amount — review Customers &
+Bills.", so the opaque posting error below is no longer the operator's
+experience. The credit-note gap itself is **still open**: there is still no way
+to issue a credit for a negative position.
+
 **Technical.** A negative `total_amount` is a credit position — money owed **to**
 the customer — and has real economic substance. The zero-invoice skip (§11) is
 therefore deliberately scoped to _exactly_ zero, never `<= 0`, with a
@@ -637,6 +710,14 @@ under an "Unassigned region" group. The **D2 key-reconstruction coupling**
 also stays for as long as the flow keeps writing the bm45 snapshot (it does
 — Part 2 makes no `bill-run-*` flow change). It was stamping geo, not the lkp
 row id, that rating adopted, so the FK-lookup option above was not taken.
+
+**Update — bm49 (verified 2026-10-12 against dev1 `614743a`): D4 CLOSED for the
+invoice.** The invoice usage annex now reads the frozen `udr_rated.state`/
+`district` via `db/repositories/billing/rated-lines.repository.ts`
+(`listBilledUsageForInvoice`; no ratecard query), with `NULL` geo grouped under
+"Unassigned region". Residuals: rows rated **before** bm48 still carry `NULL`
+geo (no backfill); the **D2 coupling** remains only for the flow's bm45
+`_bm45_volume` snapshot, which the invoice no longer reads for geo.
 
 ---
 
@@ -911,7 +992,10 @@ scan. Still open:
 The product-side altitude item (one SQL function for the price lane key) is
 tracked as `prodmgmt-issues-tracker.md` PM-ISS-004 (RESOLVED 2026-10-10 by product guardrail 41).
 
-## `ratecard` role grants are never seeded (observed bm50, not fixed)
+## 22g. 🟡 `ratecard` role grants are never seeded (observed bm50, not fixed)
+
+_(Numbered 22g on 2026-10-12; it was previously an unnumbered section between §22
+and §23.)_
 
 The `ratecard` permission row is created by migration `0043_ratecard_permission.sql`
 (whose header says "role grants are applied by the seed"), but **no seed grants
@@ -952,3 +1036,9 @@ stay, each accepted or owned elsewhere:
 | 23j | **The invoice CSV reads the customer's identity live.** Charge lines and amounts are frozen at posting, but `customer_name`/`customer_tin` come from the current `customer.organization` row on every download (as the PDF render does), so a CSV downloaded after a customer rename differs from the stored PDF. | A re-downloaded CSV can show the new name/TIN. | **Accepted by the owner (2026-10-11)**; revisit with a buyer-identity snapshot at posting if needed. |
 | 23k | ~~**Layout v1's HTML missed three accessibility basics**~~ (SonarCloud, PR #156: no `lang`, no `<title>`, no `<th>` on the Summary of charges and Tax summary tables). **Fixed 2026-10-11 in v1 itself (owner decision, option A, while still at PR stage):** `lang="en"`, a `<title>` ("Tax invoice INV…" / "Pro-forma invoice"), and visually hidden `<thead>` headers (`.vh`), so the printed design is unchanged. Layout v1 and generated v1 were re-indexed (`checksums.json`) and **migration `0046` was edited in place** (the two checksum literals). **Every database and blob store that ran `0046` before this change must be reset** (see 23l). From this commit v1 is final and immutable (Inv #44). | — | Closed. |
 | 23l | **Environments seeded before the v1 accessibility fix hold the old v1 bytes and checksums.** `0046` was edited in place (23k), so a database that already applied it keeps the old `checksum` on `BTV00000001`/`BTV00000002`, and its blob store keeps the old write-once v1 files. Renders with the default then fail `TEMPLATE_CHECKSUM_MISMATCH`; re-seeding fails `BLOB_ALREADY_EXISTS`. | Local dev and the Azure dev environment, until reset. | Reset each: drop and recreate the database (or its volume), delete the `invoice-templates/layouts/INVTPL-STD-A4/v1/` and `invoice-templates/generated/INVOICE/v1/` blobs, then `npm run db:setup`. Throwaway test stacks are unaffected (fresh each run). |
+| 23m | **The amount due prints at body size** (found 2026-10-12, verified against dev1 `614743a`). `db/seeds/invoice-templates/INVTPL-STD-A4/v1/partials/amountDue.hbs` renders `<div class="grand-total">`, but v1 `shell.hbs` (~l.104) only styles `tr.grand-total td` (600 weight, 14pt/18pt), so the figure renders at the 9pt body size with no `tabular-nums`. Also: v1's `footer.hbs` uses inline `font-family: Arial` at 7.5px, independent of the shell fonts (the placeholder `@font-face` gap is 23e). | The most important number on the invoice is not emphasised. Cosmetic; amounts are correct. | The layout v2 unit (with §20 and 23e): v1 is immutable and its checksums are pinned in `0046`, so the fix is a v2 shell/partial change (e.g. `.grand-total` selector without the `tr … td` qualifier, plus `tabular-nums`). |
+| 23n | **Guardrails 43 and 49 have no dedicated tests** (found 2026-10-12, verified against dev1 `614743a`). No test is tagged guardrail 43 (binder reconciliation: it is shown only on the `ci` seed by journey step 2, and no test asserts `renderErrorCode`) or 49 (manifest parity: only partial coverage in `tests/db/invoice-template-catalog.integration.test.ts` ~l.123 and `tests/services/billing/invoice-template/generate.test.ts`). So bm63's "Guardrails **43–56** all present and green, each in the file its unit created" is not fully true. | Coverage gap; a regression in reconciliation error reporting or manifest parity could pass CI. | Fold into 23h's test-only follow-up. |
+| 23o | **The draft invoice preview never returns 422** (found 2026-10-12, verified against dev1 `614743a`). `app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/route.ts` (~l.90-97) maps `DraftInvoiceNotFoundError` to 404 and everything else to 500. bm47 D10 / bm49 D3 specify **422** for `INVOICE_RECONCILIATION_FAILED` and `INVOICE_USAGE_OVER_LIMIT`. | The operator sees the generic "Could not render the draft invoice." instead of the reason, so a reconciliation or over-limit failure cannot be told apart from an outage. | A small billing fix: map the typed `InvoiceRenderError` codes to 422 with a specific message in the route and `invoice-preview-modal.tsx`. |
+| 23p | **The USAGE `ChargeSourceBadge` uses the Info colour family** (found 2026-10-12, verified against dev1 `614743a`). `components/billing/charge-source-badge.tsx` (~l.21-22) styles USAGE with `--color-info-50/700`, but `billmgmt-ui-context.md` §6 reserves info for status and specifies Cyan for the USAGE category. | Low-severity UI conformance gap: a category badge reads as a status. | OPEN. Switch USAGE to the Cyan tokens. |
+| 23q | **`InfoBadge` in the Uncharged table has no icon** (found 2026-10-12, verified against dev1 `614743a`). `components/billing/uncharged-table.tsx` (`InfoBadge`, ~l.47-53; labels such as "Not used"/"Orphan") renders colour + label only, breaking the ui-context rule that colour always pairs with an icon and a label. | Low-severity UI conformance and accessibility gap. | OPEN. Add an icon to `InfoBadge`. |
+| 23r | **"Use the current app logo" import (bm60 D8) rejects the shipped logo files** (found 2026-10-12, verified against dev1 `614743a`). `importAppLogo` (`services/billing/invoice-profile/upload-logo.ts` ~l.233-236) reads `getBrandingLogo()?.src`, falling back to `/brand/invoice-logo-default.svg`. Both that file and `public/brand/logo.svg` (the default `app_logo_path`) declare `width="918.000000pt" height="612.000000pt"` and start with `<!DOCTYPE svg …>`. `svgDimensions` (`image-dimensions.ts` ~l.192-210) refuses any unit other than unitless/`px`, so check 3 fails with `dimensions` ("SVG width/height must be unitless or px"); the `<!doctype` ban in `sanitize-logo.ts` (~l.52) would refuse it next anyway. `tests/actions/billing/invoice-settings/upload-logo.action.test.ts` mocks the service, so no test exercises the real files. | With default branding the import button always fails; an operator must upload a logo file by hand. | OPEN. Either ship a sanitizer-clean default SVG (unitless/px `width`/`height`, no DOCTYPE) or normalise `pt` and strip the DOCTYPE on the import path only; add a test that imports the real shipped file. |

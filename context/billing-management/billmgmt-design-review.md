@@ -23,6 +23,12 @@ Source: `/code-review xhigh` of `7cfbe4d..HEAD`, 2026-10-09.
   layout, profile) and a CSV part called only by posting and bm62.
   Cross-check against bm53 D1 and bm62 before changing the type.
 - **Owner:** design decision needed (bm53 contract). Pick up before bm62.
+- **Status (2026-10-12, verified against dev1 `614743a`): still OPEN, deadline
+  passed.** bm62 shipped (`75fd10d`) without the split; `resolveTemplate`
+  (`services/billing/invoice-template/resolve-template.ts`) still resolves the
+  CSV version on every draft, final and preview-posted render. Re-target: the
+  next unit that touches `resolve-template.ts` / `ResolvedTemplate`, now that
+  bm62's CSV consumer (`invoice-csv.ts`) exists to cross-check against.
 
 ## DR-03 — Sample-bill preview bypasses `bind()` (bm55)
 
@@ -34,6 +40,15 @@ Source: `/code-review xhigh` of `7cfbe4d..HEAD`, 2026-10-09.
   `InvoiceRenderInput` type only shows up at execute time as PREVIEW_FAILED.
 - **Decision (owner, 2026-10-09):** leave for bm55 to decide when it is picked
   up. Minimum: validate `sample-data.json` against the render-input type.
+- **Status (2026-10-12, verified against dev1 `614743a`): still OPEN.** bm55
+  shipped (`c692666`) without deciding it. The sample path in `preview.ts` still
+  spreads the sample and hand-copies `template`/`company`/`payment`/
+  `paymentTermsDays` instead of calling `bind()`, and the parse moved to
+  `services/billing/invoice-template/sample-data.ts` (`parseSampleData`, now
+  shared with bm58's activation test-render), which still does an unvalidated
+  `JSON.parse(...) as InvoiceRenderInput`. Re-target: a test-only/hardening
+  follow-up that adds the schema check in `parseSampleData` (covers both
+  callers).
 
 ## DR-04 — Unused version-stamp columns and exports (ACCEPTED)
 
@@ -42,6 +57,14 @@ Source: `/code-review xhigh` of `7cfbe4d..HEAD`, 2026-10-09.
   (invoice-profile repository); `loadCsvMap` / `csvColumnMapSchema` (`load.ts`).
 - **Decision (owner, 2026-10-09):** keep — reserved for bm56 / bm62. Revisit if
   those units change shape.
+- **Narrowed (2026-10-12, verified against dev1 `614743a`):** `loadCsvMap` is now
+  used (`services/billing/invoice-template/invoice-csv.ts`, bm62) and
+  `invoiceProfileRepository.listVersions` is used
+  (`services/billing/invoice-profile/read-profile.ts`). Still unused: the
+  `refBillFormatId` / `refBillTemplateVersionId` projections on
+  `lockBillForPosting`, `findForAccount` and `findPreviewTarget` (renders read
+  stamps through `invoiceRenderInputRepository.readBillStamps` instead), and the
+  `csvColumnMapSchema` export (used only inside `load.ts`).
 
 ## DR-05 — One-time flat fees are never billed and never reported (DECIDED: option a, OPEN)
 

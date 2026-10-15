@@ -64,9 +64,9 @@ TO billrun_runtime;
 
 ## Verification checklist
 
-- [ ] The migration applies on a disposable DB; `rated_amount` (`numeric(18,2)`, nullable) and `additional_info` (`jsonb`, nullable) exist on `billing.customer_bill_line` **and** on a live partition (parent `ALTER` propagated); no new `source`/`line_type` CHECK was added.
-- [ ] `db/schema/billing/customer-bill-line.ts` + `types/billing.ts` compile; the `BillLineRow` read model exposes `ratedAmount` + `additionalInfo`; the schema is **not** `drizzle-kit push`ed.
-- [ ] A grant assertion test confirms `billrun_runtime` holds `SELECT` on `product.product_specifications`, `product.ratecard_ran_usage_lkp`, `product.ratecard_version` — and **no** INSERT/UPDATE/DELETE on them; `app_runtime` still `SELECT`-only on `customer_bill_line`.
-- [ ] No behavior change: a bill run produces the same bills as before (both new columns land NULL — nothing populates them until bm42).
-- [ ] `tsc` / eslint / the DB-free unit suite green; the DB-gated schema + grant suites green on a disposable Postgres.
-- [ ] Docs: `billmgmt-architecture.md` (Storage/Inv #35) and `billmgmt-code-standards.md` §6 name bm41 as the unit that adds the columns + grants; `bm00-build-plan.md` Part 3 Unit 41 unchanged.
+- [x] The migration applies on a disposable DB; `rated_amount` (`numeric(18,2)`, nullable) and `additional_info` (`jsonb`, nullable) exist on `billing.customer_bill_line` **and** on a live partition (parent `ALTER` propagated); no new `source`/`line_type` CHECK was added. _(`db/migrations/0044_customer_bill_line_capacity.sql`.)_
+- [x] `db/schema/billing/customer-bill-line.ts` + `types/billing.ts` compile; the `BillLineRow` read model exposes `ratedAmount` + `additionalInfo`; the schema is **not** `drizzle-kit push`ed.
+- [x] A grant assertion test confirms `billrun_runtime` holds `SELECT` on `product.product_specifications`, `product.ratecard_ran_usage_lkp`, `product.ratecard_version` — and **no** INSERT/UPDATE/DELETE on them; `app_runtime` still `SELECT`-only on `customer_bill_line`. _(`tests/db/billrun-db-roles.integration.test.ts` cases 17h/17i.)_
+- [ ] No behavior change: a bill run produces the same bills as before (both new columns land NULL — nothing populates them until bm42). _(not separately evidenced — no bm41-only regression run recorded; moot since bm42 populates the columns, 2026-10-12)_
+- [x] `tsc` / eslint / the DB-free unit suite green; the DB-gated schema + grant suites green on a disposable Postgres. _(per tracker: bm42a run integration 1165/0, unit 4077/0; bm63 run unit 4378/0, integration 1219/0, `tsc` clean.)_
+- [ ] Docs: `billmgmt-architecture.md` (Storage/Inv #35) and `billmgmt-code-standards.md` §6 name bm41 as the unit that adds the columns + grants; `bm00-build-plan.md` Part 3 Unit 41 unchanged. _(not done — neither architecture nor code-standards names bm41, 2026-10-12)_

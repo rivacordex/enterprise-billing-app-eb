@@ -8,6 +8,13 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 
 **Invoice Template delta (minimal, 2026-10-07):** **no** new app color, type, radius or shadow token, and still **no AI**. Four UI touches: (1) two new Administration › Invoice Settings screens (Company profile, Invoice template) mapped onto existing families in **§10**, including the new `TemplateVersionStatusBadge`; (2) **Activate** on those screens takes the existing Deep Petrol featured accent (§7); (3) the invoice **document** gets its own print palette and typography, which sit **outside** the app token system and use shared hex values only as fixed layout CSS (§10c); (4) the PDF gains a "Page X of Y" footer, and the draft watermark stays `position:fixed` (§6c). Sources: `billmgmt-update-overview.md` Part 2, `billmgmt-architecture.md` › Invoice Template deltas, `billmgmt-code-standards.md` › Invoice Template deltas.
 
+**Invoice Template Phase 3 delta (minimal, 2026-10-15; planned, not built):** **no** new app color, type, radius, shadow or accent token, still **no AI**, and the Deep Petrol CTA (§7) is unchanged. Three UI touches:
+1. The Invoice template editor keeps one section toggle (**Payment information**) and gains **Footnote** lines; every other toggle is removed (D56, §10b).
+2. The rewritten layout v1 replaces the Usage annex with per-type, per-State-District detail pages and a Total Amount page. It reuses the §10c `--inv-*` print palette and adds **no** layout variable (§10d).
+3. New park/skip reasons surface on existing surfaces with existing families (§10d).
+
+Sources: `billmgmt-update-overview.md`, `billmgmt-architecture.md` › Invoice Template Phase 3 deltas, `billmgmt-code-standards.md` › Invoice Template Phase 3 deltas.
+
 **Rendering rule (shared §8):** every badge/pill renders the dark `-fg` text on the light `-bg` tint (never white-on-tint) and always pairs color with an icon **and** label, so meaning never depends on colour alone. Match the component names in `billmgmt-code-standards.md` §4.
 
 ---
@@ -34,7 +41,7 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 
 | Domain state          | Family                                                      | Base / hex                      | Text (`-fg`) / hex              | Tint (`-bg`) / hex              |
 | --------------------- | ----------------------------------------------------------- | ------------------------------- | ------------------------------- | ------------------------------- |
-| `PENDING`             | Neutral                                                     | `--text-muted` `#6A7283`        | `--color-neutral-700` `#353B46` | `--color-neutral-100` `#EEF0F4` |
+| `PENDING`             | Neutral                                                     | `--text-muted` `#6A7283`        | `--text-muted` `#6A7283`        | `--color-neutral-100` `#EEF0F4` |
 | `PROCESSING`          | Info                                                        | `--color-info-500` `#1A73D9`    | `--color-info-700` `#0C4084`    | `--color-info-50` `#E7F1FD`     |
 | `PROCESSED`           | Info                                                        | `--color-info-500` `#1A73D9`    | `--color-info-700` `#0C4084`    | `--color-info-50` `#E7F1FD`     |
 | `INVOICED`            | Success                                                     | `--color-success-500` `#1F9D57` | `--color-success-700` `#0F5C32` | `--color-success-50` `#E6F6EC`  |
@@ -42,8 +49,8 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 | `COMPLETED`           | Success                                                     | `--color-success-500` `#1F9D57` | `--color-success-700` `#0F5C32` | `--color-success-50` `#E6F6EC`  |
 | `PROCESSING_FAILED`   | Danger                                                      | `--color-danger-500` `#D92D2D`  | `--color-danger-700` `#8A1717`  | `--color-danger-50` `#FDEAEA`   |
 | `DISTRIBUTION_FAILED` | Danger                                                      | `--color-danger-500` `#D92D2D`  | `--color-danger-700` `#8A1717`  | `--color-danger-50` `#FDEAEA`   |
-| `SKIPPED`             | Neutral (muted — dropped at approval, no charge)            | `--text-disabled` `#99A1B0`     | `--color-neutral-600` `#4C5462` | `--color-neutral-100` `#EEF0F4` |
-| `EXCLUDED`            | Neutral (muted — scoping-time exclusion, **not** a failure) | `--text-disabled` `#99A1B0`     | `--color-neutral-600` `#4C5462` | `--color-neutral-100` `#EEF0F4` |
+| `SKIPPED`             | Neutral (muted — dropped at approval, no charge)            | `--text-disabled` `#99A1B0`     | `--text-disabled` `#99A1B0`     | `--color-neutral-100` `#EEF0F4` |
+| `EXCLUDED`            | Neutral (muted — scoping-time exclusion, **not** a failure) | `--text-disabled` `#99A1B0`     | `--text-disabled` `#99A1B0`     | `--color-neutral-100` `#EEF0F4` |
 
 `EXCLUDED` was missing from this table while `AccountStatusBadge` covered all ten values. It matters more from phase 3: an `EXCLUDED` account forgoes the month's recurring **and** usage (Inv #26), so it must never render in the danger family — it is a deliberate scoping outcome, not something that went wrong.
 
@@ -79,9 +86,11 @@ A bill line's **source** is a category, not a status — so it maps onto the **b
 
 | Domain value                                   | Family                          | Base / hex                                                                | Text (`-fg`) / hex              | Tint (`-bg`) / hex             |
 | ---------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------- | ------------------------------- | ------------------------------ |
-| `USAGE` (claimed from `rating.udr_rated`)      | Cyan — "measured traffic"       | `--color-cyan-500` `#00A9BC`                                              | `--color-cyan-700` `#006975`    | `--color-cyan-50` `#E2F8FA`    |
+| `USAGE` (claimed from `rating.udr_rated`)      | Info (as built — see gap note)  | `--color-info-500` `#1A73D9`                                              | `--color-info-700` `#0C4084`    | `--color-info-50` `#E7F1FD`    |
 | `RECURRING` (derived from `product_inventory`) | Primary — "contractual, steady" | `--color-primary-500` `#2E45A9`                                           | `--color-primary-700` `#1B2A68` | `--color-primary-50` `#EDF0FB` |
 | `OCC`                                          | —                               | **Not rendered** — reserved enum value with no producer this phase (D30). |
+
+⚠ Code gap (2026-10-12): the rule above calls for Cyan ("measured traffic") on `USAGE`, but `components/billing/charge-source-badge.tsx` renders it in the **Info** family (`--color-info-50` / `--color-info-700`), which this section forbids for a category. Tracked in billmgmt-known-issues.md.
 
 **§6 previously defined `PlaceholderBanner`/`PlaceholderBadge`. Both are RETIRED (D31)** along with `BILLRUN_PLACEHOLDER_MODE`; delete the components and their warning-family mapping. Nothing replaces them — see `billmgmt-code-standards.md` §4.2 for why a quieter "seeded data" badge is not substituted.
 
@@ -90,17 +99,20 @@ A bill line's **source** is a category, not a status — so it maps onto the **b
 | Element                                                                      | Treatment                                                                                                                                                                                                                                                                                                                            |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Line rows                                                                    | Data grid — `--radius-none` `0`, `--text-body-sm`, `font-variant-numeric: tabular-nums` on all three money columns                                                                                                                                                                                                                   |
-| `discount_amount` column                                                     | **Hidden while every line is `0.00`; renders once any line carries a non-zero discount.** The capacity **motivation** discount (Target Capacity update) is the first such case — a capacity line shows `discount_amount` (and `discount_rate`) in the existing money-column treatment (tabular-nums, `formatCurrency`). No new token |
+| `discount_amount` column                                                     | **Hidden while every line is `0.00`; renders once any line carries a non-zero discount.** The capacity **motivation** discount (Target Capacity update) is the first such case — a capacity line shows `discount_amount` in the existing money-column treatment (tabular-nums, `formatCurrency`). No new token |
 | `udr_rated` drill-down (a `USAGE` row)                                       | Collapsed native `<details>` disclosure on `--surface-sunken` `#EEF0F4`, fetched **on expand only** — a `volume`-profile account sits behind thousands of records                                                                                                                                                                    |
 | Price snapshot (a `RECURRING` row)                                           | Same disclosure slot, same sunken surface — the snapshot _is_ that row's evidence; there is no per-record drill-down behind it                                                                                                                                                                                                       |
-| Per-record exception surface (`BILL_NOTUSED`, unresolvable subscriber — D32) | **Info** family — `--color-info-500` `#1A73D9`, text `--color-info-700` `#0C4084`, tint `--color-info-50` `#E7F1FD`. Informational, never danger: nothing failed and approval is not blocked                                                                                                                                         |
+| Per-record exception surface (`BILL_NOTUSED`, unresolvable subscriber — D32) | **Info** family — text `--color-info-700` `#0C4084`, tint `--color-info-50` `#E7F1FD`. Informational, never danger: nothing failed and approval is not blocked. **As built it is not in `BillLineTable`:** it lives on the **Uncharged** tab (`components/billing/uncharged-table.tsx`) as a local `InfoBadge` pill labelled "Not used" (`BILL_NOTUSED`) or "Orphan" |
+
+⚠ Code gap (2026-10-12): `InfoBadge` in `uncharged-table.tsx` renders a label with **no icon**, which breaks the rendering rule at the top of this file (colour + icon + label). Tracked in billmgmt-known-issues.md.
 
 ## 6c. Draft PRO-FORMA watermark & preview modal a11y (bm18, Phase-2 review folds T9/D-T2/D-T5)
 
 **Watermark legibility.** The draft PDF's diagonal "DRAFT · PRO-FORMA · NOT A
 VALID INVOICE" watermark (Danger family, `--color-danger-500` `#D92D2D`) must
 never degrade the figures the reviewer opened the modal to validate (D-T5).
-`services/billing/render-invoice-template.ts` resolves this structurally
+The layout's `shell.hbs` (`db/seeds/invoice-templates/INVTPL-STD-A4/v1/shell.hbs`,
+moved there from the legacy `render-invoice-template.ts`, R5) resolves this structurally
 rather than by tuning an opacity-vs-contrast ratio: the watermark is a
 `position: fixed` layer at `z-index: 0` (Chromium's print engine repeats a
 fixed-position element on every page, which is what makes it appear on every
@@ -129,11 +141,11 @@ shortly"**; a failed/timed-out render shows an inline **Retry** button with a
 plain-language reason, in the destructive text color — never a frozen or
 empty frame.
 
-**Invoice Template update (2026-10-07).** The watermark **stays `position:fixed`** (R5; the plan body's "move it to the page mechanism" is superseded). The new Chromium `footerTemplate` ("Page X of Y", `--text-caption`-equivalent 7.5pt, muted `#6A7283`) must sit in the bottom margin **without clipping** the watermark. A **parked** final render (checksum mismatch, compile failure, `Σ net ≠ subtotal`) reuses the existing `RenderPendingRow`: warning-700 status text, with the error reason in the destructive text color. There is no new badge, status or color for parking.
+**Invoice Template update (2026-10-07).** The watermark **stays `position:fixed`** (R5; the plan body's "move it to the page mechanism" is superseded). The new Chromium `footerTemplate` (`footer.hbs`: "Page X of Y", inline Arial 7.5px, muted `#6A7283`) must sit in the bottom margin **without clipping** the watermark. A **parked** final render (checksum mismatch, compile failure, `Σ net ≠ subtotal`) reuses the existing `RenderPendingRow`: warning-700 status text, with the error reason in the destructive text color. There is no new badge, status or color for parking.
 
 ## 6d. Invoice usage appendix — per-polygon by state/district (Target Capacity, 2026-10-04)
 
-A capacity offering's posted invoice PDF (rendered by `render-invoice-template.ts` — print CSS, **not** an app screen) carries a per-polygon usage appendix below the charge lines. It introduces **no new token** and follows the module's existing table conventions (§6b/§8/§9):
+A capacity offering's posted invoice PDF (rendered from the layout `shell.hbs` + generated template — print CSS, **not** an app screen) carries a per-polygon usage appendix below the charge lines. It introduces **no new token** and follows the module's existing table conventions (§6b/§8/§9):
 
 | Element                                 | Treatment                                                                                                                                              |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -147,9 +159,13 @@ No new color, typography, radius, or shadow token — the appendix is print CSS 
 
 **Invoice Template update:** Part 2 moves this appendix into the generated layout as the optional **Usage annex** section and adds per-district and per-state **subtotal rows** (semibold, top rule `#E0E4EB`, tabular-nums), following the §10c print palette.
 
-**bm49 — the annex is now itemised billed records, state → district (X1/X2 closed, R9).** bm49 replaces the per-polygon snapshot design above with the delivered shape: the Usage annex lists **every billed `udr_rated` row** for the account (one row per record: Date, Cell, UDR type, Quantity, Unit, Rated amount) grouped **state → district**, with per-district and per-state subtotal rows and a grand total ("Total rated usage") that equals the bill's rated usage. Geo (`state`/`district`) is read **off `udr_rated`** (bm48, R9), never from a ratecard query; a row without geo is shown under an **"Unassigned region"** state group (district label "—"), never dropped. The 8pt/11pt table, tabular-nums on the numeric columns, overline state/district headers, and the semibold `#E0E4EB`-ruled subtotal rows are unchanged from above; `thead` repeats, a state's `tbody` may span pages (no `break-inside: avoid`), and only the subtotal row pairs use `break-before: avoid`. Bounded to **10,000 rows/account** (bm45's load-tested cap); over the bound the render fails `INVOICE_USAGE_OVER_LIMIT` and the account parks. No new token.
+**bm49 — the annex is now itemised billed records, state → district (X1/X2 closed, R9).** bm49 replaces the per-polygon snapshot design above with the delivered shape: the Usage annex lists **every billed `udr_rated` row** for the account (one row per record: Date, Cell, UDR type, Quantity, Unit, Rated amount) grouped **state → district**, with per-district and per-state subtotal rows and a grand total ("Total rated usage") that equals the bill's rated usage. Geo (`state`/`district`) is read **off `udr_rated`** (bm48, R9), never from a ratecard query; a row without geo is shown under an **"Unassigned region"** state group (district label "—"), never dropped. The 8pt/11pt table, tabular-nums on the numeric columns, overline state/district headers, and the semibold `#E0E4EB`-ruled subtotal rows are unchanged from above (as built, that annex CSS exists only in the seeded `generated/INVOICE/v1/invoice.hbs`; see the gap note below); `thead` repeats, a state's `tbody` may span pages (no `break-inside: avoid`), and only the subtotal row pairs use `break-before: avoid`. Bounded to **10,000 rows/account** (bm45's load-tested cap); over the bound the render fails `INVOICE_USAGE_OVER_LIMIT` and the account parks. No new token.
 
-**bm47 behavior change — renders on the draft too.** The binder has one bind path for both the draft PRO-FORMA preview and the final posted invoice (bm47-spec D1), so the Usage annex section now renders on **both**. "Final only" above described the legacy hardcoded template (`render-invoice-template.ts`, deleted in bm47), not a durable product rule — Part 2 overview Core flow 5 always intended the full layout to render on the draft.
+**Superseded by Invoice Template Phase 3 (planned, 2026-10-15).** The rewritten v1 removes the Usage annex. Per-polygon detail moves into `chargeDetails`, grouped type of service → State-District, with rows built from `udr_key`/`udr_resource` (§10d). Everything in this §6d describes the delivered bm49 annex until bm71 ships.
+
+⚠ Code gap (2026-10-12): the layout `shell.hbs` has no `.annex` / `table.usage` rules and the generator does not inject them, so any template **generated on Activate** renders the Usage annex unstyled (9pt body, no subtotal/header styling). Only the seeded `generated/INVOICE/v1` carries the styling. Tracked in billmgmt-known-issues.md §20 (fix in layout v2).
+
+**bm47 behavior change — renders on the draft too.** The binder has one bind path for both the draft PRO-FORMA preview and the final posted invoice (bm47-spec D1), so the Usage annex section now renders on **both**. "Final only" above described the legacy hardcoded template (the string builders in `render-invoice-template.ts`, deleted in bm47; the file remains as the binder's entry point), not a durable product rule — Part 2 overview Core flow 5 always intended the full layout to render on the draft.
 
 ## 7. Accent, CTA & destructive usage
 
@@ -192,13 +208,14 @@ No new color, typography, radius, or shadow token — the appendix is print CSS 
 | Run list / account / uncharged / errors / **bill line** tables          | `--radius-none` `0` (data grids stay square)                                                          |
 | Status/category badges & pills                                          | `--radius-pill` `9999px`                                                                              |
 | Run **action cards** (Current & Upcoming), pre-approval checklist panel | `--radius-md` `6px` (default)                                                                         |
-| Trigger / Rerun / Cancel / Approve dialogs                              | `--radius-lg` `8px`                                                                                   |
+| Trigger / Rerun / Cancel / Approve / Reject / Force-complete confirms   | `rounded-md` `6px` — as built these are **inline confirm panels**, not modals (`role="alertdialog"`; Rerun and Reject use `role="group"`); Force-complete has a danger-500 border |
 | Stall banner                                                            | `--radius-sm` `4px` (full-width bar, minimal rounding) — the stub/placeholder banner is retired (D31) |
 | `udr_rated` drill-down disclosure panel                                 | `--radius-sm` `4px` on `--surface-sunken`                                                             |
-| Invoice Settings form cards, logo dropzone                              | `--radius-md` `6px`                                                                                   |
+| Invoice Settings form cards                                             | `--radius-md` `6px`                                                                                   |
+| Logo dropzone                                                           | Square (`0`) as built — no rounded class in `logo-upload-field.tsx`                                   |
 | Live preview frame (`InvoicePreviewFrame`), Version history table       | `--radius-none` `0` (the frame is a sheet of paper, and the table is a data grid)                     |
 | Generated .hbs viewer                                                   | `--radius-sm` `4px` on `--surface-sunken`                                                             |
-| `ActivateVersionDialog`                                                 | `--radius-lg` `8px`                                                                                   |
+| `ActivateVersionDialog`                                                 | `rounded-xl` `12px` — inherited from the shared `DialogContent` (`components/ui/dialog.tsx`)          |
 | Invoice **document** (print)                                            | Square throughout (`0`); the logo is never clipped or rounded                                         |
 
 No new radius, shadow, or elevation tokens — shared §6/§7 apply as-is.
@@ -234,6 +251,11 @@ One badge serves both template and company-profile versions (code-standards › 
 | Read-only view (READ without EDIT)                        | Fields render as text, with no disabled-input grey wash. Save, Activate and Upload are not rendered                                                                                          |
 | Company profile empty state (no ACTIVE profile) | **Info** alert, no action for READ: "No company profile is active. Invoices are issued without the issuer and payment blocks until a profile is activated." EDIT users get a "Create a draft" outline button (built in bm59) that focuses the empty edit form below the alert |
 | Preview loading, queued and error states                  | Reuse the §6c PDF skeleton and captions as they are                                                                                                                                           |
+| **Phase 3:** page heading                                 | "Invoice template — Standard (default)" in `--text-h2`; "(default)" in `--text-muted`. No family switcher: only Standard exists (D45) |
+| **Phase 3:** section toggles                              | One optional checkbox, **Payment information**. The Usage annex and Notes rows and all four column toggles are removed (D56); the mandatory sections keep the locked row above |
+| **Phase 3:** Footnote field                               | Group label "Footnote", hint "Printed after Total Amount on the last page" in `--text-muted`. 1–5 single-line inputs (`--radius-sm`), each with a visible label "Line 1"…"Line 5" and a `0/200` counter in `--text-caption`; an outline **Add line** button (`Plus`) is hidden at 5 lines, and a ghost icon button (`X`, `aria-label="Remove line N"`) is hidden at 1 line. Errors show under the line in Danger `-fg` |
+| **Phase 3:** footnote in READ view                        | The lines render as plain text in a list, with no inputs |
+| **Phase 3:** Activate dialog summary                      | Lists `+ Payment information shown` / `− Payment information hidden` and `Footnote: "old" → "new"` per changed line (mono quotes), or "No change in structure." |
 
 **Confirmed as built (bm55).** The preview service appends one
 `<style data-preview="true">` to the rendered document. It is never part of a
@@ -346,6 +368,8 @@ The invoice is print CSS in the layout's `shell.hbs` (code-standards › Invoice
 
 **Typography (closes O4 if accepted):** fonts are fixed and **embedded** in the layout as base64 `@font-face`, so a render never fetches a font (Inv #47). The legacy template's Arial is replaced. Use IBM Plex Sans 400/600 for text and IBM Plex Mono 400 for IDs, both OFL-licensed and the same faces as the app.
 
+**As built (layout v1): fonts are not embedded.** `shell.hbs` declares the three `@font-face` rules but their `src` lines are commented placeholders, and `fonts/` holds only `OFL.txt`. Renders fall back to Arial/Helvetica (text) and Courier New (mono); no font is fetched. Open follow-up for layout v2 (billmgmt-known-issues.md §23e).
+
 | Role                                         | Size / line height | Weight | Notes                                         |
 | -------------------------------------------- | ------------------ | ------ | --------------------------------------------- |
 | Document title ("TAX INVOICE")               | 16pt / 20pt        | 600    | `--inv-brand`                                 |
@@ -357,3 +381,59 @@ The invoice is print CSS in the layout's `shell.hbs` (code-standards › Invoice
 | Page footer ("Page X of Y")                  | 7.5pt / 10pt       | 400    | `--inv-muted`                                 |
 
 Weights stay at 400 and 600 only (shared §5). The CSV output has no styling.
+
+### 10d. Invoice document — Standard layout v1 rewrite (Invoice Template Phase 3, planned)
+
+Print CSS in the rewritten v1 `shell.hbs` and partials. It uses the §10c `--inv-*` variables **only** and adds no new one. The business mockup (`mockup-invoice-layout-v2.html`) sets the arrangement, **not** the tokens: its `#12355B` is sample brand data (the admin's `--inv-brand` replaces it), and its weight 700 maps to 600.
+
+**Fonts:** IBM Plex Sans 400/600 and IBM Plex Mono 400 are **embedded** in the rewritten v1 as base64 `@font-face`. This supersedes §10c's "As built (layout v1): fonts are not embedded" and closes known-issues §23e.
+
+| Element | Size / line height | Weight | Treatment |
+| --- | --- | --- | --- |
+| Document title "Invoice" | 16pt / 20pt | 600 | `--inv-brand`, under the logo |
+| Recipient name (omitted if blank) | 9pt / 13pt | 600 | `--inv-ink`, first line of the bill-to block |
+| Type-of-service block heading (page 1, one per type) | 9pt / 12pt | 600 | Uppercase, +0.06em, `--inv-brand`; a 1px `--inv-line` rule under it |
+| Utilised / Unutilised / Total rows | 9pt / 13pt | 400; Total 600 | Label left, amount right, tabular-nums; Total sits on a 1px `--inv-line` top rule |
+| "Other charges" block (absent when empty) | 9pt / 13pt | 400; Sub Total 600 | Same row pattern: Description left, Amount right |
+| Total charges · Adjustments · Tax @ x% | 9pt / 13pt | 400 | Amount rows; Adjustments always shown, `0.00` included |
+| Grand Total (the amount due) | 14pt / 18pt | 600 | `--inv-soft` panel with an `--inv-accent` left rule, tabular-nums; carries the fixed "current charges only" line in 8pt `--inv-muted` (Inv #50) |
+| Detail page heading (each type starts a new page) | 12pt / 16pt | 600 | Type name in `--inv-brand`; "Access Seeker: {name}" beneath in 9pt 400 `--inv-body` |
+| State-District group label row (repeats on every page via `<thead>`) | 9pt / 12pt | 600 | Uppercase, `--inv-ink` on `--inv-soft` fill; label `STATE - DISTRICT`, one part, or "Unassigned region". No "(continued)" text |
+| Detail column header row (repeats with the label) | 8pt / 11pt | 600 | `--inv-muted`; numeric headers right-aligned; 1px `--inv-line` bottom rule |
+| Detail rows: Polygon Start Date · Polygon Name · Capacity (Mbps) · Rate/Mbps (MYR) · Utilised Capacity Charges (MYR) | 8pt / 11pt | 400 | Polygon Name in IBM Plex Mono; numbers right-aligned, tabular-nums; dates DD/MM/YYYY; Mbps whole or 2 dp; rows never split (`break-inside: avoid`) |
+| Group Sub Total row | 8pt / 11pt | 600 | 1px `--inv-line` top rule, amount right-aligned |
+| Total Amount page heading "Summary of Utilised Capacity Charges" | 12pt / 16pt | 600 | `--inv-brand`; the page starts with `break-before: page` |
+| Total Amount | 12pt / 16pt | 600 | `--inv-ink` with a 1px `--inv-line` top rule. **Never** the `--inv-soft`/`--inv-accent` amount-due panel, so it cannot be read as the amount due (architecture P10) |
+| Footnote lines | 8pt / 11pt | 400 | `--inv-muted`, one paragraph per line, after Total Amount |
+| Page footer "Page X of Y" | 7.5pt / 10pt | 400 | `--inv-muted`, **right-aligned** (was centred) |
+
+No colour signals sign or status on the invoice. Unutilised is a normal amount, not a warning. A negative Utilised can never print (Inv #55). The draft watermark (§6c, `--inv-watermark`) is unchanged.
+
+**Park and skip reasons in the app** reuse existing surfaces and families, with no new token or component:
+
+| Code | Where it shows | Family and copy |
+| --- | --- | --- |
+| `INVOICE_POLYGON_DATA_MISSING` | Draft preview error (§6c); `RenderPendingRow` | Danger `-fg`: "Polygon data is missing for a billed record (no polygon ID or region). Fix the rated data and rerun this account." |
+| `INVOICE_NEGATIVE_UTILISED` | Same | Danger `-fg`: "Utilised capacity charges came out negative. Check the rate-matching setting and rerun this account." |
+| `INVOICE_RECONCILIATION_FAILED` | Same (existing code) | Existing copy, unchanged |
+| `INVOICE_USAGE_OVER_LIMIT` | Same (existing code) | Existing copy, unchanged |
+| `TEMPLATE_VERSION_NOT_FOUND` (`FAMILY_HAS_NO_ACTIVE_VERSION`) | Draft preview error; at posting, the account shows the existing `SKIPPED` `AccountStatusBadge` with this reason (D58) | Danger `-fg`: "This account's invoice template has no active version. Activate one in Invoice Settings, then rerun this account." |
+
+## 11. Implemented UI not covered above (as built, dev1 614743a)
+
+All on existing token families; no new token.
+
+| Component / route | As built |
+| ----------------- | -------- |
+| `DistributionOutcomeBadge` | `DELIVERED` → Success (`CheckCircle2`, "Delivered"); `FAILED` → Danger (`XCircle`, "Failed") |
+| `RunDetailTabs` (`run-detail-tabs.tsx`) | Tabs: Workflow, Customers & Bills, Uncharged, Errors, Distribution, Audit |
+| `RunFlowProgress`, `PostingProgressView` | Run-flow and posting progress views. `RenderPendingRow` (inside `PostingProgressView`): "Invoice artifact render pending." in `--color-warning-700` plus an outline **Retry render** button (`RotateCcw`; "Retrying…" in flight) |
+| `StartDistributionControl`, `RerunDistributionControl`, `ForceCompleteDistributionDialog` | Distribution controls; Force-complete is an inline confirm panel with a danger-500 border (§9) |
+| `RejectDialog`, `AuditTable` | Inline reject panel (§9); the Audit tab's data grid |
+| `BillRunsFilters`, `BillRunsPagination`, `BillRunsEmptyState` | Bill-runs list filters, pagination and empty state |
+| `ExportRunsButton`, `ExportUnchargedButton` | Export buttons for the runs list and the Uncharged tab |
+| `InvoiceSettingsTabs`, `GeneratedHbsViewer`, `ColourSwatch` | Section tabs (Company profile / Invoice template); read-only `.hbs` viewer (mono, `--radius-sm` on `--surface-sunken`); the 20×20 colour swatch |
+| "Preview with" select (`invoice-structure-form.tsx`) | Preview source: **Sample bill** or one of the recent posted bills |
+| `InvoicePreviewModal` stored-invoice **Download CSV** | Outline button (`FileSpreadsheet`, "Preparing CSV…" in flight), posted bills only; fetch + blob download |
+| Bill-run routes | `bill-runs/[runId]/approve`, `bill-runs/[runId]/draft-invoice/[banId]`, `bill-runs/[runId]/stored-invoice/[banId]`, `bill-runs/[runId]/stored-invoice/[banId]/csv` |
+| Invoice Settings routes | `company-profile/logo/[assetVersionId]`, `invoice-template/versions/[versionId]/files/[file]`; `?tab=` selects the tab (template: `edit`/`generated`/`history`; company profile: `edit`/`history`; default `edit`) |
