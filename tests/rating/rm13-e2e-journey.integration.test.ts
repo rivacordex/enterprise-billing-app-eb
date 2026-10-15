@@ -21,12 +21,16 @@ import {
   type RatingPipeline,
 } from "@/tests/helpers/rating-ran-harness";
 import {
+  SAMPLE_5G_COMMERCIAL_UNIT,
   SAMPLE_5G_LKP_ROWS,
   SAMPLE_5G_RATE_PER_UNIT,
   SAMPLE_5G_RATECARD_STATE,
+  SAMPLE_5G_START_DATE,
 } from "@/db/seeds/sample/sample-5g-fixture";
 import { udrRated } from "@/db/schema/rating/udr-rated";
 import { udrBatch } from "@/db/schema/rating/udr-batch";
+import { buildRawUdrKey } from "@/validation/rating/udr-key";
+import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 
 // rm22-spec §1 — the rm13 operator journey, REFRESHED to PER_UNIT (rm22 refreshes
 // the journey + suite for PER_UNIT; it does NOT build a second test tree). The
@@ -38,6 +42,8 @@ import { udrBatch } from "@/db/schema/rating/udr-batch";
 // the SAME filename -> rm10 supersedes the prior live rows, loads the new set.
 // Proves the units (rm21 PRP / rm20 RP / rm09+rm10 RL) compose end to end, not
 // just pass in isolation — R1 (FLAT→PER_UNIT) asserted here as ship-blocking.
+// rm29 refresh (Inv 27, 28): each rated row's udr_key is the raw cell key and
+// its udr_resource is the cell's `state|district|polygon_start_date`.
 //
 // Requires DATABASE_URL + python3 with the worker runtime (psycopg + polars);
 // shells the real runtime modules exactly as the flow's tasks do (no live Kestra
@@ -178,12 +184,30 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       });
 
       // bm48 — every rated row carries its matched ratecard cell's geo, frozen
-      // at rating. Cell i was written at volume [100, 200, 300][i].
+      // at rating; rm29 — and the raw key + udr_resource of that cell. Cell i
+      // was written at volume [100, 200, 300][i].
       SAMPLE_5G_LKP_ROWS.forEach((cell, i) => {
         const quantity = `${[100, 200, 300][i]}.000000`;
         const row = rated.find((r) => r.udrUsageQuantity === quantity)!;
         expect(row.state).toBe(SAMPLE_5G_RATECARD_STATE);
         expect(row.district).toBe(cell.district);
+        expect(row.udrKey).toBe(
+          buildRawUdrKey(
+            {
+              mno_public_id: MNO,
+              commercial_unit: SAMPLE_5G_COMMERCIAL_UNIT,
+              polygon_id: cell.polygonId,
+            },
+            ["mno_public_id", "commercial_unit", "polygon_id"],
+          ),
+        );
+        expect(row.udrResource).toBe(
+          formatUdrResource({
+            state: SAMPLE_5G_RATECARD_STATE,
+            district: cell.district,
+            polygonStartDate: SAMPLE_5G_START_DATE,
+          }),
+        );
       });
 
       // One live row per (partition_period, udr_key).
@@ -215,6 +239,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(live).toHaveLength(1);
       expect(live[0]!.udrRefBatchId).toBe(batchId2);
       expect(live[0]!.udrRatedPriceRaw).toBe("15000.000000"); // 150 × 100
+      expect(live[0]!.udrResource).toBe(row100.udrResource);
 
       const all = await db
         .select()

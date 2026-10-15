@@ -123,7 +123,11 @@ tasks:
     # rm07 — the REAL Pre-Rating Processor (was rm06's # STUB:). Derives file_key
     # from the filename, discards a byte-identical redelivery (DUPLICATE_BATCH),
     # claims the batch (UNIQUE (file_key, batch_run_num)), parses + maps the CSV
-    # per the feed profile, computes the canonical udr_key, quarantines invalid
+    # per the feed profile, builds the raw udr_key (key names sorted,
+    # `name=value|…`, each value exactly as the feed sent it — no trim, no case
+    # folding, no normalised form of any kind; Inv 27), matches it exactly to
+    # an ACTIVE ratecard cell (no match → INPUT_UNMAPPED, whole batch) and
+    # stamps that cell's state/district/udr_resource (Inv 28), quarantines invalid
     # rows to error/ against the reject threshold, stamps the counts, and emits a
     # manifest file URI (outputs.prp.uri) listing the survivor Parquet chunks for
     # rp. runtime.db reads SECRET_RATING_RUNTIME_PASSWORD + RATING_DB_* from the

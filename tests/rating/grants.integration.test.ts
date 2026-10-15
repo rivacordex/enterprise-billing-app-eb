@@ -42,6 +42,10 @@ const RATING_ROLES_SQL = join(
   process.cwd(),
   "db/bootstrap/rating-db-roles.sql",
 );
+const BILLRUN_ROLES_SQL = join(
+  process.cwd(),
+  "db/bootstrap/billrun-db-roles.sql",
+);
 
 // The six columns app_runtime may UPDATE on udr_rated (rm03-spec D1); `status`
 // is the only one rating_runtime may also update.
@@ -158,9 +162,13 @@ describe.skipIf(!databaseUrl)(
       });
 
       // Provisioning order (infra/docs/db-role-verification.md): the platform
-      // roles first, then the rating boundary that references them.
+      // roles first, then the rating boundary that references them, then the
+      // bill run's role — so the write-once checks (10a) cover billrun_runtime
+      // on every cluster, not only when an earlier suite happened to create it
+      // (rm29 review; §0.1 rule 32).
       await runSqlFile(sql, BOOTSTRAP_ROLES_SQL);
       await runSqlFile(sql, RATING_ROLES_SQL);
+      await runSqlFile(sql, BILLRUN_ROLES_SQL);
 
       // Give the login roles a password so the suite can connect as each. A
       // no-grant probe role exercises the Inv #18 CONNECT boundary.
@@ -328,19 +336,22 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
-      // bm48-spec D1 — the ratecard geo columns are write-once at INSERT: no
-      // runtime role holds UPDATE on them, rating_runtime's table-level INSERT
-      // already covers them (no grant change shipped with 0045).
-      it("10a. no runtime role can UPDATE udr_rated.state / .district; rating_runtime can INSERT them (bm48)", async () => {
+      // bm48-spec D1 + rm29 (Inv 28) — the ratecard geo columns and
+      // udr_resource are write-once at INSERT: no runtime role holds UPDATE on
+      // them, rating_runtime's table-level INSERT already covers them (no grant
+      // change shipped with 0045 or Phase H).
+      it("10a. no runtime role can UPDATE udr_rated.state / .district / .udr_resource; rating_runtime can INSERT them (bm48, rm29)", async () => {
         const roles = await sql<{ rolname: string }[]>`
           SELECT rolname FROM pg_roles
           WHERE rolname IN ('app_runtime', 'rating_runtime', 'billrun_runtime')
         `;
-        expect(roles.map((r) => r.rolname)).toEqual(
-          expect.arrayContaining(["app_runtime", "rating_runtime"]),
-        );
+        expect(roles.map((r) => r.rolname).sort()).toEqual([
+          "app_runtime",
+          "billrun_runtime",
+          "rating_runtime",
+        ]);
         for (const { rolname } of roles) {
-          for (const col of ["state", "district"]) {
+          for (const col of ["state", "district", "udr_resource"]) {
             const [row] = await sql<{ p: boolean }[]>`
               SELECT has_column_privilege(${rolname}, 'rating.udr_rated', ${col}, 'UPDATE') AS p
             `;
@@ -350,7 +361,7 @@ describe.skipIf(!databaseUrl)(
         const columnGrants = await sql<{ grantee: string }[]>`
           SELECT grantee FROM information_schema.column_privileges
           WHERE table_schema = 'rating' AND table_name = 'udr_rated'
-            AND column_name IN ('state', 'district')
+            AND column_name IN ('state', 'district', 'udr_resource')
             AND privilege_type = 'UPDATE'
             AND grantee IN ('app_runtime', 'rating_runtime', 'billrun_runtime')
         `;
@@ -361,6 +372,7 @@ describe.skipIf(!databaseUrl)(
             ...ratedRow(),
             state: "STATE-1",
             district: "DIST-1",
+            udr_resource: "STATE-1|DIST-1|2026-01-01",
           })}`,
         ).resolves.toBeDefined();
       });

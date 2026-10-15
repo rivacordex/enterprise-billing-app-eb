@@ -27,7 +27,9 @@ import {
 
 // Shared harness for the DB+python-gated RAN_USAGE rating suites (rm13, rm23):
 // shells the real PRP/RP/RL runtime modules exactly as the flow's tasks do,
-// against a disposable database seeded with the Sample-5G graph.
+// against a disposable database seeded with the Sample-5G graph. Feed
+// polygons are written exactly as the card holds them, so the rated udr_key is
+// the raw key (Inv 27) and udr_resource is the matched cell's label (Inv 28).
 
 export const RATING_WORKER_DIR = join(
   process.cwd(),
@@ -45,6 +47,13 @@ const PYTHON3: string | undefined = (() => {
   if (override) return isAbsolute(override) ? override : undefined;
   return PYTHON3_CANDIDATES.find((p) => existsSync(p));
 })();
+
+// The interpreter every rating suite must use for its own Parquet reads too,
+// so a suite never gates on one python3 and reads with another.
+export function ratingPython3(): string {
+  if (!PYTHON3) throw new Error("no absolute python3 (set RATING_PYTHON3)");
+  return PYTHON3;
+}
 
 export function pythonRuntimeReady(): boolean {
   if (!PYTHON3) return false;

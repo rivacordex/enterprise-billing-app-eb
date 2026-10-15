@@ -2,6 +2,7 @@ import { sql, type SQL } from "drizzle-orm";
 
 import { udrRateDetailSchema } from "@/validation/rating/udr-rate-detail.schema";
 import { toScaled } from "@/validation/rating/decimal-string";
+import { buildRawUdrKey } from "@/validation/rating/udr-key";
 import type { UdrRatedInsert } from "@/db/schema/rating/udr-rated";
 import {
   SAMPLE_5G_LKP_ROWS,
@@ -41,13 +42,13 @@ export interface SampleChargeSpec {
   usageRate?: string; // per-unit rate (money string), required with PER_UNIT
   rateType?: "FLAT" | "PER_UNIT";
   usageUnit?: string; // default "EA"
-  // bm45-spec §Implementation §4 (D2) — when present, `udr_key` is built as
-  // the CANONICAL cell `commercial_unit=<v>|mno_public_id=<v>|polygon_id=<v>`
-  // (lower+trim, sorted key names) instead of the generic JSON shape — the
-  // format the invoice-appendix join reconstructs from the ratecard columns
-  // and matches against this exact string. Capacity-profile PER_UNIT rows
-  // always supply this; every other caller (FLAT `ci`/`volume` rows) omits it
-  // and keeps the untouched JSON `udr_key`.
+  // bm45-spec §Implementation §4 (D2), amended by rm29 (Inv 27) — when
+  // present, `udr_key` is built as the RAW cell
+  // `commercial_unit=<v>|mno_public_id=<v>|polygon_id=<v>` (sorted key names,
+  // values exactly as the card holds them — `buildRawUdrKey`, the mirror of
+  // PRP's `build_udr_key`) instead of the generic JSON shape. Capacity-profile
+  // PER_UNIT rows always supply this; every other caller (FLAT `ci`/`volume`
+  // rows) omits it and keeps the untouched JSON `udr_key`.
   polygonCell?: {
     mnoPublicKey: string;
     commercialUnitPublicKey: string;
@@ -58,6 +59,10 @@ export interface SampleChargeSpec {
   // whose cell is not on any card.
   state?: string | null;
   district?: string | null;
+  // rm29-spec §1 (Inv 28) — `state|district|polygon_start_date` of the card
+  // cell the row mirrors (`formatUdrResource`). Default NULL: a row whose cell
+  // is not on any card.
+  udrResource?: string | null;
 }
 
 // bm48-spec §Implementation §5 — the Sample-5G card's own labels (state + the
@@ -82,22 +87,24 @@ export type SampleUdrRatedRow = Omit<UdrRatedInsert, "partitionPeriod"> & {
 };
 
 // Sorted-key, fixed-format `udr_key`. Two shapes:
-//  - the CANONICAL RAN_USAGE cell (`spec.polygonCell` present) — sorted key
-//    names `commercial_unit|mno_public_id|polygon_id`, values
-//    `lower(trim(...))`, `|`-joined — exactly the string the aggregation
-//    flow's D2 join reconstructs from the ratecard columns and matches
-//    against (bm45-spec §Implementation §4).
+//  - the RAW RAN_USAGE cell (`spec.polygonCell` present) — `buildRawUdrKey`
+//    over `commercial_unit|mno_public_id|polygon_id`, values never normalised
+//    (Inv 27, rm29) — byte-for-byte the key PRP writes for the same cell.
 //  - the pre-bm45 generic shape (rm01-spec D5 precedent: half the table's
 //    natural key) for every other caller — JSON.stringify on an object
 //    literal with keys already declared in alphabetical order is
 //    deterministic across engines, no external sort routine needed.
+const RAN_KEY_COLUMNS = ["commercial_unit", "mno_public_id", "polygon_id"];
+
 function buildUdrKey(spec: SampleChargeSpec): string {
   if (spec.polygonCell) {
-    const normalise = (value: string) => value.trim().toLowerCase();
-    return (
-      `commercial_unit=${normalise(spec.polygonCell.commercialUnitPublicKey)}` +
-      `|mno_public_id=${normalise(spec.polygonCell.mnoPublicKey)}` +
-      `|polygon_id=${normalise(spec.polygonCell.polygonId)}`
+    return buildRawUdrKey(
+      {
+        commercial_unit: spec.polygonCell.commercialUnitPublicKey,
+        mno_public_id: spec.polygonCell.mnoPublicKey,
+        polygon_id: spec.polygonCell.polygonId,
+      },
+      RAN_KEY_COLUMNS,
     );
   }
   return JSON.stringify({
@@ -181,5 +188,6 @@ export function buildSampleUdrRatedRow(
     ratingFlowRevision: 0,
     state: spec.state ?? null,
     district: spec.district ?? null,
+    udrResource: spec.udrResource ?? null,
   };
 }

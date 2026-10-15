@@ -7,7 +7,8 @@ import { ratecardRanUsageLkp, ratecardVersion } from "@/db/schema/product";
 // card fixture: an ACTIVE `product.ratecard_version` named by the capacity
 // offering's `productCardLookUp` spec (`SAMPLE_CAPACITY_CARD_NAME` in
 // seed-billrun-sample.ts), carrying `product.ratecard_ran_usage_lkp` rows for
-// the appendix's mapped polygons — `state`/`district`/`service_code` set,
+// the appendix's mapped polygons and, since rm29, the anchor scenarios'
+// synthetic polygons — `state`/`district`/`service_code` set,
 // `rate_per_unit` left NULL (OV-2 — a validation/mapping card, never a rate
 // source). Mirrors `sample-5g-fixture.ts`'s `insertRanRatecard` precedent
 // (the bm45 spec's own §0 citation), extended to carry a distinct state/
@@ -39,10 +40,40 @@ export interface SampleUsageCardPolygon {
   serviceCode?: string | undefined;
 }
 
+// The labels a card cell actually holds, read back after the insert (rm29,
+// Inv 28): a seeded udr_rated row mirrors these, never the caller's
+// constants, so a cell kept from an earlier seed (onConflictDoNothing) can
+// never disagree with the row that claims to match it.
+export interface SampleUsageCardCell {
+  state: string | null;
+  district: string | null;
+  polygonStartDate: string;
+}
+
+export function usageCardCellKey(p: {
+  mnoPublicKey: string;
+  commercialUnitPublicKey: string;
+  polygonId: string;
+}): string {
+  return JSON.stringify([
+    p.mnoPublicKey,
+    p.commercialUnitPublicKey,
+    p.polygonId,
+  ]);
+}
+
+const SAMPLE_USAGE_CARD_START_DATE = "2020-01-01";
+// rm29 — the anchor scenarios add one cell per 1-EA row (3,800), so the
+// insert is chunked to stay well under Postgres's 65,535 bind-parameter cap.
+const INSERT_CHUNK = 1000;
+
 export async function ensureSampleCapacityUsageCard(
   cardName: string,
   polygons: readonly SampleUsageCardPolygon[],
-): Promise<{ cardVersionId: string }> {
+): Promise<{
+  cardVersionId: string;
+  cells: Map<string, SampleUsageCardCell>;
+}> {
   return db.transaction(async (tx) => {
     const cardVersionId = await findOrCreateActiveVersion(
       tx,
@@ -50,16 +81,16 @@ export async function ensureSampleCapacityUsageCard(
       polygons.length,
     );
 
-    if (polygons.length > 0) {
+    for (let i = 0; i < polygons.length; i += INSERT_CHUNK) {
       await tx
         .insert(ratecardRanUsageLkp)
         .values(
-          polygons.map((p) => ({
+          polygons.slice(i, i + INSERT_CHUNK).map((p) => ({
             ratecardVersionId: cardVersionId,
             mnoPublicKey: p.mnoPublicKey,
             commercialUnitPublicKey: p.commercialUnitPublicKey,
             polygonId: p.polygonId,
-            polygonStartDate: "2020-01-01",
+            polygonStartDate: SAMPLE_USAGE_CARD_START_DATE,
             polygonEndDate: null,
             state: p.state,
             district: p.district,
@@ -71,7 +102,29 @@ export async function ensureSampleCapacityUsageCard(
         .onConflictDoNothing();
     }
 
-    return { cardVersionId };
+    const rows = await tx
+      .select({
+        mnoPublicKey: ratecardRanUsageLkp.mnoPublicKey,
+        commercialUnitPublicKey: ratecardRanUsageLkp.commercialUnitPublicKey,
+        polygonId: ratecardRanUsageLkp.polygonId,
+        state: ratecardRanUsageLkp.state,
+        district: ratecardRanUsageLkp.district,
+        polygonStartDate: ratecardRanUsageLkp.polygonStartDate,
+      })
+      .from(ratecardRanUsageLkp)
+      .where(eq(ratecardRanUsageLkp.ratecardVersionId, cardVersionId));
+    const cells = new Map<string, SampleUsageCardCell>(
+      rows.map((r) => [
+        usageCardCellKey(r),
+        {
+          state: r.state,
+          district: r.district,
+          polygonStartDate: r.polygonStartDate,
+        },
+      ]),
+    );
+
+    return { cardVersionId, cells };
   });
 }
 
