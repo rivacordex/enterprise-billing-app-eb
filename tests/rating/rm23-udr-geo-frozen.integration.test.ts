@@ -56,7 +56,7 @@ const BILLRUN_ROLES_SQL = join(
 const MNO = "MNO-GEO-FROZEN";
 const PRODUCT_NAME = "Sample 5G Services geo-frozen";
 const CARD_NAME = "RATECARD_GEO_FROZEN";
-const REVISED_STATE = "Johor";
+const REVISED_STATE = "STATE-2";
 const revisedDistrict = (i: number) => `REVISED-${i + 1}`;
 
 function roleUrl(base: string, user: string): string {

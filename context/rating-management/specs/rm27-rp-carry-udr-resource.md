@@ -27,7 +27,7 @@ Make RP pass the chunk's `udr_resource` column through to its rated Parquet unch
 
 ### 2. Tests (`tests/rating/rm27-rp-carry-udr-resource.integration.test.ts`, new)
 Copy the structure of `rm23-udr-geo-frozen.integration.test.ts`: `describe.skipIf(!databaseUrl || !pythonRuntimeReady())`, migrate, seed the event catalog, provision roles, `seedSample5gRatingGraph`, `createRatingPipeline`. Cases:
-1. **Carried.** `runPrp` → `runRp` on a clean three-row file; read both Parquet files with `python3 -c` polars (as rm07's `readParquetColumn` does): the rated `udr_resource` column equals the PRP chunk's per row and in order, and equals `Selangor|DIST-n|2026-01-01` for the three Sample-5G cells.
+1. **Carried.** `runPrp` → `runRp` on a clean three-row file; read both Parquet files with `python3 -c` polars (as rm07's `readParquetColumn` does): the rated `udr_resource` column equals the PRP chunk's per row and in order, and equals `STATE-1|DIST-n|2026-01-01` for the three Sample-5G cells.
 2. **Blank labels.** A graph whose card has `state ""` and `district "   "` yields `||2026-01-01` in the rated chunk.
 3. **Absent stays absent.** After PRP, rewrite its chunk with a small polars call that drops `udr_resource` and nothing else, then run RP: the rated chunk has no `udr_resource` column, so RL's guard (rm28) can fire. This helper is the only new test utility.
 4. **Key untouched.** The rated `udr_key` equals the PRP chunk's `udr_key` byte for byte, with the upper-case polygon `PCU-042_04` intact.

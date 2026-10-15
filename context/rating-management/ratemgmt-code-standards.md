@@ -44,9 +44,9 @@ Extends `context/code-standards.md` and §0; records **only** what `_updatemodul
 
 **TypeScript conventions** (the TypeScript here is the Drizzle mirror, Zod, seeds and tests; the rating logic is Python).
 1. `udr_resource` stays `string | null` in `db/schema/rating/udr-rated.ts` (`text`), with no `.$type<T>()` (it is a delimited string, not JSON). Replace the comment "Reserved, stays NULL" (`udr-rated.ts:61`) with the format in rule 4 above.
-2. Add `validation/rating/udr-resource.schema.ts` exporting `udrResourceSchema` — `^[^|]*\|[^|]*\|\d{4}-\d{2}-\d{2}$` — and `formatUdrResource(state, district, polygonStartDate)`. Seeds and tests build the value only through that helper; no hand-written `'A|B|date'` literals.
-3. Seeds and tests build raw keys through one helper, `buildRawUdrKey(parts)`, that mirrors `build_udr_key` (sorted names, raw values). The JSON-shaped placeholder keys in `udr-rated-sample.ts` for non-RAN rows are unchanged.
-4. `polygon_start_date` is a calendar date: serialise it with `date.isoformat()` in Python and treat it as a `YYYY-MM-DD` string in TypeScript. Never pass it through a `Date` or a timezone conversion (general §2.13).
+2. Add `validation/rating/udr-resource.schema.ts` exporting `udrResourceSchema` — `^[^|]*\|[^|]*\|\d{4}-\d{2}-\d{2}$` — and `formatUdrResource({ state, district, polygonStartDate })`. Seeds and tests build the value only through that helper; no hand-written `'A|B|date'` literals.
+3. Seeds and tests build raw keys through one helper, `buildRawUdrKey(columns, keyColumns)`, that mirrors `build_udr_key` (sorted names, raw values). The JSON-shaped placeholder keys in `udr-rated-sample.ts` for non-RAN rows are unchanged.
+4. `polygon_start_date` is a calendar date, and the date of interest is the one on the rate card: `product.ratecard_ran_usage_lkp.polygon_start_date` is a `date NOT NULL` column (0041), so the database already guarantees a real day. Python serialises it with `date.isoformat()`; TypeScript carries it as the `YYYY-MM-DD` text exactly as given and checks its shape only (no calendar arithmetic). Never pass it through a `Date` or a timezone conversion — not even a UTC-pinned one — so no timezone can move the day (general §2.13). (Amended 2026-10-15: user decision; supersedes the rm25 spec's `new Date` round trip.)
 5. Python names: `build_udr_key`, `build_udr_resource`. One function builds each value; no second implementation in `rp.py` or `rl.py`.
 
 **Next.js rules — N/A.** No pages, Server Actions or Route Handlers are added (§4 stands).

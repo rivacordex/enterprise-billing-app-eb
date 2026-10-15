@@ -38,7 +38,7 @@ export const SAMPLE_5G_CURRENCY = "MYR";
 export const SAMPLE_5G_UNIT_OF_MEASURE = "Mbps";
 export const SAMPLE_5G_RATE_PER_UNIT = "100.000000";
 export const SAMPLE_5G_COMMERCIAL_UNIT = "CU-042";
-export const SAMPLE_5G_RATECARD_STATE = "Selangor";
+export const SAMPLE_5G_RATECARD_STATE = "STATE-1";
 export const SAMPLE_5G_START_DATE = "2026-01-01";
 const SAMPLE_5G_START_INSTANT = new Date("2026-01-01T00:00:00Z");
 

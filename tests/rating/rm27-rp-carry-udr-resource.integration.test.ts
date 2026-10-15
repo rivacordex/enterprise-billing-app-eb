@@ -220,7 +220,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const rated = columnValues(carried.ratedChunk, "udr_resource");
       expect(rated).toEqual(prp);
 
-      // Per Sample-5G cell: `Selangor|DIST-n|2026-01-01`, keyed by the raw
+      // Per Sample-5G cell: `STATE-1|DIST-n|2026-01-01`, keyed by the raw
       // polygon on the rated udr_key.
       const keys = columnValues(carried.ratedChunk, "udr_key");
       expect(rated).toHaveLength(SAMPLE_5G_LKP_ROWS.length);
@@ -236,7 +236,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           district: cell.district,
           polygonStartDate: SAMPLE_5G_START_DATE,
         });
-        expect(expected).toBe(`Selangor|${cell.district}|2026-01-01`);
+        expect(expected).toBe(`STATE-1|${cell.district}|2026-01-01`);
         expect(rated[i]).toBe(expected);
       }
     });

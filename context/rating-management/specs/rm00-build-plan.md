@@ -199,7 +199,7 @@ Implements `_updatemodule-rating-udr-key-resource-plan.md` and `ratemgmt-update-
 - **Spec:** `rm26-prp-raw-key-and-cell-label.md`
 - **Repo:** wfm. **Boundary:** `runtime/prp.py`.
 - **Builds:** `build_udr_key` replacing `canonical_udr_key`/`_normalise_value` (raw values; sorted names; `name=value|…`); the exact-match ratecard index and the collision guard reworded (it now fires only on a serialisation collision); `polygon_start_date` in `_RATECARD_SQL`; `RatecardCell.udr_resource` built once per card cell; `udr_resource` on `ParsedRow`, the chunk frame and the Parquet schema; the `|`-in-label hard-stop with the catalogued code. Tests 17 (PRP half), 18 and 20, with `rm07` refreshed.
-- **Visible result:** for rate-card cell `ABCD_25 DISTRICT2` / `SELANGOR` / `PETALING` / `2026-01-01` the PRP chunk carries `udr_key` with `polygon_id=ABCD_25 DISTRICT2` and `udr_resource = SELANGOR|PETALING|2026-01-01`; a case-different polygon refuses the whole batch as `INPUT_UNMAPPED`; a card label containing `|` fails the batch before rating; a blank key field is still `MISSING_KEY_FIELD`.
+- **Visible result:** for rate-card cell `ABCD_25 DISTRICT2` / `STATE-1` / `DISTRICT-1` / `2026-01-01` the PRP chunk carries `udr_key` with `polygon_id=ABCD_25 DISTRICT2` and `udr_resource = STATE-1|DISTRICT-1|2026-01-01`; a case-different polygon refuses the whole batch as `INPUT_UNMAPPED`; a card label containing `|` fails the batch before rating; a blank key field is still `MISSING_KEY_FIELD`.
 - **Depends on:** rm21, rm23, rm25.
 
 ### rm27 — RP: carry `udr_resource`

@@ -72,7 +72,7 @@ Reuse the suite's helpers (`seedBaseScenario`, `cleanRow`/`cleanRows`, `writeUdr
 3. **Exact match.** A feed polygon that differs from the card only by case, and another by a trailing space, each stop the batch as `INPUT_UNMAPPED`, status `REFUSED`, no chunk.
 4. **MNO padding.** A feed MNO `"MNO-X "` resolves the subscriber but the batch stops as `INPUT_UNMAPPED`.
 5. **Case-variant cells are distinct.** A card with `PCU-042_04` and `pcu-042_04` (district `OTHER`) and a feed row for each: no `DUPLICATE_IN_FILE`, two distinct keys, each stamped with its own district.
-6. **`udr_resource` carried.** The chunk's `udr_resource` for each Sample-5G cell equals `formatUdrResource({ state: SAMPLE_5G_RATECARD_STATE, district: <cell district>, polygonStartDate: SAMPLE_5G_START_DATE })`, i.e. `Selangor|DIST-1|2026-01-01`.
+6. **`udr_resource` carried.** The chunk's `udr_resource` for each Sample-5G cell equals `formatUdrResource({ state: SAMPLE_5G_RATECARD_STATE, district: <cell district>, polygonStartDate: SAMPLE_5G_START_DATE })`, i.e. `STATE-1|DIST-1|2026-01-01`.
 7. **Blank labels.** Replace the existing "bm48. … blank state/district labels yields NULL geo" expectation so it also asserts `udr_resource === "||2026-01-01"`; `state`/`district` stay `None` as today.
 8. **Label delimiter.** A card whose cell has `state = "A|B"` (and a second case with `district = "X|Y"`): `runPrp` exits non-zero; `udr_batch.status = REFUSED`; exactly one summarised line with `RATECARD_LABEL_INVALID`; no chunk and no `udr_rated` rows; after fixing the card, a re-drop of the same filename claims `batch_run_num = 2` and reaches `PROCESSING`.
 9. **Replace** the test at line 1002 ("a duplicate canonical cell on the ACTIVE card still fails closed before any claim"): its premise (a case-variant is a collision) no longer holds. Its replacement is test 5 above; add one test that a genuine serialisation collision (two cells whose key values differ only by moving a `|` or `=`) still fails closed before any claim.
@@ -88,7 +88,7 @@ None. `polars` and `psycopg` are already in the worker image; no package is adde
 - [ ] A record for polygon `PCU-042_04` loads with `polygon_id=PCU-042_04` (upper case) in `udr_key` and in `key__polygon_id`.
 - [ ] A case- or whitespace-different polygon, and a padded MNO, each stop the whole batch as `INPUT_UNMAPPED`.
 - [ ] Case-variant card cells are distinct cells; a serialisation collision still fails closed before any claim.
-- [ ] Every Sample-5G chunk row carries `udr_resource = Selangor|DIST-n|2026-01-01`; blank labels give empty segments (`||2026-01-01` for both blank).
+- [ ] Every Sample-5G chunk row carries `udr_resource = STATE-1|DIST-n|2026-01-01`; blank labels give empty segments (`||2026-01-01` for both blank).
 - [ ] A `|` in a card `state` or `district` refuses the batch with one `RATECARD_LABEL_INVALID` line, status `REFUSED`, zero chunks; fixing the card and re-dropping the file succeeds as run 2.
 - [ ] `RATECARD_LABEL_INVALID` resolves in `event_catalog` (rm25); the `INDETERMINATE` count is zero.
 - [ ] The `UDRTYPE_MISMATCH` test still passes after the shared refusal helper is extracted; there is one refusal tail, not two copies.

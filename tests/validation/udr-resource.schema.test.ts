@@ -14,28 +14,27 @@ import {
 
 describe("udrResourceSchema", () => {
   it.each([
-    ["full value", "Selangor|DIST-1|2026-01-01"],
+    ["full value", "STATE-1|DIST-1|2026-01-01"],
     ["blank state", "|DIST-1|2026-01-01"],
-    ["blank district", "Selangor||2026-01-01"],
+    ["blank district", "STATE-1||2026-01-01"],
     ["both blank", "||2026-01-01"],
   ])("accepts a %s", (_, value) => {
     expect(udrResourceSchema.safeParse(value).success).toBe(true);
   });
 
   it.each([
-    ["two segments", "Selangor|2026-01-01"],
-    ["four segments", "Selangor|DIST-1|X|2026-01-01"],
+    ["two segments", "STATE-1|2026-01-01"],
+    ["four segments", "STATE-1|DIST-1|X|2026-01-01"],
     ["a '|' inside a label", "Sel|angor|DIST-1|2026-01-01"],
-    ["a non-ISO date", "Selangor|DIST-1|01/01/2026"],
-    ["an impossible date", "Selangor|DIST-1|2026-02-30"],
+    ["a non-ISO date", "STATE-1|DIST-1|01/01/2026"],
     ["a whitespace-only state", "   |DIST-1|2026-01-01"],
-    ["a whitespace-only district", "Selangor|\t|2026-01-01"],
+    ["a whitespace-only district", "STATE-1|\t|2026-01-01"],
   ])("rejects %s", (_, value) => {
     expect(udrResourceSchema.safeParse(value).success).toBe(false);
   });
 
-  it("reports one issue, not a spurious date issue, for a malformed value", () => {
-    const result = udrResourceSchema.safeParse("Selangor|DIST-1|2026-01-01\n");
+  it("reports one issue, not a spurious label issue, for a malformed value", () => {
+    const result = udrResourceSchema.safeParse("STATE-1|DIST-1|2026-01-01\n");
     expect(result.error?.issues).toHaveLength(1);
   });
 });
@@ -47,11 +46,11 @@ describe("blank-label rule (mirrors PRP's _geo_label / Python str.strip())", () 
   ])("treats %s as blank, as Python does", (_, label) => {
     expect(
       formatUdrResource({
-        state: "Selangor",
+        state: "STATE-1",
         district: label,
         polygonStartDate: "2026-01-01",
       }),
-    ).toBe("Selangor||2026-01-01");
+    ).toBe("STATE-1||2026-01-01");
   });
 
   it("keeps U+FEFF, which Python does not strip, as a label", () => {
@@ -68,12 +67,12 @@ describe("blank-label rule (mirrors PRP's _geo_label / Python str.strip())", () 
 describe("formatUdrResource", () => {
   it("round-trips through parseUdrResource", () => {
     const parts = {
-      state: "Selangor",
+      state: "STATE-1",
       district: "DIST-1",
       polygonStartDate: "2026-01-01",
     };
     const value = formatUdrResource(parts);
-    expect(value).toBe("Selangor|DIST-1|2026-01-01");
+    expect(value).toBe("STATE-1|DIST-1|2026-01-01");
     expect(parseUdrResource(value)).toEqual(parts);
   });
 
@@ -103,13 +102,13 @@ describe("formatUdrResource", () => {
 
   it("keeps a label with inner spaces exactly", () => {
     const value = formatUdrResource({
-      state: "KUALA LUMPUR",
-      district: " Bukit Bintang ",
+      state: "STATE 2",
+      district: " DISTRICT 2 ",
       polygonStartDate: "2026-01-01",
     });
-    expect(value).toBe("KUALA LUMPUR| Bukit Bintang |2026-01-01");
-    expect(parseUdrResource(value).state).toBe("KUALA LUMPUR");
-    expect(parseUdrResource(value).district).toBe(" Bukit Bintang ");
+    expect(value).toBe("STATE 2| DISTRICT 2 |2026-01-01");
+    expect(parseUdrResource(value).state).toBe("STATE 2");
+    expect(parseUdrResource(value).district).toBe(" DISTRICT 2 ");
   });
 
   it("throws on a '|' in the state label", () => {
@@ -125,19 +124,20 @@ describe("formatUdrResource", () => {
   it("throws on a '|' in the district label", () => {
     expect(() =>
       formatUdrResource({
-        state: "Selangor",
+        state: "STATE-1",
         district: "DIST|1",
         polygonStartDate: "2026-01-01",
       }),
     ).toThrow(/district/);
   });
 
-  it.each(["2026-02-30", "2026-1-01", "01/01/2026", ""])(
-    "throws on an invalid date %j",
+  // Shape only: the card's `date` column already guarantees a real day.
+  it.each(["2026-1-01", "01/01/2026", "", "2026-01-01T00:00:00Z"])(
+    "throws on a date that is not YYYY-MM-DD %j",
     (polygonStartDate) => {
       expect(() =>
         formatUdrResource({
-          state: "Selangor",
+          state: "STATE-1",
           district: "DIST-1",
           polygonStartDate,
         }),
@@ -148,7 +148,7 @@ describe("formatUdrResource", () => {
 
 describe("parseUdrResource", () => {
   it("throws on a value the schema rejects", () => {
-    expect(() => parseUdrResource("Selangor|2026-01-01")).toThrow();
+    expect(() => parseUdrResource("STATE-1|2026-01-01")).toThrow();
   });
 });
 
@@ -161,5 +161,15 @@ describe("label preservation (bm48 D2)", () => {
     expect(source).not.toMatch(
       /\.(trim\w*|to(Locale)?(Lower|Upper)Case|normalize)\s*\(/,
     );
+  });
+
+  // code-standards §0.1 TypeScript rule 4: polygon_start_date stays the text
+  // the card holds and never passes through a Date (not even UTC-pinned).
+  it("never builds a Date for polygon_start_date", () => {
+    const source = readFileSync(
+      path.resolve(__dirname, "../../validation/rating/udr-resource.schema.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/\bnew Date\b|\bDate\.(parse|UTC)\b/);
   });
 });

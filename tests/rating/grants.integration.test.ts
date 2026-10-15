@@ -359,8 +359,8 @@ describe.skipIf(!databaseUrl)(
         await expect(
           ratingRuntime`INSERT INTO rating.udr_rated ${ratingRuntime({
             ...ratedRow(),
-            state: "Selangor",
-            district: "Petaling",
+            state: "STATE-1",
+            district: "DIST-1",
           })}`,
         ).resolves.toBeDefined();
       });
