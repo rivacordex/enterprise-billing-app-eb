@@ -46,6 +46,7 @@ export const SEEDED_LAYOUT_ROW: BillTemplateVersion = {
   isDefault: true,
   layoutCode: "INVTPL-STD-A4",
   refLayoutVersionId: null,
+  refBillTemplateFamilyId: null,
   structure: null,
   pageSetup: {
     format: "A4",
@@ -76,6 +77,7 @@ export const SEEDED_GENERATED_ROW: BillTemplateVersion = {
   isDefault: true,
   layoutCode: null,
   refLayoutVersionId: "BTV00000001",
+  refBillTemplateFamilyId: "BTF00000001",
   structure: {
     sections: {
       billTo: true,

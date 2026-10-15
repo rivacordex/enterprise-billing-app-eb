@@ -117,7 +117,8 @@ export async function saveTemplateDraft(
           return { ok: false, code: "DRAFT_CONFLICT" };
         }
 
-        // The draft inherits the layout of the version invoices currently use.
+        // The draft inherits the layout and the family (bm64) of the version
+        // invoices currently use.
         const current =
           (await billTemplateVersionRepository.findActive(tx, {
             kind: "generated",
@@ -125,10 +126,10 @@ export async function saveTemplateDraft(
           (await billTemplateVersionRepository.findDefault(tx, {
             kind: "generated",
           }));
-        if (!current?.refLayoutVersionId) {
+        if (!current?.refLayoutVersionId || !current.refBillTemplateFamilyId) {
           throw new InvoiceRenderError(
             "TEMPLATE_VERSION_NOT_FOUND",
-            "no ACTIVE or default generated template version to take a layout from",
+            "no ACTIVE or default generated template version to take a layout and family from",
             { kind: "generated" },
           );
         }
@@ -140,6 +141,7 @@ export async function saveTemplateDraft(
         const created = await billTemplateVersionRepository.insertDraft(tx, {
           versionNo: nextVersionNo,
           refLayoutVersionId: current.refLayoutVersionId,
+          refBillTemplateFamilyId: current.refBillTemplateFamilyId,
           structure,
           createdBy: actorId,
         });

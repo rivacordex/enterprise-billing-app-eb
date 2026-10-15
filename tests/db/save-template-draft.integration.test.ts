@@ -150,6 +150,9 @@ describe.skipIf(!databaseUrl)(
         is_default: false,
         version_no: 2,
         ref_layout_version_id: "BTV00000001",
+        // bm64 — the draft takes the family of the version it is built from
+        // (the seeded default BTV00000002, in Standard).
+        ref_bill_template_family_id: "BTF00000001",
         blob_ref: null,
         checksum: null,
         created_by: ACTOR,
@@ -345,8 +348,8 @@ describe.skipIf(!databaseUrl)(
       );
       const err = await sql`
         INSERT INTO billing.bill_template_version
-          (ref_bill_format_id, kind, version_no, status, ref_layout_version_id, structure)
-        VALUES ('INVOICE', 'generated', 99, 'DRAFT', 'BTV00000001', ${JSON.stringify(structure())}::jsonb)`.then(
+          (ref_bill_format_id, kind, version_no, status, ref_layout_version_id, ref_bill_template_family_id, structure)
+        VALUES ('INVOICE', 'generated', 99, 'DRAFT', 'BTV00000001', 'BTF00000001', ${JSON.stringify(structure())}::jsonb)`.then(
         () => null,
         (e: unknown) => e,
       );

@@ -174,12 +174,14 @@ export const billTemplateVersionRepository = {
   // bm57 D1 — first save: insert the working DRAFT. No files
   // (`btv_draft_has_no_files`), never the default. A concurrent first save is
   // refused by `btv_one_draft_uq` (the service maps the 23505 to
-  // `DRAFT_CONFLICT`).
+  // `DRAFT_CONFLICT`). bm64: the draft carries its family
+  // (`btv_generated_has_family`) — the family of the version it is built from.
   async insertDraft(
     tx: Database,
     input: {
       versionNo: number;
       refLayoutVersionId: string;
+      refBillTemplateFamilyId: string;
       structure: InvoiceTemplateStructureInput;
       createdBy: string;
     },
@@ -193,6 +195,7 @@ export const billTemplateVersionRepository = {
         status: "DRAFT",
         isDefault: false,
         refLayoutVersionId: input.refLayoutVersionId,
+        refBillTemplateFamilyId: input.refBillTemplateFamilyId,
         structure: input.structure,
         createdBy: input.createdBy,
       })

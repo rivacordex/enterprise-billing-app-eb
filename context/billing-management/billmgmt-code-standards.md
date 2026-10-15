@@ -1137,7 +1137,7 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
     - the draft render throws `TEMPLATE_VERSION_NOT_FOUND` (`FAMILY_HAS_NO_ACTIVE_VERSION`);
     - posting marks the account `SKIPPED` with that code, consumes no INV number, writes no `customer_bill` stamp, and siblings post;
     - a rerun after activation bills the BAN.
-61. **Catalog schema (fresh DB).**
+61. **Catalog schema (fresh DB).** Built (bm64): `tests/db/invoice-template-catalog.integration.test.ts`, with the grants half in `tests/guardrails/invoice-settings-grants.integration.test.ts`.
     - Every seeded `generated` row has a family, and the CHECK refuses a `generated` row without one.
     - The guard trigger refuses an UPDATE of `ref_bill_template_family_id`.
     - The family-scoped indexes refuse a second non-default ACTIVE or DRAFT in one family.

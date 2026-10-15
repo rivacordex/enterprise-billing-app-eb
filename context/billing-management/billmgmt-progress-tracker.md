@@ -32,6 +32,36 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
   its overview is `billmgmt-update-overview.md`. Parts 1 and 2 (earlier updates) are
   folded into `billmgmt-project-overview.md` (Part 1 fully rolled up 2026-10-15).
 
+## Invoice Template Phase 3 — Bill Run uses the BAN's template (bm64–bm73)
+
+| Unit | What | Status |
+| --- | --- | --- |
+| bm64 | Standard template family in the catalog (`bill_template_family`, `0046` edited in place per D26) | **Built, awaiting review/commit** (2026-10-15) — tsc/ESLint/Prettier clean; unit 4593/0; integration 1239/0 (110 skipped); `db:setup` chain ×2 on a fresh disposable DB OK; checklist queries match |
+
+**bm64 notes (2026-10-15):**
+
+- **Owner confirmed** the fresh-DB round (D26: empty DB + empty `invoice-templates` for every
+  environment) and the family code `STANDARD` before `0046` was edited. `_journal.json` untouched.
+- `0046`: `bill_template_family` (+ seq, `btf_one_default_uq`, `bill_template_family_guard`),
+  `ref_bill_template_family_id` + `btv_generated_has_family`, the four family/format-scoped
+  indexes + `btv_family_ref_idx`, the family in the version guard's identity list, seed
+  `BTF00000001` and `BTV00000002`'s family. Checksums unchanged.
+- `insertDraft` takes `refBillTemplateFamilyId`; `saveTemplateDraft` passes the base version's
+  family (missing family → `TEMPLATE_VERSION_NOT_FOUND`, like a missing layout). Resolution
+  queries unchanged. New read repo `bill-template-family.ts` (`findDefault`, `findById`) for bm65.
+- **Deviation 1 — grants:** `bootstrap-db-roles.sql` also has an explicit
+  `GRANT SELECT … bill_template_family TO app_runtime` before the spec's REVOKE. This matches
+  `bill_format`. Without it, a DB migrated as superuser (the local and Azure scratch path, and the
+  grants test) leaves `app_runtime` with no SELECT, because default privileges never fire there.
+- **Deviation 2 — runbook order:** the spec listed role bootstrap before `db:setup`. On an empty
+  DB the GRANTs need the schemas, so the runbook keeps the repo order: migrate/`db:setup`
+  first, then the role bootstraps.
+- `invoice-csv.integration.test.ts` needed no fixture change: its raw insert is a CSV row, and
+  CSV rows have no family.
+- Doc corrections in spec Open question 1 were already applied in the companion docs; this
+  unit added only the "built (bm64)" markers (architecture Inv #44 note + storage rows,
+  code-standards guardrail 61).
+
 ## Delivered units
 
 ### Phase 1 — control plane (bm01–bm13)

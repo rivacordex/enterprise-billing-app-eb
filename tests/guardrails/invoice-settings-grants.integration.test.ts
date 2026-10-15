@@ -15,6 +15,8 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 // three catalog tables and NO DELETE on any; billrun_runtime has nothing on the
 // four tables and lost INSERT/UPDATE on the two reserved customer_bill stamp
 // columns (Inv #41). Runs the real bootstrap SQL (no hand-copied grant list).
+// bm64 adds bill_template_family: SELECT only for app_runtime, nothing for
+// billrun_runtime (Inv #23).
 const databaseUrl = process.env.DATABASE_URL;
 
 const CATALOG_TABLES = [
@@ -128,6 +130,15 @@ describe.skipIf(!databaseUrl)(
       }
     });
 
+    it("bm64 — app_runtime: SELECT only on bill_template_family; billrun_runtime: nothing", async () => {
+      expect(await tablePrivs("app_runtime", "bill_template_family")).toEqual([
+        "SELECT",
+      ]);
+      expect(
+        await tablePrivs("billrun_runtime", "bill_template_family"),
+      ).toEqual([]);
+    });
+
     it("billrun_runtime: no privilege on any of the four catalog tables", async () => {
       for (const t of CATALOG_TABLES) {
         expect(await tablePrivs("billrun_runtime", t)).toEqual([]);
@@ -152,6 +163,9 @@ describe.skipIf(!databaseUrl)(
       await sql.unsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
         "billing"."bill_format", "billing"."bill_template_version",
         "billing"."bill_asset", "billing"."bill_asset_version" TO app_runtime`);
+      // bm64 — the app_migrate default-privilege path hands app_runtime full DML.
+      await sql.unsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+        "billing"."bill_template_family" TO app_runtime`);
       await sql.unsafe(`GRANT ALL ON TABLE
         "billing"."bill_format", "billing"."bill_template_version",
         "billing"."bill_asset", "billing"."bill_asset_version" TO billrun_runtime`);
@@ -168,6 +182,9 @@ describe.skipIf(!databaseUrl)(
       await bootstrap();
 
       expect(await tablePrivs("app_runtime", "bill_format")).toEqual([
+        "SELECT",
+      ]);
+      expect(await tablePrivs("app_runtime", "bill_template_family")).toEqual([
         "SELECT",
       ]);
       for (const t of [

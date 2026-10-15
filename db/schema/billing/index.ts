@@ -8,6 +8,7 @@ export * from "@/db/schema/billing/customer-bill-line";
 export * from "@/db/schema/billing/customer-bill-tax-item";
 export * from "@/db/schema/billing/bill-run-invoices";
 export * from "@/db/schema/billing/bill-format";
+export * from "@/db/schema/billing/bill-template-family";
 export * from "@/db/schema/billing/bill-template-version";
 export * from "@/db/schema/billing/bill-asset";
 export * from "@/db/schema/billing/catalogs";

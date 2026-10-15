@@ -160,6 +160,19 @@ command again, which does nothing if Azurite is already up.
 docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml up -d --no-deps azurite
 ```
 
+> ⚠️ **Rebuilding for Invoice Template Phase 3 (bm64, D26).** Phase 3 edits
+> migration `0046` in place, and the template store is write-once: the seed
+> refuses a stored blob that differs from the repo (`SEED_BLOB_CONFLICT`). An
+> existing stack therefore needs an empty database **and** an empty
+> `invoice-templates` container. Run `docker compose down -v` (drops the
+> `pgdata` volume) and
+> `docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml down -v`
+> (drops the `azurite_data` volume), then follow these steps from step 3. If you
+> want to keep Azurite's other containers, delete only the `invoice-templates`
+> container in Azure Storage Explorer instead of the second command. See
+> `infra/docs/environment-operations.md` "Fresh rebuild — Invoice Template
+> Phase 3".
+
 ### 4. Migrate + set up partitioning + seed (as the superuser)
 
 The initial migrate must run as the **superuser/owner** (the `app_runtime` role

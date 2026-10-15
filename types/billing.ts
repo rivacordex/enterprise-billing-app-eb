@@ -4,6 +4,7 @@
 // (db/schema/billing/bill-run.ts). Composed here in `types/` and returned by
 // the service so the page never re-derives operability (code-standards §2.7).
 
+import type { billTemplateFamily } from "@/db/schema/billing/bill-template-family";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import type { ConfigStatus } from "@/types/system-config";
 
@@ -895,6 +896,10 @@ export interface InvoiceTemplateStructure {
   sections: Record<InvoiceSectionKey, boolean>;
   columns: Record<InvoiceColumnKey, boolean>;
 }
+
+// bm64-spec §Design — one `bill_template_family` row (general §2.7). The
+// seeded Standard family (`BTF00000001`) is the default; read by bm65 capture.
+export type BillTemplateFamily = typeof billTemplateFamily.$inferSelect;
 
 // bm55-spec §Design D4 — Version history read model (one row per generated
 // version, newest first). `usedByCount` counts `customer_bill` rows stamped

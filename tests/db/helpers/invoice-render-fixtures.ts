@@ -118,10 +118,10 @@ export async function insertGeneratedTemplateFixture(
   await sql`
     INSERT INTO billing.bill_template_version
       (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
-       ref_layout_version_id, structure, blob_ref, checksum, checksum_algorithm,
+       ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum, checksum_algorithm,
        change_note, activated_datetime)
     SELECT ${args.id}, 'INVOICE', 'generated', ${args.versionNo}, 'ACTIVE', false,
-           'BTV00000001', structure, ${`invoice-templates/${dir}`},
+           'BTV00000001', 'BTF00000001', structure, ${`invoice-templates/${dir}`},
            ${createHash("sha256").update(index).digest("hex")}, 'sha256',
            ${`bm54 fixture generated v${args.versionNo}`}, now()
     FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;

@@ -12,6 +12,8 @@ import {
 import { document, documentLine } from "@/db/schema/billing/documents";
 import { ledgerBinding } from "@/db/schema/billing/ledger-binding";
 import { accountingPeriod } from "@/db/schema/billing/periods";
+import { billTemplateFamily } from "@/db/schema/billing/bill-template-family";
+import { billTemplateVersion } from "@/db/schema/billing/bill-template-version";
 
 function columnNames(table: Parameters<typeof getTableColumns>[0]): string[] {
   return Object.values(getTableColumns(table)).map((c) => c.name);
@@ -421,5 +423,36 @@ describe("billing.accounting_period", () => {
         "accounting_period_period_format_check",
       ]),
     );
+  });
+});
+
+// bm64-spec §2 — the template family table and the version's family column
+// (DDL of record: 0046; Drizzle mirrors it for query typing only).
+describe("billing.bill_template_family", () => {
+  it("exposes the exact snake_case column set", () => {
+    expect(columnNames(billTemplateFamily).sort()).toEqual(
+      [
+        "bill_template_family_id",
+        "code",
+        "name",
+        "kind",
+        "is_default",
+        "retired_datetime",
+        "created_by",
+        "created_datetime",
+      ].sort(),
+    );
+  });
+
+  it("has no status column (D44 — usable = not retired + an ACTIVE version)", () => {
+    expect(columnNames(billTemplateFamily)).not.toContain("status");
+  });
+});
+
+describe("billing.bill_template_version (bm64)", () => {
+  it("carries ref_bill_template_family_id, nullable (layout/CSV rows have no family)", () => {
+    const col = getTableColumns(billTemplateVersion).refBillTemplateFamilyId;
+    expect(col.name).toBe("ref_bill_template_family_id");
+    expect(col.notNull).toBe(false);
   });
 });
