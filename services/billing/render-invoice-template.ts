@@ -1,4 +1,5 @@
 import { db } from "@/db/client";
+import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { invoiceRenderInputRepository } from "@/db/repositories/billing/invoice-render-input";
 import {
   inlineLogo,
@@ -38,8 +39,10 @@ import type {
 export interface BuildInvoiceHtmlParams {
   runId: string;
   banId: string;
-  // `draft` resolves the current versions; `final` and `preview-posted` (the
-  // editor preview of a posted bill, bm55) resolve the bill's stamps (D1).
+  // `draft` renders the BAN's captured run stamps (bm66, `run` mode) — or,
+  // with an `override`, the family's live versions (`preview-family`);
+  // `final` and `preview-posted` (the editor preview of a posted bill, bm55)
+  // resolve the bill's stamps (D1).
   mode: "draft" | "final" | "preview-posted";
   // The final render's requested invoice number — the binder asserts it
   // against the bound `billing.document` row (render-invoice.ts §6). Unused
@@ -49,13 +52,16 @@ export interface BuildInvoiceHtmlParams {
   // admin's unsaved structure: `load` builds the template in memory from the
   // resolved layout (generated + compiled, never stored or memoized) in place
   // of the stored generated version. Draft mode only — a posted bill always
-  // renders its stamped version (Inv #42).
+  // renders its stamped version (Inv #42). bm66: requires `familyId`, and
+  // resolves that family's live versions (`preview-family`), not the run's.
   override?: {
     structure: InvoiceTemplateStructure;
     load: (
       resolved: ResolvedTemplate,
     ) => Promise<Pick<LoadedGeneratedTemplate, "invoice" | "footer">>;
   };
+  // bm66-spec §3 — the template family an `override` preview renders with.
+  familyId?: string;
 }
 
 export interface BuildInvoiceHtmlResult {
@@ -85,6 +91,7 @@ export async function buildInvoiceHtml({
   mode,
   invoiceNo,
   override,
+  familyId,
 }: BuildInvoiceHtmlParams): Promise<BuildInvoiceHtmlResult> {
   const isFinal = mode === "final";
   // bm55-spec §Design D3 — `isDraft: !posted`: the editor preview of a
@@ -92,6 +99,9 @@ export async function buildInvoiceHtml({
   const isDraft = mode === "draft";
   if (override && !isDraft) {
     throw new Error("buildInvoiceHtml: a template override is draft-only");
+  }
+  if (override && familyId === undefined) {
+    throw new Error("buildInvoiceHtml: a template override needs a familyId");
   }
   const timezone = getAppTimezone();
 
@@ -108,8 +118,25 @@ export async function buildInvoiceHtml({
       });
       if (!stamps) return null;
 
-      const renderMode: RenderMode =
-        mode === "draft" ? { kind: "draft" } : { kind: mode, bill: stamps };
+      // bm66-spec §3 (D33, Inv #51) — a draft in a run renders the BAN's
+      // captured stamps. No row, or an EXCLUDED row (never captured, never
+      // rendered), is not found → 404.
+      // An `override` (draft-only, guarded above) is the editor preview of an
+      // unposted bill: the family's live versions, not the run's.
+      let renderMode: RenderMode;
+      if (override) {
+        renderMode = { kind: "preview-family", familyId: familyId! };
+      } else if (mode === "draft") {
+        const runStamps = await billRunAccountRepository.readStamps(
+          tx,
+          runId,
+          banId,
+        );
+        if (!runStamps || runStamps.status === "EXCLUDED") return null;
+        renderMode = { kind: "run", stamps: runStamps };
+      } else {
+        renderMode = { kind: mode, bill: stamps };
+      }
       const resolved = await resolveTemplate(tx, renderMode);
 
       // bm49 D4 — a hidden Usage annex skips the usage read (and its

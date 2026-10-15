@@ -124,6 +124,8 @@ export interface InvoiceStructureFormProps {
   draftVersionId?: string | null;
   draftVersionNo?: number | null;
   activeStructure?: InvoiceTemplateStructure | null;
+  // bm66: the template family (Standard) the live preview renders with.
+  familyId: string;
 }
 
 function RequiredMark(): React.JSX.Element {
@@ -152,6 +154,7 @@ export function InvoiceStructureForm({
   draftVersionId = null,
   draftVersionNo = null,
   activeStructure = null,
+  familyId,
 }: InvoiceStructureFormProps): React.JSX.Element {
   const router = useRouter();
   const [structure, setStructure] = useState(initialStructure);
@@ -213,6 +216,7 @@ export function InvoiceStructureForm({
         source: source === SAMPLE ? "sample" : { billId: source },
         annotate,
         outline,
+        familyId,
       })
         .then((result) => {
           if (requestRef.current !== id) return;
@@ -243,7 +247,7 @@ export function InvoiceStructureForm({
         .finally(() => clearTimeout(queued));
     }, DEBOUNCE_MS);
     return () => clearTimeout(debounce);
-  }, [structure, source, annotate, outline, retryToken]);
+  }, [structure, source, annotate, outline, retryToken, familyId]);
 
   async function saveDraft(): Promise<void> {
     setSaving(true);

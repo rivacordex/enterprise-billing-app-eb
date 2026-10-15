@@ -18,11 +18,14 @@ import {
   findActiveUserById,
   resolveEffectivePermissions,
 } from "@/auth/resolver";
+import { describeInvoiceRenderCode } from "@/lib/invoice-render-messages";
+import { logger } from "@/lib/logger";
 import { isRateLimited } from "@/lib/rate-limit";
 import {
   DraftInvoiceNotFoundError,
   renderDraftInvoice,
 } from "@/services/billing/render-invoice";
+import { InvoiceRenderError } from "@/types/billing";
 import { meetsLevel } from "@/types/permissions";
 import { billingAccountIdSchema } from "@/validation/billing/ban-id.schema";
 import { billRunIdSchema } from "@/validation/billing/run-id.schema";
@@ -90,6 +93,26 @@ export async function GET(
   } catch (error) {
     if (error instanceof DraftInvoiceNotFoundError) {
       return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    // bm66-spec §5 (general code-standards §5.5–§5.6) — a render failure
+    // carries its typed code to the client in the error envelope, with safe
+    // text; the code and detail are logged, never the stack in the body.
+    if (error instanceof InvoiceRenderError) {
+      logger.warn("draft invoice render failed", {
+        runId: runResult.data,
+        banId: banResult.data,
+        code: error.code,
+        detail: error.detail,
+      });
+      return Response.json(
+        {
+          error: {
+            code: error.code,
+            message: describeInvoiceRenderCode(error.code),
+          },
+        },
+        { status: 422 },
+      );
     }
     return Response.json(
       { error: "Could not render the draft invoice." },

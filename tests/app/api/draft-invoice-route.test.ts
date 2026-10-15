@@ -49,6 +49,7 @@ import {
   DraftInvoiceNotFoundError,
   renderDraftInvoice,
 } from "@/services/billing/render-invoice";
+import { InvoiceRenderError } from "@/types/billing";
 
 const mockGetSession = vi.mocked(auth.api.getSession);
 const mockFindActiveUserById = vi.mocked(findActiveUserById);
@@ -140,6 +141,32 @@ describe("GET /billing/bill-runs/[runId]/draft-invoice/[banId]", () => {
     const response = await GET({} as never, ctx());
 
     expect(response.status).toBe(500);
+  });
+
+  // bm66-spec §5 (general code-standards §5.5–§5.6) — a render failure keeps
+  // its typed code: 422 with the error envelope and the code's safe message,
+  // never the internal message or a stack.
+  it("422s with { error: { code, message } } for an InvoiceRenderError (bm66)", async () => {
+    mockRenderDraftInvoice.mockRejectedValue(
+      new InvoiceRenderError(
+        "TEMPLATE_VERSION_NOT_FOUND",
+        "template family BTF00000099 has no active generated version",
+        { reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId: "BTF00000099" },
+      ),
+    );
+
+    const response = await GET({} as never, ctx());
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      error: {
+        code: "TEMPLATE_VERSION_NOT_FOUND",
+        message:
+          "This account's invoice template has no active version. Activate one in Invoice Settings, then rerun this account.",
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("BTF00000099");
   });
 
   it("streams the PDF inline with a DRAFT-<ban> filename for a granted, well-formed request", async () => {

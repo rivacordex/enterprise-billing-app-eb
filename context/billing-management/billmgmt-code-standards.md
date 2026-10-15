@@ -975,8 +975,8 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - `InvoiceStructureForm` shows one checkbox, Payment information, plus a **Footnote** field with 1–5 single-line inputs and add/remove buttons, built with React Hook Form `useFieldArray` and the shared `invoice-template-structure.schema.ts` resolver (general §4.12); each input has a `<label>` (general §4.9).
    - Below EDIT, both render read-only.
    - The page heading names the family ("Standard (default)").
-3. **The preview action takes a family.** `previewInvoiceTemplateAction` adds a required `familyId`, validated by the BTF schema; this phase only Standard exists. A `{ billId }` source keeps its `billrun_view` check and renders with that bill's stamps (`preview-posted`).
-4. **The draft PRO-FORMA route renders in run mode.** `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` builds `{ kind: "run", … }` from the `bill_run_account` row. If the row is missing or `EXCLUDED`, it returns 404 without rendering.
+3. **The preview action takes a family.** _(Built (bm66).)_ `previewInvoiceTemplateAction` adds a required `familyId`, validated by the BTF schema; this phase only Standard exists. A `{ billId }` source keeps its `billrun_view` check and renders with that bill's stamps (`preview-posted`).
+4. **The draft PRO-FORMA route renders in run mode.** _(Built (bm66).)_ `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` builds `{ kind: "run", … }` from the `bill_run_account` row. If the row is missing or `EXCLUDED`, it returns 404 without rendering.
 5. **Manage Customer is not touched.** The "Billing account" panel (`components/customers/billing-account-panel.tsx`) and its "Reset to follow active template" button stay as built (D46).
 
 ### Styling (adds to §4 — invoice layout only; app screens unchanged)
@@ -1010,7 +1010,7 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
 ### API routes (adds to §5)
 
 1. **No new handler.** The three M2M `POST` handlers and the route-inventory test (§9 item 11) are unchanged.
-2. **Changed behaviour on one existing route only:** `draft-invoice/[banId]` renders from run stamps (Next.js rule 4). An `InvoiceRenderError` now returns `422 { error: { code, message } }` (general §5.5–§5.6) instead of a generic 500, and `InvoicePreviewModal` shows the code's message via `lib/invoice-render-messages.ts` (bm66). 401/403/404/429/500 are unchanged.
+2. **Changed behaviour on one existing route only:** _(Built (bm66).)_ `draft-invoice/[banId]` renders from run stamps (Next.js rule 4). An `InvoiceRenderError` now returns `422 { error: { code, message } }` (general §5.5–§5.6) instead of a generic 500, and `InvoicePreviewModal` shows the code's message via `lib/invoice-render-messages.ts` (bm66). 401/403/404/429/500 are unchanged.
 3. **`stored-invoice/[banId]` and its `/csv` are unchanged.** They read `customer_bill` stamps; the CSV export is out of scope (known-issues §23j).
 
 ### Data and storage rules (adds to §6)

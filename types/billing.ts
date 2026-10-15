@@ -972,13 +972,18 @@ export type CapturedTemplateStamp = {
   versionId: string | null;
 };
 
-// D1 — a draft (pro-forma, editor sample preview) resolves the current
-// versions; a final render and the editor preview of a posted bill resolve the
-// bill's stamps (Inv #42 — never the current ACTIVE).
+// bm66-spec §Design (D33, Inv #42/#51/#53) — which versions a render uses.
+//   run             → a draft PRO-FORMA inside a run: the BAN's captured
+//                     `bill_run_account` stamps (bm65). Never live.
+//   final           → the bill's stamps (Inv #42 — never the current ACTIVE).
+//   preview-posted  → the editor preview of a posted bill: the bill's stamps.
+//   preview-family  → the Invoice Settings preview: the family's live, current
+//                     versions — the only live render mode.
 export type RenderMode =
-  | { kind: "draft" }
+  | { kind: "run"; stamps: RunTemplateStamps }
   | { kind: "final"; bill: PostedBillStamps }
-  | { kind: "preview-posted"; bill: PostedBillStamps };
+  | { kind: "preview-posted"; bill: PostedBillStamps }
+  | { kind: "preview-family"; familyId: string };
 
 // D1 — never cached (workflow rules §3.9): every render queries the rows.
 export interface ResolvedTemplate {

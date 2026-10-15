@@ -25,6 +25,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { triggerBlobDownload } from "@/lib/download";
+import { describeInvoiceRenderCode } from "@/lib/invoice-render-messages";
+import type { InvoiceErrorCode } from "@/types/billing";
 
 export interface InvoicePreviewModalProps {
   billRunId: string;
@@ -102,7 +104,16 @@ export function InvoicePreviewModal({
       );
       if (isStale()) return;
       if (!response.ok) {
-        setErrorMessage(describeRenderError(response.status));
+        // bm66-spec §5 — a 422 carries the render failure's code; show its
+        // message (UI context §10d). Anything else keeps the status text.
+        const code =
+          response.status === 422 ? await readRenderErrorCode(response) : null;
+        if (isStale()) return;
+        setErrorMessage(
+          code === null
+            ? describeRenderError(response.status)
+            : describeInvoiceRenderCode(code),
+        );
         setState("error");
         return;
       }
@@ -238,6 +249,22 @@ export function InvoicePreviewModal({
       </DialogContent>
     </Dialog>
   );
+}
+
+// The draft route's 422 envelope: `{ error: { code, message } }`. An
+// unreadable body falls back to the status text.
+async function readRenderErrorCode(
+  response: Response,
+): Promise<InvoiceErrorCode | null> {
+  try {
+    const body = (await response.json()) as {
+      error?: { code?: unknown };
+    };
+    const code = body.error?.code;
+    return typeof code === "string" ? (code as InvoiceErrorCode) : null;
+  } catch {
+    return null;
+  }
 }
 
 function describeRenderError(status: number): string {

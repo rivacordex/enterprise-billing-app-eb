@@ -90,14 +90,17 @@ export const billRunAccountRepository = {
   },
 
   // bm65-spec §4 — one BAN's run-start stamps (bm66 drafts, bm67 posting), or
-  // `null` when the BAN is not in the run.
+  // `null` when the BAN is not in the run. bm66-spec §3 adds the row's status,
+  // so a caller can tell an EXCLUDED row (never captured) from a NULL-version
+  // capture (D55).
   async readStamps(
     tx: Database,
     billRunId: string,
     banId: string,
-  ): Promise<RunTemplateStamps | null> {
+  ): Promise<(RunTemplateStamps & { status: AccountStatus }) | null> {
     const [row] = await tx
       .select({
+        status: billRunAccount.status,
         refBillTemplateFamilyId: billRunAccount.refBillTemplateFamilyId,
         refBillTemplateVersionId: billRunAccount.refBillTemplateVersionId,
         refInvoiceProfileVersion: billRunAccount.refInvoiceProfileVersion,
@@ -111,7 +114,7 @@ export const billRunAccountRepository = {
         ),
       )
       .limit(1);
-    return row ?? null;
+    return row ? { ...row, status: row.status as AccountStatus } : null;
   },
 
   async insertSnapshot(

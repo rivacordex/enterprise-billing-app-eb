@@ -40,8 +40,10 @@ import type { SaveProfileDraftInput } from "@/validation/billing/invoice-profile
 //   * A's `charge_checksum` still recomputes from its lines;
 //   * a parked twin posted alongside A re-renders through `retryRenderInvoice`
 //     with v2 + profile v1 (its stamps), never the current ACTIVE (Inv #42);
-//   * a NEW draft preview of account B uses v3 + profile v2 (its issuer block,
-//     bank details and the v2 logo inlined);
+//   * a draft of account B in a run started after v3's activation uses v3 +
+//     profile v2 (its issuer block, bank details and the v2 logo inlined) —
+//     bm66: a draft renders the run's captured stamps, so the run must start
+//     after the activation to capture v3;
 //   * the NEXT posting (account C) stamps profile v2.
 //
 // The two real versions differ in structure (v2 shows Notes & terms, v3 hides
@@ -259,12 +261,6 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       });
       const { path } = blobStore.parseBlobRef(twinStored!.blob_ref);
       await service!.getContainerClient("invoices").deleteBlob(path);
-
-      await fx.newRun(RUN_DRAFT);
-      ({ banId: banDraft } = await fx.draftBill({
-        label: "B",
-        runId: RUN_DRAFT,
-      }));
     }, 300_000);
 
     afterAll(async () => {
@@ -364,7 +360,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(stored.pdf.subarray(0, 4).toString()).toBe("%PDF");
     }, 120_000);
 
-    it("a NEW draft preview of account B uses the newly ACTIVE v3 + profile v2: its issuer block, bank details and logo", async () => {
+    it("a draft of account B in a run started after v3's activation uses v3 + profile v2: its issuer block, bank details and logo", async () => {
+      // bm66 — the run starts (and captures its stamps) after the activations
+      // in the [CRITICAL] case above.
+      await fx.newRun(RUN_DRAFT);
+      ({ banId: banDraft } = await fx.draftBill({
+        label: "B",
+        runId: RUN_DRAFT,
+      }));
       const draft = await buildInvoiceHtml({
         runId: RUN_DRAFT,
         banId: banDraft,

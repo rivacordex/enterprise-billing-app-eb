@@ -175,6 +175,7 @@ export default async function InvoiceTemplatePage({
           draftVersionId={draft?.billTemplateVersionId ?? null}
           draftVersionNo={draft?.versionNo ?? null}
           activeStructure={current.structure}
+          familyId={data.standardFamilyId}
           canPreviewBills={canPreviewBills}
           recentBills={canPreviewBills ? await listRecentPostedBills() : []}
         />

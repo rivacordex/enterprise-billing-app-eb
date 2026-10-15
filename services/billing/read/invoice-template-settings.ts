@@ -1,4 +1,5 @@
 import { db } from "@/db/client";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
@@ -38,6 +39,8 @@ export interface InvoiceTemplatePageData {
   draft: TemplateDraftInfo | null;
   shownStructure: InvoiceTemplateStructure;
   history: TemplateVersionHistoryRow[];
+  // bm66-spec §4 — the Standard (default) family the live preview renders.
+  standardFamilyId: string;
 }
 
 function toHistoryRow(
@@ -78,22 +81,30 @@ export async function getInvoiceTemplatePageData(
   versionId: string | undefined,
   { canEdit }: { canEdit: boolean },
 ): Promise<InvoiceTemplatePageData> {
-  const [active, fallback, selected, generatedRows, layoutRows, draftRow] =
-    await Promise.all([
-      billTemplateVersionRepository.findActive(db, { kind: "generated" }),
-      billTemplateVersionRepository.findDefault(db, { kind: "generated" }),
-      versionId === undefined
-        ? Promise.resolve(null)
-        : billTemplateVersionRepository.findById(db, versionId),
-      billTemplateVersionRepository.listForKind(db, { kind: "generated" }),
-      billTemplateVersionRepository.listForKind(db, {
-        kind: "layout",
-        withUsage: false,
-      }),
-      canEdit
-        ? billTemplateVersionRepository.findDraft(db, { kind: "generated" })
-        : Promise.resolve(null),
-    ]);
+  const [
+    active,
+    fallback,
+    selected,
+    generatedRows,
+    layoutRows,
+    draftRow,
+    standardFamily,
+  ] = await Promise.all([
+    billTemplateVersionRepository.findActive(db, { kind: "generated" }),
+    billTemplateVersionRepository.findDefault(db, { kind: "generated" }),
+    versionId === undefined
+      ? Promise.resolve(null)
+      : billTemplateVersionRepository.findById(db, versionId),
+    billTemplateVersionRepository.listForKind(db, { kind: "generated" }),
+    billTemplateVersionRepository.listForKind(db, {
+      kind: "layout",
+      withUsage: false,
+    }),
+    canEdit
+      ? billTemplateVersionRepository.findDraft(db, { kind: "generated" })
+      : Promise.resolve(null),
+    billTemplateFamilyRepository.findDefault(db),
+  ]);
 
   const current = active ?? fallback;
   if (!current) {
@@ -103,6 +114,16 @@ export async function getInvoiceTemplatePageData(
       "TEMPLATE_VERSION_NOT_FOUND",
       "no ACTIVE or default generated template version",
       { kind: "generated" },
+    );
+  }
+
+  if (!standardFamily) {
+    // The seeded default family is trigger-protected (bm64), like the default
+    // rows above.
+    throw new InvoiceRenderError(
+      "TEMPLATE_VERSION_NOT_FOUND",
+      "no default template family",
+      { reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId: null },
     );
   }
 
@@ -135,6 +156,7 @@ export async function getInvoiceTemplatePageData(
     // CHECK `btv_generated_has_layout` guarantees a generated row's structure.
     shownStructure: shown.structure!,
     history: generatedRows.map((r) => toHistoryRow(r, layoutLabels)),
+    standardFamilyId: standardFamily.billTemplateFamilyId,
   };
 }
 

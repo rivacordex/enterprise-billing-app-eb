@@ -269,7 +269,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         WHERE bill_template_version_id = 'BTV00000002'`;
       expect(def).toMatchObject({ status: "ACTIVE", is_default: true });
       clearLoadedTemplateMemo();
-      const resolved = await resolveTemplate(db, { kind: "draft" });
+      const resolved = await resolveTemplate(db, {
+        kind: "preview-family",
+        familyId: "BTF00000001",
+      });
       expect(resolved.generated.billTemplateVersionId).toBe(result.versionId);
     }, 120_000);
 

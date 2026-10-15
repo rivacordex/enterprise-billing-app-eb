@@ -327,7 +327,10 @@ describe.skipIf(!databaseUrl)(
       });
       expect(draft?.status).toBe("DRAFT");
 
-      const resolved = await resolveTemplate(db, { kind: "draft" });
+      const resolved = await resolveTemplate(db, {
+        kind: "preview-family",
+        familyId: "BTF00000001",
+      });
       const posting = await db.transaction((tx) =>
         resolveVersionsForPosting(tx),
       );

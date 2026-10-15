@@ -37,7 +37,37 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
 | Unit | What | Status |
 | --- | --- | --- |
 | bm64 | Standard template family in the catalog (`bill_template_family`, `0046` edited in place per D26) | **Built** (2026-10-15, `0e65a57`) — tsc/ESLint/Prettier clean; unit 4593/0; integration 1239/0 (110 skipped); `db:setup` chain ×2 on a fresh disposable DB OK; checklist queries match |
-| bm65 | Template captured at run start and on rerun (`bill_run_account` stamps, migration `0051`) | **Built, awaiting review/commit** (2026-10-15) — tsc/ESLint/Prettier clean; unit 4596/0; integration 1245/0 (110 skipped) |
+| bm65 | Template captured at run start and on rerun (`bill_run_account` stamps, migration `0051`) | **Built** (2026-10-15, `9e399b7`) — tsc/ESLint/Prettier clean; unit 4596/0; integration 1245/0 (110 skipped). Code-review findings (xhigh) held pending owner decisions |
+| bm66 | Draft PRO-FORMA renders from the captured template (`RenderMode` run / preview-family, draft route 422) | **Built, awaiting review/commit** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4615/0; integration 1248/0 (110 skipped) |
+
+**bm66 notes (2026-10-16):**
+
+- `RenderMode` = `run` | `final` | `preview-posted` | `preview-family`; `resolveTemplate` is a
+  `switch` ending in a `never` check. `run` reads only the stamps (never `currentVersion`); a NULL
+  generated stamp throws `TEMPLATE_VERSION_NOT_FOUND` with
+  `{ reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId }` (`familyNotActive`). `preview-family`
+  uses bm65's `resolveCurrentVersionsForFamily`. Posting (`resolveVersionsForPosting`) unchanged.
+- `buildInvoiceHtml` keeps its public `mode: "draft"`: no override → `readStamps` (widened with
+  `status`) → missing/EXCLUDED = `DraftInvoiceNotFoundError` (404); override → requires `familyId`
+  → `preview-family`.
+- Preview: `familyId` required on `previewInvoiceTemplateInputSchema` (`templateFamilyIdSchema`),
+  passed by `InvoiceStructureForm` from the page's `standardFamilyId`
+  (`billTemplateFamilyRepository.findDefault`; a missing default family throws, like a missing
+  default version).
+- Draft route: `InvoiceRenderError` → `422 { error: { code, message } }` (logged code + detail);
+  `lib/invoice-render-messages.ts` `describeInvoiceRenderCode` shared with
+  `InvoicePreviewModal` (unreadable 422 body → generic text).
+- **Test fixture change:** `invoice-render-fixtures.ts` now captures each fixture row with the real
+  `captureTemplateStamps` (a real trigger always captures; without it every fixture draft would hit
+  the NULL-stamp path). Guardrail 46's draft case now starts B's run after v3's activation (spec
+  §6 wording).
+- New `tests/db/draft-uses-run-stamps.integration.test.ts` (mid-run activation keeps the captured
+  version vs `preview-family` showing the new one; EXCLUDED → 404; NULL stamp → 422, via the real
+  route behind a mocked session). It asserts on `resolved.generated` (what `template.version` binds
+  from) and the Notes section, since layout v1 does not print `template.version`.
+- Docs: architecture Inv #42 note, #51 (draft half), #53 marked built; code-standards Phase 3
+  Next.js rules 3–4 and API rule 2 marked built (the 422 contract was already recorded there);
+  UI context §10d records the message map and the two bm66 copy rows.
 
 **bm65 notes (2026-10-15):**
 

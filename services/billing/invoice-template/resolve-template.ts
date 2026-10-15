@@ -10,10 +10,17 @@ import {
   type TemplateKind,
 } from "@/types/billing";
 
-// bm53-spec §Design D1 (Inv #42) — which versions a render uses.
+// bm53-spec §Design D1 (Inv #42), bm66-spec §Design (D33, Inv #51/#53) —
+// which versions a render uses.
 //
-//   draft                   → the non-default ACTIVE ?? the default; the ACTIVE
-//                             `invoice.profile` version ?? null (G15 A).
+//   run                     → a draft PRO-FORMA in a run: exactly the BAN's
+//                             captured `bill_run_account` stamps (bm65). Never
+//                             live. A NULL generated stamp (its family had no
+//                             ACTIVE version at capture, D55) throws
+//                             `TEMPLATE_VERSION_NOT_FOUND` — never the default
+//                             (architecture P3). A NULL profile stays NULL.
+//   preview-family          → the Invoice Settings preview: the family's live,
+//                             current versions (`resolveCurrentVersionsForFamily`).
 //   final / preview-posted  → the bill's stamps. A posted bill NEVER resolves
 //                             the current ACTIVE (code-standards General rule 4).
 //                             An unstamped column resolves the immutable default
@@ -21,11 +28,15 @@ import {
 //                             stamps at all, so they render with the default —
 //                             deterministic, and identical to what was ACTIVE
 //                             then (nothing is activatable before bm58).
-//   posting (bm54)          → `resolveVersionsForPosting`: the same "current"
-//                             as draft, returned as the four stamp values.
+//   posting (bm54)          → `resolveVersionsForPosting`: the live "current",
+//                             returned as the four stamp values (replaced by the
+//                             run stamps in bm67).
 //   run start (bm65)        → `resolveCurrentVersionsForFamily`: "current"
 //                             within one template family, captured onto
 //                             `bill_run_account` at trigger and rerun.
+//
+// The only live resolutions on a render or run path are run-start capture and
+// `preview-family` (Inv #53); posting joins them until bm67.
 //
 // "No template" cannot occur: the default rows are trigger-protected (bm50 D2).
 // If one is missing anyway (corrupted DB) this throws
@@ -80,9 +91,8 @@ async function versionById(
   return row;
 }
 
-// The one definition of "current" (bm54-spec §Design D1): shared by the draft
-// render and the posting stamp, so a pro-forma and the bill posted next can
-// never disagree on which versions are current.
+// The one definition of "current" (bm54-spec §Design D1) for the posting stamp
+// (until bm67 moves posting onto the run stamps).
 async function currentVersions(db: Database): Promise<{
   generated: BillTemplateVersion;
   csv: BillTemplateVersion;
@@ -141,6 +151,16 @@ export async function resolveCurrentVersionsForFamily(
   return { generated, csv, profileVersion };
 }
 
+// bm66-spec §2 (D55) — a family with no ACTIVE (or default) generated
+// version: the run's stamp is NULL, or the preview family has nothing to show.
+function familyNotActive(familyId: string | null): InvoiceRenderError {
+  return new InvoiceRenderError(
+    "TEMPLATE_VERSION_NOT_FOUND",
+    `template family ${familyId ?? "(none)"} has no active generated version`,
+    { reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId },
+  );
+}
+
 export async function resolveTemplate(
   db: Database,
   mode: RenderMode,
@@ -149,20 +169,52 @@ export async function resolveTemplate(
   let csv: BillTemplateVersion;
   let profileVersion: number | null;
 
-  if (mode.kind === "draft") {
-    ({ generated, csv, profileVersion } = await currentVersions(db));
-  } else {
-    const { bill } = mode;
-    [generated, csv] = await Promise.all([
-      bill.refBillTemplateVersionId === null
-        ? defaultVersion(db, "generated")
-        : versionById(db, bill.refBillTemplateVersionId, "generated"),
-      bill.refCsvTemplateVersionId === null
-        ? defaultVersion(db, "csv")
-        : versionById(db, bill.refCsvTemplateVersionId, "csv"),
-    ]);
-    // G15 A — a `null` stamp stays `null` (never the current ACTIVE).
-    profileVersion = bill.refInvoiceProfileVersion;
+  switch (mode.kind) {
+    case "run": {
+      const { stamps } = mode;
+      if (stamps.refBillTemplateVersionId === null) {
+        throw familyNotActive(stamps.refBillTemplateFamilyId);
+      }
+      if (stamps.refCsvTemplateVersionId === null) {
+        throw notFound("the run stamp has no CSV template version", {
+          familyId: stamps.refBillTemplateFamilyId,
+        });
+      }
+      [generated, csv] = await Promise.all([
+        versionById(db, stamps.refBillTemplateVersionId, "generated"),
+        versionById(db, stamps.refCsvTemplateVersionId, "csv"),
+      ]);
+      // G15 A — a `null` stamp stays `null` (never the current ACTIVE).
+      profileVersion = stamps.refInvoiceProfileVersion;
+      break;
+    }
+    case "preview-family": {
+      const current = await resolveCurrentVersionsForFamily(db, mode.familyId);
+      if (current.generated === null) throw familyNotActive(mode.familyId);
+      generated = current.generated;
+      csv = current.csv;
+      profileVersion = current.profileVersion;
+      break;
+    }
+    case "final":
+    case "preview-posted": {
+      const { bill } = mode;
+      [generated, csv] = await Promise.all([
+        bill.refBillTemplateVersionId === null
+          ? defaultVersion(db, "generated")
+          : versionById(db, bill.refBillTemplateVersionId, "generated"),
+        bill.refCsvTemplateVersionId === null
+          ? defaultVersion(db, "csv")
+          : versionById(db, bill.refCsvTemplateVersionId, "csv"),
+      ]);
+      // G15 A — a `null` stamp stays `null` (never the current ACTIVE).
+      profileVersion = bill.refInvoiceProfileVersion;
+      break;
+    }
+    default: {
+      const exhaustive: never = mode;
+      throw new Error(`unknown render mode ${JSON.stringify(exhaustive)}`);
+    }
   }
 
   if (generated.refLayoutVersionId === null) {

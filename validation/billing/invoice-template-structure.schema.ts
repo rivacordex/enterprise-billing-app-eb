@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { MANDATORY_SECTION_KEYS } from "@/types/billing";
+import { templateFamilyIdSchema } from "@/validation/billing/template-family-id.schema";
 
 // bm55-spec §Design D2 (code-standards Part 2 TS rule 3, Inv #46/#49) — the
 // admin's only template input: a boolean map over the nine section keys and
@@ -61,6 +62,8 @@ export const previewInvoiceTemplateInputSchema = z
     ]),
     annotate: z.boolean().optional(),
     outline: z.boolean().optional(),
+    // bm66-spec §4 — the family whose live versions the preview renders.
+    familyId: templateFamilyIdSchema,
   })
   .strict();
 

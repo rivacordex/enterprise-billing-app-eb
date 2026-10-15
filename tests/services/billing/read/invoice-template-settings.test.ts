@@ -20,10 +20,14 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
 vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
   customerBillRepository: {},
 }));
+vi.mock("@/db/repositories/billing/bill-template-family", () => ({
+  billTemplateFamilyRepository: { findDefault: vi.fn() },
+}));
 vi.mock("@/services/billing/invoice-template/load", () => ({
   loadGeneratedFiles: vi.fn(),
 }));
 
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { getInvoiceTemplatePageData } from "@/services/billing/read/invoice-template-settings";
 import {
@@ -32,6 +36,7 @@ import {
 } from "@/tests/helpers/seeded-invoice-template";
 
 const repo = vi.mocked(billTemplateVersionRepository);
+const familyRepo = vi.mocked(billTemplateFamilyRepository);
 
 const DRAFT_ROW = {
   ...SEEDED_GENERATED_ROW,
@@ -61,6 +66,16 @@ beforeEach(() => {
   );
   repo.findDraft.mockResolvedValue(DRAFT_ROW);
   repo.findLatestDraftSaver.mockResolvedValue("Draft Saver");
+  familyRepo.findDefault.mockResolvedValue({
+    billTemplateFamilyId: "BTF00000001",
+    code: "STANDARD",
+    name: "Standard",
+    kind: "generated",
+    isDefault: true,
+    retiredDatetime: null,
+    createdBy: null,
+    createdDatetime: new Date("2026-10-15T00:00:00Z"),
+  });
   repo.listForKind.mockImplementation(async (_db, { kind }) =>
     kind === "layout"
       ? [{ ...SEEDED_LAYOUT_ROW, usedByCount: 0 }]
@@ -69,6 +84,22 @@ beforeEach(() => {
           { ...SEEDED_GENERATED_ROW, usedByCount: 5 },
         ],
   );
+});
+
+describe("getInvoiceTemplatePageData: the Standard family (bm66)", () => {
+  it("hands the preview the default (Standard) family id", async () => {
+    const data = await getInvoiceTemplatePageData(undefined, {
+      canEdit: false,
+    });
+    expect(data.standardFamilyId).toBe("BTF00000001");
+  });
+
+  it("a missing default family (corrupted catalog) throws TEMPLATE_VERSION_NOT_FOUND, never a blank page", async () => {
+    familyRepo.findDefault.mockResolvedValue(null);
+    await expect(
+      getInvoiceTemplatePageData(undefined, { canEdit: false }),
+    ).rejects.toMatchObject({ code: "TEMPLATE_VERSION_NOT_FOUND" });
+  });
 });
 
 describe("getInvoiceTemplatePageData: the working draft", () => {

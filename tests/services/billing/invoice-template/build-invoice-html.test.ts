@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // own orchestration: one repeatable-read, read-only transaction for every DB
 // read (stamps → resolve → raw input → profile rows), blob I/O only after it
 // closes, the mode-appropriate not-found error, and `includeUsage` derived
-// from the resolved structure.
+// from the resolved structure. bm66-spec §3 — a draft renders the BAN's
+// captured run stamps (`run` mode); a missing or EXCLUDED run row is not
+// found; an override renders the named family's live versions.
 
 const events: string[] = [];
 const transactionOptions: unknown[] = [];
@@ -21,6 +23,9 @@ vi.mock("@/db/client", () => ({
 }));
 vi.mock("@/db/repositories/billing/invoice-render-input", () => ({
   invoiceRenderInputRepository: { read: vi.fn(), readBillStamps: vi.fn() },
+}));
+vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
+  billRunAccountRepository: { readStamps: vi.fn() },
 }));
 vi.mock("@/services/billing/invoice-template/resolve-template", () => ({
   resolveTemplate: vi.fn(),
@@ -47,6 +52,7 @@ import {
 import type { InvoiceProfile, ResolvedTemplate } from "@/types/billing";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 import { invoiceRenderInputRepository } from "@/db/repositories/billing/invoice-render-input";
+import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { bind } from "@/services/billing/invoice-template/bind";
 import { loadGenerated } from "@/services/billing/invoice-template/load";
 import { resolveTemplate } from "@/services/billing/invoice-template/resolve-template";
@@ -59,6 +65,7 @@ import { SEEDED_GENERATED_ROW } from "@/tests/helpers/seeded-invoice-template";
 
 const mockRead = vi.mocked(invoiceRenderInputRepository.read);
 const mockStamps = vi.mocked(invoiceRenderInputRepository.readBillStamps);
+const mockRunStamps = vi.mocked(billRunAccountRepository.readStamps);
 const mockResolve = vi.mocked(resolveTemplate);
 const mockLoad = vi.mocked(loadGenerated);
 const mockReadProfile = vi.mocked(readInvoiceProfile);
@@ -70,6 +77,15 @@ const NULL_STAMPS = {
   refInvoiceProfileVersion: null,
   refCsvTemplateVersionId: null,
   refInvDocumentId: null,
+};
+
+// bm66 — the BAN's captured `bill_run_account` stamps (bm65).
+const RUN_STAMPS = {
+  status: "PROCESSED" as const,
+  refBillTemplateFamilyId: "BTF00000001",
+  refBillTemplateVersionId: "BTV00000002",
+  refInvoiceProfileVersion: null,
+  refCsvTemplateVersionId: "BTV00000003",
 };
 
 const LAYOUT = {
@@ -120,6 +136,7 @@ beforeEach(() => {
   transactionOptions.length = 0;
   events.length = 0;
   mockStamps.mockResolvedValue(NULL_STAMPS);
+  mockRunStamps.mockResolvedValue(RUN_STAMPS);
   mockResolve.mockResolvedValue(resolved());
   mockRead.mockResolvedValue(RAW);
   mockLoad.mockImplementation(async () => {
@@ -143,6 +160,36 @@ beforeEach(() => {
 describe("buildInvoiceHtml — not found", () => {
   it("throws DraftInvoiceNotFoundError when no bill exists (draft)", async () => {
     mockStamps.mockResolvedValue(null);
+    await expect(
+      buildInvoiceHtml({
+        runId: "BRN00000042",
+        banId: "BAN00000001",
+        mode: "draft",
+      }),
+    ).rejects.toBeInstanceOf(DraftInvoiceNotFoundError);
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it("bm66 — throws DraftInvoiceNotFoundError when the BAN has no run row (draft)", async () => {
+    mockRunStamps.mockResolvedValue(null);
+    await expect(
+      buildInvoiceHtml({
+        runId: "BRN00000042",
+        banId: "BAN00000001",
+        mode: "draft",
+      }),
+    ).rejects.toBeInstanceOf(DraftInvoiceNotFoundError);
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it("bm66 — throws DraftInvoiceNotFoundError for an EXCLUDED run row (never captured, never rendered)", async () => {
+    mockRunStamps.mockResolvedValue({
+      ...RUN_STAMPS,
+      status: "EXCLUDED",
+      refBillTemplateFamilyId: null,
+      refBillTemplateVersionId: null,
+      refCsvTemplateVersionId: null,
+    });
     await expect(
       buildInvoiceHtml({
         runId: "BRN00000042",
@@ -207,13 +254,59 @@ describe("buildInvoiceHtml — read snapshot (D1/D5)", () => {
 });
 
 describe("buildInvoiceHtml — resolution mode (D1)", () => {
-  it("a draft resolves the current versions", async () => {
+  it("bm66 — a draft resolves the BAN's captured run stamps (run mode), never live", async () => {
     await buildInvoiceHtml({
       runId: "BRN00000042",
       banId: "BAN00000001",
       mode: "draft",
     });
-    expect(mockResolve).toHaveBeenCalledWith({}, { kind: "draft" });
+    expect(mockRunStamps).toHaveBeenCalledWith(
+      {},
+      "BRN00000042",
+      "BAN00000001",
+    );
+    expect(mockResolve).toHaveBeenCalledWith(
+      {},
+      { kind: "run", stamps: RUN_STAMPS },
+    );
+  });
+
+  it("bm66 — an override resolves the named family's live versions (preview-family), not the run's", async () => {
+    await buildInvoiceHtml({
+      runId: "BRN00000042",
+      banId: "BAN00000001",
+      mode: "draft",
+      familyId: "BTF00000001",
+      override: {
+        structure: SEEDED_GENERATED_ROW.structure!,
+        load: async () => ({
+          invoice: () => "<html>override</html>",
+          footer: () => "<div>footer</div>",
+        }),
+      },
+    });
+    expect(mockRunStamps).not.toHaveBeenCalled();
+    expect(mockResolve).toHaveBeenCalledWith(
+      {},
+      { kind: "preview-family", familyId: "BTF00000001" },
+    );
+  });
+
+  it("bm66 — an override without a familyId is refused", async () => {
+    await expect(
+      buildInvoiceHtml({
+        runId: "BRN00000042",
+        banId: "BAN00000001",
+        mode: "draft",
+        override: {
+          structure: SEEDED_GENERATED_ROW.structure!,
+          load: async () => ({
+            invoice: () => "",
+            footer: () => "",
+          }),
+        },
+      }),
+    ).rejects.toThrow(/familyId/);
   });
 
   it("a final render resolves the bill's stamps", async () => {

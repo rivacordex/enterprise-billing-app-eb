@@ -415,9 +415,11 @@ No colour signals sign or status on the invoice. Unutilised is a normal amount, 
 | --- | --- | --- |
 | `INVOICE_POLYGON_DATA_MISSING` | Draft preview error (§6c); `RenderPendingRow` | Danger `-fg`: "Polygon data is missing for a billed record (no polygon ID or region). Fix the rated data and rerun this account." |
 | `INVOICE_NEGATIVE_UTILISED` | Same | Danger `-fg`: "Utilised capacity charges came out negative. Check the rate-matching setting and rerun this account." |
-| `INVOICE_RECONCILIATION_FAILED` | Same (existing code) | Existing copy, unchanged |
-| `INVOICE_USAGE_OVER_LIMIT` | Same (existing code) | Existing copy, unchanged |
+| `INVOICE_RECONCILIATION_FAILED` | Same (existing code) | Danger `-fg`: "The invoice lines do not add up to the bill total. Rerun this account; if it repeats, report it." (bm66) |
+| `INVOICE_USAGE_OVER_LIMIT` | Same (existing code) | Danger `-fg`: "This account has more than 10,000 billed usage records, over the invoice limit." (bm66) |
 | `TEMPLATE_VERSION_NOT_FOUND` (`FAMILY_HAS_NO_ACTIVE_VERSION`) | Draft preview error; at posting, the account shows the existing `SKIPPED` `AccountStatusBadge` with this reason (D58) | Danger `-fg`: "This account's invoice template has no active version. Activate one in Invoice Settings, then rerun this account." |
+
+**As built (bm66):** the draft-preview copy lives in one map, `describeInvoiceRenderCode(code)` (`lib/invoice-render-messages.ts`), shared by the draft route's `422 { error: { code, message } }` body and `InvoicePreviewModal`. Any code without its own row keeps the generic "Could not render the draft invoice. Please try again." The modal keeps its existing error layout (Danger `-fg` text and Retry). bm70 and bm71 add the two `INVOICE_*` polygon/utilised rows to the map.
 
 ## 11. Implemented UI not covered above (as built, dev1 614743a)
 

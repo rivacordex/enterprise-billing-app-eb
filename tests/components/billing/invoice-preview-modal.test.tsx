@@ -113,6 +113,48 @@ describe("InvoicePreviewModal", () => {
     ).toBeTruthy();
   });
 
+  // bm66-spec §5 / UI context §10d — a 422 carries the render failure's code;
+  // the modal shows that code's message, keeping the error layout and Retry.
+  it("shows the no-active-version message for a 422 TEMPLATE_VERSION_NOT_FOUND (bm66)", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        error: {
+          code: "TEMPLATE_VERSION_NOT_FOUND",
+          message: "server copy",
+        },
+      }),
+    } as never);
+    renderModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /preview pro-forma/i }));
+
+    expect(
+      await screen.findByText(
+        "This account's invoice template has no active version. Activate one in Invoice Settings, then rerun this account.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^retry$/i })).toBeTruthy();
+  });
+
+  it("falls back to the generic text for a 422 whose body is unreadable (bm66)", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => {
+        throw new SyntaxError("not json");
+      },
+    } as never);
+    renderModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /preview pro-forma/i }));
+
+    expect(
+      await screen.findByText(/could not render the draft invoice/i),
+    ).toBeTruthy();
+  });
+
   it("shows a rate-limit reason for a 429", async () => {
     vi.mocked(fetch).mockResolvedValue({ ok: false, status: 429 } as never);
     renderModal();

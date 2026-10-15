@@ -21,6 +21,7 @@ import { seedGlMappings } from "@/db/seeds/accounts/seed-gl-mappings";
 import { seedReasonCodes } from "@/db/seeds/accounts/seed-reason-codes";
 import { seedSysAccounts } from "@/db/seeds/accounts/seed-sys-accounts";
 import { blobStore } from "@/services/billing/blob-store";
+import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import type { PostAccountResult } from "@/services/billing/post-run";
 import { createFlowDoubleFixtures } from "@/tests/db/helpers/billrun-flow-double-fixtures";
 
@@ -224,6 +225,10 @@ export async function setupInvoiceRenderFixtures(
         (ref_bill_run_id, ref_billing_account_id, period_partition, status, attempt_count)
       VALUES (${args.runId}, ${banId}, ${FIXTURE_PARTITION},
               ${args.posted ? "INVOICED" : "PROCESSED"}, 1)`;
+    // bm65/bm66 — a real trigger captures every non-EXCLUDED row's template
+    // stamps, and a draft render reads only them (run mode). Capture with the
+    // real service, so the row carries the versions current at fixture time.
+    await captureTemplateStamps(db as unknown as Database, args.runId, [banId]);
 
     return sql.begin(async (tx) => {
       await tx`SET LOCAL session_replication_role = replica`;
