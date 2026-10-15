@@ -506,13 +506,15 @@ def build_udr_resource(
 
 
 def invalid_label_cells(ratecard: dict[str, RatecardCell]) -> list[dict[str, str]]:
-    """Cells whose state or district contains ``|`` (R9), sorted by cell for a stable log."""
+    """Cells whose state or district contains ``|`` (R9), sorted by cell for a stable log.
+    Only the offenders are sorted — a clean card (the normal case) costs one pass."""
     offenders: list[dict[str, str]] = []
-    for cell in sorted(ratecard):
-        entry = ratecard[cell]
+    for cell, entry in ratecard.items():
         for column, value in (("state", entry.state), ("district", entry.district)):
             if value is not None and "|" in value:
                 offenders.append({"cell": cell, "column": column, "value": value})
+    # A stable sort by cell keeps a cell's state entry before its district entry.
+    offenders.sort(key=lambda o: o["cell"])
     return offenders
 
 
@@ -1481,16 +1483,33 @@ def _refuse_claimed_batch(
     conn: psycopg.Connection,
     *,
     args: argparse.Namespace,
-    outcome: Outcome,
+    event_code: str,
+    specific_problem: str,
+    additional_info: dict[str, Any],
     batch_id: str,
+    batch_run_num: int,
+    file_key: str,
     source_file: str,
     started_at: datetime,
     engine_version: str | None,
 ) -> int:
     """Refuse a just-claimed batch before any parse (``UDRTYPE_MISMATCH``,
-    ``RATECARD_LABEL_INVALID``): stamp the REFUSED counts, emit the one summarised
-    line (Inv #11), write the stderr diagnostic and return the non-zero exit. No
-    chunk is written and the file stays in ``landing/``."""
+    ``RATECARD_LABEL_INVALID``): stamp the REFUSED counts (all zero — nothing was
+    parsed), emit the one summarised ``ERROR`` line (Inv #11), write the stderr
+    diagnostic and return the non-zero exit. No chunk is written and the file
+    stays in ``landing/``."""
+    outcome = Outcome(
+        status="REFUSED",
+        event_code=event_code,
+        log_level="ERROR",
+        parsed=0,
+        rejected=0,
+        discarded=0,
+        specific_problem=specific_problem,
+        additional_info=additional_info,
+        alarm_key=_batch_alarm_key(event_code, args.udr_type, file_key, batch_run_num),
+        managed_object=file_key,
+    )
     stamp_counts(
         conn,
         batch_id=batch_id,
@@ -1501,17 +1520,17 @@ def _refuse_claimed_batch(
         engine_version=engine_version,
     )
     emit_summary(
-        event_code=outcome.event_code or "",
-        log_level=outcome.log_level or "ERROR",
+        event_code=event_code,
+        log_level="ERROR",
         source_file=source_file,
         batch_id=batch_id,
         workflow_execution_id=args.workflow_execution_id,
-        specific_problem=outcome.specific_problem or "",
-        additional_info=outcome.additional_info,
+        specific_problem=specific_problem,
+        additional_info=additional_info,
         alarm_key=outcome.alarm_key,
-        managed_object=outcome.managed_object,
+        managed_object=file_key,
     )
-    print(f"{outcome.event_code}: batch {batch_id} REFUSED", file=sys.stderr)
+    print(f"{event_code}: batch {batch_id} REFUSED", file=sys.stderr)
     return 1
 
 
@@ -1683,29 +1702,20 @@ def main(argv: list[str] | None = None) -> int:
             return _refuse_claimed_batch(
                 conn,
                 args=args,
-                outcome=Outcome(
-                    status="REFUSED",
-                    event_code="UDRTYPE_MISMATCH",
-                    log_level="ERROR",
-                    parsed=0,
-                    rejected=0,
-                    discarded=0,
-                    specific_problem=(
-                        f"flow udr_type {args.udr_type!r} != pinned offering udrType "
-                        f"spec {pin.udr_type_value!r} ({args.subscription_product_name!r})"
-                    ),
-                    additional_info={
-                        "file_key": file_key,
-                        "flow_udr_type": args.udr_type,
-                        "offering_udr_type": pin.udr_type_value,
-                        "subscription_product_name": args.subscription_product_name,
-                    },
-                    alarm_key=_batch_alarm_key(
-                        "UDRTYPE_MISMATCH", args.udr_type, file_key, batch_run_num
-                    ),
-                    managed_object=file_key,
+                event_code="UDRTYPE_MISMATCH",
+                specific_problem=(
+                    f"flow udr_type {args.udr_type!r} != pinned offering udrType "
+                    f"spec {pin.udr_type_value!r} ({args.subscription_product_name!r})"
                 ),
+                additional_info={
+                    "file_key": file_key,
+                    "flow_udr_type": args.udr_type,
+                    "offering_udr_type": pin.udr_type_value,
+                    "subscription_product_name": args.subscription_product_name,
+                },
                 batch_id=batch_id,
+                batch_run_num=batch_run_num,
+                file_key=file_key,
                 source_file=source_file,
                 started_at=started_at,
                 engine_version=engine_version,
@@ -1714,37 +1724,35 @@ def main(argv: list[str] | None = None) -> int:
         # Card-label delimiter (rm26 / R9, Inv 28): a ratecard state or district
         # containing `|` would corrupt udr_resource's positional segments, so the
         # whole batch is refused before any record is rated — post-claim, so Ops
-        # gets a batch row and a catalogued MAJOR line. Fix the card and re-drop the
-        # file (same file_key, next batch_run_num).
+        # gets a batch row and a catalogued MAJOR line. Remedy: fix the card, then
+        # re-deliver. NOTE a byte-identical re-drop of the same file is discarded
+        # as DUPLICATE_BATCH, because is_duplicate_redelivery matches
+        # (file_key, checksum) whatever the earlier batch's status (rm11 open item
+        # 1) — only changed bytes claim the next batch_run_num. Owner decision
+        # pending (see ratemgmt-progress-tracker, rm26).
         offenders = invalid_label_cells(ratecard)
         if offenders:
+            # One entry per offending LABEL, so a cell with both labels bad counts
+            # twice in `n`; the message names distinct cells.
             n = len(offenders)
+            n_cells = len({o["cell"] for o in offenders})
             return _refuse_claimed_batch(
                 conn,
                 args=args,
-                outcome=Outcome(
-                    status="REFUSED",
-                    event_code="RATECARD_LABEL_INVALID",
-                    log_level="ERROR",
-                    parsed=0,
-                    rejected=0,
-                    discarded=0,
-                    specific_problem=(
-                        f"{n} ratecard cell(s) in card {pin.card_name!r} have a state "
-                        "or district containing '|'"
-                    ),
-                    additional_info={
-                        "file_key": file_key,
-                        "card_name": pin.card_name,
-                        "invalid_label_count": n,
-                        "sample": offenders[:20],
-                    },
-                    alarm_key=_batch_alarm_key(
-                        "RATECARD_LABEL_INVALID", args.udr_type, file_key, batch_run_num
-                    ),
-                    managed_object=file_key,
+                event_code="RATECARD_LABEL_INVALID",
+                specific_problem=(
+                    f"{n_cells} ratecard cell(s) in card {pin.card_name!r} have a "
+                    "state or district containing '|'"
                 ),
+                additional_info={
+                    "file_key": file_key,
+                    "card_name": pin.card_name,
+                    "invalid_label_count": n,
+                    "sample": offenders[:20],
+                },
                 batch_id=batch_id,
+                batch_run_num=batch_run_num,
+                file_key=file_key,
                 source_file=source_file,
                 started_at=started_at,
                 engine_version=engine_version,
