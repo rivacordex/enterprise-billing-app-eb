@@ -208,9 +208,9 @@ export async function previewInvoiceTemplate({
     runId: target.billRunId,
     banId: target.billingAccountId,
     mode: "draft",
-    familyId,
     override: {
       structure,
+      renderMode: { kind: "preview-family", familyId },
       load: async (resolved) => {
         const { invoice, footer } = await generateInMemory(
           resolved,

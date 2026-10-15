@@ -73,9 +73,9 @@ export const customerBill = billing.table(
     }).notNull(),
     paymentDueDate: date("payment_due_date", { mode: "string" }).notNull(),
     // Invoice-template posting stamps (Inv. #41) — stamped at posting by the
-    // app (bm54): `stampPosted` writes all four in the same UPDATE as
-    // `ref_inv_document_id`, from the rows `resolveVersionsForPosting`
-    // resolved, then the finalization guard (0033) freezes them. No FK
+    // app (bm54): `stampPosted` writes them in the same UPDATE as
+    // `ref_inv_document_id`, copied from the BAN's run stamps (bm67; bm54
+    // resolved them live), then the finalization guard (0033) freezes them. No FK
     // (partitioned table + the plain-key stamp rule, 0029 precedent).
     // `billrun_runtime` lost its column grants on the first two (bm50, Inv
     // #41) — these are app-only. NULL on every bill posted before bm54.
@@ -86,6 +86,10 @@ export const customerBill = billing.table(
     // nullable, no FK, app-only stamps, stamped at posting by the app (bm54).
     refInvoiceProfileVersion: integer("ref_invoice_profile_version"),
     refCsvTemplateVersionId: text("ref_csv_template_version_id"),
+    // bm67 (migration 0052, D23) — the template family the bill was posted
+    // under, copied from the BAN's run stamp; nullable, no FK, app-only
+    // stamp. NULL on every bill posted before bm67.
+    refBillTemplateFamilyId: text("ref_bill_template_family_id"),
     // The finalization latch (Inv. #4), written at posting (bm11).
     refInvDocumentId: text("ref_inv_document_id"),
     postedAttempt: integer("posted_attempt"),

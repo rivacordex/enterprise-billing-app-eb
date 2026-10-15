@@ -410,6 +410,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
       refBillTemplateVersionId: "BTV00000002",
     });
     renderInput.readBillStamps.mockResolvedValue({
+      refBillTemplateFamilyId: "BTF00000001",
       refBillTemplateVersionId: "BTV00000002",
       refInvoiceProfileVersion: null,
       refCsvTemplateVersionId: "BTV00000003",
@@ -453,6 +454,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
       refBillTemplateVersionId: null,
     });
     renderInput.readBillStamps.mockResolvedValue({
+      refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
       refInvoiceProfileVersion: null,
       refCsvTemplateVersionId: null,
@@ -494,6 +496,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
       refBillTemplateVersionId: null,
     });
     renderInput.readBillStamps.mockResolvedValue({
+      refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
       refInvoiceProfileVersion: null,
       refCsvTemplateVersionId: null,

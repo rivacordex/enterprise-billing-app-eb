@@ -40,7 +40,7 @@ export interface BuildInvoiceHtmlParams {
   runId: string;
   banId: string;
   // `draft` renders the BAN's captured run stamps (bm66, `run` mode) — or,
-  // with an `override`, the family's live versions (`preview-family`);
+  // with an `override`, the render mode the editor preview supplies;
   // `final` and `preview-posted` (the editor preview of a posted bill, bm55)
   // resolve the bill's stamps (D1).
   mode: "draft" | "final" | "preview-posted";
@@ -52,24 +52,28 @@ export interface BuildInvoiceHtmlParams {
   // admin's unsaved structure: `load` builds the template in memory from the
   // resolved layout (generated + compiled, never stored or memoized) in place
   // of the stored generated version. Draft mode only — a posted bill always
-  // renders its stamped version (Inv #42). bm66: requires `familyId`, and
-  // resolves that family's live versions (`preview-family`), not the run's.
+  // renders its stamped version (Inv #42). bm66/bm67: the override carries
+  // its own live render mode, built by the editor preview (`preview.ts`) for
+  // the family it names — this module never constructs a live mode
+  // (guardrail 57, Inv #53).
   override?: {
     structure: InvoiceTemplateStructure;
     load: (
       resolved: ResolvedTemplate,
     ) => Promise<Pick<LoadedGeneratedTemplate, "invoice" | "footer">>;
+    renderMode: LiveFamilyRenderMode;
   };
-  // bm66-spec §3 — the template family an `override` preview renders with.
-  familyId?: string;
 }
+
+// The editor preview's live, family-scoped render mode (bm66).
+type LiveFamilyRenderMode = Extract<RenderMode, { familyId: string }>;
 
 export interface BuildInvoiceHtmlResult {
   html: string;
   footerHtml: string;
   pageSetup: LayoutPageSetup;
-  // D5 step 7 — the versions this render resolved (posting resolves its own
-  // stamps with `resolveVersionsForPosting`; the CSV path resolves separately).
+  // D5 step 7 — the versions this render resolved (posting copies the run
+  // stamps and resolves nothing, bm67; the CSV path resolves separately).
   resolved: ResolvedTemplate;
 }
 
@@ -91,7 +95,6 @@ export async function buildInvoiceHtml({
   mode,
   invoiceNo,
   override,
-  familyId,
 }: BuildInvoiceHtmlParams): Promise<BuildInvoiceHtmlResult> {
   const isFinal = mode === "final";
   // bm55-spec §Design D3 — `isDraft: !posted`: the editor preview of a
@@ -99,9 +102,6 @@ export async function buildInvoiceHtml({
   const isDraft = mode === "draft";
   if (override && !isDraft) {
     throw new Error("buildInvoiceHtml: a template override is draft-only");
-  }
-  if (override && familyId === undefined) {
-    throw new Error("buildInvoiceHtml: a template override needs a familyId");
   }
   const timezone = getAppTimezone();
 
@@ -125,7 +125,7 @@ export async function buildInvoiceHtml({
       // unposted bill: the family's live versions, not the run's.
       let renderMode: RenderMode;
       if (override) {
-        renderMode = { kind: "preview-family", familyId: familyId! };
+        renderMode = override.renderMode;
       } else if (mode === "draft") {
         const runStamps = await billRunAccountRepository.readStamps(
           tx,

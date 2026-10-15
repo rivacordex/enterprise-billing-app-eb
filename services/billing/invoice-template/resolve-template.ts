@@ -4,7 +4,6 @@ import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-prof
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import {
   InvoiceRenderError,
-  type PostingVersionStamps,
   type RenderMode,
   type ResolvedTemplate,
   type TemplateKind,
@@ -28,15 +27,13 @@ import {
 //                             stamps at all, so they render with the default —
 //                             deterministic, and identical to what was ACTIVE
 //                             then (nothing is activatable before bm58).
-//   posting (bm54)          → `resolveVersionsForPosting`: the live "current",
-//                             returned as the four stamp values (replaced by the
-//                             run stamps in bm67).
 //   run start (bm65)        → `resolveCurrentVersionsForFamily`: "current"
 //                             within one template family, captured onto
 //                             `bill_run_account` at trigger and rerun.
 //
-// The only live resolutions on a render or run path are run-start capture and
-// `preview-family` (Inv #53); posting joins them until bm67.
+// Posting resolves nothing: it copies the BAN's run stamps onto the bill (bm67,
+// Inv #41 amended). The only live resolutions are run-start capture and
+// `preview-family` (Inv #53, guardrail 57).
 //
 // "No template" cannot occur: the default rows are trigger-protected (bm50 D2).
 // If one is missing anyway (corrupted DB) this throws
@@ -91,47 +88,12 @@ async function versionById(
   return row;
 }
 
-// The one definition of "current" (bm54-spec §Design D1) for the posting stamp
-// (until bm67 moves posting onto the run stamps).
-async function currentVersions(db: Database): Promise<{
-  generated: BillTemplateVersion;
-  csv: BillTemplateVersion;
-  profileVersion: number | null;
-}> {
-  const [generated, csv, profileVersion] = await Promise.all([
-    currentVersion(db, "generated"),
-    currentVersion(db, "csv"),
-    invoiceProfileRepository.findActiveVersion(db),
-  ]);
-  return { generated, csv, profileVersion };
-}
-
-// bm54-spec §Design D1 (Inv #41) — the versions a bill is posted under, read
-// inside `postAccount`'s money transaction and written by `stampPosted` in the
-// same UPDATE as `ref_inv_document_id`. DB rows only: no blob read, no compile
-// — posting must never fail or slow because a template is unreadable (a bad
-// template parks the render afterwards, Inv #40). The catalog rows are read
-// without a lock, so an activation mid-run can give accounts of one run
-// different versions; each bill records exactly what it was posted under.
-export async function resolveVersionsForPosting(
-  tx: Database,
-): Promise<PostingVersionStamps> {
-  const { generated, csv, profileVersion } = await currentVersions(tx);
-  return {
-    refBillFormatId: "INVOICE",
-    refBillTemplateVersionId: generated.billTemplateVersionId,
-    // G15 A — no ACTIVE profile ⇒ stamped NULL.
-    refInvoiceProfileVersion: profileVersion,
-    refCsvTemplateVersionId: csv.billTemplateVersionId,
-  };
-}
-
 // bm65-spec §3 (Inv #51, #53) — the versions a BAN in `familyId` is captured
 // with at run start: the only live resolution on a run path, run at capture.
 // `generated` is the family's non-default ACTIVE, else the family's default,
 // else `null` — no throw (D55, Inv #58: a family with no ACTIVE version is
-// stamped NULL and acted on by render/posting). CSV and profile are global
-// and use the same "current" as above.
+// stamped NULL and acted on by render/posting). CSV and profile are global:
+// the non-default ACTIVE ?? the default, and the ACTIVE profile ?? null (G15 A).
 export async function resolveCurrentVersionsForFamily(
   db: Database,
   familyId: string,

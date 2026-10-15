@@ -37,10 +37,7 @@ import {
   isDraftRaceViolation,
   saveTemplateDraft,
 } from "@/services/billing/invoice-template/save-template-draft";
-import {
-  resolveTemplate,
-  resolveVersionsForPosting,
-} from "@/services/billing/invoice-template/resolve-template";
+import { resolveTemplate } from "@/services/billing/invoice-template/resolve-template";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import type { Database } from "@/db/client";
 
@@ -317,7 +314,9 @@ describe.skipIf(!databaseUrl)(
       expect(await auditRows()).toHaveLength(0);
     });
 
-    it("the DRAFT is never resolved: draft and posting still use the ACTIVE/default version", async () => {
+    // bm67 — posting no longer resolves (it copies the run stamps), so only
+    // the live preview resolution is checked here.
+    it("the DRAFT is never resolved: the live preview still uses the ACTIVE/default version", async () => {
       await saveTemplateDraft(
         { structure: structure({ payment: false }), expectedDraftToken: null },
         ACTOR,
@@ -331,10 +330,6 @@ describe.skipIf(!databaseUrl)(
         kind: "preview-family",
         familyId: "BTF00000001",
       });
-      const posting = await db.transaction((tx) =>
-        resolveVersionsForPosting(tx),
-      );
-      expect(posting.refBillTemplateVersionId).toBe("BTV00000002");
       expect(resolved.generated.billTemplateVersionId).toBe("BTV00000002");
       expect(resolved.generated.status).toBe("ACTIVE");
       expect(

@@ -934,22 +934,15 @@ export interface RecentPostedBill {
 // `services/billing/invoice-template/resolve-template.ts` + `load.ts`.
 // ============================================================================
 
-// The three `customer_bill` stamp columns (bm50 D5). All `null` on a bill
-// posted before bm54, which introduces the stamping.
+// The `customer_bill` template stamp columns (bm50 D5; the family, bm67). All
+// `null` on a bill posted before bm54, which introduces the stamping; the
+// family is `null` on a bill posted before bm67. Resolution never reads the
+// family: the version id already pins the layout.
 export interface PostedBillStamps {
+  refBillTemplateFamilyId: string | null;
   refBillTemplateVersionId: string | null;
   refInvoiceProfileVersion: number | null;
   refCsvTemplateVersionId: string | null;
-}
-
-// bm54-spec §Design D1/D2 — the four values `resolveVersionsForPosting`
-// resolves and `stampPosted` writes in the same UPDATE as
-// `ref_inv_document_id` (Inv #41). Only the profile version can be null (G15 A).
-export interface PostingVersionStamps {
-  refBillFormatId: "INVOICE";
-  refBillTemplateVersionId: string;
-  refInvoiceProfileVersion: number | null;
-  refCsvTemplateVersionId: string;
 }
 
 // bm65-spec §2 (Inv #51/#52) — the run-start template stamps on one

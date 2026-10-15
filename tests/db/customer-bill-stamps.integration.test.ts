@@ -9,10 +9,13 @@ import {
 } from "@/tests/db/helpers/invoice-render-fixtures";
 
 // bm54-spec §Tests row 2 (Inv #41, guardrail 46 DB half). The REAL posting
-// transaction (`postAccount` → `resolveVersionsForPosting` → `stampPosted`)
-// writes the four invoice-template version stamps in the SAME UPDATE as the
-// finalization latch `ref_inv_document_id`, and the finalization guard (0033)
-// then refuses any later stamp with SQLSTATE 23001.
+// transaction (`postAccount` → `stampPosted`) writes the invoice-template
+// version stamps in the SAME UPDATE as the finalization latch
+// `ref_inv_document_id`, and the finalization guard (0033) then refuses any
+// later stamp with SQLSTATE 23001. bm67-spec §5 — the stamps are copied from
+// the BAN's run stamps (captured by the fixture with the real capture
+// service), and the family `ref_bill_template_family_id` rides in that same
+// UPDATE and is frozen the same way.
 //
 // "Same statement" is proven without pg_stat_statements: a test-only BEFORE
 // UPDATE row trigger (named to fire before `customer_bill_finalization_guard`)
@@ -28,6 +31,7 @@ const RUN = "BRN-BM54-STAMPS";
 
 interface StampRow {
   ref_bill_format_id: string | null;
+  ref_bill_template_family_id: string | null;
   ref_bill_template_version_id: string | null;
   ref_invoice_profile_version: number | null;
   ref_csv_template_version_id: string | null;
@@ -42,7 +46,8 @@ describe.skipIf(!databaseUrl)(
 
     async function readStamps(customerBillId: string): Promise<StampRow> {
       const [row] = await sql<StampRow[]>`
-        SELECT ref_bill_format_id, ref_bill_template_version_id,
+        SELECT ref_bill_format_id, ref_bill_template_family_id,
+               ref_bill_template_version_id,
                ref_invoice_profile_version, ref_csv_template_version_id,
                ref_inv_document_id
         FROM billing.customer_bill WHERE customer_bill_id = ${customerBillId}`;
@@ -62,6 +67,7 @@ describe.skipIf(!databaseUrl)(
           old_inv_document_id text,
           new_inv_document_id text,
           new_bill_format_id text,
+          new_bill_template_family_id text,
           new_bill_template_version_id text,
           new_invoice_profile_version integer,
           new_csv_template_version_id text
@@ -72,7 +78,8 @@ describe.skipIf(!databaseUrl)(
         BEGIN
           INSERT INTO billing.bm54_update_audit VALUES (
             NEW.customer_bill_id, OLD.ref_inv_document_id, NEW.ref_inv_document_id,
-            NEW.ref_bill_format_id, NEW.ref_bill_template_version_id,
+            NEW.ref_bill_format_id, NEW.ref_bill_template_family_id,
+            NEW.ref_bill_template_version_id,
             NEW.ref_invoice_profile_version, NEW.ref_csv_template_version_id);
           RETURN NEW;
         END $$`);
@@ -104,6 +111,7 @@ describe.skipIf(!databaseUrl)(
 
       expect(await readStamps(customerBillId)).toEqual({
         ref_bill_format_id: "INVOICE",
+        ref_bill_template_family_id: "BTF00000001",
         ref_bill_template_version_id: "BTV00000002",
         ref_invoice_profile_version: null, // G15 A
         ref_csv_template_version_id: "BTV00000003",
@@ -120,6 +128,7 @@ describe.skipIf(!databaseUrl)(
         old_inv_document_id: null,
         new_inv_document_id: result.invoiceId,
         new_bill_format_id: "INVOICE",
+        new_bill_template_family_id: "BTF00000001",
         new_bill_template_version_id: "BTV00000002",
         new_invoice_profile_version: null,
         new_csv_template_version_id: "BTV00000003",
@@ -157,6 +166,8 @@ describe.skipIf(!databaseUrl)(
         sql`UPDATE billing.customer_bill SET ref_bill_template_version_id = 'BTV00000099' WHERE customer_bill_id = ${id}`,
         sql`UPDATE billing.customer_bill SET ref_invoice_profile_version = 7 WHERE customer_bill_id = ${id}`,
         sql`UPDATE billing.customer_bill SET ref_csv_template_version_id = NULL WHERE customer_bill_id = ${id}`,
+        // bm67 — the family stamp is frozen like the others.
+        sql`UPDATE billing.customer_bill SET ref_bill_template_family_id = 'BTF00000099' WHERE customer_bill_id = ${id}`,
       ]) {
         await expect(statement).rejects.toMatchObject({ code: "23001" });
       }

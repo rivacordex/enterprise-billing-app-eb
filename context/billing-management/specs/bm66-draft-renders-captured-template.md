@@ -38,7 +38,7 @@ export type RenderMode =
 **The editor preview names a family.**
 - `previewInvoiceTemplate` (`services/billing/invoice-template/preview.ts`) gains a required `familyId`:
   - the sample source (`previewSample`, ~l.119) renders with `{ kind: "preview-family", familyId }`;
-  - an **unposted** bill source keeps rendering the admin's unsaved structure on that bill's data, so it uses `{ kind: "preview-family", familyId }`, not the run stamps. `buildInvoiceHtml` gains an optional `familyId`; when `override` is present it must be set, and the mode is `preview-family`.
+  - an **unposted** bill source keeps rendering the admin's unsaved structure on that bill's data, so it uses `{ kind: "preview-family", familyId }`, not the run stamps. `preview.ts` builds that mode and passes it to `buildInvoiceHtml` on the override (`override.renderMode`); `buildInvoiceHtml` uses it as given and never constructs a live mode itself (code-standards Phase 3 TS rule 1: only `preview.ts` may construct `preview-family`; guardrail 57).
 - A **posted** bill source keeps `preview-posted` (unchanged).
 - `previewInvoiceTemplateInputSchema` (`validation/billing/invoice-template-structure.schema.ts`) gains `familyId: templateFamilyIdSchema` (bm64).
 - `InvoiceStructureForm` (~l.211) passes the Standard family's id, read once by the page's server read service (`services/billing/read/invoice-template-settings.ts`) through `billTemplateFamilyRepository.findDefault` and handed to the form as a prop.
@@ -87,20 +87,22 @@ A fixture BAN with a NULL generated stamp shows the "no active version" message 
 ### 3. Binder entry point
 
 `services/billing/render-invoice-template.ts`:
-- `BuildInvoiceHtmlParams` gains `familyId?: string`; `override` requires `familyId` (throw if missing, the same guard as today's draft-only check ~l.96).
+- `BuildInvoiceHtmlParams.override` gains a required `renderMode: Extract<RenderMode, { familyId: string }>`, built by the caller (`preview.ts`). It is a required field of the override, so an override without a family is a type error; there is no runtime guard and no separate `familyId` parameter. The existing draft-only check (~l.96) stays.
 - In the read transaction:
 
   ```ts
-  if (mode === "draft" && !override) {
+  if (override) {
+    renderMode = override.renderMode;                             // preview-family, built by preview.ts
+  } else if (mode === "draft") {
     const stamps = await billRunAccountRepository.readStamps(tx, runId, banId);
     if (!stamps || stamps.status === "EXCLUDED") return null;   // → DraftInvoiceNotFoundError
     renderMode = { kind: "run", stamps };
-  } else if (override) {
-    renderMode = { kind: "preview-family", familyId: familyId! };
   } else {
     renderMode = { kind: mode, bill: stamps };                    // final / preview-posted, unchanged
   }
   ```
+
+  > **Corrected 2026-10-16 (bm67).** This section first gave `buildInvoiceHtml` an optional `familyId` and had it construct `{ kind: "preview-family", … }`. That contradicted code-standards Phase 3 TS rule 1 ("only `preview.ts` may construct it") and bm67's guardrail 57, which forbids `preview-family` in `render-invoice-template.ts`. The override now carries the mode `preview.ts` built. The behaviour is the same: an unposted-bill preview renders the named family's live versions.
 
   `readStamps` returns the status alongside the four stamps; widen its bm65 signature to `RunTemplateStamps & { status: AccountStatus }`.
 
@@ -109,7 +111,7 @@ A fixture BAN with a NULL generated stamp shows the "no active version" message 
 - `services/billing/invoice-template/preview.ts`:
   - `PreviewInvoiceTemplateParams` gains `familyId: string`;
   - `previewSample` resolves `{ kind: "preview-family", familyId }`;
-  - the unposted-bill branch passes `familyId` to `buildInvoiceHtml`.
+  - the unposted-bill branch passes `override.renderMode: { kind: "preview-family", familyId }` to `buildInvoiceHtml`.
 - `validation/billing/invoice-template-structure.schema.ts`: `previewInvoiceTemplateInputSchema` adds `familyId`.
 - `actions/billing/invoice-settings/preview-invoice-template.action.ts`: pass it through. The existing `invoice_settings : READ` gate and the `billrun_view` check for bill sources are unchanged.
 - `services/billing/read/invoice-template-settings.ts`: the page data adds `standardFamilyId`.

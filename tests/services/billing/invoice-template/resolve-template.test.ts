@@ -23,10 +23,7 @@ import type { Database } from "@/db/client";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
-import {
-  resolveTemplate,
-  resolveVersionsForPosting,
-} from "@/services/billing/invoice-template/resolve-template";
+import { resolveTemplate } from "@/services/billing/invoice-template/resolve-template";
 import { InvoiceRenderError, type TemplateKind } from "@/types/billing";
 import { SEEDED_GENERATED_ROW } from "@/tests/helpers/seeded-invoice-template";
 
@@ -256,6 +253,7 @@ describe.each(["final", "preview-posted"] as const)(
       const r = await resolveTemplate(DB, {
         kind,
         bill: {
+          refBillTemplateFamilyId: "BTF00000001",
           refBillTemplateVersionId: "BTV00000007",
           refInvoiceProfileVersion: 2,
           refCsvTemplateVersionId: "BTV00000003",
@@ -277,6 +275,7 @@ describe.each(["final", "preview-posted"] as const)(
       const r = await resolveTemplate(DB, {
         kind,
         bill: {
+          refBillTemplateFamilyId: null,
           refBillTemplateVersionId: null,
           refInvoiceProfileVersion: null,
           refCsvTemplateVersionId: null,
@@ -295,6 +294,7 @@ describe.each(["final", "preview-posted"] as const)(
           resolveTemplate(DB, {
             kind,
             bill: {
+              refBillTemplateFamilyId: "BTF00000001",
               refBillTemplateVersionId: "BTV00099999",
               refInvoiceProfileVersion: 1,
               refCsvTemplateVersionId: null,
@@ -315,6 +315,7 @@ describe.each(["final", "preview-posted"] as const)(
             resolveTemplate(DB, {
               kind,
               bill: {
+                refBillTemplateFamilyId: "BTF00000001",
                 refBillTemplateVersionId: id,
                 refInvoiceProfileVersion: null,
                 refCsvTemplateVersionId: null,
@@ -347,63 +348,5 @@ describe("resolveTemplate — layout", () => {
   });
 });
 
-// bm54-spec §Design D1 — the posting stamp shares the draft's "current"
-// precedence (one private helper), so a pro-forma and the bill posted next can
-// never disagree. DB rows only: no layout lookup, no blob I/O.
-describe("resolveVersionsForPosting", () => {
-  it("fresh catalog → the default generated + CSV ids, format INVOICE, profile null (G15 A)", async () => {
-    expect(await resolveVersionsForPosting(DB)).toEqual({
-      refBillFormatId: "INVOICE",
-      refBillTemplateVersionId: "BTV00000002",
-      refInvoiceProfileVersion: null,
-      refCsvTemplateVersionId: "BTV00000003",
-    });
-  });
-
-  it("the non-default ACTIVE versions + the ACTIVE profile version win over the defaults", async () => {
-    repo.findActive.mockImplementation(async (_db, { kind }) =>
-      kind === "generated" ? ACTIVE_GENERATED : ACTIVE_CSV,
-    );
-    profileRepo.findActiveVersion.mockResolvedValue(2);
-
-    expect(await resolveVersionsForPosting(DB)).toEqual({
-      refBillFormatId: "INVOICE",
-      refBillTemplateVersionId: "BTV00000010",
-      refInvoiceProfileVersion: 2,
-      refCsvTemplateVersionId: "BTV00000011",
-    });
-  });
-
-  it("agrees with a Standard preview-family resolve on the same one-family catalog", async () => {
-    repo.findActive.mockImplementation(async (_db, { kind }) =>
-      kind === "generated" ? ACTIVE_GENERATED : null,
-    );
-    repo.findActiveInFamily.mockResolvedValue(ACTIVE_GENERATED);
-    profileRepo.findActiveVersion.mockResolvedValue(4);
-
-    const draft = await resolveTemplate(DB, {
-      kind: "preview-family",
-      familyId: STANDARD,
-    });
-    const posting = await resolveVersionsForPosting(DB);
-    expect(posting.refBillTemplateVersionId).toBe(
-      draft.generated.billTemplateVersionId,
-    );
-    expect(posting.refCsvTemplateVersionId).toBe(
-      draft.csv.billTemplateVersionId,
-    );
-    expect(posting.refInvoiceProfileVersion).toBe(draft.profileVersion);
-  });
-
-  it("reads the catalog rows only — no layout/by-id lookup", async () => {
-    await resolveVersionsForPosting(DB);
-    expect(repo.findById).not.toHaveBeenCalled();
-  });
-
-  it("a missing default (corrupted DB) → TEMPLATE_VERSION_NOT_FOUND (the posting transaction rolls back)", async () => {
-    repo.findDefault.mockResolvedValue(null);
-    await expect(resolveVersionsForPosting(DB)).rejects.toMatchObject({
-      code: "TEMPLATE_VERSION_NOT_FOUND",
-    });
-  });
-});
+// bm67 — `resolveVersionsForPosting` is deleted: posting copies the BAN's run
+// stamps onto the bill and resolves nothing (guardrail 57).

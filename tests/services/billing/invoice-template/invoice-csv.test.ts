@@ -379,6 +379,7 @@ describe("getPostedInvoiceCsv (D1)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockStamps.mockResolvedValue({
+      refBillTemplateFamilyId: "BTF00000001",
       refBillTemplateVersionId: "BTV00000002",
       refInvoiceProfileVersion: 4,
       refCsvTemplateVersionId: "BTV00000003",
@@ -419,6 +420,7 @@ describe("getPostedInvoiceCsv (D1)", () => {
     ).rejects.toBeInstanceOf(FinalInvoiceNotFoundError);
 
     mockStamps.mockResolvedValueOnce({
+      refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
       refInvoiceProfileVersion: null,
       refCsvTemplateVersionId: null,

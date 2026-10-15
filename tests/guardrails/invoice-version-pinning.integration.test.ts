@@ -26,9 +26,14 @@ import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
 import type { SaveProfileDraftInput } from "@/validation/billing/invoice-profile.schema";
 
 // Guardrail 46 (bm54-spec §Tests; code-standards Part 2 §9 item 46, Inv #41–
-// #43). Account A is posted through the REAL posting transaction under a
-// generated v2 and a fixture company profile v1 (with a logo). Then a newer
-// generated v3 is made ACTIVE (retiring v2) and a profile v2 is made ACTIVE.
+// #43), posting half rewritten for bm67 (D23, Inv #51): account A's run
+// captures generated v2 and company profile v1 (with a logo) at run start;
+// THEN — mid-run, before posting — a newer generated v3 is made ACTIVE
+// (retiring v2) and a profile v2 is made ACTIVE; THEN A is posted through the
+// REAL posting transaction. A is stamped with the captured v2/v1 and the
+// Standard family, equal to its `bill_run_account` stamps, and its stored PDF
+// is rendered from v2. A second run captured after the activations posts
+// with v3/v2.
 // bm58: the generated versions are now created by the REAL save-draft and
 // activate services (a real generated, test-rendered, checksum-indexed blob
 // write and a real retire + promote). bm61: the company profiles are now REAL
@@ -89,6 +94,7 @@ const ACCOUNT_V2 = "8888-7777-6666";
 
 interface Stamps {
   ref_bill_format_id: string | null;
+  ref_bill_template_family_id: string | null;
   ref_bill_template_version_id: string | null;
   ref_invoice_profile_version: number | null;
   ref_csv_template_version_id: string | null;
@@ -199,7 +205,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
 
     async function readStamps(banId: string): Promise<Stamps> {
       const [row] = await sql<Stamps[]>`
-        SELECT ref_bill_format_id, ref_bill_template_version_id,
+        SELECT ref_bill_format_id, ref_bill_template_family_id, ref_bill_template_version_id,
                ref_invoice_profile_version, ref_csv_template_version_id,
                charge_checksum, customer_bill_id, period_partition::text
         FROM billing.customer_bill
@@ -234,14 +240,29 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(profileV1.version).toBe(1);
       ({ versionId: v2Id } = await activateGenerated(true, "pin test v2"));
 
-      // Post A and its twin through the real posting transaction. Both render
-      // + store after commit (production path).
+      // 1. The run starts: the fixture captures A's and its twin's stamps
+      // (generated v2, profile v1) with the real capture service (bm65).
       await fx.newRun(RUN);
       ({ banId: banA } = await fx.postableBill({ label: "A", runId: RUN }));
       ({ banId: banTwin } = await fx.postableBill({
         label: "TWIN",
         runId: RUN,
       }));
+
+      // 2. Mid-run, before posting: bm58 a REAL activation retires v2 and
+      // promotes v3; bm61 a REAL profile activation retires profile v1 and
+      // promotes v2 (new name, new bank account, new logo).
+      ({ versionId: v3Id } = await activateGenerated(false, "pin test v3"));
+      const profileV2 = await activateProfileVersion(
+        { ...profileRows(COMPANY_V2), bank_account_no: ACCOUNT_V2 },
+        LOGO_V2,
+        "pin test profile v2",
+      );
+      expect(profileV2.version).toBe(2);
+      clearLoadedTemplateMemo();
+
+      // 3. Post A and its twin through the real posting transaction. Both
+      // render + store after commit (production path).
       for (const ban of [banA, banTwin]) {
         const result = await fx.post(RUN, ban);
         expect(result.status).toBe("invoiced");
@@ -287,34 +308,62 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       }
     }, 60_000);
 
-    it("A is stamped with the versions current at posting: generated v2, profile v1, the default CSV", async () => {
-      expect(await readStamps(banA)).toMatchObject({
+    it("[CRITICAL] A is stamped with the CAPTURED versions (generated v2, profile v1, the default CSV, Standard) — not the ones activated mid-run — equal to its run stamps", async () => {
+      const stamps = await readStamps(banA);
+      expect(stamps).toMatchObject({
         ref_bill_format_id: "INVOICE",
+        ref_bill_template_family_id: "BTF00000001",
         ref_bill_template_version_id: v2Id,
         ref_invoice_profile_version: 1,
         ref_csv_template_version_id: "BTV00000003",
       });
+      expect(stamps.ref_bill_template_version_id).not.toBe(v3Id);
+      const [run] = await sql<
+        {
+          ref_bill_template_family_id: string | null;
+          ref_bill_template_version_id: string | null;
+          ref_invoice_profile_version: number | null;
+          ref_csv_template_version_id: string | null;
+        }[]
+      >`
+        SELECT ref_bill_template_family_id, ref_bill_template_version_id,
+               ref_invoice_profile_version, ref_csv_template_version_id
+        FROM billing.bill_run_account
+        WHERE ref_bill_run_id = ${RUN} AND ref_billing_account_id = ${banA}`;
+      expect(run).toEqual({
+        ref_bill_template_family_id: stamps.ref_bill_template_family_id,
+        ref_bill_template_version_id: stamps.ref_bill_template_version_id,
+        ref_invoice_profile_version: stamps.ref_invoice_profile_version,
+        ref_csv_template_version_id: stamps.ref_csv_template_version_id,
+      });
     });
 
-    it("[CRITICAL] activating generated v3 + profile v2 changes neither A's stamps, nor its stored PDF bytes, nor its charge_checksum", async () => {
-      const stampsBefore = await readStamps(banA);
-      const storedBefore = await getStoredInvoice(RUN, banA);
-
-      // bm58: a REAL activation retires v2 and promotes v3. bm61: a REAL
-      // profile activation retires profile v1 and promotes v2 (new name, new
-      // bank account, new logo).
-      ({ versionId: v3Id } = await activateGenerated(false, "pin test v3"));
-      const profileV2 = await activateProfileVersion(
-        { ...profileRows(COMPANY_V2), bank_account_no: ACCOUNT_V2 },
-        LOGO_V2,
-        "pin test profile v2",
-      );
-      expect(profileV2.version).toBe(2);
+    it("[CRITICAL] A's stored PDF is rendered from v2 + profile v1 and stays pinned: a reprint is the stored bytes, the stamps and charge_checksum hold", async () => {
       const [v1Status] = await sql<{ status: string }[]>`
         SELECT DISTINCT status FROM core.system_config
         WHERE config_group = 'invoice.profile' AND config_version = 1`;
       expect(v1Status?.status).toBe("RETIRED");
-      clearLoadedTemplateMemo();
+
+      const stampsBefore = await readStamps(banA);
+      const storedBefore = await getStoredInvoice(RUN, banA);
+      expect(storedBefore.pdf.subarray(0, 4).toString()).toBe("%PDF");
+      // The stored PDF is produced by the final render, which resolves the
+      // bill's stamps: v2 (Notes shown) and profile v1's issuer block.
+      const final = await buildInvoiceHtml({
+        runId: RUN,
+        banId: banA,
+        mode: "final",
+        invoiceNo: (
+          await sql<{ ref_inv_document_id: string }[]>`
+          SELECT ref_inv_document_id FROM billing.customer_bill
+          WHERE ref_bill_run_id = ${RUN} AND ref_billing_account_id = ${banA}`
+        )[0]!.ref_inv_document_id,
+      });
+      expect(final.resolved.generated.billTemplateVersionId).toBe(v2Id);
+      expect(final.resolved.profileVersion).toBe(1);
+      expect(final.html).toContain("sec--notes");
+      expect(final.html).toContain(COMPANY_V1);
+      expect(final.html).not.toContain(COMPANY_V2);
 
       const stampsAfter = await readStamps(banA);
       expect(stampsAfter).toEqual(stampsBefore);
@@ -361,8 +410,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }, 120_000);
 
     it("a draft of account B in a run started after v3's activation uses v3 + profile v2: its issuer block, bank details and logo", async () => {
-      // bm66 — the run starts (and captures its stamps) after the activations
-      // in the [CRITICAL] case above.
+      // bm66 — the run starts (and captures its stamps) after the mid-run
+      // activations in `beforeAll`.
       await fx.newRun(RUN_DRAFT);
       ({ banId: banDraft } = await fx.draftBill({
         label: "B",
@@ -387,7 +436,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(draft.html).not.toContain(inlined(LOGO_V1));
     });
 
-    it("the NEXT posting (account C) stamps profile v2", async () => {
+    it("a second run captured after the activations posts with v3 + profile v2 (account C)", async () => {
       await fx.newRun(RUN_NEXT);
       const { banId: banNext } = await fx.postableBill({
         label: "C",
@@ -395,10 +444,22 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       });
       const result = await fx.post(RUN_NEXT, banNext);
       expect(result.status).toBe("invoiced");
-      const [row] = await sql<{ ref_invoice_profile_version: number }[]>`
-        SELECT ref_invoice_profile_version FROM billing.customer_bill
+      const [row] = await sql<
+        {
+          ref_invoice_profile_version: number;
+          ref_bill_template_version_id: string;
+          ref_bill_template_family_id: string;
+        }[]
+      >`
+        SELECT ref_invoice_profile_version, ref_bill_template_version_id,
+               ref_bill_template_family_id
+        FROM billing.customer_bill
         WHERE ref_bill_run_id = ${RUN_NEXT} AND ref_billing_account_id = ${banNext}`;
-      expect(row?.ref_invoice_profile_version).toBe(2);
+      expect(row).toEqual({
+        ref_invoice_profile_version: 2,
+        ref_bill_template_version_id: v3Id,
+        ref_bill_template_family_id: "BTF00000001",
+      });
     }, 120_000);
   },
 );

@@ -38,7 +38,43 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
 | --- | --- | --- |
 | bm64 | Standard template family in the catalog (`bill_template_family`, `0046` edited in place per D26) | **Built** (2026-10-15, `0e65a57`) — tsc/ESLint/Prettier clean; unit 4593/0; integration 1239/0 (110 skipped); `db:setup` chain ×2 on a fresh disposable DB OK; checklist queries match |
 | bm65 | Template captured at run start and on rerun (`bill_run_account` stamps, migration `0051`) | **Built** (2026-10-15, `9e399b7`) — tsc/ESLint/Prettier clean; unit 4596/0; integration 1245/0 (110 skipped). Code-review findings (xhigh) held pending owner decisions |
-| bm66 | Draft PRO-FORMA renders from the captured template (`RenderMode` run / preview-family, draft route 422) | **Built, awaiting review/commit** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4615/0; integration 1248/0 (110 skipped) |
+| bm66 | Draft PRO-FORMA renders from the captured template (`RenderMode` run / preview-family, draft route 422) | **Built** (2026-10-16, `4139f02`) — tsc/ESLint/Prettier clean; unit 4615/0; integration 1248/0 (110 skipped) |
+| bm67 | Posted invoices use the captured template (`stampPosted` copies run stamps + family, migration `0052`, NULL-stamp skip) | **Built, awaiting review/commit — full integration run still owed** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4615/0; the 7 affected integration suites 58/0 (posting-skips-null-template, invoice-version-pinning, customer-bill-stamps, draft-uses-run-stamps, invoice-default-resolution, invoice-checksum-tamper, billrun-db-roles). The full integration run was stopped by the host for low memory before it reported; re-run it before commit |
+
+**bm67 notes (2026-10-16):**
+
+- Migration `0052` (`customer_bill.ref_bill_template_family_id`, nullable plain key, no FK) +
+  journal `idx 52`; Drizzle mirror; `billrun-db-roles.sql` Step 5 comment only (no grant change).
+  `0033` freezes the whole posted row, so the new column is frozen with no trigger change.
+- `lockBillForPosting` returns the BAN's five run stamps as a nested `runStamps` object (same
+  query, no extra lock). **Deviation:** nested because the read already returns the bill's own
+  stamps under the same field names (unused by posting, kept).
+- `postAccount`: D58 skip (captured + NULL version → `SKIPPED` / `TEMPLATE_VERSION_NOT_FOUND`,
+  before any INV, `expectedStatus: PROCESSED`); no-capture guard throws → `POSTING_FAILED`;
+  `stampPosted` gets the explicit run stamps + family (non-null by type).
+  `resolveVersionsForPosting`, `currentVersions` and `PostingVersionStamps` deleted;
+  `PostedBillStamps` gains `refBillTemplateFamilyId` (read by `findForAccount`/`readBillStamps`).
+- **bm66 ↔ bm67 spec conflict — resolved in the specs (2026-10-16):** bm66 had
+  `render-invoice-template.ts` build the `preview-family` mode for the editor override, which
+  guardrail 57 and code-standards Phase 3 TS rule 1 ("only `preview.ts` may construct it")
+  forbid. The override now carries its `renderMode`, built by `preview.ts` (bm66's `familyId`
+  parameter is gone; a missing mode is a type error, so the runtime "no familyId" test was
+  dropped). `specs/bm66` §Design/§3/§4 and `specs/bm67` §5 now say so, with dated correction
+  notes; code-standards already matched.
+- Guardrail 57 (`tests/guardrails/no-live-template-resolution.test.ts`, now as `specs/bm67` §5
+  states) checks **comment-stripped** code: `services/accounts/resolve-ban-template-label.ts` keeps a historical
+  comment naming `resolveVersionsForPosting`, and D46 forbids touching Customer Management files,
+  so the spec's raw `grep -rn resolveVersionsForPosting services db app` still finds that one
+  comment. `preview.ts` does not import `resolveCurrentVersionsForFamily` (it reaches it through
+  `resolveTemplate`), so the importer check is "only these two may", plus a check that only
+  `preview.ts` builds a `preview-family` mode.
+- Guardrail 46 rewritten: capture (v2/profile v1) → activate v3 + profile v2 mid-run → post; A is
+  stamped v2/v1 + `BTF00000001`, equal to its run row, and its final render is v2; account C's
+  later run posts v3/v2. New `posting-skips-null-template.integration.test.ts` (SKIPPED, no
+  document, consecutive INV numbers, siblings + run `INVOICED`; distribution trigger stubbed).
+  `customer-bill-stamps` asserts the family in the same UPDATE and its freeze; schema test.
+- Docs: known-issues §19 closed (and table row 23b); architecture Inv #41/#58 notes and
+  #51/#53/#58 marked built; code-standards guardrails 57, 58, 60 marked built.
 
 **bm66 notes (2026-10-16):**
 

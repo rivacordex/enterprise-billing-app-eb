@@ -73,6 +73,7 @@ const mockInlineLogo = vi.mocked(inlineLogo);
 const mockBind = vi.mocked(bind);
 
 const NULL_STAMPS = {
+  refBillTemplateFamilyId: null,
   refBillTemplateVersionId: null,
   refInvoiceProfileVersion: null,
   refCsvTemplateVersionId: null,
@@ -271,18 +272,21 @@ describe("buildInvoiceHtml — resolution mode (D1)", () => {
     );
   });
 
-  it("bm66 — an override resolves the named family's live versions (preview-family), not the run's", async () => {
+  // bm67 — the override carries the live mode its caller (the editor
+  // preview) built; buildInvoiceHtml never constructs one (guardrail 57). A
+  // missing mode is a type error, so there is no runtime "no familyId" case.
+  it("bm66/bm67 — an override resolves with the live mode it carries (preview-family), not the run's", async () => {
     await buildInvoiceHtml({
       runId: "BRN00000042",
       banId: "BAN00000001",
       mode: "draft",
-      familyId: "BTF00000001",
       override: {
         structure: SEEDED_GENERATED_ROW.structure!,
         load: async () => ({
           invoice: () => "<html>override</html>",
           footer: () => "<div>footer</div>",
         }),
+        renderMode: { kind: "preview-family", familyId: "BTF00000001" },
       },
     });
     expect(mockRunStamps).not.toHaveBeenCalled();
@@ -292,25 +296,9 @@ describe("buildInvoiceHtml — resolution mode (D1)", () => {
     );
   });
 
-  it("bm66 — an override without a familyId is refused", async () => {
-    await expect(
-      buildInvoiceHtml({
-        runId: "BRN00000042",
-        banId: "BAN00000001",
-        mode: "draft",
-        override: {
-          structure: SEEDED_GENERATED_ROW.structure!,
-          load: async () => ({
-            invoice: () => "",
-            footer: () => "",
-          }),
-        },
-      }),
-    ).rejects.toThrow(/familyId/);
-  });
-
   it("a final render resolves the bill's stamps", async () => {
     const stamps = {
+      refBillTemplateFamilyId: "BTF00000001",
       refBillTemplateVersionId: "BTV00000009",
       refInvoiceProfileVersion: 2,
       refCsvTemplateVersionId: "BTV00000003",

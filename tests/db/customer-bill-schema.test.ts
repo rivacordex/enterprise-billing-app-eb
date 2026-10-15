@@ -37,6 +37,8 @@ describe("billing.customer_bill", () => {
         // stamped at posting by the app (bm54).
         "ref_invoice_profile_version",
         "ref_csv_template_version_id",
+        // bm67 (migration 0052) — the template family posting stamp.
+        "ref_bill_template_family_id",
         "ref_inv_document_id",
         "posted_attempt",
         "charge_checksum",
@@ -93,6 +95,18 @@ describe("billing.customer_bill", () => {
     );
     expect(fkColumnNames).not.toContain("ref_bill_format_id");
     expect(fkColumnNames).not.toContain("ref_bill_template_version_id");
+  });
+
+  it("bm67 — ref_bill_template_family_id is a nullable plain key with no FK (the posting-stamp rule)", () => {
+    const columns = getTableColumns(customerBill);
+    expect(columns.refBillTemplateFamilyId.name).toBe(
+      "ref_bill_template_family_id",
+    );
+    expect(columns.refBillTemplateFamilyId.notNull).toBe(false);
+    const fkColumnNames = getTableConfig(customerBill).foreignKeys.flatMap(
+      (fk) => fk.reference().columns.map((c) => c.name),
+    );
+    expect(fkColumnNames).not.toContain("ref_bill_template_family_id");
   });
 
   it("subtotal/tax_total/total_amount/billing_period_start/billing_period_end/payment_due_date are required", () => {

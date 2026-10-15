@@ -848,7 +848,15 @@ Bills posted before bm54 are **not back-stamped**: `0033` refuses the
 `UPDATE`, so they keep `NULL` stamps for good and keep rendering as described
 above.
 
-## 19. 🟡 An activation during a run can give that run's accounts different template versions (bm54, by design)
+## 19. 🟢 RESOLVED (bm67) — An activation during a run can give that run's accounts different template versions (bm54, by design)
+
+> **Closed 2026-10-16 by Invoice Template Phase 3 (bm65–bm67).** Each BAN's
+> template family and versions are captured onto its `bill_run_account` row at
+> run start (bm65); the draft renders those stamps (bm66) and posting copies
+> them onto the bill (bm67) — `resolveVersionsForPosting` is deleted. A version
+> activated mid-run never reaches that run; only a rerun re-captures, and only
+> for the rerun BANs (Inv #51–#53). Proven by guardrail 46 (capture → activate
+> → post) and guardrail 57. The text below is the original record.
 
 **Where:** `services/billing/invoice-template/resolve-template.ts`
 (`resolveVersionsForPosting`), `services/billing/post-run.ts` (`postAccount`).
@@ -1025,7 +1033,7 @@ stay, each accepted or owned elsewhere:
 | #   | Residual | Effect | Owner / next step |
 | --- | -------- | ------ | ----------------- |
 | 23a | **Bills posted before bm54 are unstamped** (§18). | They render with the immutable default and no company profile. | By design (Inv #42). |
-| 23b | **A mid-run activation splits a run's versions** (§19). | Each bill records what it was posted under. | By design. |
+| 23b | **A mid-run activation splits a run's versions** (§19). | Each bill records what it was posted under. | ~~By design.~~ **Resolved (bm67):** the run's captured stamps freeze its versions. |
 | 23c | **`ratecard` role grants are never seeded** (section above). | The Rate Card page needs a hand-assigned grant. | Rate-card follow-up. |
 | 23d | **Orphan template/logo blobs are tolerated.** A failed activation or upload transaction leaves its write-once, content-addressed blob behind (code-standards Part 2 General rule 10, data rule 7). | Storage only: an identical retry reuses it; nothing references it. | By design; no retention job in v1 (G10). |
 | 23e | **Layout v1 ships placeholder `@font-face` sources** (G8 decided: IBM Plex embedded). | Rendered invoices fall back to a system font; no font is ever fetched. | The layout v2 unit (with §20's annex CSS). |
