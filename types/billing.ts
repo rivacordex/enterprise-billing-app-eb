@@ -332,10 +332,11 @@ export interface BillLineRow {
 
 // bm41-spec §Implementation §3 / billmgmt-code-standards.md §"TypeScript
 // conventions" — the versioned shape of `customer_bill_line.additional_info`.
-// Typing only here; bm42 is the writer and bm45 the invoice-appendix reader.
+// Typing only here; bm42 is the writer. bm68 (D31) removed bm45's per-polygon
+// `appendix` key: the trace is `pricing`, `calc[]` and `summary[]` only.
 //
 // bm42a — money-as-text contract: every monetary amount, rate and decimal
-// quantity inside this trace (`pricing.*`, `calc[*]`, `appendix[*]`) is a JSON
+// quantity inside this trace (`pricing.*`, `calc[*]`) is a JSON
 // STRING at its canonical scale (money 2dp, quantities and rates 6dp, e.g.
 // "100000.00", "400.000000"), matching TS rule 3. Integers that are not money
 // (`v`, `calc[*].udrCount`, `calc[*].band`) stay numbers, and
@@ -349,28 +350,6 @@ export interface CapacityCalcTrace {
   pricing: Record<string, unknown>;
   calc: unknown[];
   summary: unknown[];
-  // bm45-spec §Implementation §1 (Target Capacity Pricing update, Unit 5) —
-  // the per-polygon usage appendix snapshot, written by `aggregation` onto
-  // the capacity line alongside the calc trace (D1 — no new table). Optional:
-  // absent on a pre-bm45 line and on a capacity line with zero claimed
-  // polygons. `state`/`district` are `null` for a polygon with usage but no
-  // matching ratecard row (D3 — surfaced, never dropped).
-  appendix?: InvoiceUsageAppendixRow[];
-}
-
-// bm45-spec §Implementation §1 — one per-polygon row of the invoice usage
-// appendix, as stored in `CapacityCalcTrace.appendix` and read by the final
-// invoice render (`render-invoice.ts`/`render-invoice-template.ts`). `volume`/
-// `amount` are the polygon's SUM(udr_usage_quantity)/SUM(udr_rated_price)
-// over the account's claimed rows for that canonical cell (D2). No `unit`
-// field here (the unit is the capacity line's own `unit` column) — the
-// render orchestrator attaches it when shaping the template param.
-export interface InvoiceUsageAppendixRow {
-  polygon: string;
-  state: string | null;
-  district: string | null;
-  volume: string;
-  amount: string;
 }
 
 // bm28-spec §Design "the udr_rated drill-down". One claimed `rating.udr_rated`
@@ -769,7 +748,8 @@ export interface InvoiceUsageSection {
 }
 
 // bm49-spec §Design D3 — the billed-usage-row bound, a named constant equal to
-// bm45's `CAPACITY_APPENDIX_OVER_LIMIT` (the load-tested bound). Over this, the
+// bm45's former appendix bound (the load-tested bound; that flow guard was
+// removed by bm68, so this is now the only per-account row bound). Over this, the
 // bind fails `INVOICE_USAGE_OVER_LIMIT` and the account parks; the repository
 // selects no rows. Changing it is a spec change, not a config value.
 export const INVOICE_USAGE_ROW_LIMIT = 10_000;

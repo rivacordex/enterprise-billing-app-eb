@@ -149,7 +149,7 @@ This is a fresh-DB round: every environment is rebuilt from empty, and only Whol
 | Preview a BAN's invoice | `billrun_view` | ADMIN, MANAGER, USER |
 | Trigger / rerun / approve the run | `billrun_operate` / `billrun_approve` (unchanged) | ADMIN; RevOps users are given roles operationally |
 
-No grant changes in this update.
+No permission-grant changes in this update. The two database-grant changes (Inv #23) are listed in architecture's auth deltas: `app_runtime` limited to SELECT on `bill_template_family` (bm64), and `billrun_runtime`'s SELECT on the two ratecard tables revoked once the appendix is gone (bm68).
 
 ## In scope
 

@@ -42,6 +42,16 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
 | bm67 | Posted invoices use the captured template (`stampPosted` copies run stamps + family, migration `0052`, NULL-stamp skip) | **Built** (2026-10-16, `976d2ca`) — tsc/ESLint/Prettier clean; unit 4615/0; full integration run completed with the review fixes below (1254/0, 110 skipped) |
 
 | bm64–67 review fixes | Fixes from the xhigh (bm65) and max (bm65–bm67) code reviews, all items | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4630/0; full integration 1256/0 (110 skipped, run in four foreground chunks); known-issues §24 RESOLVED |
+| bm68 | Capacity flow stops writing the appendix (flow SQL, two ratecard grants revoked, appendix types deleted, guardrail 66) | **In progress** (2026-10-16) — code, tests, docs done: tsc/ESLint/Prettier clean; unit 4638/0 (two repo-scan timeouts pass alone); targeted integration 78/78; full integration 1165 passed, 2 failed (E2E journeys stop at INVOICED with no engine, known-issues §4c, identical on baseline) + azurite env file; **live Kestra smoke (spec §6) not yet run** — needs host `npm run dev` |
+
+**bm68 notes (2026-10-16):** guardrail 66 item 3 pins `services/billing/post-run.ts` →
+`services/accounts/post-document` + `services/accounts/money` (ledger posting, Inv #6) as an exact
+allowlist — the spec's literal rule fails on existing code; recorded in code-standards item 66.
+`billrun-capacity-appendix` test renamed to `billrun-capacity-trace`. The bm41 grant drops the two
+ratecard tables and an explicit `REVOKE` follows. TC54 still open (doc correction 3): the capacity
+path is proven by the extracted-SQL suites; the `ci` live run closes it. Hazard: `vitest run` picks
+up `.claude/worktrees/**` and runs their integration files against `.env`'s dev DB — run with
+`--exclude ".claude/**"` until the config excludes it.
 
 **bm65–bm67 review fixes (2026-10-16):** owner decisions: a blocking approval gate (D58a),
 defer the skip audit row, edit `0051` in place, fix both UI items.

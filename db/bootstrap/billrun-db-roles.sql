@@ -331,16 +331,21 @@ TO billrun_runtime;
 --> statement-breakpoint
 
 -- bm41 (Target Capacity Pricing update, Unit 1) — read-only context the
--- capacity aggregation (bm42) and the invoice appendix (bm45) need: the
--- `udrType` characteristic off `product_specifications`, and the per-polygon
--- ratecard lookup off `ratecard_ran_usage_lkp`/`ratecard_version`. SELECT
--- only, enumerated per table (Inv #23), never ON ALL TABLES; `USAGE ON SCHEMA
--- "product"` already held above — no write grant of any kind on these tables.
+-- capacity aggregation (bm42) needs: the `udrType` characteristic off
+-- `product_specifications`. SELECT only, enumerated per table (Inv #23), never
+-- ON ALL TABLES; `USAGE ON SCHEMA "product"` already held above — no write
+-- grant of any kind on this table.
 GRANT SELECT ON TABLE
-  "product"."product_specifications",
-  "product"."ratecard_ran_usage_lkp",
-  "product"."ratecard_version"
+  "product"."product_specifications"
 TO billrun_runtime;
+--> statement-breakpoint
+
+-- bm68 (D31, Inv #23) — the bm45 invoice appendix, the only reader of the
+-- per-polygon ratecard (`ratecard_ran_usage_lkp`/`ratecard_version`), is gone
+-- from the processing flow, so bm41's SELECT on those two tables is revoked.
+-- Explicit so an already-bootstrapped database loses it too; idempotent on a
+-- re-run (revoking an absent privilege is a no-op).
+REVOKE SELECT ON TABLE "product"."ratecard_ran_usage_lkp", "product"."ratecard_version" FROM billrun_runtime;
 --> statement-breakpoint
 
 -- Step 9 — the run-state write REVOKE (billmgmt-architecture.md Inv #2). Strictly

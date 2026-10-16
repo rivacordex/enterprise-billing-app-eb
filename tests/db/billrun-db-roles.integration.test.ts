@@ -1037,23 +1037,35 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
-    // ---- capacity reads — udr_type characteristic + ratecard lookup (bm41) --
-    describe("product_specifications + ratecard_ran_usage_lkp + ratecard_version — read-only capacity context (Step 3/8, bm41)", () => {
-      it("17h. billrun_runtime SELECTs product.product_specifications + product.ratecard_ran_usage_lkp + product.ratecard_version (schema USAGE + table SELECT granted)", async () => {
+    // ---- capacity reads — udr_type characteristic (bm41); ratecard revoked (bm68)
+    describe("product_specifications read-only; ratecard_ran_usage_lkp + ratecard_version revoked (Step 3/8, bm41, bm68)", () => {
+      it("17h. billrun_runtime SELECTs product.product_specifications and is denied SELECT on product.ratecard_ran_usage_lkp + product.ratecard_version (bm68, Inv #23)", async () => {
         // Resolving at all proves the schema USAGE (Step 3 — `product`,
-        // already held) and the table SELECT (Step 8). bm42's capacity
+        // already held) and the table SELECT (Step 8): bm42's capacity
         // aggregation reads the `udrType` characteristic off
-        // product_specifications and the per-polygon rate off the ratecard
-        // pair; bm45's invoice appendix reads the ratecard pair again.
+        // product_specifications. The ratecard pair was granted (bm41) only for
+        // bm45's invoice appendix, which bm68 removed from the flow (D31), so
+        // the grant is revoked.
         await expect(
           billrunRuntime`SELECT 1 FROM product.product_specifications WHERE false`,
         ).resolves.toBeDefined();
         await expect(
           billrunRuntime`SELECT 1 FROM product.ratecard_ran_usage_lkp WHERE false`,
-        ).resolves.toBeDefined();
+        ).rejects.toThrow(/permission denied for table ratecard_ran_usage_lkp/);
         await expect(
           billrunRuntime`SELECT 1 FROM product.ratecard_version WHERE false`,
-        ).resolves.toBeDefined();
+        ).rejects.toThrow(/permission denied for table ratecard_version/);
+
+        const privs = await sql<
+          { table_name: string; privilege_type: string }[]
+        >`
+          SELECT table_name, privilege_type FROM information_schema.role_table_grants
+          WHERE grantee = 'billrun_runtime' AND table_schema = 'product'
+            AND table_name IN ('product_specifications', 'ratecard_ran_usage_lkp', 'ratecard_version')
+          ORDER BY table_name, privilege_type`;
+        expect(privs.map((p) => `${p.table_name}:${p.privilege_type}`)).toEqual(
+          ["product_specifications:SELECT"],
+        );
       });
 
       it("17i. [CRITICAL] billrun_runtime is refused INSERT/UPDATE/DELETE on the capacity reads — no write on product anywhere here (Inv #23)", async () => {

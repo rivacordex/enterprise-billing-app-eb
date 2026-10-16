@@ -1050,7 +1050,7 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - `app_runtime` gets `SELECT` on `bill_template_family` only; this phase has no create or retire screen, so no `INSERT`/`UPDATE`.
    - `billrun_runtime` gets no grant on `bill_template_family` and cannot **write** any new stamp column. It keeps its existing table-level SELECT on `bill_run_account` and `customer_bill`, so it can read them (`customer_bill`'s INSERT/UPDATE grants are column lists that never include stamps).
    - The `app_runtime` grant lives in `db/bootstrap/bootstrap-db-roles.sql`: the new table inherits default-privilege DML, so bm64 REVOKEs INSERT, UPDATE and DELETE, leaving SELECT.
-   - bm68 revokes `billrun_runtime`'s SELECT on `product.ratecard_ran_usage_lkp` and `product.ratecard_version` in `db/bootstrap/billrun-db-roles.sql`: only the removed appendix read them (Inv #23).
+   - bm68 revokes `billrun_runtime`'s SELECT on `product.ratecard_ran_usage_lkp` and `product.ratecard_version` in `db/bootstrap/billrun-db-roles.sql`: only the removed appendix read them (Inv #23). Built (bm68): the bm41 `GRANT` drops the two tables and an explicit, idempotent `REVOKE` follows it; `billrun-db-roles` 17h asserts it over `information_schema`.
 6. **The detail query lives in `rated-lines.repository.ts`, never in `invoice-render-input.ts`.** The source-boundary test keeps `invoice-render-input.ts` free of `rating.`. The query:
    - extends bm49's `listBilledUsageForInvoice`;
    - computes the polygon fields **once** in a CTE: `substring(udr_key from 'polygon_id=([^;|&]+)')` and `split_part(udr_resource, '|', 1..3)`, adjusted to the rating plan's final `udr_key` delimiter;
@@ -1061,11 +1061,11 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
 
    Missing-field detection returns a flag column; the binder throws (General rule 7).
 7. **Amounts come from `invoice-render-input.ts` in SQL.** Per capacity type: `SUM(gross_amount - rated_amount)` (Unutilised) and `SUM(net_amount) - SUM(gross_amount - rated_amount)` (Utilised). The per-type reconciliation compares Σ detail `udr_rated_price` to Σ `rated_amount` as `numeric`, never as floats.
-8. **The flow edit (bm68):**
+8. **The flow edit (bm68). Built (bm68):**
    - remove the SQL from `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml`, the only copy with executable SQL (the flow bm38 promoted);
    - correct the design comments in `workflow-management/flows/bill-run-processor/bill_run_processing.template.yml`, which holds comments only.
 
-   Remove the `appendix` key from the `additional_info` build and the `CAPACITY_APPENDIX_OVER_LIMIT` guard. The extracted-SQL harness tests (`billrun-capacity-appendix`) are updated to assert the key is absent.
+   Remove the `appendix` key from the `additional_info` build and the `CAPACITY_APPENDIX_OVER_LIMIT` guard. The extracted-SQL harness tests are updated to assert the key is absent: bm68 rewrote `billrun-capacity-appendix` as `tests/db/billrun-capacity-trace.integration.test.ts` (no `appendix` key; `pricing`/`calc`/`summary` unchanged at the bm42 anchors; 10,001 polygon rows no longer fail the account), and deleted `CapacityCalcTrace.appendix` / `InvoiceUsageAppendixRow` from `types/billing.ts`.
 9. **Seeds:**
    - The v1 layout and the Standard generated v1 are rewritten in their existing directories, and `checksums.json` is regenerated **only** by `scripts/invoice-templates/write-checksums.ts`. `manifest.json` keeps `"layoutVersion": 1`.
    - The `_SAMPLE_` DB seed stays minimal: 1 MNO, 1 rate-card entry, 2–3 polygons (D52).
@@ -1159,8 +1159,8 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
     - the Other charges block is absent when empty and present with a recurring line;
     - dates are `DD/MM/YYYY` and Mbps is whole or 2 decimals.
 65. **v1 checksum pin (Inv #57).** A test holds the SHA-256 of every file under the two v1 seed directories and fails on any change. A footnote activation creates a new version that reuses v1's `ref_layout_version_id`.
-66. **Boundaries (D46, D31).**
-    - No file under `services/billing/**` or `actions/billing/**` imports `services/accounts/**` or writes `billing_account`.
+66. **Boundaries (D46, D31).** Built (bm68): `tests/guardrails/phase3-boundaries.test.ts` (DB-free, static source; mutation-checked).
+    - No file under `services/billing/**` or `actions/billing/**` imports `services/accounts/**` or writes `billing_account`. One pinned exemption: `services/billing/post-run.ts` imports `services/accounts/post-document` and `services/accounts/money` (the Accounts document engine that posting reuses, architecture §Stack "Ledger posting", Inv #6; bm09/bm11). It predates Phase 3 and is not Customer Management. The test pins the exemption exactly and fails if it grows or goes stale. _(Added 2026-10-16 by bm68: the rule as first written had no exemption, so it would fail on the existing posting path.)_ The `billing_account` write search also covers `db/repositories/billing/**`.
     - `invoice-render-input.ts` has no `rating.` reference.
     - Neither flow YAML copy contains `appendix` in the `additional_info` build or `CAPACITY_APPENDIX_OVER_LIMIT`.
 67. **Structure and manifest parity (D56, D38).**

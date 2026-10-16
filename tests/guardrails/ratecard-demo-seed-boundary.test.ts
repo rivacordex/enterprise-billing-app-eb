@@ -39,7 +39,7 @@ const SAMPLE_SEED = "db/seeds/sample/seed-billrun-sample.ts";
 // `validation/product/pricing-component.schema.ts` (pm47), legitimately used
 // by `sample-5g-fixture.ts`/`product-demo.ts` and, from bm42, the capacity
 // profile's `usage_rate` component here; it names no table, no service, and
-// resolves no card (that is bm45's invoice appendix, a separate unit).
+// resolves no card (that was bm45's invoice appendix, removed by bm68).
 const RATE_CARD_ARTIFACT =
   /ratecard(?!LookUp)|RATECARD_RAN_USAGE_LKP|ran_usage_lkp|seedRateCardDemo|upload-version|activate-version|rollback-version/i;
 
