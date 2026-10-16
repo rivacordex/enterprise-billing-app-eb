@@ -29,6 +29,8 @@ export function describeInvoiceRenderCode(
       return "The invoice lines do not add up to the bill total. Rerun this account; if it repeats, report it.";
     case "INVOICE_USAGE_OVER_LIMIT":
       return "This account has more than 10,000 billed usage records, over the invoice limit.";
+    case "INVOICE_NEGATIVE_UTILISED":
+      return "Utilised capacity charges came out negative. Check the rate-matching setting and rerun this account.";
     default:
       return GENERIC_RENDER_MESSAGE;
   }

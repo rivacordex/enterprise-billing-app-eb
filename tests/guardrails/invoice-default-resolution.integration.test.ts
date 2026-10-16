@@ -90,10 +90,13 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         );
         expect(result.resolved.csv.billTemplateVersionId).toBe("BTV00000003");
         expect(result.resolved.profileVersion).toBeNull();
-        expect(result.html).toContain("TAX INVOICE");
+        expect(result.html).toContain(
+          `<title>Tax invoice ${invoiceNo}</title>`,
+        );
         expect(result.html).toContain(invoiceNo);
-        // G15 A — no profile: no issuer/payment block.
+        // G15 A — no profile: no issuer/supplier/payment block.
         expect(result.html).not.toContain('class="issuer"');
+        expect(result.html).not.toContain('class="supplier"');
         expect(result.html).not.toContain("sec--payment");
         expect(result.pageSetup.format).toBe("A4");
       }

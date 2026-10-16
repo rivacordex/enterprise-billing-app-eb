@@ -141,19 +141,37 @@ function rawInput(usage: ReturnType<typeof buildUsage>): RawInvoiceRenderInput {
       billingPeriodStart: "2026-06-01",
       billingPeriodEnd: "2026-06-30",
       paymentDueDate: "2026-07-15",
-      subtotal: "0.00",
+      // bm70 — the `ci` 2,000 Mbps capacity anchor: gross 200,000 −
+      // discount 50,000 = net 150,000, rated 200,000.
+      subtotal: "150000.00",
       taxTotal: "0.00",
-      totalAmount: "0.00",
-      linesNetSum: "0.00",
-      grossTotal: "0.00",
-      discountTotal: "0.00",
+      totalAmount: "150000.00",
+      linesNetSum: "150000.00",
+      grossTotal: "200000.00",
+      discountTotal: "50000.00",
       usageRatedTotal: usage.grandAmount,
+      otherChargesSubTotal: "0.00",
+      adjustments: "0.00",
+      summaryBlocksSum: "150000.00",
     },
     run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
     lines: [],
+    serviceTypes: [
+      {
+        offeringId: "POF00000020",
+        label: "RAN Target Capacity",
+        utilised: "150000.00",
+        unutilised: "0.00",
+        total: "150000.00",
+        missingRated: false,
+        negativeUtilised: false,
+      },
+    ],
+    otherCharges: [],
     taxItems: [],
     document: null,
     customer: {
+      recipientName: "Aisha Rahman",
       name: "Acme Communications Sdn Bhd",
       tradingName: null,
       registrationNumber: null,
@@ -348,6 +366,67 @@ describe.skipIf(!run)(
 
       // More itemised records ⇒ more pages ⇒ a larger PDF (pagination proxy).
       expect(bigPdf.length).toBeGreaterThan(smallPdf.length);
+    }, 120_000);
+
+    // bm70-spec §6 / Inv #47 — the `ci` 2,000 Mbps bill renders page 1 to a
+    // PDF with the IBM Plex faces loaded from the embedded @font-face data
+    // and no network request at all.
+    it("renders the ci 2,000 Mbps bill with embedded fonts and zero network requests (bm70)", async () => {
+      const { render, renderFooter } = await loadSeededDefault();
+      const pageSetup = await loadPageSetup();
+      const raw = rawInput(buildUsage(1, 1, 1));
+      raw.document = {
+        documentId: "INV00000070",
+        postingDate: new Date("2026-07-05"),
+      };
+      const bound = bind(raw, {
+        isDraft: false,
+        locale: "en-MY",
+        timezone: TZ,
+        includeUsage: true,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
+        invoiceNo: "INV00000070",
+      });
+      const html = render(bound);
+      expect(html).toContain("Utilised capacity charges");
+      expect(html).toContain("150,000.00");
+
+      const page = await browser.newPage();
+      const requests: string[] = [];
+      page.on("request", (req) => {
+        if (!req.url().startsWith("data:")) requests.push(req.url());
+      });
+      try {
+        await page.setContent(html, { waitUntil: "networkidle" });
+        const loaded = await page.evaluate(async () => {
+          await document.fonts.ready;
+          return [...document.fonts]
+            .filter((f) => f.status === "loaded")
+            .map((f) => `${f.family.replace(/"/g, "")} ${f.weight}`)
+            .sort();
+        });
+        expect(loaded).toEqual([
+          "IBM Plex Mono 400",
+          "IBM Plex Sans 400",
+          "IBM Plex Sans 600",
+        ]);
+        const pdf = await page.pdf({
+          format: pageSetup.format,
+          landscape: pageSetup.orientation === "landscape",
+          printBackground: pageSetup.printBackground,
+          margin: pageSetup.margin,
+          displayHeaderFooter: true,
+          headerTemplate: "<span></span>",
+          footerTemplate: renderFooter(bound),
+        });
+        expect(pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
+        // The embedded faces are subset into the PDF.
+        expect(pdf.toString("latin1")).toMatch(/IBMPlexSans/);
+      } finally {
+        await page.close();
+      }
+      expect(requests).toEqual([]);
     }, 120_000);
   },
 );

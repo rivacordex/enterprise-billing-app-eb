@@ -764,6 +764,18 @@ export interface LayoutPageSetup {
   printBackground: boolean;
 }
 
+// bm70-spec §Design (D28/D30/D47) — one page-1 type-of-service block. Every
+// figure is a SQL `numeric(18,2)::text`: Unutilised = Σ(gross − rated),
+// Utilised = Σ net − Unutilised, Total = Σ net. Utilised is never negative
+// once bound (`INVOICE_NEGATIVE_UTILISED`, Inv #55).
+export interface InvoiceServiceType {
+  offeringId: string;
+  label: string;
+  utilised: string;
+  unutilised: string;
+  total: string;
+}
+
 // D4 — keys mirror the placeholder roots in
 // `invoice-template/placeholder-catalog.md`. `poRef`/`contractRef`/`sstRegNo`
 // are always `null` this unit (G9 interim — no source before a profile
@@ -798,6 +810,9 @@ export interface InvoiceRenderInput {
   };
   customer: {
     billingAccountId: string;
+    // bm70 (D16) — the bill-to recipient line; `null` (line omitted) when the
+    // preferred (or fallback first) contact has a blank name.
+    recipientName: string | null;
     name: string;
     tradingName: string | null;
     registrationNo: string | null;
@@ -814,9 +829,22 @@ export interface InvoiceRenderInput {
     taxTotal: string;
     totalAmount: string;
     amountDue: string;
+    // bm70 (D14/D60) — page 1: "Total charges" (= `customer_bill.subtotal`),
+    // "Adjustments" (always shown, `0.00` this phase) and the "Other charges"
+    // Sub Total. SQL sums, never a JS reduce.
+    totalCharges: string;
+    adjustments: string;
+    otherChargesSubTotal: string;
   };
   taxes: { category: string; rate: string; amount: string }[];
-  chargeSummary: { name: string; source: ChargeSource; amount: string }[];
+  // bm70 (D15) — the "Tax @ x%" rate: `taxes[0]?.rate ?? "0"`, printed by the
+  // layout as `{{taxRateLabel}}%`.
+  taxRateLabel: string;
+  // bm70 (D28/D60) — one Utilised / Unutilised / Total block per capacity type
+  // of service, sorted by label. bm71 adds `regions` to each element.
+  serviceTypes: InvoiceServiceType[];
+  // bm70 (D60) — the non-capacity charge lines; the block is absent when empty.
+  otherCharges: { description: string; amount: string }[];
   lineGroups: InvoiceLineGroup[];
   usage: InvoiceUsageSection | null;
   isDraft: boolean;
@@ -1039,6 +1067,11 @@ export const INVOICE_ERROR_CODES = [
   // bm55-spec §Design D1/D2 — a structure hides a mandatory section. The Zod
   // schema rejects it first; `generate` re-asserts it.
   "MANDATORY_SECTION_HIDDEN",
+  // bm70-spec §Design (D42, Inv #55) — a capacity type of service's Utilised
+  // came out negative (only reachable with `capacity_rate_matching` OFF); the
+  // bind fails loud and the account parks, it never prints;
+  // `detail: { banId, offeringId, utilised }`.
+  "INVOICE_NEGATIVE_UTILISED",
 ] as const;
 export type InvoiceErrorCode = (typeof INVOICE_ERROR_CODES)[number];
 

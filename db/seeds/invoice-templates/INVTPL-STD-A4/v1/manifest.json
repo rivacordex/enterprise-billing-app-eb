@@ -12,11 +12,11 @@
     "header": { "mandatory": true },
     "identification": { "mandatory": true },
     "billTo": { "mandatory": true },
-    "amountDue": { "mandatory": true },
     "chargeSummary": { "mandatory": true },
     "taxSummary": { "mandatory": true },
-    "chargeDetails": { "mandatory": true },
+    "amountDue": { "mandatory": true },
     "payment": { "mandatory": false },
+    "chargeDetails": { "mandatory": true },
     "usageAnnex": { "mandatory": false },
     "notes": { "mandatory": false }
   },

@@ -162,6 +162,9 @@ function rawBill(posted: boolean): RawInvoiceRenderInput {
       grossTotal: "50.00",
       discountTotal: "0.00",
       usageRatedTotal: "0.00",
+      otherChargesSubTotal: "50.00",
+      adjustments: "0.00",
+      summaryBlocksSum: "50.00",
     },
     run: { billRunId: "BRN00000004", cycleName: "Enterprise Monthly" },
     lines: [
@@ -186,11 +189,14 @@ function rawBill(posted: boolean): RawInvoiceRenderInput {
         groupNetTotal: "50.00",
       },
     ],
+    serviceTypes: [],
+    otherCharges: [{ description: "Enterprise Fibre 1Gbps", amount: "50.00" }],
     taxItems: [],
     document: posted
       ? { documentId: "INV00000077", postingDate: new Date("2026-09-01") }
       : null,
     customer: {
+      recipientName: null,
       name: "Acme Communications Sdn Bhd",
       tradingName: null,
       registrationNumber: null,
@@ -436,7 +442,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     // The stamped all-on v1, not the submitted structure.
     expect(result.html).toContain('<th class="num">Discount</th>');
     expect(result.html).toContain("INV00000077");
-    expect(result.html).toContain("TAX INVOICE");
+    expect(result.html).toContain("<title>Tax invoice INV00000077</title>");
     expect(result.html).not.toContain("PRO-FORMA&nbsp;&middot;");
     // A stored template is never re-generated, so it is never annotated.
     expect(result.html).not.toContain('class="ph"');

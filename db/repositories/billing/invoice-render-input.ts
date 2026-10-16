@@ -59,6 +59,21 @@ export interface RawInvoiceLine {
   groupNetTotal: string;
 }
 
+// bm70-spec §Design "Data" (D28/D30/D47) — one capacity type of service: the
+// capacity lines (`line_type = 'charge'`, `grouping_key LIKE '%:CAPACITY:%'`)
+// of one offering. Every figure is a SQL `numeric(18,2)::text`;
+// `missingRated`/`negativeUtilised` are SQL flags the binder's guards read
+// (code-standards Phase 3 General rule 6 — no TypeScript arithmetic).
+export interface RawInvoiceServiceType {
+  offeringId: string;
+  label: string;
+  utilised: string;
+  unutilised: string;
+  total: string;
+  missingRated: boolean;
+  negativeUtilised: boolean;
+}
+
 export interface RawInvoiceRenderInput {
   bill: {
     customerBillId: string;
@@ -80,13 +95,27 @@ export interface RawInvoiceRenderInput {
     // (bm44: `rated_amount` is anchored on the same `udr_rated` rows the annex
     // itemises). Compared as a string in `bind()` (no new error code).
     usageRatedTotal: string;
+    // bm70 — the page-1 summary sums (SQL `FILTER` aggregates):
+    // `otherChargesSubTotal` over non-capacity charge lines, `adjustments`
+    // over `line_type = 'adjustment'` (`0.00` when none), and
+    // `summaryBlocksSum` = Σ capacity totals + other charges + adjustments,
+    // compared as a string against `linesNetSum` in `bind()`.
+    otherChargesSubTotal: string;
+    adjustments: string;
+    summaryBlocksSum: string;
   };
   run: { billRunId: string; cycleName: string };
   lines: RawInvoiceLine[];
+  // bm70 — one row per capacity offering, ordered by label then offering id.
+  serviceTypes: RawInvoiceServiceType[];
+  // bm70 — non-capacity charge lines in `line_no` order.
+  otherCharges: { description: string; amount: string }[];
   taxItems: { category: string; rate: string; amount: string }[];
   // final only; `null` on a draft (no `billing.document` row yet).
   document: { documentId: string; postingDate: Date | null } | null;
   customer: {
+    // bm70 — the bill-to contact's name; `null` when blank (D16).
+    recipientName: string | null;
     name: string;
     tradingName: string | null;
     registrationNumber: string | null;
@@ -100,6 +129,11 @@ export interface RawInvoiceRenderInput {
   // over-limit marker, D3).
   usage: RawInvoiceUsage | null;
 }
+
+// bm70 — the bm42 capacity line identity (`<offering>:CAPACITY:<unit>`); every
+// other charge line is an "Other charges" row.
+const CAPACITY_CHARGE = sql`(${customerBillLine.lineType} = 'charge' AND ${customerBillLine.groupingKey} LIKE '%:CAPACITY:%')`;
+const OTHER_CHARGE = sql`(${customerBillLine.lineType} = 'charge' AND ${customerBillLine.groupingKey} NOT LIKE '%:CAPACITY:%')`;
 
 async function readBillHeader(
   tx: Database,
@@ -179,6 +213,9 @@ async function readLines(
   grossTotal: string;
   discountTotal: string;
   usageRatedTotal: string;
+  otherChargesSubTotal: string;
+  adjustments: string;
+  summaryBlocksSum: string;
 }> {
   const scope = and(
     eq(customerBillLine.refCustomerBillId, customerBillId),
@@ -217,6 +254,12 @@ async function readLines(
       discountTotal: sql<string>`COALESCE(SUM(${customerBillLine.discountAmount}), 0)::numeric(18,2)::text`,
       // bm49 §Design D6 — the rated side of the usage reconciliation.
       usageRatedTotal: sql<string>`COALESCE(SUM(${customerBillLine.ratedAmount}) FILTER (WHERE ${customerBillLine.source} = 'USAGE'), 0)::numeric(18,2)::text`,
+      // bm70 §Design "Data" — the page-1 summary sums.
+      otherChargesSubTotal: sql<string>`COALESCE(SUM(${customerBillLine.netAmount}) FILTER (WHERE ${OTHER_CHARGE}), 0)::numeric(18,2)::text`,
+      adjustments: sql<string>`COALESCE(SUM(${customerBillLine.netAmount}) FILTER (WHERE ${customerBillLine.lineType} = 'adjustment'), 0)::numeric(18,2)::text`,
+      summaryBlocksSum: sql<string>`(COALESCE(SUM(${customerBillLine.netAmount}) FILTER (WHERE ${CAPACITY_CHARGE}), 0)
+        + COALESCE(SUM(${customerBillLine.netAmount}) FILTER (WHERE ${OTHER_CHARGE}), 0)
+        + COALESCE(SUM(${customerBillLine.netAmount}) FILTER (WHERE ${customerBillLine.lineType} = 'adjustment'), 0))::numeric(18,2)::text`,
     })
     .from(customerBillLine)
     .where(scope);
@@ -231,7 +274,70 @@ async function readLines(
     grossTotal: sums?.grossTotal ?? "0.00",
     discountTotal: sums?.discountTotal ?? "0.00",
     usageRatedTotal: sums?.usageRatedTotal ?? "0.00",
+    otherChargesSubTotal: sums?.otherChargesSubTotal ?? "0.00",
+    adjustments: sums?.adjustments ?? "0.00",
+    summaryBlocksSum: sums?.summaryBlocksSum ?? "0.00",
   };
+}
+
+// bm70-spec §Implementation §1 — the per-type capacity summary (D28/D30/D47):
+// Unutilised = Σ(gross − rated), Utilised = Σ net − Unutilised, Total = Σ net,
+// all in SQL. `missingRated` and `negativeUtilised` feed the binder's
+// fail-loud guards (a NULL `rated_amount` or a negative Utilised never prints,
+// Inv #55). Label = the offering name carried on the line (D27).
+async function readCapacitySummary(
+  tx: Database,
+  customerBillId: string,
+  periodPartition: string,
+): Promise<RawInvoiceServiceType[]> {
+  const l = customerBillLine;
+  const unutilised = sql`SUM(${l.grossAmount} - ${l.ratedAmount})`;
+  const utilised = sql`(SUM(${l.netAmount}) - ${unutilised})`;
+  return tx
+    .select({
+      offeringId: l.refProductOfferingId,
+      label: sql<string>`COALESCE(min(${l.description}), ${l.refProductOfferingId})`,
+      utilised: sql<string>`${utilised}::numeric(18,2)::text`,
+      unutilised: sql<string>`${unutilised}::numeric(18,2)::text`,
+      total: sql<string>`SUM(${l.netAmount})::numeric(18,2)::text`,
+      missingRated: sql<boolean>`bool_or(${l.ratedAmount} IS NULL)`,
+      negativeUtilised: sql<boolean>`COALESCE(${utilised} < 0, false)`,
+    })
+    .from(l)
+    .where(
+      and(
+        eq(l.refCustomerBillId, customerBillId),
+        eq(l.periodPartition, periodPartition),
+        CAPACITY_CHARGE,
+      ),
+    )
+    .groupBy(l.refProductOfferingId)
+    .orderBy(sql`min(${l.description})`, asc(l.refProductOfferingId));
+}
+
+// bm70-spec §Design "Data" — the "Other charges" rows: every non-capacity
+// charge line in `line_no` order, the description falling back to the
+// offering id.
+async function readOtherCharges(
+  tx: Database,
+  customerBillId: string,
+  periodPartition: string,
+): Promise<{ description: string; amount: string }[]> {
+  const l = customerBillLine;
+  return tx
+    .select({
+      description: sql<string>`COALESCE(${l.description}, ${l.refProductOfferingId})`,
+      amount: sql<string>`${l.netAmount}::text`,
+    })
+    .from(l)
+    .where(
+      and(
+        eq(l.refCustomerBillId, customerBillId),
+        eq(l.periodPartition, periodPartition),
+        OTHER_CHARGE,
+      ),
+    )
+    .orderBy(asc(l.lineNo));
 }
 
 async function readDocument(
@@ -256,6 +362,7 @@ async function readCustomer(
   tx: Database,
   refPartyRoleId: string,
 ): Promise<{
+  recipientName: string | null;
   name: string;
   tradingName: string | null;
   registrationNumber: string | null;
@@ -286,6 +393,10 @@ async function readCustomer(
   }
 
   const contactSelect = {
+    // bm70 (D16) — a blank contact name reads as `null` (the line is omitted).
+    contactName: sql<
+      string | null
+    >`NULLIF(btrim(${contactMedium.contactName}), '')`,
     emailAddress: contactMedium.emailAddress,
     phoneNumber: contactMedium.phoneNumber,
     gaAddressLine1: contactMedium.gaAddressLine1,
@@ -297,6 +408,7 @@ async function readCustomer(
   };
 
   interface ContactRow {
+    contactName: string | null;
     emailAddress: string | null;
     phoneNumber: string | null;
     gaAddressLine1: string | null;
@@ -337,6 +449,7 @@ async function readCustomer(
       : null;
 
   return {
+    recipientName: contact?.contactName ?? null,
     name: org.name,
     tradingName: org.tradingName,
     registrationNumber: org.registrationNumber,
@@ -401,8 +514,18 @@ export const invoiceRenderInputRepository = {
     const header = await readBillHeader(tx, runId, banId);
     if (!header) return null;
 
-    const [lineData, taxItems, doc, customer, usage] = await Promise.all([
+    const [
+      lineData,
+      serviceTypes,
+      otherCharges,
+      taxItems,
+      doc,
+      customer,
+      usage,
+    ] = await Promise.all([
       readLines(tx, header.customerBillId, header.periodPartition),
+      readCapacitySummary(tx, header.customerBillId, header.periodPartition),
+      readOtherCharges(tx, header.customerBillId, header.periodPartition),
       customerBillTaxItemRepository.listForBill(
         tx,
         header.customerBillId,
@@ -437,9 +560,14 @@ export const invoiceRenderInputRepository = {
         grossTotal: lineData.grossTotal,
         discountTotal: lineData.discountTotal,
         usageRatedTotal: lineData.usageRatedTotal,
+        otherChargesSubTotal: lineData.otherChargesSubTotal,
+        adjustments: lineData.adjustments,
+        summaryBlocksSum: lineData.summaryBlocksSum,
       },
       run: { billRunId: header.billRunId, cycleName: header.cycleName },
       lines: lineData.lines,
+      serviceTypes,
+      otherCharges,
       taxItems,
       document: doc,
       customer,

@@ -83,6 +83,9 @@ function rawInput(
       grossTotal: "150.00",
       discountTotal: "0.00",
       usageRatedTotal: "0.00",
+      otherChargesSubTotal: "150.00",
+      adjustments: "0.00",
+      summaryBlocksSum: "150.00",
     },
     run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
     lines: [
@@ -127,9 +130,15 @@ function rawInput(
         groupNetTotal: "100.00",
       },
     ],
+    serviceTypes: [],
+    otherCharges: [
+      { description: "Enterprise Fibre 1Gbps", amount: "50.00" },
+      { description: "RAN Usage", amount: "100.00" },
+    ],
     taxItems: [],
     document: null,
     customer: {
+      recipientName: null,
       name: "Acme Communications Sdn Bhd",
       tradingName: null,
       registrationNumber: null,
@@ -349,12 +358,12 @@ describe("the default generated template — company profile (G15 A)", () => {
     expect(await renderFooter(PROFILE)).toContain("Digital Billing Sdn Bhd");
   });
 
-  it("a profile without a logo still prints the issuer block, minus the image", async () => {
+  it("a profile without a logo still prints the supplier block, minus the image", async () => {
     const html = await renderFinal(
       {},
       { ...PROFILE, company: { ...PROFILE.company, logoUrl: null } },
     );
-    expect(html).toContain('class="issuer"');
+    expect(html).toContain('class="supplier"');
     expect(html).not.toContain("<img");
   });
 

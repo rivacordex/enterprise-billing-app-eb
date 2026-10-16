@@ -1,9 +1,22 @@
 <section class="sec sec--header sec--full">
   {{#if company}}
-  <div class="issuer">
-    {{#if company.logoUrl}}<img src="{{company.logoUrl}}" alt="{{company.name}}" height="32" />{{/if}}
-    <div class="mono">{{company.name}}</div>
+  {{#if company.logoUrl}}<div class="issuer"><img src="{{company.logoUrl}}" alt="{{company.name}}" height="32" /></div>{{/if}}
+  {{/if}}
+  <h1>Invoice</h1>
+  {{#if company}}
+  <div class="supplier">
+    <div class="supplier-name">{{company.name}}</div>
+    <div class="mono">Reg. No. {{company.registrationNo}}</div>
+    <div class="mono">TIN {{company.tin}}</div>
+    {{#if company.sstRegNo}}<div class="mono">SST No. {{company.sstRegNo}}</div>{{/if}}
+    <div>{{company.addressLine1}}</div>
+    {{#if company.addressLine2}}<div>{{company.addressLine2}}</div>{{/if}}
+    <div>{{company.postcode}} {{company.city}}</div>
+    <div>{{company.state}}</div>
+    <div>{{company.country}}</div>
+    <div>{{company.phone}}</div>
+    <div>{{company.email}}</div>
+    {{#if company.website}}<div>{{company.website}}</div>{{/if}}
   </div>
   {{/if}}
-  <h1>{{#if invoice.isDraft}}PRO-FORMA — Draft Invoice{{else}}TAX INVOICE{{/if}}</h1>
 </section>

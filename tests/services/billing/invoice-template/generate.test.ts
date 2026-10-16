@@ -191,12 +191,24 @@ describe("generate — layout pairing", () => {
   });
 
   it("widens a half section to full when its layout partner is hidden", () => {
-    // Synthetic layout: make the Usage annex a half section after payment, so
-    // payment and usageAnnex form a pair.
-    const paired = withPartial(
+    // Synthetic layout: make the Usage annex a half section directly after
+    // payment, so payment and usageAnnex form a pair. Since bm70 (D60) v1
+    // orders chargeDetails between them, so the synthetic manifest moves
+    // chargeDetails ahead of payment.
+    const annexHalf = withPartial(
       "usageAnnex",
       '<section class="sec sec--usageAnnex sec--half">\n  <p>Usage annex</p>\n</section>\n',
     );
+    const { chargeDetails, ...rest } = annexHalf.manifest.sections;
+    const sections: typeof rest = {};
+    for (const [key, value] of Object.entries(rest)) {
+      if (key === "payment") sections.chargeDetails = chargeDetails!;
+      sections[key] = value;
+    }
+    const paired: LayoutFiles = {
+      ...annexHalf,
+      manifest: { ...annexHalf.manifest, sections },
+    };
 
     const both = generate(paired, ALL_ON).invoiceHbs;
     expect(both).toContain('class="sec sec--payment sec--half"');

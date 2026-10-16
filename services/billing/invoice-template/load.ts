@@ -255,6 +255,7 @@ export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
   },
   customer: {
     billingAccountId: "BAN00000001",
+    recipientName: "Probe Recipient",
     name: "Probe Customer Sdn Bhd",
     tradingName: "Probe Customer",
     registrationNo: "202601000002",
@@ -278,13 +279,22 @@ export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
     taxTotal: "0.00",
     totalAmount: "3.00",
     amountDue: "3.00",
+    totalCharges: "3.00",
+    adjustments: "0.00",
+    otherChargesSubTotal: "1.00",
   },
   taxes: [{ category: "SST", rate: "0.00", amount: "0.00" }],
-  chargeSummary: [
-    { name: "Recurring charges", source: "RECURRING", amount: "1.00" },
-    { name: "Usage charges", source: "USAGE", amount: "1.00" },
-    { name: "Other charges", source: "OCC", amount: "1.00" },
+  taxRateLabel: "0.00",
+  serviceTypes: [
+    {
+      offeringId: "POF00000001",
+      label: "Probe capacity service",
+      utilised: "1.50",
+      unutilised: "0.50",
+      total: "2.00",
+    },
   ],
+  otherCharges: [{ description: "Probe recurring line", amount: "1.00" }],
   lineGroups: (["RECURRING", "USAGE", "OCC"] as const).map((source, i) => ({
     name: `${source} group`,
     source,
@@ -434,7 +444,6 @@ export const CSV_PATH_ROOTS = [
   "customer",
   "totals",
   "taxes",
-  "chargeSummary",
   "lineGroups",
   "usage",
   "isDraft",

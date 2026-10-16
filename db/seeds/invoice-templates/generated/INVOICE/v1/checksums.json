@@ -2,7 +2,7 @@
   "algorithm": "sha256",
   "files": {
     "footer.hbs": "9727654f54c7602aa51bf143a43bc30d8f8427c69fe243bb4fc6887019588349",
-    "invoice.hbs": "b649b8e14ebff0ce34de0d8c2c0290231461c257eae3292b3da687c61d7ab7ec",
+    "invoice.hbs": "788a99dd5279455386195810ff5b7cdc9ff42bcecf02e7e561f97aa944be3f0d",
     "structure.json": "7390a20791f0d67f5e554d5f4330773e053c3d269b4f02b98ea8a05b3203e6b8"
   }
 }

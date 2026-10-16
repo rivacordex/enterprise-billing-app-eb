@@ -4,8 +4,9 @@ import { bind } from "@/services/billing/invoice-template/bind";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 import { FinalInvoiceNotFoundError, InvoiceRenderError } from "@/types/billing";
 
-// bm47-spec §Design D2/D3/D4/D5 + bm49-spec §Design D3/D4/D5/D6, test plan
-// rows. Pure, DB-free — `bind()` takes no DB/Handlebars/next import.
+// bm47-spec §Design D2/D3/D4/D5 + bm49-spec §Design D3/D4/D5/D6 + bm70-spec
+// §6, test plan rows. Pure, DB-free — `bind()` takes no DB/Handlebars/next
+// import.
 
 function rawInput(
   overrides: Partial<RawInvoiceRenderInput> = {},
@@ -26,6 +27,10 @@ function rawInput(
       grossTotal: "150.00",
       discountTotal: "0.00",
       usageRatedTotal: "0.00",
+      // Both fixture lines are non-capacity charges (no `:CAPACITY:` key).
+      otherChargesSubTotal: "150.00",
+      adjustments: "0.00",
+      summaryBlocksSum: "150.00",
     },
     run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
     lines: [
@@ -70,9 +75,15 @@ function rawInput(
         groupNetTotal: "100.00",
       },
     ],
+    serviceTypes: [],
+    otherCharges: [
+      { description: "Enterprise Fibre 1Gbps", amount: "50.00" },
+      { description: "RAN Usage", amount: "100.00" },
+    ],
     taxItems: [],
     document: null,
     customer: {
+      recipientName: "Aisha Rahman",
       name: "Acme Communications Sdn Bhd",
       tradingName: "Acme Communications",
       registrationNumber: "201001098765",
@@ -137,7 +148,10 @@ describe("bind — reconciliation (D2)", () => {
         linesNetSum: "0.00",
         grossTotal: "0.00",
         discountTotal: "0.00",
+        otherChargesSubTotal: "0.00",
+        summaryBlocksSum: "0.00",
       },
+      otherCharges: [],
     });
     const bound = bind(raw, CTX);
     expect(bound.lineGroups).toEqual([]);
@@ -243,12 +257,248 @@ describe("bind — line groups (D3)", () => {
     expect(usage.unitPrice).toBeNull();
   });
 
-  it("builds chargeSummary with one entry per present group at the group subtotal", () => {
+  it("bm70 — no longer emits the per-source chargeSummary", () => {
     const bound = bind(rawInput(), CTX);
-    expect(bound.chargeSummary).toEqual([
-      { name: "Recurring charges", source: "RECURRING", amount: "50.00" },
-      { name: "Usage charges", source: "USAGE", amount: "100.00" },
+    expect(bound).not.toHaveProperty("chargeSummary");
+  });
+});
+
+// bm70-spec §Design — the `ci` capacity fixture (base RM100/Mbps, target
+// 1,000, step above 1,000 at RM50): the SQL figures the repository returns for
+// each anchor (Unutilised = Σ(gross − rated), Utilised = Σ net − Unutilised).
+const ANCHORS = [
+  {
+    usage: "800",
+    utilised: "80000.00",
+    unutilised: "20000.00",
+    total: "100000.00",
+  },
+  {
+    usage: "1000",
+    utilised: "100000.00",
+    unutilised: "0.00",
+    total: "100000.00",
+  },
+  {
+    usage: "2000",
+    utilised: "150000.00",
+    unutilised: "0.00",
+    total: "150000.00",
+  },
+  {
+    usage: "0",
+    utilised: "0.00",
+    unutilised: "100000.00",
+    total: "100000.00",
+  },
+] as const;
+
+function serviceType(
+  offeringId: string,
+  label: string,
+  utilised: string,
+  unutilised: string,
+  total: string,
+  flags: { missingRated?: boolean; negativeUtilised?: boolean } = {},
+): RawInvoiceRenderInput["serviceTypes"][number] {
+  return {
+    offeringId,
+    label,
+    utilised,
+    unutilised,
+    total,
+    missingRated: flags.missingRated ?? false,
+    negativeUtilised: flags.negativeUtilised ?? false,
+  };
+}
+
+// A capacity-only bill: one type whose Total is the whole subtotal.
+function capacityRaw(
+  type: RawInvoiceRenderInput["serviceTypes"][number],
+): RawInvoiceRenderInput {
+  return rawInput({
+    bill: {
+      ...rawInput().bill,
+      subtotal: type.total,
+      totalAmount: type.total,
+      linesNetSum: type.total,
+      otherChargesSubTotal: "0.00",
+      summaryBlocksSum: type.total,
+    },
+    lines: [],
+    serviceTypes: [type],
+    otherCharges: [],
+  });
+}
+
+function bindError(raw: RawInvoiceRenderInput): InvoiceRenderError {
+  let caught: unknown;
+  try {
+    bind(raw, CTX);
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(InvoiceRenderError);
+  return caught as InvoiceRenderError;
+}
+
+describe("bind — page-1 capacity summary (bm70)", () => {
+  it.each(ANCHORS)(
+    "the $usage Mbps anchor maps to Utilised $utilised / Unutilised $unutilised / Total $total and Grand Total $total",
+    (a) => {
+      const bound = bind(
+        capacityRaw(
+          serviceType("POF-CAP", "Capacity", a.utilised, a.unutilised, a.total),
+        ),
+        CTX,
+      );
+      expect(bound.serviceTypes).toEqual([
+        {
+          offeringId: "POF-CAP",
+          label: "Capacity",
+          utilised: a.utilised,
+          unutilised: a.unutilised,
+          total: a.total,
+        },
+      ]);
+      expect(bound.totals.totalCharges).toBe(a.total);
+      expect(bound.totals.amountDue).toBe(a.total);
+      expect(bound.totals.adjustments).toBe("0.00");
+    },
+  );
+
+  it("keeps two types in the repository's label order", () => {
+    // The repository sorts by label (ORDER BY min(description)); the binder
+    // keeps that order.
+    const bound = bind(
+      rawInput({
+        bill: {
+          ...rawInput().bill,
+          subtotal: "250000.00",
+          totalAmount: "250000.00",
+          linesNetSum: "250000.00",
+          otherChargesSubTotal: "0.00",
+          summaryBlocksSum: "250000.00",
+        },
+        lines: [],
+        otherCharges: [],
+        serviceTypes: [
+          serviceType(
+            "POF-B",
+            "Alpha Capacity",
+            "80000.00",
+            "20000.00",
+            "100000.00",
+          ),
+          serviceType(
+            "POF-A",
+            "Beta Capacity",
+            "150000.00",
+            "0.00",
+            "150000.00",
+          ),
+        ],
+      }),
+      CTX,
+    );
+    expect(bound.serviceTypes.map((t) => t.label)).toEqual([
+      "Alpha Capacity",
+      "Beta Capacity",
     ]);
+  });
+
+  it("binds Other charges and their Sub Total when non-capacity lines exist", () => {
+    const bound = bind(rawInput(), CTX);
+    expect(bound.otherCharges).toEqual([
+      { description: "Enterprise Fibre 1Gbps", amount: "50.00" },
+      { description: "RAN Usage", amount: "100.00" },
+    ]);
+    expect(bound.totals.otherChargesSubTotal).toBe("150.00");
+  });
+
+  it("binds no Other charges on a capacity-only bill", () => {
+    const a = ANCHORS[2];
+    const bound = bind(
+      capacityRaw(
+        serviceType("POF-CAP", "Capacity", a.utilised, a.unutilised, a.total),
+      ),
+      CTX,
+    );
+    expect(bound.otherCharges).toEqual([]);
+    expect(bound.totals.otherChargesSubTotal).toBe("0.00");
+  });
+
+  it("binds the recipient name, and null when the contact name is blank", () => {
+    expect(bind(rawInput(), CTX).customer.recipientName).toBe("Aisha Rahman");
+    const raw = rawInput();
+    raw.customer = { ...raw.customer, recipientName: null };
+    expect(bind(raw, CTX).customer.recipientName).toBeNull();
+  });
+
+  it('binds the tax rate label from the first tax item, else "0"', () => {
+    expect(bind(rawInput(), CTX).taxRateLabel).toBe("0");
+    const bound = bind(
+      rawInput({
+        taxItems: [{ category: "SST", rate: "8.00", amount: "0.00" }],
+      }),
+      CTX,
+    );
+    expect(bound.taxRateLabel).toBe("8.00");
+  });
+
+  it("guard 1 — a capacity line without rated_amount throws INVOICE_RECONCILIATION_FAILED", () => {
+    const err = bindError(
+      capacityRaw(
+        serviceType("POF-CAP", "Capacity", "100000.00", "0.00", "100000.00", {
+          missingRated: true,
+        }),
+      ),
+    );
+    expect(err.code).toBe("INVOICE_RECONCILIATION_FAILED");
+    expect(err.detail).toEqual({
+      banId: "BAN00000001",
+      offeringId: "POF-CAP",
+      reason: "CAPACITY_LINE_WITHOUT_RATED_AMOUNT",
+    });
+  });
+
+  it("guard 2 — a negative Utilised throws INVOICE_NEGATIVE_UTILISED", () => {
+    const err = bindError(
+      capacityRaw(
+        serviceType("POF-CAP", "Capacity", "-500.00", "0.00", "99500.00", {
+          negativeUtilised: true,
+        }),
+      ),
+    );
+    expect(err.code).toBe("INVOICE_NEGATIVE_UTILISED");
+    expect(err.detail).toEqual({
+      banId: "BAN00000001",
+      offeringId: "POF-CAP",
+      utilised: "-500.00",
+    });
+  });
+
+  it("guard 3 — summary blocks that do not add up to the lines net sum throw INVOICE_RECONCILIATION_FAILED", () => {
+    const raw = rawInput({
+      bill: { ...rawInput().bill, summaryBlocksSum: "149.99" },
+    });
+    const err = bindError(raw);
+    expect(err.code).toBe("INVOICE_RECONCILIATION_FAILED");
+    expect(err.detail).toEqual({
+      banId: "BAN00000001",
+      reason: "SUMMARY_BLOCKS_DO_NOT_ADD_UP",
+    });
+  });
+
+  it("the guards run before the D2 subtotal reconciliation", () => {
+    // Both a negative Utilised and a subtotal mismatch: the guard wins.
+    const raw = capacityRaw(
+      serviceType("POF-CAP", "Capacity", "-1.00", "0.00", "100.00", {
+        negativeUtilised: true,
+      }),
+    );
+    raw.bill = { ...raw.bill, subtotal: "999.00" };
+    expect(bindError(raw).code).toBe("INVOICE_NEGATIVE_UTILISED");
   });
 });
 

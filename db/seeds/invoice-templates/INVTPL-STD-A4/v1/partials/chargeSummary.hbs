@@ -1,11 +1,21 @@
 <section class="sec sec--chargeSummary sec--full">
-  <p class="section-heading">Summary of charges</p>
-  <table>
-    <thead class="vh"><tr><th scope="col">Charge</th><th scope="col">Amount</th></tr></thead>
-    <tbody>
-      {{#each chargeSummary}}
-      <tr><td>{{this.name}}</td><td class="num">{{money this.amount}}</td></tr>
-      {{/each}}
-    </tbody>
-  </table>
+  {{#each serviceTypes}}
+  <div class="svc-block">
+    <p class="svc-heading">{{this.label}}</p>
+    <div class="svc-row"><span>Utilised capacity charges</span><span class="amt">{{money this.utilised}}</span></div>
+    <div class="svc-row"><span>Unutilised capacity charges</span><span class="amt">{{money this.unutilised}}</span></div>
+    <div class="svc-row svc-total"><span>Total</span><span class="amt">{{money this.total}}</span></div>
+  </div>
+  {{/each}}
+  {{#if otherCharges.length}}
+  <div class="svc-block other-charges">
+    <p class="svc-heading">Other charges</p>
+    {{#each otherCharges}}
+    <div class="svc-row"><span>{{this.description}}</span><span class="amt">{{money this.amount}}</span></div>
+    {{/each}}
+    <div class="svc-row svc-total"><span>Sub Total</span><span class="amt">{{money totals.otherChargesSubTotal}}</span></div>
+  </div>
+  {{/if}}
+  <div class="totals-row"><span>Total charges</span><span class="amt">{{money totals.totalCharges}}</span></div>
+  <div class="totals-row"><span>Adjustments</span><span class="amt">{{money totals.adjustments}}</span></div>
 </section>

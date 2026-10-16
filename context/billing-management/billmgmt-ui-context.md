@@ -368,7 +368,7 @@ The invoice is print CSS in the layout's `shell.hbs` (code-standards › Invoice
 
 **Typography (closes O4 if accepted):** fonts are fixed and **embedded** in the layout as base64 `@font-face`, so a render never fetches a font (Inv #47). The legacy template's Arial is replaced. Use IBM Plex Sans 400/600 for text and IBM Plex Mono 400 for IDs, both OFL-licensed and the same faces as the app.
 
-**As built (layout v1): fonts are not embedded.** `shell.hbs` declares the three `@font-face` rules but their `src` lines are commented placeholders, and `fonts/` holds only `OFL.txt`. Renders fall back to Arial/Helvetica (text) and Courier New (mono); no font is fetched. Open follow-up for layout v2 (billmgmt-known-issues.md §23e).
+**Superseded by bm70 (§10d):** the rewritten v1 embeds the fonts. **As built before bm70 (layout v1): fonts are not embedded.** `shell.hbs` declares the three `@font-face` rules but their `src` lines are commented placeholders, and `fonts/` holds only `OFL.txt`. Renders fall back to Arial/Helvetica (text) and Courier New (mono); no font is fetched. Open follow-up for layout v2 (billmgmt-known-issues.md §23e).
 
 | Role                                         | Size / line height | Weight | Notes                                         |
 | -------------------------------------------- | ------------------ | ------ | --------------------------------------------- |
@@ -407,6 +407,8 @@ Print CSS in the rewritten v1 `shell.hbs` and partials. It uses the §10c `--inv
 | Footnote lines | 8pt / 11pt | 400 | `--inv-muted`, one paragraph per line, after Total Amount |
 | Page footer "Page X of Y" | 7.5pt / 10pt | 400 | `--inv-muted`, **right-aligned** (was centred) |
 
+**As built (bm70), page 1:** the title, supplier block (D102), recipient line, type-of-service blocks, "Other charges", Total charges · Adjustments · Tax @ x% and the Grand Total rows above are confirmed in the rewritten v1 (`.svc-block`, `.svc-heading`, `.svc-row`, `.svc-total`, `.other-charges`, `.totals-row`, `.grand-total-panel`). The panel's left rule is 3px `--inv-accent`. The identification block also prints the due date (D60 table row 2). The detail-page, Total Amount, footnote and right-aligned footer rows are bm71/bm72.
+
 No colour signals sign or status on the invoice. Unutilised is a normal amount, not a warning. A negative Utilised can never print (Inv #55). The draft watermark (§6c, `--inv-watermark`) is unchanged.
 
 **Park and skip reasons in the app** reuse existing surfaces and families, with no new token or component:
@@ -414,7 +416,7 @@ No colour signals sign or status on the invoice. Unutilised is a normal amount, 
 | Code | Where it shows | Family and copy |
 | --- | --- | --- |
 | `INVOICE_POLYGON_DATA_MISSING` | Draft preview error (§6c); `RenderPendingRow` | Danger `-fg`: "Polygon data is missing for a billed record (no polygon ID or region). Fix the rated data and rerun this account." |
-| `INVOICE_NEGATIVE_UTILISED` | Same | Danger `-fg`: "Utilised capacity charges came out negative. Check the rate-matching setting and rerun this account." |
+| `INVOICE_NEGATIVE_UTILISED` | Same | Danger `-fg`: "Utilised capacity charges came out negative. Check the rate-matching setting and rerun this account." **Confirmed (bm70)** in `describeInvoiceRenderCode`. |
 | `INVOICE_RECONCILIATION_FAILED` | Same (existing code) | Draft preview (bm66): Danger `-fg`: "The invoice lines do not add up to the bill total. Rerun this account; if it repeats, report it." `RenderPendingRow` keeps its own retry text. |
 | `INVOICE_USAGE_OVER_LIMIT` | Same (existing code) | Draft preview (bm66): Danger `-fg`: "This account has more than 10,000 billed usage records, over the invoice limit." `RenderPendingRow` keeps its own retry text. |
 | `TEMPLATE_VERSION_NOT_FOUND` (`FAMILY_HAS_NO_ACTIVE_VERSION`) | Draft preview error; at posting, the account shows the existing `SKIPPED` `AccountStatusBadge` with this reason (D58) | Danger `-fg`: "This account's invoice template has no active version. Activate one in Invoice Settings, then rerun this account." |
