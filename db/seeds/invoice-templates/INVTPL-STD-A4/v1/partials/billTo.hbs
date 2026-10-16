@@ -1,5 +1,6 @@
 <section class="sec sec--billTo sec--half">
   <p class="section-heading">Bill to</p>
+  {{#if customer.recipientName}}<div class="recipient">{{customer.recipientName}}</div>{{/if}}
   <div>{{customer.name}}</div>
   {{#if customer.tradingName}}<div>{{customer.tradingName}}</div>{{/if}}
   <div class="mono">{{customer.billingAccountId}}</div>

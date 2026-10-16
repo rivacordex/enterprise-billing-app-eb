@@ -1,15 +1,3 @@
 <section class="sec sec--taxSummary sec--full">
-  <p class="section-heading">Tax summary</p>
-  <table>
-    <thead class="vh"><tr><th scope="col">Tax</th><th scope="col">Amount</th></tr></thead>
-    <tbody>
-      {{#if taxes.length}}
-        {{#each taxes}}
-        <tr><td>{{this.category}} @ {{this.rate}}%</td><td class="num">{{money this.amount}}</td></tr>
-        {{/each}}
-      {{else}}
-        <tr><td>Tax</td><td class="num">{{money totals.taxTotal}}</td></tr>
-      {{/if}}
-    </tbody>
-  </table>
+  <div class="totals-row"><span>Tax @ {{taxRateLabel}}%</span><span class="amt">{{money totals.taxTotal}}</span></div>
 </section>

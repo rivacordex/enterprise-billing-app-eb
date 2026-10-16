@@ -112,9 +112,14 @@ const MONTHS_SHORT = [
 // "no inline toISOString(), no second date helper"); the validation (real
 // day-in-month) is shared by both styles, and an ill-formed value degrades to
 // the raw input under either style.
+//
+// `style: "dmy"` (bm69 D21) — the same validated calendar date rendered
+// `DD/MM/YYYY`, for the invoice Handlebars `date`/`period` helpers; app screens
+// keep the `"long"` default. For `2026-10-15` the three styles give:
+// `"long"` → `15 Oct 2026`, `"iso"` → `2026-10-15`, `"dmy"` → `15/10/2026`.
 export function formatCalendarDate(
   ymd: string,
-  style: "long" | "iso" = "long",
+  style: "long" | "iso" | "dmy" = "long",
 ): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
   if (!match) return ymd;
@@ -129,9 +134,9 @@ export function formatCalendarDate(
     Date.UTC(Number(year), monthNum, 0),
   ).getUTCDate();
   if (dayNum < 1 || dayNum > daysInMonth) return ymd;
-  return style === "iso"
-    ? `${year}-${month}-${day}`
-    : `${day} ${monthLabel} ${year}`;
+  if (style === "iso") return `${year}-${month}-${day}`;
+  if (style === "dmy") return `${day}/${month}/${year}`;
+  return `${day} ${monthLabel} ${year}`;
 }
 
 // Used by `ConfigTable`'s "Last Modified" column (um22-spec §22.5).

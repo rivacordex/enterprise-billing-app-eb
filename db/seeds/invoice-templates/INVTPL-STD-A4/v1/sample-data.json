@@ -10,16 +10,17 @@
     "registrationNo": "199901012345",
     "tin": "C12345678901",
     "sstRegNo": "A10-1234-56781234",
-    "address": {
-      "line1": "Level 10, Menara Sample",
-      "line2": "Jalan Contoh 1",
-      "city": "City-01",
-      "stateProvince": "State-01",
-      "postalCode": "50450",
-      "country": "Country-01"
-    },
-    "email": "billing@sampletelco.example",
+    "addressLine1": "Level 10, Menara Sample",
+    "addressLine2": "Jalan Contoh 1",
+    "postcode": "50450",
+    "city": "City-01",
+    "stateCode": "14",
+    "state": "State-01",
+    "countryCode": "MY",
+    "country": "Country-01",
     "phone": "+60 3-1234 5678",
+    "email": "billing@sampletelco.example",
+    "website": "https://sampletelco.example",
     "brandColor": "#12355B",
     "accentColor": "#1F9E89",
     "logoUrl": null
@@ -44,10 +45,12 @@
     "cycleName": "Enterprise Monthly",
     "billRef": "CBL00000001",
     "poRef": null,
-    "contractRef": null
+    "contractRef": null,
+    "paymentTermsDays": 10
   },
   "customer": {
     "billingAccountId": "BAN00000001",
+    "recipientName": "Aisha Rahman",
     "name": "Acme Communications Sdn Bhd",
     "tradingName": "Acme Communications",
     "registrationNo": "201001098765",
@@ -65,21 +68,39 @@
     "phone": "+60 3-7654 3210"
   },
   "totals": {
-    "grossTotal": "210000.00",
+    "grossTotal": "310000.00",
     "discountTotal": "50000.00",
-    "subtotalExclTax": "160000.00",
+    "subtotalExclTax": "260000.00",
     "taxTotal": "0.00",
-    "totalAmount": "160000.00",
-    "amountDue": "160000.00"
+    "totalAmount": "260000.00",
+    "amountDue": "260000.00",
+    "totalCharges": "260000.00",
+    "adjustments": "0.00",
+    "otherChargesSubTotal": "10000.00"
   },
   "taxes": [],
-  "chargeSummary": [
+  "taxRateLabel": "0",
+  "serviceTypes": [
     {
-      "name": "Recurring charges",
-      "source": "RECURRING",
-      "amount": "10000.00"
+      "offeringId": "POF00000021",
+      "label": "5G RAN Target Capacity",
+      "utilised": "80000.00",
+      "unutilised": "20000.00",
+      "total": "100000.00"
     },
-    { "name": "Usage charges", "source": "USAGE", "amount": "150000.00" }
+    {
+      "offeringId": "POF00000020",
+      "label": "RAN Usage — Target Capacity",
+      "utilised": "150000.00",
+      "unutilised": "0.00",
+      "total": "150000.00"
+    }
+  ],
+  "otherCharges": [
+    {
+      "description": "Enterprise Fibre 1Gbps",
+      "amount": "10000.00"
+    }
   ],
   "lineGroups": [
     {
@@ -111,12 +132,29 @@
     {
       "name": "Usage charges",
       "source": "USAGE",
-      "grossTotal": "200000.00",
+      "grossTotal": "300000.00",
       "discountTotal": "50000.00",
-      "subtotal": "150000.00",
+      "subtotal": "250000.00",
       "lines": [
         {
           "lineNo": 2,
+          "source": "USAGE",
+          "description": "5G RAN Target Capacity",
+          "productOfferingId": "POF00000021",
+          "udrType": "RAN_USAGE",
+          "udrCount": 1,
+          "periodStart": "2026-08-01",
+          "periodEnd": "2026-08-31",
+          "quantity": "800.000000",
+          "unit": "EA",
+          "unitPrice": null,
+          "grossAmount": "100000.00",
+          "discountAmount": "0.00",
+          "netAmount": "100000.00",
+          "discountNote": null
+        },
+        {
+          "lineNo": 3,
           "source": "USAGE",
           "description": "RAN Usage — Target Capacity",
           "productOfferingId": "POF00000020",

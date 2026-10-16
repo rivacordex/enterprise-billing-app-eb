@@ -43,6 +43,45 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
 
 | bm64–67 review fixes | Fixes from the xhigh (bm65) and max (bm65–bm67) code reviews, all items | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4630/0; full integration 1256/0 (110 skipped, run in four foreground chunks); known-issues §24 RESOLVED |
 | bm68 | Capacity flow stops writing the appendix (flow SQL, two ratecard grants revoked, appendix types deleted, guardrail 66) | **In progress** (2026-10-16) — code, tests, docs done: tsc/ESLint/Prettier clean; unit 4638/0 (two repo-scan timeouts pass alone); targeted integration 78/78; full integration 1165 passed, 2 failed (E2E journeys stop at INVOICED with no engine, known-issues §4c, identical on baseline) + azurite env file; **live Kestra smoke (spec §6) not yet run** — needs host `npm run dev` |
+| bm69 | Invoice dates `DD/MM/YYYY` and Mbps quantities (`formatCalendarDate` `"dmy"` style; `date`/`period`/`qty` helpers) | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; targeted unit (billing services, `tests/lib`, layout lint) 1029/0; v1 goldens regenerated (date + quantity text only); full unit 4577 passed, 1 failed (`ratecard-parse-csv` repo-scan timeout, passes alone) + 7 files fail to load on missing `.env` keys (`DATABASE_URL`/`BETTER_AUTH_*`), identical on baseline; no expectation edits outside the spec's files |
+| bm70 | New invoice page 1: capacity summary per service type (render-input SQL, binder guards, v1 layout rewrite, embedded IBM Plex, `0046` checksum literals) | **Built** (2026-10-16, uncommitted) — tsc/ESLint/Prettier clean; unit 4598 passed, 1 failed (`ratecard-parse-csv` repo-scan timeout) + 7 files fail to load on missing `.env` keys, identical to bm69's baseline; integration 1260/0 (110 skipped) on a throwaway Postgres + Azurite with a scrubbed env; Chromium e2e 3/3 (`RUN_CHROMIUM_E2E=1`: fonts load from the embedded data, zero network requests) |
+| bm69–70 SonarQube fixes | Golden `@font-face` stub is valid CSS (`local("stripped")`, css:S4654); duplicated test lines factored into `tests/helpers/invoice-render-input-fixtures.ts` + `bootstrapFlowDoubleDatabase` / `dropFlowDoubleSchemas` (flow-double helper); `formatCalendarDate` cases as `it.each` tables. Tests only, no product code | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; affected unit files 212/0; `invoice-capacity-summary` 4/0 + `billrun-capacity-aggregation` 10/0 on a throwaway Postgres DB |
+| bm69–70 code review fixes | xhigh review: one finding. `readCapacitySummary` now orders by the printed label (`COALESCE(min(description), offering_id)`), so a type with no description sorts by its fallback label instead of last. Noted, not changed: a `line_type = 'discount'` line would trip `SUMMARY_BLOCKS_DO_NOT_ADD_UP` (no flow writes one today); `CSV_PATH_ROOTS` does not list the new bind fields (CSV unchanged by spec) | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; `bind` + `invoice-render-source-boundary` 33/0; `invoice-capacity-summary` integration not re-run (needs a disposable DB) |
+
+**bm70 notes (2026-10-16):**
+
+- Repository: `readCapacitySummary` (per-type Utilised/Unutilised/Total + `missingRated`/`negativeUtilised`
+  flags) and `readOtherCharges`; `otherChargesSubTotal`, `adjustments` and `summaryBlocksSum` as `FILTER`
+  aggregates on the existing sums select; `contactName` (`NULLIF(btrim(…), '')`) for `recipientName`.
+  The binder's three guards run before the D2 subtotal check. `chargeSummary` is gone (type,
+  probe input, sample data, CSV path roots).
+- Fonts: the official `@ibm/plex-sans` 1.1.0 / `@ibm/plex-mono` 2.5.0 npm releases (Latin-1 split
+  woff2, renamed to the spec's names), fetched via the npm registry (jsdelivr is blocked here).
+- **Deviation 1 — annex CSS carried into the new `shell.hbs`.** The spec lists only page-1 CSS, but
+  regenerating the stored v1 from a shell without the bm49 annex CSS would have left the
+  still-rendered usage annex unstyled. With it, the generated and stored v1 are byte-identical, so
+  `generate-parity`'s `it.fails` became a plain test and known-issues §20 / §23e / §23m (amount due)
+  are closed.
+- **Deviation 2 — due date added to `identification.hbs`.** §Implementation 4.4 says "unchanged
+  markup", but the D60 table row 2 lists Due date, and the block had none.
+- New `scripts/invoice-templates/regenerate-generated.ts` (no generator entry point existed, §5).
+  `tests/helpers/seeded-invoice-template.ts` carries the two checksum literals too; updated with `0046`.
+- Test changes outside the spec's list (each forced by the redesign): `generate.test.ts` pairing case
+  reorders its synthetic manifest (chargeDetails now sits between payment and the annex);
+  `load`/`preview`/`render-invoice-template`/`invoice-default-resolution` assert the new title or
+  supplier block instead of "TAX INVOICE"/`issuer`; the golden `normalise()` strips data URIs before
+  `src:` (an embedded font's `;` cut the old strip short). The spec's "second probe profile in
+  `load.ts`" does not exist; the SST-absent golden case builds it from `PROBE_RENDER_INPUT`.
+- **Test-env hazard (found running bm70's integration suite):** running the integration config with
+  `--env-file=.env` and only `DATABASE_URL` overridden inherits `.env`'s `BILLRUN_ENGINE_URL` and
+  `BOOTSTRAP_DATABASE_URL`, so `trigger-run`/journey suites dispatch real executions to the **dev**
+  Kestra and the partman suites run the (idempotent) bootstrap scripts on the dev DB. Happened once
+  this unit: 24 dev `bill_run_processing`/`bill_run_distribution` executions, all killed or failed; dev
+  DB audited unchanged (no claims, stages, bills, distributions; one cron job). Use a scrubbed env file
+  (drop `DATABASE_URL`, `BOOTSTRAP_DATABASE_URL`, `BILLRUN_ENGINE_*`, `BILLRUN_BLOB_CONNECTION_STRING`)
+  and a throwaway Postgres named `enterprise_billing` (pg_cron is bound to that name) + Azurite on 10001.
+- Re-seed on an empty DB + empty `invoice-templates` container (bm64 runbook) is still to do on each
+  environment.
 
 **bm68 notes (2026-10-16):** guardrail 66 item 3 pins `services/billing/post-run.ts` →
 `services/accounts/post-document` + `services/accounts/money` (ledger posting, Inv #6) as an exact

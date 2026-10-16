@@ -162,7 +162,7 @@ describe("loadGenerated — verify, then compile, then memo", () => {
       );
     }
     const loaded = await loadGenerated(SEEDED_GENERATED_ROW);
-    expect(loaded.invoice(PROBE_RENDER_INPUT)).toContain("TAX INVOICE");
+    expect(loaded.invoice(PROBE_RENDER_INPUT)).toContain("<h1>Invoice</h1>");
   });
 
   it("an index digest mismatch → TEMPLATE_CHECKSUM_MISMATCH naming checksums.json", async () => {

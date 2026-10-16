@@ -50,6 +50,10 @@ export function bind(
   raw: RawInvoiceRenderInput,
   ctx: BindContext,
 ): InvoiceRenderInput {
+  // bm70-spec §Design "Binder guards" (D42, Inv #55) — fail loud, never
+  // print. They run before the D2 outcome below is used.
+  assertSummaryGuards(raw);
+
   // D2 — reconcile FIRST, before anything else is built. Both sides are
   // `numeric(18,2)::text` from the same snapshot, so a plain string compare
   // is exact (no float, no `services/accounts/money.ts` needed here — that
@@ -91,11 +95,6 @@ export function bind(
   }
 
   const lineGroups = buildLineGroups(raw);
-  const chargeSummary = lineGroups.map((g) => ({
-    name: g.name,
-    source: g.source,
-    amount: g.subtotal,
-  }));
 
   // D3/D4/D6 — the usage annex. When the section is hidden the read was
   // skipped (`raw.usage` is `null`): no over-limit throw, no reconcile, `usage`
@@ -158,6 +157,7 @@ export function bind(
     },
     customer: {
       billingAccountId: raw.bill.billingAccountId,
+      recipientName: raw.customer.recipientName,
       name: raw.customer.name,
       tradingName: raw.customer.tradingName,
       registrationNo: raw.customer.registrationNumber,
@@ -175,15 +175,64 @@ export function bind(
       totalAmount: raw.bill.totalAmount,
       // Inv #50 — "current charges only"; no balance brought forward (R2).
       amountDue: raw.bill.totalAmount,
+      // bm70 (D14) — "Total charges" is the bill's subtotal.
+      totalCharges: raw.bill.subtotal,
+      adjustments: raw.bill.adjustments,
+      otherChargesSubTotal: raw.bill.otherChargesSubTotal,
     },
     taxes: raw.taxItems,
-    chargeSummary,
+    // bm70 (D15) — 0% this phase: no tax item → "0".
+    taxRateLabel: raw.taxItems[0]?.rate ?? "0",
+    serviceTypes: raw.serviceTypes.map((t) => ({
+      offeringId: t.offeringId,
+      label: t.label,
+      utilised: t.utilised,
+      unutilised: t.unutilised,
+      total: t.total,
+    })),
+    otherCharges: raw.otherCharges,
     lineGroups,
     usage,
     isDraft: ctx.isDraft,
     locale: ctx.locale,
     timezone: ctx.timezone,
   };
+}
+
+// bm70-spec §Design "Binder guards" — the three page-1 conditions, in order.
+// Every input is a SQL flag or a SQL `numeric(18,2)::text` sum; the third is
+// a plain string compare (no TypeScript arithmetic, General rule 6).
+function assertSummaryGuards(raw: RawInvoiceRenderInput): void {
+  const banId = raw.bill.billingAccountId;
+  for (const t of raw.serviceTypes) {
+    if (t.missingRated) {
+      throw new InvoiceRenderError(
+        "INVOICE_RECONCILIATION_FAILED",
+        `customer_bill ${raw.bill.customerBillId}: a capacity line of ${t.offeringId} has no rated_amount`,
+        {
+          banId,
+          offeringId: t.offeringId,
+          reason: "CAPACITY_LINE_WITHOUT_RATED_AMOUNT",
+        },
+      );
+    }
+  }
+  for (const t of raw.serviceTypes) {
+    if (t.negativeUtilised) {
+      throw new InvoiceRenderError(
+        "INVOICE_NEGATIVE_UTILISED",
+        `customer_bill ${raw.bill.customerBillId}: Utilised ${t.utilised} for ${t.offeringId} is negative`,
+        { banId, offeringId: t.offeringId, utilised: t.utilised },
+      );
+    }
+  }
+  if (raw.bill.summaryBlocksSum !== raw.bill.linesNetSum) {
+    throw new InvoiceRenderError(
+      "INVOICE_RECONCILIATION_FAILED",
+      `customer_bill ${raw.bill.customerBillId}: summary blocks ${raw.bill.summaryBlocksSum} do not add up to the lines net sum ${raw.bill.linesNetSum}`,
+      { banId, reason: "SUMMARY_BLOCKS_DO_NOT_ADD_UP" },
+    );
+  }
 }
 
 function buildLineGroups(raw: RawInvoiceRenderInput): InvoiceLineGroup[] {

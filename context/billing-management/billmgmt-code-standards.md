@@ -992,7 +992,7 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - No "(continued)" text, no Paged.js, no measured pre-pagination (D48).
    - The group's Sub Total is the last `<tbody>` row.
 3. **"Page X of Y" is right-aligned** in the existing `footerTemplate`.
-4. **Formats come from the existing nine helpers; no tenth helper is registered** (Part 2 rule 7). Changing the helpers below is safe because v1 is the only layout and the round runs on a fresh DB; v1 goldens are regenerated with the change.
+4. **Formats come from the existing nine helpers; no tenth helper is registered** (Part 2 rule 7). _(Built (bm69): the option is `formatCalendarDate`'s `"dmy"` style; `qty` decides whole-vs-2dp on the decimal string via the private `isWholeDecimalString`; v1 goldens regenerated.)_ Changing the helpers below is safe because v1 is the only layout and the round runs on a fresh DB; v1 goldens are regenerated with the change.
    - `date` and `period` render `DD/MM/YYYY` by calling the shared calendar-date formatter with a numeric day/month/year option added once in `lib/`. Never build the string by hand (no slicing or reordering `YYYY-MM-DD`; general §2.13), and do not change that formatter's default, which app screens use.
    - `qty` renders a whole number when the value has no fractional part, else 2 decimals, with thousands separators.
    - `money` stays MYR with thousands separators and 2 decimals.
@@ -1142,7 +1142,7 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
     - The guard trigger refuses an UPDATE of `ref_bill_template_family_id`.
     - The family-scoped indexes refuse a second non-default ACTIVE or DRAFT in one family.
     - Exactly one default family exists.
-62. **[CRITICAL] Amounts (Inv #55).** At the anchors 800 / 1,000 / 2,000 / 0 Mbps, Utilised + Unutilised = `net_amount` per type, and Σ per-polygon = `rated_amount`. At 2,000, Total Amount = `150000.00` while the detail Sub Totals sum to `200000.00` (asserted). A `capacity_rate_matching` OFF fixture forcing Utilised < 0 parks with `INVOICE_NEGATIVE_UTILISED`.
+62. **[CRITICAL] Amounts (Inv #55).** At the anchors 800 / 1,000 / 2,000 / 0 Mbps, Utilised + Unutilised = `net_amount` per type, and Σ per-polygon = `rated_amount`. At 2,000, Total Amount = `150000.00` while the detail Sub Totals sum to `200000.00` (asserted). A `capacity_rate_matching` OFF fixture forcing Utilised < 0 parks with `INVOICE_NEGATIVE_UTILISED`. **Built (bm70) for page 1:** `tests/db/invoice-capacity-summary.integration.test.ts` runs the four anchors through the extracted aggregation SQL and `invoiceRenderInputRepository.read` (Utilised + Unutilised = `net_amount` per type; Σ blocks + Other charges + Adjustments = `subtotal`; 2,000 → Utilised `150000.00`), a mixed bill with an Other charges row, and a SQL-inserted `discount_amount > rated_amount` line → `INVOICE_NEGATIVE_UTILISED`. The per-polygon assertions (Σ per-polygon = `rated_amount`, Total Amount vs detail Sub Totals) come with bm71/bm72.
 63. **[CRITICAL] Detail query (Inv #56).**
     - One row per polygon per type, and the same polygon under two types.
     - Ordering follows D21, and the label rule gives `STATE - DISTRICT`, one part, or "Unassigned region".

@@ -1,20 +1,23 @@
 {
   "algorithm": "sha256",
   "files": {
+    "fonts/IBMPlexMono-Regular.woff2": "e8993d946649b9d01abb1ed06d574b19d8ea3e66b5c3948602db335c44c18e56",
+    "fonts/IBMPlexSans-Regular.woff2": "b5ad7bd39f996144915f0ad9849a90183b27d8c28ad97ed98af5b1bebc51f6b1",
+    "fonts/IBMPlexSans-SemiBold.woff2": "fff0ab3a88b0b4aa0b693e4f0201359a15183b08e3fa5696d1918d8f0ade8ad5",
     "fonts/OFL.txt": "ea3437d14918a535b87af4a2ab3ada0d10b577e4e44afb49a9183f2dc589842e",
     "footer.hbs": "9727654f54c7602aa51bf143a43bc30d8f8427c69fe243bb4fc6887019588349",
-    "manifest.json": "9045dd0aed9e24a28ecbd94001759977cd7af6fea8960a70eb21246b6bbc0ecc",
-    "partials/amountDue.hbs": "c79aea4c47092bc2e0918fe7274b9645250da886aac8366e3c8afcc82a2827d8",
-    "partials/billTo.hbs": "0ba4520ef2c8de980f88e056e0f75e828648355b0454b3789d89ab398544686f",
+    "manifest.json": "e49f544367b477aceb82ec4ce687abdc0684f6f1e007c18e1249290712825523",
+    "partials/amountDue.hbs": "b3d410c7fc6442a52798ac342a3ba6f4233f232a16e7f8a925a6db3fcfe87b0e",
+    "partials/billTo.hbs": "8f6dd6cdb74121b24ead21304f2fa3f0a46d4c38d02d03905ba6c983c5861e1d",
     "partials/chargeDetails.hbs": "3ff63a83a403372040ea4c21fa6e9d6348f1e2b0c5e7bd1c665938708a76f6e7",
-    "partials/chargeSummary.hbs": "d836589f2830b5c1607bc0619b9858e5aebbd563d95e3d8015951e1703777f0d",
-    "partials/header.hbs": "10deb66eb84903c33090a3ac82a33196f21ea03c754fb5b229376fc508bff96a",
-    "partials/identification.hbs": "91803df65f619a44fcf1cef3b717c7cad1fc4f09c34797a49d31dd4b5da32d58",
+    "partials/chargeSummary.hbs": "195642c3a7793816e44a9cdb80112f453f952e277afb4167b6689672dd45d5eb",
+    "partials/header.hbs": "cecea07ca81cb840ac2b64995e878c524ffb5f07827711c4007e424a3866760e",
+    "partials/identification.hbs": "a7a2e1a57062ad9ce83cf72f5dd2a7ac203921a9ad5e2299bdf594b50a9887b6",
     "partials/notes.hbs": "6a3d12d28893519a75fe7b4f5e94cd34bb2de15331ba1551a25b476073bd3310",
     "partials/payment.hbs": "d24ef37834d041db96750d4c9f079eac58260252dbb62a2c11fdadf7e48450f3",
-    "partials/taxSummary.hbs": "471ce1fdab21c5ddd305849c147b766197319f802d3e3497402bdf076e673fda",
+    "partials/taxSummary.hbs": "b0d0b36203d38964825eb9722c822c8b785503a4fef2335ff9a0766a0abfbf12",
     "partials/usageAnnex.hbs": "3d6fdaf9e403042863902efacaae3c7a462afab66a7c8008bf2012e8a5815c21",
-    "sample-data.json": "35e9788fbd251d00d7d516935ee8212907d197abd11f5447cac8501c0d369bd7",
-    "shell.hbs": "ba37abb4f7891f07496d158af91eee42e6ff751f2a450c1fc4242d190fd0903c"
+    "sample-data.json": "057fc8e4bb3f6c19a5fc8eb8121650cf8ee578654c7d5a8230b5f2af3eec60e2",
+    "shell.hbs": "0983e19e0e2c30d78ce77be6abcce0e941be7dea65520c7021830cda6e886f61"
   }
 }

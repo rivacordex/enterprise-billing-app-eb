@@ -29,17 +29,15 @@ import {
 import type { InvoiceRenderInput } from "@/types/billing";
 
 // bm55-spec §Design D1 "Parity with the bm47 hand-written default" — the stored
-// generated v1 `invoice.hbs` was hand-written (bm47) and seeded immutably
-// (bm50). Semantic parity: generate(layout v1, all-true) and the stored v1,
-// each compiled, render the same HTML for the layout's `sample-data.json` and
-// for a multi-page fixture.
+// generated v1 `invoice.hbs` is seeded immutably per round (bm50). Semantic
+// parity: generate(layout v1, all-true) and the stored v1, each compiled,
+// render the same HTML for the layout's `sample-data.json` and for a
+// multi-page fixture.
 //
-// KNOWN GAP (owner decision 2026-10-09; known-issues §20): the two differ in
-// the `<head>` `<style>` only — layout v1's `shell.hbs` was frozen without the
-// bm49 usage-annex CSS (and with different CSS comments) that the hand-written
-// v1 carries. Layout v1 is immutable (Inv #44), so the fix is a layout v2.
-// The `<body>` is byte-identical; the whole-document test below is marked
-// `fails` so it turns red — and must be flipped — once a layout carries the CSS.
+// bm70 (D60) rewrote layout v1 and regenerated the stored v1 with the
+// generator (`scripts/invoice-templates/regenerate-generated.ts`). The
+// rewritten `shell.hbs` carries the bm49 usage-annex CSS, so the former
+// `<head>` gap (known-issues §20) is closed: the whole document is identical.
 
 let generatedHtml: (input: InvoiceRenderInput) => string;
 let storedHtml: (input: InvoiceRenderInput) => string;
@@ -149,22 +147,8 @@ describe("generate ↔ stored v1 semantic parity (bm55 D1)", () => {
     expect(html.match(/<tr>/g)!.length).toBeGreaterThan(600);
   });
 
-  it.fails(
-    "renders a byte-identical whole document (KNOWN GAP: layout v1 <style> lacks the annex CSS)",
-    () => {
-      expect(generatedHtml(sampleData)).toBe(storedHtml(sampleData));
-    },
-  );
-
-  it("the only <head> difference is the stylesheet: the stored v1 styles the annex, layout v1 does not", () => {
-    const generated = generatedHtml(sampleData);
-    const stored = storedHtml(sampleData);
-    const head = (html: string) => html.slice(0, html.indexOf("<body>"));
-    expect(head(stored)).toContain(".annex {");
-    expect(head(generated)).not.toContain(".annex {");
-    // Outside <style>, the heads match.
-    const strip = (html: string) =>
-      head(html).replace(/<style>[\s\S]*<\/style>/, "<style/>");
-    expect(strip(generated)).toBe(strip(stored));
+  it("renders a byte-identical whole document, stylesheet included (bm70 closed the annex-CSS gap)", () => {
+    expect(generatedHtml(sampleData)).toBe(storedHtml(sampleData));
+    expect(storedHtml(sampleData)).toContain(".annex {");
   });
 });

@@ -83,6 +83,10 @@ import {
   SEEDED_LAYOUT_ROW,
 } from "@/tests/helpers/seeded-invoice-template";
 import type { InvoiceTemplateStructure } from "@/types/billing";
+import {
+  BARE_RAW_CUSTOMER,
+  rawInvoiceRenderInputFixture,
+} from "@/tests/helpers/invoice-render-input-fixtures";
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const repo = vi.mocked(billTemplateVersionRepository);
@@ -145,61 +149,30 @@ const ROWS: Record<string, BillTemplateVersion> = {
   BTV00000003: CSV_ROW,
 };
 
+// The shared fixture cut to its RM50 recurring line, on a customer with no
+// optional fields; `posted` adds the INV document.
 function rawBill(posted: boolean): RawInvoiceRenderInput {
+  const base = rawInvoiceRenderInputFixture();
   return {
+    ...base,
     bill: {
+      ...base.bill,
       customerBillId: "CBL00000007",
-      periodPartition: "2026-08-01",
-      billingAccountId: "BAN00000001",
-      currency: "MYR",
-      billingPeriodStart: "2026-08-01",
-      billingPeriodEnd: "2026-08-31",
       paymentDueDate: "2026-09-30",
       subtotal: "50.00",
-      taxTotal: "0.00",
       totalAmount: "50.00",
       linesNetSum: "50.00",
       grossTotal: "50.00",
-      discountTotal: "0.00",
-      usageRatedTotal: "0.00",
+      otherChargesSubTotal: "50.00",
+      summaryBlocksSum: "50.00",
     },
-    run: { billRunId: "BRN00000004", cycleName: "Enterprise Monthly" },
-    lines: [
-      {
-        lineNo: 1,
-        source: "RECURRING",
-        lineType: "charge",
-        description: "Enterprise Fibre 1Gbps",
-        refProductOfferingId: "POF00000010",
-        udrType: null,
-        udrCount: null,
-        quantity: "1.000000",
-        unit: "EA",
-        snapshotQuantity: "1.000000",
-        snapshotUnitPrice: "50.00",
-        grossAmount: "50.00",
-        discountAmount: "0.00",
-        netAmount: "50.00",
-        discountRate: null,
-        groupGrossTotal: "50.00",
-        groupDiscountTotal: "0.00",
-        groupNetTotal: "50.00",
-      },
-    ],
-    taxItems: [],
+    run: { ...base.run, billRunId: "BRN00000004" },
+    lines: [base.lines[0]!],
+    otherCharges: [base.otherCharges[0]!],
     document: posted
       ? { documentId: "INV00000077", postingDate: new Date("2026-09-01") }
       : null,
-    customer: {
-      name: "Acme Communications Sdn Bhd",
-      tradingName: null,
-      registrationNumber: null,
-      taxId: null,
-      email: null,
-      phone: null,
-      address: null,
-    },
-    usage: null,
+    customer: { ...BARE_RAW_CUSTOMER },
   };
 }
 
@@ -436,7 +409,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     // The stamped all-on v1, not the submitted structure.
     expect(result.html).toContain('<th class="num">Discount</th>');
     expect(result.html).toContain("INV00000077");
-    expect(result.html).toContain("TAX INVOICE");
+    expect(result.html).toContain("<title>Tax invoice INV00000077</title>");
     expect(result.html).not.toContain("PRO-FORMA&nbsp;&middot;");
     // A stored template is never re-generated, so it is never annotated.
     expect(result.html).not.toContain('class="ph"');

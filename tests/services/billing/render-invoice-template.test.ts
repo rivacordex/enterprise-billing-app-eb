@@ -21,6 +21,10 @@ import {
   SEEDED_GENERATED_ROW as SEEDED_GENERATED,
   SEEDED_TEMPLATE_STAMP as TEMPLATE,
 } from "@/tests/helpers/seeded-invoice-template";
+import {
+  BARE_RAW_CUSTOMER,
+  rawInvoiceRenderInputFixture,
+} from "@/tests/helpers/invoice-render-input-fixtures";
 
 // bm47-spec §Design D1/D8, test plan row 3; bm53-spec §Tests (extend). DB-free:
 // exercises the seeded `generated/INVOICE/v1/*.hbs` through `bind()` + the
@@ -64,81 +68,27 @@ const PROFILE: InvoiceProfile = {
   logoAssetVersionId: "INVASV00000001",
 };
 
+// The shared fixture with an undiscounted usage line, on a customer with no
+// optional fields.
 function rawInput(
   overrides: Partial<RawInvoiceRenderInput> = {},
 ): RawInvoiceRenderInput {
+  const base = rawInvoiceRenderInputFixture();
+  const [recurring, usage] = base.lines;
   return {
-    bill: {
-      customerBillId: "CBL00000001",
-      periodPartition: "2026-08-01",
-      billingAccountId: "BAN00000001",
-      currency: "MYR",
-      billingPeriodStart: "2026-08-01",
-      billingPeriodEnd: "2026-08-31",
-      paymentDueDate: "2026-09-15",
-      subtotal: "150.00",
-      taxTotal: "0.00",
-      totalAmount: "150.00",
-      linesNetSum: "150.00",
-      grossTotal: "150.00",
-      discountTotal: "0.00",
-      usageRatedTotal: "0.00",
-    },
-    run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
+    ...base,
     lines: [
+      recurring!,
       {
-        lineNo: 1,
-        source: "RECURRING",
-        lineType: "charge",
-        description: "Enterprise Fibre 1Gbps",
-        refProductOfferingId: "POF00000010",
-        udrType: null,
-        udrCount: null,
-        quantity: "1.000000",
-        unit: "EA",
-        snapshotQuantity: "1.000000",
-        snapshotUnitPrice: "50.00",
-        grossAmount: "50.00",
-        discountAmount: "0.00",
-        netAmount: "50.00",
-        discountRate: null,
-        groupGrossTotal: "50.00",
-        groupDiscountTotal: "0.00",
-        groupNetTotal: "50.00",
-      },
-      {
-        lineNo: 2,
-        source: "USAGE",
-        lineType: "charge",
-        description: "RAN Usage",
-        refProductOfferingId: "POF00000020",
-        udrType: "RAN_USAGE",
-        udrCount: 2,
-        quantity: "100.000000",
-        unit: "GB",
-        snapshotQuantity: null,
-        snapshotUnitPrice: null,
+        ...usage!,
         grossAmount: "100.00",
         discountAmount: "0.00",
-        netAmount: "100.00",
         discountRate: null,
         groupGrossTotal: "100.00",
         groupDiscountTotal: "0.00",
-        groupNetTotal: "100.00",
       },
     ],
-    taxItems: [],
-    document: null,
-    customer: {
-      name: "Acme Communications Sdn Bhd",
-      tradingName: null,
-      registrationNumber: null,
-      taxId: null,
-      email: null,
-      phone: null,
-      address: null,
-    },
-    usage: null,
+    customer: { ...BARE_RAW_CUSTOMER },
     ...overrides,
   };
 }
@@ -349,12 +299,12 @@ describe("the default generated template — company profile (G15 A)", () => {
     expect(await renderFooter(PROFILE)).toContain("Digital Billing Sdn Bhd");
   });
 
-  it("a profile without a logo still prints the issuer block, minus the image", async () => {
+  it("a profile without a logo still prints the supplier block, minus the image", async () => {
     const html = await renderFinal(
       {},
       { ...PROFILE, company: { ...PROFILE.company, logoUrl: null } },
     );
-    expect(html).toContain('class="issuer"');
+    expect(html).toContain('class="supplier"');
     expect(html).not.toContain("<img");
   });
 

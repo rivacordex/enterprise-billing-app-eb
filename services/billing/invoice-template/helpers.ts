@@ -9,6 +9,10 @@ import type { InvoiceRenderInput } from "@/types/billing";
 // `locale`/`currency` from `options.data.root` (the bound `InvoiceRenderInput`
 // Handlebars renders against), never from config (code-standards TS rule 4).
 // No helper returns `SafeString` — the layout lint (D10) forbids `{{{`.
+// bm69 (D21): `date`/`period` print `DD/MM/YYYY` (`formatCalendarDate`'s
+// `"dmy"` style); `qty` prints a whole number, or exactly 2 decimals when the
+// fraction is non-zero — decided on the decimal string, no `Number()` on the
+// value. Display rounding only; no stored amount changes.
 export const KNOWN_HELPERS = {
   money: true,
   date: true,
@@ -36,6 +40,11 @@ function rootOf(options: Handlebars.HelperOptions): InvoiceRenderInput {
 
 function isZeroString(value: string): boolean {
   return /^-?0+(\.0+)?$/.test(value.trim());
+}
+
+// A fraction made only of zeros counts as whole ("1500", "1500.000000").
+function isWholeDecimalString(value: string): boolean {
+  return /^-?\d+(\.0*)?$/.test(value.trim());
 }
 
 function formatNumberString(
@@ -69,14 +78,18 @@ export function registerInvoiceHelpers(hb: typeof Handlebars): void {
 
   hb.registerHelper("date", (ymd: unknown) => {
     if (ymd === null || ymd === undefined || ymd === "") return "—";
-    return formatCalendarDate(String(ymd));
+    return formatCalendarDate(String(ymd), "dmy");
   });
 
   hb.registerHelper("period", (a: unknown, b: unknown) => {
     const start =
-      a === null || a === undefined ? "—" : formatCalendarDate(String(a));
+      a === null || a === undefined
+        ? "—"
+        : formatCalendarDate(String(a), "dmy");
     const end =
-      b === null || b === undefined ? "—" : formatCalendarDate(String(b));
+      b === null || b === undefined
+        ? "—"
+        : formatCalendarDate(String(b), "dmy");
     return `${start} – ${end}`;
   });
 
@@ -85,9 +98,11 @@ export function registerInvoiceHelpers(hb: typeof Handlebars): void {
     (value: unknown, options: Handlebars.HelperOptions) => {
       if (value === null || value === undefined || value === "") return "—";
       const root = rootOf(options);
-      return formatNumberString(String(value), root.locale, {
-        minimumFractionDigits: 3,
-        maximumFractionDigits: 3,
+      const str = String(value);
+      const digits = isWholeDecimalString(str) ? 0 : 2;
+      return formatNumberString(str, root.locale, {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
       });
     },
   );

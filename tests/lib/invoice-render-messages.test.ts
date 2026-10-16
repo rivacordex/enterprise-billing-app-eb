@@ -40,10 +40,17 @@ describe("describeInvoiceRenderCode", () => {
     );
   });
 
+  it("bm70 — gives INVOICE_NEGATIVE_UTILISED the §10d copy", () => {
+    expect(describeInvoiceRenderCode("INVOICE_NEGATIVE_UTILISED")).toBe(
+      "Utilised capacity charges came out negative. Check the rate-matching setting and rerun this account.",
+    );
+  });
+
   it("returns a non-empty message for every code, the generic text for the rest", () => {
     const specific = new Set([
       "INVOICE_RECONCILIATION_FAILED",
       "INVOICE_USAGE_OVER_LIMIT",
+      "INVOICE_NEGATIVE_UTILISED",
     ]);
     for (const code of INVOICE_ERROR_CODES) {
       const message = describeInvoiceRenderCode(code);
