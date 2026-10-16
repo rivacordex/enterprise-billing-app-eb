@@ -33,6 +33,16 @@ describe("formatCalendarDate", () => {
     expect(formatCalendarDate("2026-04-31")).toBe("2026-04-31");
     expect(formatCalendarDate("2026-08-00")).toBe("2026-08-00");
   });
+
+  // bm69 D21 — the invoice's DD/MM/YYYY style shares the same validation.
+  it("formats a valid YYYY-MM-DD as DD/MM/YYYY under the dmy style", () => {
+    expect(formatCalendarDate("2026-10-15", "dmy")).toBe("15/10/2026");
+    expect(formatCalendarDate("2024-02-29", "dmy")).toBe("29/02/2024"); // leap year
+  });
+
+  it("returns the raw input for an impossible day under the dmy style", () => {
+    expect(formatCalendarDate("2025-02-29", "dmy")).toBe("2025-02-29");
+  });
 });
 
 describe("formatDatetime", () => {

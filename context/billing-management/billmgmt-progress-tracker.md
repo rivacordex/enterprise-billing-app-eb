@@ -43,6 +43,7 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
 
 | bm64–67 review fixes | Fixes from the xhigh (bm65) and max (bm65–bm67) code reviews, all items | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4630/0; full integration 1256/0 (110 skipped, run in four foreground chunks); known-issues §24 RESOLVED |
 | bm68 | Capacity flow stops writing the appendix (flow SQL, two ratecard grants revoked, appendix types deleted, guardrail 66) | **In progress** (2026-10-16) — code, tests, docs done: tsc/ESLint/Prettier clean; unit 4638/0 (two repo-scan timeouts pass alone); targeted integration 78/78; full integration 1165 passed, 2 failed (E2E journeys stop at INVOICED with no engine, known-issues §4c, identical on baseline) + azurite env file; **live Kestra smoke (spec §6) not yet run** — needs host `npm run dev` |
+| bm69 | Invoice dates `DD/MM/YYYY` and Mbps quantities (`formatCalendarDate` `"dmy"` style; `date`/`period`/`qty` helpers) | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; targeted unit (billing services, `tests/lib`, layout lint) 1029/0; v1 goldens regenerated (date + quantity text only); full unit 4577 passed, 1 failed (`ratecard-parse-csv` repo-scan timeout, passes alone) + 7 files fail to load on missing `.env` keys (`DATABASE_URL`/`BETTER_AUTH_*`), identical on baseline; no expectation edits outside the spec's files |
 
 **bm68 notes (2026-10-16):** guardrail 66 item 3 pins `services/billing/post-run.ts` →
 `services/accounts/post-document` + `services/accounts/money` (ledger posting, Inv #6) as an exact

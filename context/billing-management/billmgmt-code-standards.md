@@ -992,7 +992,7 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - No "(continued)" text, no Paged.js, no measured pre-pagination (D48).
    - The group's Sub Total is the last `<tbody>` row.
 3. **"Page X of Y" is right-aligned** in the existing `footerTemplate`.
-4. **Formats come from the existing nine helpers; no tenth helper is registered** (Part 2 rule 7). Changing the helpers below is safe because v1 is the only layout and the round runs on a fresh DB; v1 goldens are regenerated with the change.
+4. **Formats come from the existing nine helpers; no tenth helper is registered** (Part 2 rule 7). _(Built (bm69): the option is `formatCalendarDate`'s `"dmy"` style; `qty` decides whole-vs-2dp on the decimal string via the private `isWholeDecimalString`; v1 goldens regenerated.)_ Changing the helpers below is safe because v1 is the only layout and the round runs on a fresh DB; v1 goldens are regenerated with the change.
    - `date` and `period` render `DD/MM/YYYY` by calling the shared calendar-date formatter with a numeric day/month/year option added once in `lib/`. Never build the string by hand (no slicing or reordering `YYYY-MM-DD`; general §2.13), and do not change that formatter's default, which app screens use.
    - `qty` renders a whole number when the value has no fractional part, else 2 decimals, with thousands separators.
    - `money` stays MYR with thousands separators and 2 decimals.

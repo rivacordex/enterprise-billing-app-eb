@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compileInvoiceTemplate } from "@/services/billing/invoice-template/compile";
+import { KNOWN_HELPERS } from "@/services/billing/invoice-template/helpers";
 import { InvoiceRenderError } from "@/types/billing";
 import type { InvoiceRenderInput } from "@/types/billing";
 
@@ -90,8 +91,8 @@ describe("money", () => {
 });
 
 describe("date / period", () => {
-  it("formats a calendar date", () => {
-    expect(render("{{date invoice.date}}", fixture())).toBe("05 Sep 2026");
+  it("formats a calendar date as DD/MM/YYYY (bm69)", () => {
+    expect(render("{{date invoice.date}}", fixture())).toBe("05/09/2026");
   });
 
   it("renders a dash for a null date", () => {
@@ -106,14 +107,31 @@ describe("date / period", () => {
   it("joins two dates with an en dash", () => {
     expect(
       render("{{period invoice.periodStart invoice.periodEnd}}", fixture()),
-    ).toBe("01 Aug 2026 – 31 Aug 2026");
+    ).toBe("01/08/2026 – 31/08/2026");
   });
 });
 
 describe("qty / price / int / amt", () => {
-  it("qty renders 3 dp, grouped", () => {
-    const html = renderAmount("{{qty totals.amountDue}}", "1234.5");
-    expect(html).toBe("1,234.500");
+  // bm69 — whole number when the fraction is all zeros, else exactly 2 dp,
+  // grouped by locale.
+  it.each([
+    ["1500", "1,500"],
+    ["1500.000000", "1,500"],
+    ["1500.5", "1,500.50"],
+    ["1500.005", "1,500.01"], // display rounding
+    ["0.25", "0.25"],
+  ])("qty renders %s as %s", (value, expected) => {
+    expect(renderAmount("{{qty totals.amountDue}}", value)).toBe(expected);
+  });
+
+  it("qty renders a dash for a null value", () => {
+    const data = fixture({
+      totals: {
+        ...fixture().totals,
+        amountDue: null as unknown as string,
+      },
+    });
+    expect(render("{{qty totals.amountDue}}", data)).toBe("—");
   });
 
   it("price renders 2 dp at or above 1", () => {
@@ -177,5 +195,23 @@ describe("no helper returns SafeString", () => {
     );
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("KNOWN_HELPERS", () => {
+  it("still lists exactly the nine helpers (Inv #46, bm69)", () => {
+    expect(Object.keys(KNOWN_HELPERS).sort()).toEqual(
+      [
+        "amt",
+        "asset",
+        "date",
+        "int",
+        "money",
+        "period",
+        "price",
+        "qty",
+        "unitCode",
+      ].sort(),
+    );
   });
 });
