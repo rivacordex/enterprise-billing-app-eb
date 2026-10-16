@@ -266,12 +266,25 @@ async function skipAccount(
     familyId?: string | null;
   },
 ): Promise<void> {
-  await billRunAccountRepository.updateStatus(tx, billRunId, billingAccountId, {
-    status: "SKIPPED",
-    errorCode: reason.errorCode,
-    errorDetail: reason.errorDetail,
-    expectedStatus: "PROCESSED",
-  });
+  const skipped = await billRunAccountRepository.updateStatus(
+    tx,
+    billRunId,
+    billingAccountId,
+    {
+      status: "SKIPPED",
+      errorCode: reason.errorCode,
+      errorDetail: reason.errorDetail,
+      expectedStatus: "PROCESSED",
+    },
+  );
+  if (!skipped) {
+    // The guarded write matched no row: the account is no longer `PROCESSED`.
+    // Throw so the transaction rolls back and no audit row records a
+    // transition that did not happen.
+    throw new Error(
+      `postAccount: account ${billingAccountId} in run ${billRunId} is no longer PROCESSED; skip not applied`,
+    );
+  }
   await insertAuditEvent(tx, {
     eventType: "BILL_RUN_ACCOUNT_SKIPPED",
     actorUserId: actorId,

@@ -457,6 +457,23 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
     });
   });
 
+  // The SKIPPED write is guarded on `PROCESSED`; when it matches no row the
+  // transaction throws, so no audit row records a skip that did not happen.
+  it("a skip whose guarded write matches no row writes no audit event", async () => {
+    mockLockBill.mockResolvedValue(
+      bill({ subtotal: "0.00", taxTotal: "0.00", totalAmount: "0.00" }),
+    );
+    mockUpdateStatus.mockResolvedValue(false);
+
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockInsertAuditEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "BILL_RUN_ACCOUNT_SKIPPED" }),
+    );
+    expect(mockDocInsert).not.toHaveBeenCalled();
+  });
+
   // [CRITICAL] The skip is EXACTLY zero, never `<= 0`. A negative total is a
   // credit position with real economic substance (money owed TO the customer);
   // suppressing it would understate the liability and silently deny the
