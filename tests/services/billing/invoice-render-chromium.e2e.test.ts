@@ -22,11 +22,16 @@ import {
 } from "@/tests/helpers/seeded-invoice-template";
 import type { InvoiceRenderInput } from "@/types/billing";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
+import type {
+  CapacityDetailGroupRaw,
+  CapacityDetailRowRaw,
+} from "@/db/repositories/billing/rated-lines.repository";
 import { layoutPageSetupSchema } from "@/validation/billing/layout-page-setup.schema";
 
 // bm49 — a REAL Chromium render (not the mocked `render-invoice.service.test.ts`)
 // that drives the actually-seeded generated template through `bind` → Handlebars
-// → Chromium PDF, exercising the new state→district usage annex end to end. The
+// → Chromium PDF; since bm71 it exercises the type → State-District detail
+// pages end to end, on a ~900-polygon bill. The
 // pipeline needs no DB (the verified loader is served the repo `.hbs`), so this is
 // gated behind RUN_CHROMIUM_E2E=1 to keep it out of the fast unit run:
 //
@@ -40,98 +45,51 @@ const run = process.env.RUN_CHROMIUM_E2E === "1";
 
 const TZ = "Asia/Kuala_Lumpur";
 
-interface UsageRow {
-  startDate: string;
-  cell: string;
-  udrType: string;
-  quantity: string;
-  unit: string;
-  amount: string;
-  state: string | null;
-  district: string | null;
-}
+// bm71 — a consistent capacity detail read (rows + GROUPING SETS-shaped
+// groups) for one type of service, with JS sums: this is fixture scaffolding,
+// the production Sub Total math is SQL's. Every polygon is 1 Mbps × RM100.
+const OFFERING = "POF00000020";
 
-// Build a consistent usage read (rows + GROUPING SETS-shaped groups) with JS
-// sums — this is fixture scaffolding, the production subtotal math is SQL's.
-function buildUsage(states: number, districts: number, rowsPer: number) {
-  const rows: UsageRow[] = [];
-  for (let si = 0; si < states; si++) {
-    const st = `State-${String(si + 1).padStart(2, "0")}`;
-    for (let di = 0; di < districts; di++) {
-      const dt = `${st}-District-${di + 1}`;
-      for (let ri = 0; ri < rowsPer; ri++) {
-        rows.push({
-          startDate: "2026-06-03",
-          cell: `cell-${si + 1}-${di + 1}-${ri + 1}`,
-          udrType: "RAN_USAGE",
-          quantity: "10.000000",
-          unit: "EA",
-          amount: "100.00",
-          state: st,
-          district: dt,
-        });
-      }
+function buildDetail(regions: number, rowsPer: number) {
+  const rows: CapacityDetailRowRaw[] = [];
+  const groups: CapacityDetailGroupRaw[] = [];
+  const money = (n: number) => `${n}.00`;
+  for (let r = 0; r < regions; r++) {
+    const regionLabel = `STATE-${String(r + 1).padStart(2, "0")} - DISTRICT-${r + 1}`;
+    for (let i = 0; i < rowsPer; i++) {
+      rows.push({
+        udrId: `UDR${String(r * rowsPer + i).padStart(8, "0")}`,
+        offeringId: OFFERING,
+        label: "RAN Target Capacity",
+        regionLabel,
+        polygonStartDate: "2025-03-01",
+        polygonId: `PCU-${r + 1}-${String(i + 1).padStart(4, "0")}`,
+        resourceOk: true,
+        capacityMbps: "1.000000",
+        ratePerMbps: "100.00",
+        amount: "100.00",
+      });
     }
+    groups.push({
+      offeringId: OFFERING,
+      regionLabel,
+      gRegion: 0,
+      amount: money(rowsPer * 100),
+    });
   }
-  const money = (n: number) => n.toFixed(2);
-  const qty = (n: number) => n.toFixed(6);
-
-  const districtGroups = new Map<
-    string,
-    { state: string; district: string; count: number }
-  >();
-  const stateGroups = new Map<string, { state: string; count: number }>();
-  for (const r of rows) {
-    const dk = `${r.state}|${r.district}`;
-    const dg = districtGroups.get(dk) ?? {
-      state: r.state!,
-      district: r.district!,
-      count: 0,
-    };
-    dg.count += 1;
-    districtGroups.set(dk, dg);
-    const sg = stateGroups.get(r.state!) ?? { state: r.state!, count: 0 };
-    sg.count += 1;
-    stateGroups.set(r.state!, sg);
-  }
-
-  const groups = [
-    ...[...districtGroups.values()].map((g) => ({
-      state: g.state,
-      district: g.district,
-      gState: 0,
-      gDistrict: 0,
-      rowCount: g.count,
-      amount: money(g.count * 100),
-      quantity: qty(g.count * 10),
-      unit: "EA",
-    })),
-    ...[...stateGroups.values()].map((g) => ({
-      state: g.state,
-      district: null,
-      gState: 0,
-      gDistrict: 1,
-      rowCount: g.count,
-      amount: money(g.count * 100),
-      quantity: qty(g.count * 10),
-      unit: "EA",
-    })),
-    {
-      state: null,
-      district: null,
-      gState: 1,
-      gDistrict: 1,
-      rowCount: rows.length,
-      amount: money(rows.length * 100),
-      quantity: qty(rows.length * 10),
-      unit: "EA",
-    },
-  ];
-
-  return { rows, groups, grandAmount: money(rows.length * 100) };
+  const grandAmount = money(regions * rowsPer * 100);
+  groups.push({
+    offeringId: OFFERING,
+    regionLabel: null,
+    gRegion: 1,
+    amount: grandAmount,
+  });
+  return { rows, groups, grandAmount };
 }
 
-function rawInput(usage: ReturnType<typeof buildUsage>): RawInvoiceRenderInput {
+function rawInput(
+  detail: ReturnType<typeof buildDetail>,
+): RawInvoiceRenderInput {
   return {
     bill: {
       customerBillId: "CBL00000001",
@@ -142,14 +100,13 @@ function rawInput(usage: ReturnType<typeof buildUsage>): RawInvoiceRenderInput {
       billingPeriodEnd: "2026-06-30",
       paymentDueDate: "2026-07-15",
       // bm70 — the `ci` 2,000 Mbps capacity anchor: gross 200,000 −
-      // discount 50,000 = net 150,000, rated 200,000.
+      // discount 50,000 = net 150,000.
       subtotal: "150000.00",
       taxTotal: "0.00",
       totalAmount: "150000.00",
       linesNetSum: "150000.00",
       grossTotal: "200000.00",
       discountTotal: "50000.00",
-      usageRatedTotal: usage.grandAmount,
       otherChargesSubTotal: "0.00",
       adjustments: "0.00",
       summaryBlocksSum: "150000.00",
@@ -158,17 +115,24 @@ function rawInput(usage: ReturnType<typeof buildUsage>): RawInvoiceRenderInput {
     lines: [],
     serviceTypes: [
       {
-        offeringId: "POF00000020",
+        offeringId: OFFERING,
         label: "RAN Target Capacity",
         utilised: "150000.00",
         unutilised: "0.00",
         total: "150000.00",
+        // The fixture's own detail total (bm71 reconciliation).
+        ratedTotal: detail.grandAmount,
         missingRated: false,
         negativeUtilised: false,
       },
     ],
     otherCharges: [],
     taxItems: [],
+    capacityDetail: {
+      overLimit: false,
+      rows: detail.rows,
+      groups: detail.groups,
+    },
     document: null,
     customer: {
       recipientName: "Aisha Rahman",
@@ -180,7 +144,6 @@ function rawInput(usage: ReturnType<typeof buildUsage>): RawInvoiceRenderInput {
       phone: null,
       address: null,
     },
-    usage: { overLimit: false, rows: usage.rows, groups: usage.groups },
   };
 }
 
@@ -202,8 +165,12 @@ async function renderPdf(
   html: string,
   footerHtml: string,
   pageSetup: Awaited<ReturnType<typeof loadPageSetup>>,
+  requests: string[] = [],
 ): Promise<Buffer> {
   const page = await browser.newPage();
+  page.on("request", (req) => {
+    if (!req.url().startsWith("data:")) requests.push(req.url());
+  });
   try {
     await page.setContent(html, { waitUntil: "networkidle" });
     return await page.pdf({
@@ -262,7 +229,7 @@ async function loadSeededDefault(): Promise<{
 }
 
 describe.skipIf(!run)(
-  "bm49 invoice render — real Chromium (RUN_CHROMIUM_E2E=1)",
+  "bm49/bm71 invoice render — real Chromium (RUN_CHROMIUM_E2E=1)",
   () => {
     let browser: Browser;
 
@@ -274,17 +241,16 @@ describe.skipIf(!run)(
       if (browser) await browser.close();
     });
 
-    it("renders a valid multi-page PDF for a large state→district annex (draft), with the Page X of Y footer wired", async () => {
+    it("renders a valid multi-page PDF for a ~900-polygon detail (draft) with no network request, with the Page X of Y footer wired", async () => {
       const { render, renderFooter } = await loadSeededDefault();
       const pageSetup = await loadPageSetup();
 
-      // 8 states × 4 districts × 4 rows = 128 itemised records → well over one A4
-      // page at the §10c 8pt table size.
-      const big = bind(rawInput(buildUsage(8, 4, 4)), {
+      // 9 State-District groups × 100 polygons = 900 rows → many A4 pages at
+      // the §10d 8pt table size.
+      const big = bind(rawInput(buildDetail(9, 100)), {
         isDraft: true,
         locale: "en-MY",
         timezone: TZ,
-        includeUsage: true,
         template: SEEDED_TEMPLATE_STAMP,
         profile: null,
       });
@@ -295,19 +261,21 @@ describe.skipIf(!run)(
       expect(footer).toContain('class="pageNumber"');
       expect(footer).toContain('class="totalPages"');
       // thead repeats across page breaks; watermark is a fixed layer (not clipped).
-      expect(html).toContain("Usage annex — billed usage by region");
+      expect(html.match(/<td class="mono">PCU-/g)).toHaveLength(900);
+      expect(footer).toContain('<span style="text-align: right;">Page');
       expect(html).toMatch(/thead\s*\{[^}]*display:\s*table-header-group/);
       expect(html).toMatch(/\.watermark\s*\{[^}]*position:\s*fixed/);
 
-      const pdf = await renderPdf(browser, html, footer, pageSetup);
+      const requests: string[] = [];
+      const pdf = await renderPdf(browser, html, footer, pageSetup, requests);
+      expect(requests).toEqual([]);
       const bytes = pdf.toString("latin1");
       expect(bytes.startsWith("%PDF-")).toBe(true);
       expect(bytes).toContain("%%EOF");
       expect(pdf.length).toBeGreaterThan(10_000);
 
       // The laid-out content spans more than one A4 page — a reliable,
-      // parser-free multi-page proof (the 128-row annex far exceeds one
-      // printable page).
+      // parser-free multi-page proof (900 rows far exceed one printable page).
       expect(await printPageCount(browser, html, pageSetup)).toBeGreaterThan(1);
       // Opportunistic cross-check: Chromium's Pages node usually carries a plain
       // `/Count N`; assert it agrees when present (it is absent when stored in
@@ -318,11 +286,11 @@ describe.skipIf(!run)(
       }
     }, 120_000);
 
-    it("renders the final invoice (real INV number, no watermark) and a small annex yields a smaller PDF than the large one", async () => {
+    it("renders the final invoice (real INV number, no watermark) and a small detail yields a smaller PDF than the large one", async () => {
       const { render, renderFooter } = await loadSeededDefault();
       const pageSetup = await loadPageSetup();
 
-      const smallRaw = rawInput(buildUsage(1, 1, 1));
+      const smallRaw = rawInput(buildDetail(1, 1));
       smallRaw.document = {
         documentId: "INV00000042",
         postingDate: new Date("2026-07-05"),
@@ -331,7 +299,6 @@ describe.skipIf(!run)(
         isDraft: false,
         locale: "en-MY",
         timezone: TZ,
-        includeUsage: true,
         template: SEEDED_TEMPLATE_STAMP,
         profile: null,
         invoiceNo: "INV00000042",
@@ -348,12 +315,11 @@ describe.skipIf(!run)(
       );
       expect(smallPdf.toString("latin1").startsWith("%PDF-")).toBe(true);
 
-      const bigRaw = rawInput(buildUsage(8, 4, 4));
+      const bigRaw = rawInput(buildDetail(9, 100));
       const big = bind(bigRaw, {
         isDraft: true,
         locale: "en-MY",
         timezone: TZ,
-        includeUsage: true,
         template: SEEDED_TEMPLATE_STAMP,
         profile: null,
       });
@@ -364,7 +330,7 @@ describe.skipIf(!run)(
         pageSetup,
       );
 
-      // More itemised records ⇒ more pages ⇒ a larger PDF (pagination proxy).
+      // More polygons ⇒ more pages ⇒ a larger PDF (pagination proxy).
       expect(bigPdf.length).toBeGreaterThan(smallPdf.length);
     }, 120_000);
 
@@ -374,7 +340,7 @@ describe.skipIf(!run)(
     it("renders the ci 2,000 Mbps bill with embedded fonts and zero network requests (bm70)", async () => {
       const { render, renderFooter } = await loadSeededDefault();
       const pageSetup = await loadPageSetup();
-      const raw = rawInput(buildUsage(1, 1, 1));
+      const raw = rawInput(buildDetail(1, 1));
       raw.document = {
         documentId: "INV00000070",
         postingDate: new Date("2026-07-05"),
@@ -383,7 +349,6 @@ describe.skipIf(!run)(
         isDraft: false,
         locale: "en-MY",
         timezone: TZ,
-        includeUsage: true,
         template: SEEDED_TEMPLATE_STAMP,
         profile: null,
         invoiceNo: "INV00000070",

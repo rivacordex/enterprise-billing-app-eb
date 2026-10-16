@@ -31,6 +31,8 @@ export function describeInvoiceRenderCode(
       return "This account has more than 10,000 billed usage records, over the invoice limit.";
     case "INVOICE_NEGATIVE_UTILISED":
       return "Utilised capacity charges came out negative. Check the rate-matching setting and rerun this account.";
+    case "INVOICE_POLYGON_DATA_MISSING":
+      return "Polygon data is missing for a billed record (no polygon ID or region). Fix the rated data and rerun this account.";
     default:
       return GENERIC_RENDER_MESSAGE;
   }

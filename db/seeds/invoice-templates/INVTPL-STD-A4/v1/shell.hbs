@@ -123,38 +123,30 @@
   .grand-total { font-size: 14pt; line-height: 18pt; font-weight: 600; color: var(--inv-ink); }
   .amount-due-note { margin: 4px 0 0; font-size: 8pt; line-height: 11pt; color: var(--inv-muted); }
 
+  /* Detail pages (§10d, D17/D48): each type of service starts a new page
+     (break-before on .detail-type) under its name and "Access Seeker". One
+     table per State-District group; its thead (group label + column header)
+     repeats on every page the group spans. Rows never split; groups may. No
+     continuation label, no pre-pagination (D48). */
   table { width: 100%; border-collapse: collapse; }
   thead { display: table-header-group; }
-  th { text-align: left; font-weight: 600; border-bottom: 1px solid var(--inv-line); padding: 4px 4px; }
-  td { padding: 4px 4px; border-bottom: 1px solid var(--inv-line); }
+  tr { break-inside: avoid; }
+  th { text-align: left; font-weight: 600; border-bottom: 1px solid var(--inv-line); padding: 3px 4px; }
+  td { padding: 3px 4px; border-bottom: 1px solid var(--inv-line); }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .line-group { break-inside: avoid; }
-  tr.subtotal td { font-weight: 600; border-top: 1px solid var(--inv-line); }
-
-  /* bm49 §Design D7 / ui-context §10c — the Usage annex: 8pt/11pt table,
-     tabular-nums on numeric columns, state/district headers as overline
-     labels, subtotal rows semibold with a top rule. `thead` repeats (global
-     rule); `tbody.state` is deliberately NOT `break-inside: avoid` (a state
-     can span pages); only the subtotal row pairs use `break-before: avoid`. */
-  .annex { margin-bottom: 16px; }
-  .annex h3 {
+  .detail-heading { font-size: 12pt; line-height: 16pt; font-weight: 600; color: var(--inv-brand); margin: 0 0 2px; }
+  .access-seeker { margin: 0 0 10px; color: var(--inv-body); }
+  .detail-group {
+    break-inside: auto; margin-bottom: 12px;
+    font-size: 8pt; line-height: 11pt; font-variant-numeric: tabular-nums;
+  }
+  .detail-group tr.group-label th {
     font-size: 9pt; line-height: 12pt; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.06em; color: var(--inv-muted); margin: 0 0 6px;
+    letter-spacing: 0.06em; color: var(--inv-ink); background: var(--inv-soft);
   }
-  table.usage { font-size: 8pt; line-height: 11pt; }
-  table.usage th, table.usage td { padding: 3px 4px; border-bottom: 1px solid var(--inv-line); }
-  table.usage td.n, table.usage th.n { text-align: right; font-variant-numeric: tabular-nums; }
-  table.usage tr.state-h td {
-    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
-    color: var(--inv-muted); border-bottom: none; padding-top: 8px;
-  }
-  table.usage tr.district-h td {
-    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--inv-muted); border-bottom: none;
-  }
-  table.usage tr.subtotal td { font-weight: 600; border-top: 1px solid var(--inv-line); border-bottom: none; break-before: avoid; }
-  table.usage tfoot td { font-weight: 600; border-top: 1px solid var(--inv-line); }
-  .annex .sub { margin-top: 8px; font-size: 8pt; color: var(--inv-muted); }
+  .detail-group tr.col-head th { font-size: 8pt; line-height: 11pt; font-weight: 600; color: var(--inv-muted); }
+  .detail-group tr.subtotal td { font-weight: 600; border-top: 1px solid var(--inv-line); border-bottom: none; }
+  .no-usage { color: var(--inv-muted); }
 </style>
 </head>
 <body>

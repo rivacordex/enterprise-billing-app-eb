@@ -1,30 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { describeStructureChanges } from "@/components/billing/invoice-settings/structure-labels";
+import {
+  SECTION_ROWS,
+  describeStructureChanges,
+} from "@/components/billing/invoice-settings/structure-labels";
 import type { InvoiceTemplateStructure } from "@/types/billing";
 
 // bm58-spec §Design D4: the Activate dialog's "what changes" summary lists the
-// sections/columns whose visibility differs from the structure in use, in the
-// layout's display order, and nothing when they match.
+// optional sections whose visibility differs from the structure in use, in the
+// layout's display order, and nothing when they match. bm71 (D56): the Usage
+// annex row and the column toggles are gone.
 
 const BASE: InvoiceTemplateStructure = {
-  sections: {
-    billTo: true,
-    identification: true,
-    amountDue: true,
-    chargeSummary: true,
-    taxSummary: true,
-    payment: true,
-    chargeDetails: true,
-    usageAnnex: true,
-    notes: true,
-  },
-  columns: {
-    showServicePeriod: true,
-    showDiscountColumn: true,
-    showProductId: true,
-    showUdrCount: true,
-  },
+  sections: { payment: true, notes: true },
+  columns: {},
 };
 
 describe("describeStructureChanges", () => {
@@ -32,31 +21,45 @@ describe("describeStructureChanges", () => {
     expect(describeStructureChanges(BASE, BASE)).toEqual([]);
   });
 
-  it("lists shown and hidden sections and columns with a sign", () => {
+  it("lists shown and hidden sections with a sign", () => {
     const before: InvoiceTemplateStructure = {
       ...BASE,
-      sections: { ...BASE.sections, usageAnnex: false },
+      sections: { payment: false, notes: true },
     };
     const after: InvoiceTemplateStructure = {
-      sections: { ...BASE.sections, usageAnnex: true, notes: false },
-      columns: { ...BASE.columns, showDiscountColumn: false },
+      ...BASE,
+      sections: { payment: true, notes: false },
     };
     expect(describeStructureChanges(before, after)).toEqual([
-      { sign: "+", text: "Usage annex shown" },
+      { sign: "+", text: "Payment information shown" },
       { sign: "−", text: "Notes & terms hidden" },
-      { sign: "−", text: "Discount column hidden" },
     ]);
   });
 
-  it("orders sections in layout order, before columns", () => {
+  it("orders sections in layout order", () => {
     const after: InvoiceTemplateStructure = {
-      sections: { ...BASE.sections, notes: false, payment: false },
-      columns: { ...BASE.columns, showServicePeriod: false },
+      ...BASE,
+      sections: { notes: false, payment: false },
     };
     expect(describeStructureChanges(BASE, after).map((c) => c.text)).toEqual([
       "Payment information hidden",
       "Notes & terms hidden",
-      "Service period column hidden",
+    ]);
+  });
+});
+
+describe("SECTION_ROWS (bm71)", () => {
+  it("has no Usage annex row", () => {
+    expect(SECTION_ROWS.map((r) => r.label)).not.toContain("Usage annex");
+    expect(SECTION_ROWS.map((r) => r.key)).toEqual([
+      "identification",
+      "billTo",
+      "amountDue",
+      "chargeSummary",
+      "taxSummary",
+      "chargeDetails",
+      "payment",
+      "notes",
     ]);
   });
 });

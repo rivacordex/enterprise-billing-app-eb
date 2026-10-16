@@ -29,19 +29,24 @@ import {
 } from "@/services/billing/invoice-template/load";
 import { SEEDED_LAYOUT_ROW } from "@/tests/helpers/seeded-invoice-template";
 import {
-  INVOICE_COLUMN_KEYS,
   INVOICE_OPTIONAL_SECTION_KEYS,
   InvoiceRenderError,
-  type InvoiceColumnKey,
   type InvoiceTemplateStructure,
 } from "@/types/billing";
 import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-template-structure.schema";
+import { layoutManifestSchema } from "@/validation/billing/layout-manifest.schema";
 
-// bm55-spec §Tests — guardrail 48 (code-standards Part 2 §9 item 48): the
-// generator over every one of the 2⁷ = 128 combinations of the 3 optional
-// sections × 4 columns, against the seeded layout v1.
+// bm55-spec §Tests — guardrail 48, shrunk by bm71-spec §6 (D56): the
+// generator over every combination of the 2 optional sections (payment ×
+// notes = 4 cases; the column toggles are gone), against the seeded layout
+// v1. bm71 also pins the structure schema and the layout manifest schema
+// (D38).
 
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
+const MANIFEST_PATH = path.join(
+  REPO_ROOT,
+  "db/seeds/invoice-templates/INVTPL-STD-A4/v1/manifest.json",
+);
 
 let layout: LayoutFiles;
 
@@ -52,51 +57,29 @@ beforeAll(async () => {
 function structureFor(mask: number): InvoiceTemplateStructure {
   const bit = (i: number): boolean => (mask & (1 << i)) !== 0;
   return {
-    sections: {
-      billTo: true,
-      identification: true,
-      amountDue: true,
-      chargeSummary: true,
-      taxSummary: true,
-      chargeDetails: true,
-      payment: bit(0),
-      usageAnnex: bit(1),
-      notes: bit(2),
-    },
-    columns: {
-      showServicePeriod: bit(3),
-      showDiscountColumn: bit(4),
-      showProductId: bit(5),
-      showUdrCount: bit(6),
-    },
+    sections: { payment: bit(0), notes: bit(1) },
+    columns: {},
   };
 }
 
-const ALL_ON = structureFor(127);
-
-const COLUMN_HEADERS: Record<InvoiceColumnKey, string> = {
-  showServicePeriod: "<th>Service period</th>",
-  showDiscountColumn: '<th class="num">Discount</th>',
-  showProductId: "<th>Offering ID</th>",
-  showUdrCount: "<th>UDR type / count</th>",
-};
+const ALL_ON = structureFor(3);
 
 // Each optional section's distinctive markup in the generated file.
 const SECTION_MARKERS = {
   payment: "sec--payment",
-  usageAnnex: "Usage annex — billed usage by region",
   notes: "sec--notes",
 } as const;
 
-function chargeDetails(hbs: string): string {
-  const start = hbs.indexOf("sec--chargeDetails");
-  const end = hbs.indexOf("</section>", start);
-  return hbs.slice(start, end);
-}
-
-function expectedColCount(s: InvoiceTemplateStructure): number {
-  return 6 + INVOICE_COLUMN_KEYS.filter((k) => s.columns[k]).length;
-}
+// The mandatory sections the layout always generates.
+const MANDATORY_MARKERS = [
+  "sec--header",
+  "sec--identification",
+  "sec--billTo",
+  "sec--chargeSummary",
+  "sec--taxSummary",
+  "sec--amountDue",
+  "sec--chargeDetails",
+];
 
 function expectGenerationFailed(fn: () => unknown, file: string): void {
   try {
@@ -119,8 +102,8 @@ function withPartial(
   return { ...layout, partials: { ...layout.partials, [key]: source } };
 }
 
-describe("generate — guardrail 48 (all 128 structure combinations)", () => {
-  const masks = Array.from({ length: 128 }, (_, mask) => mask);
+describe("generate — guardrail 48 (all 4 structure combinations)", () => {
+  const masks = Array.from({ length: 4 }, (_, mask) => mask);
 
   it.each(masks)(
     "combination %i compiles, has no directive, and drops hidden markup",
@@ -143,37 +126,18 @@ describe("generate — guardrail 48 (all 128 structure combinations)", () => {
         expect(file).not.toContain("\r");
       }
 
-      // Hidden means absent (Styling rule 5).
+      // Hidden means absent (Styling rule 5); mandatory means always there.
       for (const key of INVOICE_OPTIONAL_SECTION_KEYS) {
-        if (structure.sections[key]) {
-          expect(invoiceHbs).toContain(SECTION_MARKERS[key]);
-        } else {
-          expect(invoiceHbs).not.toContain(SECTION_MARKERS[key]);
-        }
-      }
-      for (const key of INVOICE_COLUMN_KEYS) {
-        expect(invoiceHbs.includes(COLUMN_HEADERS[key])).toBe(
-          structure.columns[key],
+        expect(invoiceHbs.includes(SECTION_MARKERS[key])).toBe(
+          structure.sections[key],
         );
       }
-      // A hidden Discount column also drops its line cell and group total.
-      expect(invoiceHbs.includes("this.discountTotal")).toBe(
-        structure.columns.showDiscountColumn,
-      );
-      expect(invoiceHbs.includes("this.discountAmount negate=true")).toBe(
-        structure.columns.showDiscountColumn,
-      );
-
-      // colspan values equal the formulas, and the header row has colCount cells.
-      const details = chargeDetails(invoiceHbs);
-      const colCount = expectedColCount(structure);
-      const discount = structure.columns.showDiscountColumn ? 1 : 0;
-      const spans = [...details.matchAll(/colspan="(\d+)"/g)].map((m) =>
-        Number(m[1]),
-      );
-      expect(spans).toEqual([colCount, colCount - 2 - discount]);
-      const thead = details.slice(0, details.indexOf("</thead>"));
-      expect(thead.match(/<th[ >]/g)).toHaveLength(colCount);
+      for (const marker of MANDATORY_MARKERS) {
+        expect(invoiceHbs).toContain(marker);
+      }
+      // The detail pages carry no admin column toggle (D56).
+      expect(invoiceHbs).toContain('<table class="detail-group">');
+      expect(invoiceHbs).not.toContain("annex");
     },
   );
 });
@@ -191,61 +155,62 @@ describe("generate — layout pairing", () => {
   });
 
   it("widens a half section to full when its layout partner is hidden", () => {
-    // Synthetic layout: make the Usage annex a half section directly after
-    // payment, so payment and usageAnnex form a pair. Since bm70 (D60) v1
-    // orders chargeDetails between them, so the synthetic manifest moves
-    // chargeDetails ahead of payment.
-    const annexHalf = withPartial(
-      "usageAnnex",
-      '<section class="sec sec--usageAnnex sec--half">\n  <p>Usage annex</p>\n</section>\n',
+    // Synthetic layout: make Notes a half section directly after payment, so
+    // payment and notes form a pair. v1 orders chargeDetails between them, so
+    // the synthetic manifest moves chargeDetails ahead of payment.
+    const notesHalf = withPartial(
+      "notes",
+      '<section class="sec sec--notes sec--half">\n  <p>Notes</p>\n</section>\n',
     );
-    const { chargeDetails, ...rest } = annexHalf.manifest.sections;
+    const { chargeDetails, ...rest } = notesHalf.manifest.sections;
     const sections: typeof rest = {};
     for (const [key, value] of Object.entries(rest)) {
       if (key === "payment") sections.chargeDetails = chargeDetails!;
       sections[key] = value;
     }
     const paired: LayoutFiles = {
-      ...annexHalf,
-      manifest: { ...annexHalf.manifest, sections },
+      ...notesHalf,
+      manifest: { ...notesHalf.manifest, sections },
     };
 
     const both = generate(paired, ALL_ON).invoiceHbs;
     expect(both).toContain('class="sec sec--payment sec--half"');
-    expect(both).toContain('class="sec sec--usageAnnex sec--half"');
+    expect(both).toContain('class="sec sec--notes sec--half"');
 
-    const noAnnex = generate(paired, {
-      ...ALL_ON,
-      sections: { ...ALL_ON.sections, usageAnnex: false },
-    }).invoiceHbs;
-    expect(noAnnex).toContain('class="sec sec--payment sec--full"');
-    expect(noAnnex).not.toContain("sec--usageAnnex");
+    const noNotes = generate(paired, structureFor(1)).invoiceHbs;
+    expect(noNotes).toContain('class="sec sec--payment sec--full"');
+    expect(noNotes).not.toContain("sec--notes");
 
-    const noPayment = generate(paired, {
-      ...ALL_ON,
-      sections: { ...ALL_ON.sections, payment: false },
-    }).invoiceHbs;
-    expect(noPayment).toContain('class="sec sec--usageAnnex sec--full"');
+    const noPayment = generate(paired, structureFor(2)).invoiceHbs;
+    expect(noPayment).toContain('class="sec sec--notes sec--full"');
     expect(noPayment).not.toContain("sec--payment");
   });
 });
 
-describe("generate — the mandatory-section rule", () => {
-  it("the Zod schema rejects a hidden mandatory section with MANDATORY_SECTION_HIDDEN", () => {
-    const parsed = invoiceTemplateStructureSchema.safeParse({
-      ...ALL_ON,
-      sections: { ...ALL_ON.sections, chargeDetails: false },
-    });
-    expect(parsed.success).toBe(false);
-    expect(parsed.error?.issues).toEqual([
-      expect.objectContaining({
-        path: ["sections", "chargeDetails"],
-        message: "MANDATORY_SECTION_HIDDEN",
-      }),
-    ]);
+describe("generate — the structure schema (bm71, D56)", () => {
+  it("accepts the optional sections with an empty columns map", () => {
+    for (const mask of [0, 1, 2, 3]) {
+      expect(
+        invoiceTemplateStructureSchema.safeParse(structureFor(mask)).success,
+      ).toBe(true);
+    }
   });
 
-  it("the Zod schema rejects unknown keys (no admin markup can ride along)", () => {
+  it("rejects a usageAnnex section, a mandatory section key and any column key", () => {
+    const rejected = [
+      { ...ALL_ON, sections: { ...ALL_ON.sections, usageAnnex: true } },
+      { ...ALL_ON, sections: { ...ALL_ON.sections, chargeDetails: true } },
+      { ...ALL_ON, columns: { showUdrCount: true } },
+      { ...ALL_ON, columns: { showServicePeriod: false } },
+    ];
+    for (const structure of rejected) {
+      expect(invoiceTemplateStructureSchema.safeParse(structure).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it("rejects unknown keys (no admin markup can ride along)", () => {
     expect(
       invoiceTemplateStructureSchema.safeParse({ ...ALL_ON, css: "x" }).success,
     ).toBe(false);
@@ -256,16 +221,62 @@ describe("generate — the mandatory-section rule", () => {
       }).success,
     ).toBe(false);
   });
+});
 
-  it("generate re-asserts it", () => {
-    expect(() =>
-      generate(layout, {
-        ...ALL_ON,
-        sections: { ...ALL_ON.sections, billTo: false },
-      }),
-    ).toThrow(
-      expect.objectContaining({ code: "MANDATORY_SECTION_HIDDEN" }) as Error,
-    );
+describe("generate — the layout manifest schema (bm71, D38)", () => {
+  const seeded = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8")) as Record<
+    string,
+    unknown
+  >;
+
+  it("parses the seeded v1 manifest, keeping its section order", () => {
+    const manifest = layoutManifestSchema.parse(seeded);
+    expect(Object.keys(manifest.sections)).toEqual([
+      "header",
+      "identification",
+      "billTo",
+      "chargeSummary",
+      "taxSummary",
+      "amountDue",
+      "payment",
+      "chargeDetails",
+      "notes",
+    ]);
+    expect(manifest.columns).toEqual({});
+    expect(manifest.usageGrouping).toEqual([
+      "serviceType",
+      "state",
+      "district",
+    ]);
+    expect(manifest.fixedColumns).toEqual([
+      "Polygon Start Date",
+      "Polygon Name",
+      "Capacity (Mbps)",
+      "Rate/Mbps (MYR)",
+      "Utilised Capacity Charges (MYR)",
+    ]);
+  });
+
+  it("is what layoutFilesFromVerified parses (the seeded layout loads)", () => {
+    expect(Object.keys(layout.manifest.sections)).toHaveLength(9);
+  });
+
+  it("rejects a usageAnnex section, a column key, a missing section or another grouping", () => {
+    const sections = seeded.sections as Record<string, unknown>;
+    const { notes: _notes, ...withoutNotes } = sections;
+    const rejected = [
+      {
+        ...seeded,
+        sections: { ...sections, usageAnnex: { mandatory: false } },
+      },
+      { ...seeded, sections: withoutNotes },
+      { ...seeded, columns: { showUdrCount: { mandatory: false } } },
+      { ...seeded, usageGrouping: ["state", "district"] },
+      { ...seeded, fixedColumns: ["#", "Description"] },
+    ];
+    for (const manifest of rejected) {
+      expect(layoutManifestSchema.safeParse(manifest).success).toBe(false);
+    }
   });
 });
 
@@ -276,7 +287,7 @@ describe("generate — TEMPLATE_GENERATION_FAILED", () => {
         generate(
           withPartial(
             "notes",
-            "[[if sections.notes]]a[[if columns.showUdrCount]]b[[/if]][[/if]]",
+            "[[if sections.notes]]a[[if sections.payment]]b[[/if]][[/if]]",
           ),
           ALL_ON,
         ),
@@ -291,19 +302,20 @@ describe("generate — TEMPLATE_GENERATION_FAILED", () => {
     );
   });
 
-  it("rejects an unknown key", () => {
-    expectGenerationFailed(
-      () =>
-        generate(
-          withPartial("notes", "[[if sections.accountSummary]]x[[/if]]"),
-          ALL_ON,
-        ),
-      "partials/notes.hbs",
-    );
-    expectGenerationFailed(
-      () => generate(withPartial("notes", "[[num rowCount]]"), ALL_ON),
-      "partials/notes.hbs",
-    );
+  it("rejects an unknown key, a mandatory section key, and the retired columns/num directives", () => {
+    for (const source of [
+      "[[if sections.accountSummary]]x[[/if]]",
+      "[[if sections.usageAnnex]]x[[/if]]",
+      "[[if sections.billTo]]x[[/if]]",
+      "[[if columns.showUdrCount]]x[[/if]]",
+      "[[num colCount]]",
+      "[[num rowCount]]",
+    ]) {
+      expectGenerationFailed(
+        () => generate(withPartial("notes", source), ALL_ON),
+        "partials/notes.hbs",
+      );
+    }
   });
 
   it("rejects an unbalanced [[if]]", () => {
@@ -347,7 +359,7 @@ describe("generate — TEMPLATE_GENERATION_FAILED", () => {
               "[[if sections.notes]][[body]][[/if]]",
             ),
           },
-          { ...ALL_ON, sections: { ...ALL_ON.sections, notes: false } },
+          structureFor(1),
         ),
       "shell.hbs",
     );
@@ -378,7 +390,7 @@ describe("generate — annotate (preview only)", () => {
       '<span class="ph" data-ph="customer.name">{{customer.name}}</span>',
     );
     expect(annotated).toContain(
-      '<span class="ph" data-ph="money this.netAmount">{{money this.netAmount}}</span>',
+      '<span class="ph" data-ph="money this.utilised">{{money this.utilised}}</span>',
     );
     // Attribute placeholders are untouched.
     expect(annotated).toContain(

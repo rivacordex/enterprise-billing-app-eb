@@ -23,9 +23,6 @@ const RECURRING_LINE: RawLine = {
   discountAmount: "0.00",
   netAmount: "50.00",
   discountRate: null,
-  groupGrossTotal: "50.00",
-  groupDiscountTotal: "0.00",
-  groupNetTotal: "50.00",
 };
 
 const USAGE_LINE: RawLine = {
@@ -44,9 +41,6 @@ const USAGE_LINE: RawLine = {
   discountAmount: "20.00",
   netAmount: "100.00",
   discountRate: "16.666667",
-  groupGrossTotal: "120.00",
-  groupDiscountTotal: "20.00",
-  groupNetTotal: "100.00",
 };
 
 // A customer with every optional field null.
@@ -82,7 +76,6 @@ export function rawInvoiceRenderInputFixture(
       linesNetSum: "150.00",
       grossTotal: "150.00",
       discountTotal: "0.00",
-      usageRatedTotal: "0.00",
       otherChargesSubTotal: "150.00",
       adjustments: "0.00",
       summaryBlocksSum: "150.00",
@@ -95,6 +88,7 @@ export function rawInvoiceRenderInputFixture(
       { description: "RAN Usage", amount: "100.00" },
     ],
     taxItems: [],
+    capacityDetail: { overLimit: false, rows: [], groups: [] },
     document: null,
     customer: {
       recipientName: "Aisha Rahman",
@@ -113,7 +107,6 @@ export function rawInvoiceRenderInputFixture(
         country: "Country-01",
       },
     },
-    usage: null,
     ...overrides,
   };
 }
@@ -169,8 +162,6 @@ export function invoiceRenderInputFixture(
     taxRateLabel: "0",
     serviceTypes: [],
     otherCharges: [],
-    lineGroups: [],
-    usage: null,
     isDraft: false,
     locale: "en-MY",
     timezone: "UTC",

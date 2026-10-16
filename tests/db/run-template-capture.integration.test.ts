@@ -12,7 +12,7 @@ import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
 import { billRun } from "@/db/schema/billing/bill-run";
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
+import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
 import type { Database } from "@/db/client";
 
 // bm65-spec §8 (guardrail 59, capture half of 60; Inv #51, #52, #58) — the
@@ -47,10 +47,12 @@ import { triggerRun } from "@/services/billing/trigger-run";
 function structure(notes: boolean) {
   return {
     sections: {
-      ...Object.fromEntries(INVOICE_SECTION_KEYS.map((k) => [k, true])),
+      ...Object.fromEntries(
+        INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
+      ),
       notes,
     },
-    columns: Object.fromEntries(INVOICE_COLUMN_KEYS.map((k) => [k, true])),
+    columns: {},
   } as Parameters<typeof saveTemplateDraft>[0]["structure"];
 }
 

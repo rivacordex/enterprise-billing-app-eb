@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // bm57-spec §Tests: `saveTemplateDraftAction`. Guard first (EDIT), a READ user
-// or no permission is FORBIDDEN with nothing written; a hidden mandatory
-// section is MANDATORY_SECTION_HIDDEN (with the offending paths) even when
-// posted directly; an unknown key is VALIDATION_ERROR; success revalidates the
+// or no permission is FORBIDDEN with nothing written; a mandatory section key
+// posted directly is VALIDATION_ERROR (bm71, D56: the structure stores only the
+// optional sections), as is an unknown key; success revalidates the
 // Invoice Settings layout; a conflict and an unexpected throw are mapped.
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
@@ -24,23 +24,8 @@ const mockService = vi.mocked(saveTemplateDraft);
 const mockRevalidate = vi.mocked(revalidatePath);
 
 const STRUCTURE = {
-  sections: {
-    billTo: true,
-    identification: true,
-    amountDue: true,
-    chargeSummary: true,
-    taxSummary: true,
-    payment: true,
-    chargeDetails: true,
-    usageAnnex: false,
-    notes: false,
-  },
-  columns: {
-    showServicePeriod: true,
-    showDiscountColumn: false,
-    showProductId: false,
-    showUdrCount: false,
-  },
+  sections: { payment: true, notes: false },
+  columns: {},
 };
 const TOKEN = "2026-10-10T01:02:03.123456Z";
 
@@ -98,7 +83,7 @@ describe("saveTemplateDraftAction", () => {
     expect(mockService).not.toHaveBeenCalled();
   });
 
-  it("rejects a hidden mandatory section posted directly: MANDATORY_SECTION_HIDDEN", async () => {
+  it("rejects a mandatory section key posted directly: VALIDATION_ERROR (bm71)", async () => {
     const crafted = {
       ...STRUCTURE,
       sections: { ...STRUCTURE.sections, billTo: false, taxSummary: false },
@@ -107,18 +92,23 @@ describe("saveTemplateDraftAction", () => {
       structure: crafted,
       expectedDraftToken: null,
     });
-    expect(result).toMatchObject({
-      ok: false,
-      code: "MANDATORY_SECTION_HIDDEN",
-    });
-    const fieldErrors = (result as { fieldErrors: Record<string, string[]> })
-      .fieldErrors;
-    expect(Object.keys(fieldErrors).sort()).toEqual([
-      "structure.sections.billTo",
-      "structure.sections.taxSummary",
-    ]);
+    expect(result).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
     expect(mockService).not.toHaveBeenCalled();
     expect(mockRevalidate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the retired usageAnnex section", { usageAnnex: true }],
+    ["a column key", null],
+  ])("rejects %s with VALIDATION_ERROR (bm71)", async (_label, sections) => {
+    const result = await saveTemplateDraftAction({
+      structure: sections
+        ? { ...STRUCTURE, sections: { ...STRUCTURE.sections, ...sections } }
+        : { ...STRUCTURE, columns: { showDiscountColumn: true } },
+      expectedDraftToken: null,
+    });
+    expect(result).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
+    expect(mockService).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -42,23 +42,8 @@ const mockActivate = vi.mocked(activateTemplateAction);
 const TOKEN = "2026-10-10T01:02:03.123456Z";
 
 const ALL_ON: InvoiceTemplateStructure = {
-  sections: {
-    billTo: true,
-    identification: true,
-    amountDue: true,
-    chargeSummary: true,
-    taxSummary: true,
-    payment: true,
-    chargeDetails: true,
-    usageAnnex: true,
-    notes: false,
-  },
-  columns: {
-    showServicePeriod: true,
-    showDiscountColumn: false,
-    showProductId: true,
-    showUdrCount: true,
-  },
+  sections: { payment: true, notes: false },
+  columns: {},
 };
 
 const BILLS = [
@@ -124,7 +109,7 @@ describe("InvoiceStructureForm — EDIT user", () => {
     }
   });
 
-  it("renders optional sections and columns as enabled checkboxes with their values", () => {
+  it("renders the optional sections as enabled checkboxes with their values", () => {
     renderForm();
     const payment = within(screen.getByTestId("section-payment")).getByRole(
       "checkbox",
@@ -135,13 +120,18 @@ describe("InvoiceStructureForm — EDIT user", () => {
       within(screen.getByTestId("section-notes")).getByRole("checkbox"),
     ).toHaveAttribute("data-state", "unchecked");
     expect(
-      within(screen.getByTestId("column-showDiscountColumn")).getByRole(
-        "checkbox",
-      ),
-    ).toHaveAttribute("data-state", "unchecked");
-    expect(
       within(screen.getByTestId("section-payment")).queryByText("Required"),
     ).toBeNull();
+  });
+
+  it("bm71 — has no Usage annex row and no column toggles", () => {
+    renderForm();
+    expect(screen.queryByTestId("section-usageAnnex")).toBeNull();
+    expect(screen.queryByText("Usage annex")).toBeNull();
+    expect(screen.queryByText("Charge-detail columns")).toBeNull();
+    expect(screen.queryAllByTestId(/^column-/)).toHaveLength(0);
+    // The locked mandatory rows plus Payment information and Notes & terms.
+    expect(screen.getAllByRole("checkbox")).toHaveLength(8);
   });
 
   it("previews the initial structure after the 400 ms debounce, then the toggled one", async () => {
@@ -172,10 +162,9 @@ describe("InvoiceStructureForm — EDIT user", () => {
     renderForm();
     await flushDebounce();
     mockPreview.mockClear();
-    const discount = within(
-      screen.getByTestId("column-showDiscountColumn"),
-    ).getByRole("checkbox");
-    fireEvent.click(discount);
+    fireEvent.click(
+      within(screen.getByTestId("section-payment")).getByRole("checkbox"),
+    );
     fireEvent.click(
       within(screen.getByTestId("section-notes")).getByRole("checkbox"),
     );
@@ -183,8 +172,8 @@ describe("InvoiceStructureForm — EDIT user", () => {
     expect(mockPreview).toHaveBeenCalledTimes(1);
     expect(mockPreview.mock.lastCall?.[0]).toMatchObject({
       structure: {
-        sections: { notes: true },
-        columns: { showDiscountColumn: true },
+        sections: { payment: false, notes: true },
+        columns: {},
       },
     });
   });
@@ -197,7 +186,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
     draftVersionNo: 2,
     activeStructure: {
       ...ALL_ON,
-      sections: { ...ALL_ON.sections, usageAnnex: false },
+      sections: { ...ALL_ON.sections, payment: false },
     },
   } as const;
 
@@ -242,7 +231,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
     expect(screen.getByText("Activate template v2")).toBeInTheDocument();
     expect(screen.getByTestId("activate-summary")).toHaveTextContent(
-      "+ Usage annex shown",
+      "+ Payment information shown",
     );
   });
 
@@ -516,7 +505,7 @@ describe("InvoiceStructureForm — Save draft (bm57)", () => {
 });
 
 describe("InvoiceStructureForm — read-only (READ user)", () => {
-  it("renders sections and columns as text, not inputs", () => {
+  it("renders sections as text, not inputs", () => {
     renderForm({ editable: false });
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(
@@ -527,11 +516,6 @@ describe("InvoiceStructureForm — read-only (READ user)", () => {
     ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("section-billTo")).getByText("Required"),
-    ).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("column-showDiscountColumn")).getByText(
-        "Hidden",
-      ),
     ).toBeInTheDocument();
   });
 

@@ -60,7 +60,13 @@ import type * as TriggerRun from "@/services/billing/trigger-run";
 //   5. tamper: one byte of v3's `invoice.hbs`, then of the v2 logo — the
 //      affected renders park with the typed code, other versions still render;
 //   6. CSV of a step-3 bill sums to its subtotal;
-//   7. multi-page: 10,000 usage rows render ≥ 3 pages; 10,001 park;
+//   7. multi-page mechanics: the page footer, repeated header and fixed
+//      watermark (bm71 retired the usage-annex half of this step: the
+//      per-polygon detail pages, their 10,000-row bound and the
+//      ~900-polygon pagination are proven by
+//      tests/db/invoice-capacity-detail.integration.test.ts,
+//      tests/services/billing/invoice-golden.test.ts and the
+//      RUN_CHROMIUM_E2E render);
 //   8. audit: one AUDIT_LOG row per save, upload and activation.
 //
 // No live Kestra is needed: Part 2 changes no flow (workflow rules §1.7), and
@@ -133,25 +139,7 @@ function pdfPageCount(pdf: Buffer): number {
 }
 
 function structure(notes: boolean) {
-  return {
-    sections: {
-      billTo: true,
-      identification: true,
-      amountDue: true,
-      chargeSummary: true,
-      taxSummary: true,
-      payment: true,
-      chargeDetails: true,
-      usageAnnex: true,
-      notes,
-    },
-    columns: {
-      showServicePeriod: true,
-      showDiscountColumn: true,
-      showProductId: true,
-      showUdrCount: true,
-    },
-  };
+  return { sections: { payment: true, notes }, columns: {} };
 }
 
 function profileFields(companyName: string): Record<string, string> {
@@ -310,7 +298,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       return { ...activated, assetVersionId: uploaded.assetVersionId };
     }
 
-    // A posted fixture bill whose single line is a USAGE line rated at
+    // A posted fixture bill whose single line is a (non-capacity) USAGE line rated at
     // `rows` × 1.00, plus `rows` billed `udr_rated` rows (state → district,
     // every 7th row with no geo) claimed for the run/account/attempt 1.
     async function usageBill(runId: string, label: string, rows: number) {
@@ -534,7 +522,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       // same four INV documents).
       expect(ciPosted).toHaveLength(4);
 
-      let sawUnassigned = false;
       for (const ban of ciPosted) {
         // Rendered and stored from the default, never parked.
         expect(await storedRow(ciRunId, ban)).toBeDefined();
@@ -548,7 +535,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         // Σ net_amount = subtotal, compared as SQL text (criterion 1).
         const [sum] = await sql<{ net: string; n: number }[]>`
           SELECT COALESCE(SUM(net_amount), 0)::numeric(18,2)::text AS net,
-                 count(*)::int AS n
+                 count(*) FILTER (WHERE line_type = 'charge')::int AS n
           FROM billing.customer_bill_line
           WHERE ref_customer_bill_id = ${s.customer_bill_id}`;
         expect(sum!.net).toBe(s.subtotal);
@@ -558,18 +545,18 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
           banId: ban,
           mode: "final",
         });
-        // Every line is listed (one charge row per customer_bill_line).
-        const lineRows = (
-          html.match(/<tr>\s*<td class="mono">\d+<\/td>/g) ?? []
-        ).length;
-        expect(lineRows).toBe(sum!.n);
+        // The ci seed bills no capacity line, so every charge line is an
+        // "Other charges" row and no detail page prints (bm70/bm71).
+        const otherRows = (html.match(/<div class="svc-row"><span>/g) ?? [])
+          .length;
+        expect(otherRows).toBe(sum!.n);
+        expect(html).not.toContain('class="detail-type"');
         // G15 A — no issuer or payment block without a profile.
         expect(html).not.toContain("sec--payment");
         expect(html).not.toContain('class="issuer"');
-        if (html.includes("Unassigned region")) sawUnassigned = true;
       }
-      // The ci seed's first usage row has no geo (criterion 8).
-      expect(sawUnassigned).toBe(true);
+      // bm71 — the State-District labels ("Unassigned region" included)
+      // are proven by tests/db/invoice-capacity-detail.integration.test.ts.
     }, 600_000);
 
     it("step 3 — template v2 + profile v1 through the actions; the next run is stamped v2 / profile 1", async () => {
@@ -740,40 +727,44 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       expect(sum!.total).toBe(s.subtotal);
     });
 
-    it("step 7 — 10,000 usage rows render ≥ 3 pages with the page footer, repeated header and fixed watermark; 10,001 park (criterion 7)", async () => {
+    it("step 7 — the page footer, repeated header and fixed watermark on a posted and a draft bill (criterion 7)", async () => {
+      // bm71 — a non-capacity usage line prints no detail page; the
+      // ~900-polygon pagination, the 10,000-row bound and the over-limit
+      // park are proven by invoice-capacity-detail.integration.test.ts,
+      // invoice-golden.test.ts (guardrail 64) and the Chromium e2e.
       await fx.newRun(RUN_PAGES);
-      const { banId: banPages } = await usageBill(RUN_PAGES, "PAGES", 10_000);
+      const { banId: banPages } = await usageBill(RUN_PAGES, "PAGES", 10);
       expect((await fx.post(RUN_PAGES, banPages)).status).toBe("invoiced");
       const stored = await svc.getStoredInvoice(RUN_PAGES, banPages);
-      expect(pdfPageCount(stored.pdf)).toBeGreaterThanOrEqual(3);
+      expect(pdfPageCount(stored.pdf)).toBeGreaterThanOrEqual(1);
 
       const final = await svc.buildInvoiceHtml({
         runId: RUN_PAGES,
         banId: banPages,
         mode: "final",
       });
-      // "Page X of Y" on every page: Chromium's footer template, filled per
-      // page from these spans (R5), with the header/footer band enabled.
+      // "Page X of Y" on every page, bottom-right: Chromium's footer
+      // template, filled per page from these spans (R5), with the
+      // header/footer band enabled.
       expect(final.pageSetup.displayHeaderFooter).toBe(true);
       expect(final.footerHtml).toMatch(
-        /Page <span class="pageNumber"><\/span> of <span class="totalPages"><\/span>/,
+        /<span style="text-align: right;">Page <span class="pageNumber"><\/span> of <span class="totalPages"><\/span>/,
       );
       expect(final.html).toContain("thead { display: table-header-group; }");
-      expect(final.html).toContain(".line-group { break-inside: avoid; }");
-      expect(final.html).toContain("Unassigned region");
+      expect(final.html).toContain("tr { break-inside: avoid; }");
 
-      // The draft of a 10,000-row bill: ≥ 3 pages, the watermark a fixed
-      // full-page layer inside the body (never in the footer margin).
+      // The watermark is a fixed full-page layer inside the body (never in
+      // the footer margin).
       const { banId: banDraftPages } = await usageBill(
         RUN_PAGES,
         "PAGESDRAFT",
-        10_000,
+        10,
       );
       const draftPdf = await svc.renderDraftInvoice({
         runId: RUN_PAGES,
         banId: banDraftPages,
       });
-      expect(pdfPageCount(draftPdf)).toBeGreaterThanOrEqual(3);
+      expect(pdfPageCount(draftPdf)).toBeGreaterThanOrEqual(1);
       const draft = await svc.buildInvoiceHtml({
         runId: RUN_PAGES,
         banId: banDraftPages,
@@ -785,16 +776,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       const body = draft.html.slice(draft.html.indexOf("<body"));
       expect(body).toContain('class="watermark"');
       expect(draft.footerHtml).not.toContain("watermark");
-
-      // 10,001 rows: posted, parked with INVOICE_USAGE_OVER_LIMIT.
-      const { banId: banOver } = await usageBill(RUN_PAGES, "OVER", 10_001);
-      expect((await fx.post(RUN_PAGES, banOver)).status).toBe("invoiced");
-      expect(await storedRow(RUN_PAGES, banOver)).toBeUndefined();
-      expect(await svc.retryRenderInvoice(RUN_PAGES, banOver)).toEqual({
-        ok: false,
-        code: "RENDER_FAILED",
-        detail: "INVOICE_USAGE_OVER_LIMIT",
-      });
     }, 600_000);
 
     it("step 8 — every save, upload and activation wrote exactly one AUDIT_LOG row of its type (criterion 11)", async () => {

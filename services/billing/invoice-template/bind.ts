@@ -4,13 +4,9 @@ import {
   FinalInvoiceNotFoundError,
   INVOICE_USAGE_ROW_LIMIT,
   InvoiceRenderError,
-  type ChargeSource,
-  type InvoiceLine,
-  type InvoiceLineGroup,
+  type InvoiceCapacityRegion,
   type InvoiceProfile,
   type InvoiceRenderInput,
-  type InvoiceUsageRow,
-  type InvoiceUsageSection,
 } from "@/types/billing";
 
 // bm47-spec §Implementation §4 — pure function: no DB, no Handlebars, no
@@ -20,12 +16,6 @@ export interface BindContext {
   isDraft: boolean;
   locale: string;
   timezone: string;
-  // bm49-spec §Design D4 — when the template hides the Usage annex
-  // (`structure.sections.usageAnnex === false`) the usage read is skipped and
-  // the over-limit/reconcile checks never run. In bm49 the only template is
-  // the all-on default; bm53 derives it from the resolved version's
-  // `structure.sections.usageAnnex`.
-  includeUsage: boolean;
   // The final render's requested invoice number (D1's "the binder takes the
   // number from billing.document and asserts it equals invoiceNo" — render-
   // invoice.ts §6). Unused on a draft bind.
@@ -38,13 +28,6 @@ export interface BindContext {
   // blocks hidden).
   profile: InvoiceProfile | null;
 }
-
-// D3 — fixed order; a group with no lines is omitted.
-const GROUP_ORDER: { source: ChargeSource; name: string }[] = [
-  { source: "RECURRING", name: "Recurring charges" },
-  { source: "USAGE", name: "Usage charges" },
-  { source: "OCC", name: "Other charges" },
-];
 
 export function bind(
   raw: RawInvoiceRenderInput,
@@ -94,41 +77,8 @@ export function bind(
     }
   }
 
-  const lineGroups = buildLineGroups(raw);
-
-  // D3/D4/D6 — the usage annex. When the section is hidden the read was
-  // skipped (`raw.usage` is `null`): no over-limit throw, no reconcile, `usage`
-  // is `null`.
-  let usage: InvoiceUsageSection | null = null;
-  if (ctx.includeUsage && raw.usage) {
-    if (raw.usage.overLimit) {
-      // D3 — fail loud (no truncation, no partial annex). The draft preview
-      // surfaces the code; the final render parks the account (bm47 D10).
-      throw new InvoiceRenderError(
-        "INVOICE_USAGE_OVER_LIMIT",
-        `customer_bill ${raw.bill.customerBillId}: ${raw.usage.rowCount} billed usage rows exceed the ${INVOICE_USAGE_ROW_LIMIT}-row annex limit`,
-        { rowCount: raw.usage.rowCount, limit: INVOICE_USAGE_ROW_LIMIT },
-      );
-    }
-    usage = buildUsageSection(raw.usage);
-
-    // D6 — the annex's grand total must equal `Σ rated_amount` over the bill's
-    // USAGE lines (both `::text` from the same snapshot). A `null` grand total
-    // (no billed rows) and a `"0.00"` rated total are the matching empty case.
-    const annexTotal = grandTotal(raw.usage) ?? "0.00";
-    if (annexTotal !== raw.bill.usageRatedTotal) {
-      throw new InvoiceRenderError(
-        "INVOICE_RECONCILIATION_FAILED",
-        `customer_bill ${raw.bill.customerBillId}: usage annex total ${annexTotal} does not equal USAGE rated_amount ${raw.bill.usageRatedTotal}`,
-        {
-          detail: "usage",
-          annexTotal,
-          usageRatedTotal: raw.bill.usageRatedTotal,
-          customerBillId: raw.bill.customerBillId,
-        },
-      );
-    }
-  }
+  // bm71-spec §Design "Guards" — the detail pages, guarded before render.
+  const regionsByType = buildCapacityDetail(raw);
 
   return {
     template: ctx.template,
@@ -189,10 +139,11 @@ export function bind(
       utilised: t.utilised,
       unutilised: t.unutilised,
       total: t.total,
+      // A type with a capacity line but no claimed row (0 Mbps, only the
+      // commitment floor) prints "No utilised capacity this period."
+      regions: regionsByType.get(t.offeringId) ?? [],
     })),
     otherCharges: raw.otherCharges,
-    lineGroups,
-    usage,
     isDraft: ctx.isDraft,
     locale: ctx.locale,
     timezone: ctx.timezone,
@@ -235,138 +186,97 @@ function assertSummaryGuards(raw: RawInvoiceRenderInput): void {
   }
 }
 
-function buildLineGroups(raw: RawInvoiceRenderInput): InvoiceLineGroup[] {
-  const bySource = new Map<ChargeSource, RawInvoiceRenderInput["lines"]>();
-  for (const line of raw.lines) {
-    const arr = bySource.get(line.source) ?? [];
-    arr.push(line);
-    bySource.set(line.source, arr);
+// bm71-spec §Design "Guards" (D29/D37, Inv #56) — the four detail guards,
+// then the detail pages keyed by offering id. The rows arrive in the D21
+// order (type label, region label with "Unassigned region" last, polygon
+// id), so grouping here keeps that order. No money arithmetic: every Sub
+// Total and per-type total was summed in SQL, and the reconciliation is a
+// plain string compare of SQL sums (General rule 6). The first failing row
+// is reported; nothing is printed blank (General rule 7).
+function buildCapacityDetail(
+  raw: RawInvoiceRenderInput,
+): Map<string, InvoiceCapacityRegion[]> {
+  const banId = raw.bill.billingAccountId;
+  const detail = raw.capacityDetail;
+  if (detail.overLimit) {
+    throw new InvoiceRenderError(
+      "INVOICE_USAGE_OVER_LIMIT",
+      `customer_bill ${raw.bill.customerBillId}: ${detail.rowCount} capacity detail rows exceed the ${INVOICE_USAGE_ROW_LIMIT}-row limit`,
+      { banId, rowCount: detail.rowCount },
+    );
   }
 
-  const groups: InvoiceLineGroup[] = [];
-  for (const { source, name } of GROUP_ORDER) {
-    const lines = bySource.get(source);
-    if (!lines || lines.length === 0) continue;
-    const first = lines[0]!;
-    groups.push({
-      name,
-      source,
-      grossTotal: first.groupGrossTotal,
-      discountTotal: first.groupDiscountTotal,
-      subtotal: first.groupNetTotal,
-      lines: lines.map((line) => toInvoiceLine(line, raw.bill)),
-    });
-  }
-  return groups;
-}
-
-function toInvoiceLine(
-  line: RawInvoiceRenderInput["lines"][number],
-  bill: RawInvoiceRenderInput["bill"],
-): InvoiceLine {
-  return {
-    lineNo: line.lineNo,
-    source: line.source,
-    description: line.description ?? line.refProductOfferingId,
-    productOfferingId: line.refProductOfferingId,
-    udrType: line.udrType,
-    udrCount: line.udrCount,
-    periodStart: bill.billingPeriodStart,
-    periodEnd: bill.billingPeriodEnd,
-    quantity: line.quantity ?? line.snapshotQuantity,
-    unit: line.unit,
-    unitPrice: line.snapshotUnitPrice,
-    grossAmount: line.grossAmount,
-    discountAmount: line.discountAmount,
-    netAmount: line.netAmount,
-    discountNote: line.discountRate ? `Discount ${line.discountRate}%` : null,
-  };
-}
-
-// D5 — the rows arrive already ordered `state ASC NULLS LAST, district ASC
-// NULLS LAST, start_datetime, udr_id`, so structuring here preserves that
-// order (the "Unassigned region" group lands last) and does NO money
-// arithmetic — every subtotal was summed in SQL (`listBilledUsageForInvoice`'s
-// GROUPING SETS). Labels: `state ?? 'Unassigned region'`, `district ?? '—'`.
-type UsageRead = Extract<RawInvoiceRenderInput["usage"], { overLimit: false }>;
-type UsageGroup = UsageRead["groups"][number];
-
-// A NULL-safe composite key so a real `state/district IS NULL` group is never
-// confused with a non-null one.
-function groupKey(state: string | null, district: string | null): string {
-  return `${state ?? " "}|${district ?? " "}`;
-}
-
-function grandTotal(usage: UsageRead): string | null {
-  return usage.groups.find((g) => g.gState === 1)?.amount ?? null;
-}
-
-function buildUsageSection(usage: UsageRead): InvoiceUsageSection | null {
-  if (usage.rows.length === 0) return null;
-
-  const grand = usage.groups.find((g) => g.gState === 1);
-  const stateGroups = new Map<string | null, UsageGroup>();
-  const districtGroups = new Map<string, UsageGroup>();
-  for (const g of usage.groups) {
-    if (g.gState === 1) continue;
-    if (g.gDistrict === 1) stateGroups.set(g.state, g);
-    else districtGroups.set(groupKey(g.state, g.district), g);
-  }
-
-  const stateOrder: (string | null)[] = [];
-  const byState = new Map<
-    string | null,
-    Map<string | null, InvoiceUsageRow[]>
-  >();
-  for (const row of usage.rows) {
-    if (!byState.has(row.state)) {
-      byState.set(row.state, new Map());
-      stateOrder.push(row.state);
+  // Each type's Sub Totals by region label, and each type's detail total.
+  const subTotals = new Map<string, Map<string, string>>();
+  const typeTotals = new Map<string, string>();
+  for (const g of detail.groups) {
+    if (g.gRegion === 1) {
+      typeTotals.set(g.offeringId, g.amount);
+    } else if (g.regionLabel !== null) {
+      const byRegion = subTotals.get(g.offeringId) ?? new Map<string, string>();
+      byRegion.set(g.regionLabel, g.amount);
+      subTotals.set(g.offeringId, byRegion);
     }
-    const districts = byState.get(row.state)!;
-    if (!districts.has(row.district)) districts.set(row.district, []);
-    districts.get(row.district)!.push({
-      startDate: row.startDate,
-      cell: row.cell,
-      udrType: row.udrType,
-      quantity: row.quantity,
-      unit: row.unit,
+  }
+
+  const regionsByType = new Map<string, InvoiceCapacityRegion[]>();
+  for (const row of detail.rows) {
+    if (row.polygonId === null) {
+      throw polygonDataMissing(raw, row.udrId, "polygon_id");
+    }
+    if (!row.resourceOk) {
+      throw polygonDataMissing(raw, row.udrId, "udr_resource");
+    }
+    const regions = regionsByType.get(row.offeringId) ?? [];
+    regionsByType.set(row.offeringId, regions);
+    let region = regions.at(-1);
+    if (region?.label !== row.regionLabel) {
+      region = {
+        label: row.regionLabel,
+        rows: [],
+        subTotal: subTotals.get(row.offeringId)?.get(row.regionLabel) ?? "0.00",
+      };
+      regions.push(region);
+    }
+    region.rows.push({
+      polygonStartDate: row.polygonStartDate,
+      polygonName: row.polygonId,
+      capacityMbps: row.capacityMbps,
+      ratePerMbps: row.ratePerMbps,
       amount: row.amount,
     });
   }
 
-  const states = stateOrder.map((state) => {
-    const sg = stateGroups.get(state);
-    const districts = byState.get(state)!;
-    return {
-      state,
-      label: state ?? "Unassigned region",
-      rowCount: sg?.rowCount ?? 0,
-      amount: sg?.amount ?? "0.00",
-      quantity: sg?.quantity ?? null,
-      unit: sg?.unit ?? null,
-      districts: Array.from(districts.entries()).map(([district, rows]) => {
-        const dg = districtGroups.get(groupKey(state, district));
-        return {
-          district,
-          label: district ?? "—",
-          rowCount: dg?.rowCount ?? rows.length,
-          amount: dg?.amount ?? "0.00",
-          quantity: dg?.quantity ?? null,
-          unit: dg?.unit ?? null,
-          rows,
-        };
-      }),
-    };
-  });
+  // D37 — each type's detail total equals Σ `rated_amount` of its capacity
+  // lines; a type with no claimed row has no detail total ("0.00").
+  for (const t of raw.serviceTypes) {
+    const detailTotal = typeTotals.get(t.offeringId) ?? "0.00";
+    if (detailTotal !== t.ratedTotal) {
+      throw new InvoiceRenderError(
+        "INVOICE_RECONCILIATION_FAILED",
+        `customer_bill ${raw.bill.customerBillId}: detail total ${detailTotal} for ${t.offeringId} does not equal its rated_amount ${t.ratedTotal}`,
+        {
+          banId,
+          offeringId: t.offeringId,
+          reason: "DETAIL_DOES_NOT_MATCH_RATED_AMOUNT",
+        },
+      );
+    }
+  }
 
-  return {
-    rowCount: usage.rows.length,
-    totalAmount: grand?.amount ?? "0.00",
-    totalQuantity: grand?.quantity ?? null,
-    unit: grand?.unit ?? null,
-    states,
-  };
+  return regionsByType;
+}
+
+function polygonDataMissing(
+  raw: RawInvoiceRenderInput,
+  udrRatedId: string,
+  missing: "polygon_id" | "udr_resource",
+): InvoiceRenderError {
+  return new InvoiceRenderError(
+    "INVOICE_POLYGON_DATA_MISSING",
+    `customer_bill ${raw.bill.customerBillId}: billed record ${udrRatedId} has no ${missing === "polygon_id" ? "polygon_id= segment in udr_key" : "well-formed udr_resource"}`,
+    { banId: raw.bill.billingAccountId, udrRatedId, missing },
+  );
 }
 
 // The posting instant's calendar day in the app timezone, not UTC — a

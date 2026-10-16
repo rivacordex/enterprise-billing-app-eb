@@ -6,7 +6,7 @@ import type postgresjs from "postgres";
 
 import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
+import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
 
 // bm50-spec §Design D1/D2/D4/D7, Tests — the invoice template catalog on a
 // fresh DB: seed rows, the CHECK family, the three partial unique indexes, the
@@ -18,8 +18,10 @@ const STANDARD = "BTF00000001";
 const databaseUrl = process.env.DATABASE_URL;
 
 const GEN_STRUCTURE = JSON.stringify({
-  sections: Object.fromEntries(INVOICE_SECTION_KEYS.map((k) => [k, true])),
-  columns: Object.fromEntries(INVOICE_COLUMN_KEYS.map((k) => [k, true])),
+  sections: Object.fromEntries(
+    INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
+  ),
+  columns: {},
 });
 
 describe.skipIf(!databaseUrl)(
@@ -181,14 +183,12 @@ describe.skipIf(!databaseUrl)(
         }[]
       >`
         SELECT structure FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
+      // bm71 (D56) — only the optional sections are stored; no columns.
       expect(Object.keys(row!.structure.sections).sort()).toEqual(
-        [...INVOICE_SECTION_KEYS].sort(),
+        [...INVOICE_OPTIONAL_SECTION_KEYS].sort(),
       );
-      expect(Object.keys(row!.structure.columns).sort()).toEqual(
-        [...INVOICE_COLUMN_KEYS].sort(),
-      );
+      expect(row!.structure.columns).toEqual({});
       expect(Object.values(row!.structure.sections).every(Boolean)).toBe(true);
-      expect(Object.values(row!.structure.columns).every(Boolean)).toBe(true);
     });
 
     it("bm64 — refuses a generated version without a family (btv_generated_has_family)", async () => {
@@ -342,9 +342,9 @@ describe.skipIf(!databaseUrl)(
       // allowed (DRAFT -> DRAFT).
       const edited = JSON.stringify({
         sections: Object.fromEntries(
-          INVOICE_SECTION_KEYS.map((k) => [k, k !== "payment"]),
+          INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, k !== "payment"]),
         ),
-        columns: Object.fromEntries(INVOICE_COLUMN_KEYS.map((k) => [k, true])),
+        columns: {},
       });
       await sql`UPDATE billing.bill_template_version SET structure=${edited}::jsonb, last_modified_datetime=now() WHERE bill_template_version_id='BTV00000020'`;
 

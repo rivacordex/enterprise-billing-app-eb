@@ -15,13 +15,18 @@ Every optional key is present with `null`, never `undefined` (Handlebars
 
 ## A. Placeholder roots
 
-**Final for v1 (bm63 ship gate, 2026-10-11).** These thirteen roots are exactly
-the keys of `InvoiceRenderInput`: `template`, `company`, `payment`, `invoice`,
-`customer`, `totals`, `taxes`, `chargeSummary`, `lineGroups`, `usage`, `isDraft`,
-`locale`, `timezone`. The CSV column map (bm62) may address these roots plus
-`line` (the current `customer_bill_line`), and `csvColumnMapSchema`
+**As of bm71 (Invoice Template Phase 3, 2026-10-16).** These thirteen roots are
+exactly the keys of `InvoiceRenderInput`: `template`, `company`, `payment`,
+`invoice`, `customer`, `totals`, `taxes`, `taxRateLabel`, `serviceTypes`,
+`otherCharges`, `isDraft`, `locale`, `timezone`. bm70 replaced `chargeSummary` with
+`serviceTypes`/`otherCharges`/`taxRateLabel`; bm71 removed `lineGroups` (the old line
+table) and `usage` (the usage annex). The CSV column map (bm62) may address
+`template`, `company`, `payment`, `invoice`, `customer`, `totals`, `taxes`,
+`isDraft`, `locale`, `timezone` plus `line` (the current `customer_bill_line`, built
+by `invoice-csv.ts` from the bill's lines), and `csvColumnMapSchema`
 (`services/billing/invoice-template/load.ts`, `CSV_PATH_ROOTS`) rejects any other
-root at load. A new root is a spec change to this file and the type together.
+root at load (the CSV is unchanged by Phase 3). A new root is a spec change to
+this file and the type together.
 
 | Root | Shape | Notes |
 | --- | --- | --- |
@@ -30,17 +35,19 @@ root at load. A new root is a spec change to this file and the type together.
 | `payment.*` | `InvoicePayment \| null` | `null` when no profile resolves (G15 A). Fields: `bankName`, `accountName`, `accountNo`, `swift`, `jomPayBillerCode` (`null` when blank), `remittanceEmail`. |
 | `invoice.*` | — | `number` (`null` on draft → "— pending posting —"), `isDraft`, `date` (posting date, `null` on draft), `periodStart`/`periodEnd`, `dueDate`, `paymentTermsDays` (bm53 — the profile's `payment_terms_days`, `null` without a profile; no billing-account override column exists yet), `currency`, `billRunId`, `cycleName`, `billRef` (= `customer_bill_id`), `poRef`/`contractRef` (always `null` — G9 interim). |
 | `customer.*` | — | `billingAccountId`, `name`, `tradingName`, `registrationNo`, `tin`, `sstRegNo` (always `null` — G9), `address`, `email`, `phone`. |
-| `totals.*` | — | `grossTotal`, `discountTotal`, `subtotalExclTax`, `taxTotal`, `totalAmount`, `amountDue` (= `totalAmount` — Inv #50, current charges only, no balance brought forward). All SQL strings. |
+| `totals.*` | — | `grossTotal`, `discountTotal`, `subtotalExclTax`, `taxTotal`, `totalAmount`, `amountDue` (= `totalAmount` — Inv #50, current charges only, no balance brought forward), and (bm70) `totalCharges` (= subtotal), `adjustments`, `otherChargesSubTotal`. All SQL strings. |
 | `taxes[]` | `{ category, rate, amount }[]` | Bill-level only (Inv #50) — no per-line tax. |
-| `chargeSummary[]` | `{ name, source, amount }[]` | One row per present `lineGroups` entry. |
-| `lineGroups[]` | `InvoiceLineGroup[]` | Fixed order `RECURRING → USAGE → OCC`; a group with no lines is omitted. Each line: `lineNo`, `source`, `description`, `productOfferingId`, `udrType`, `udrCount`, `periodStart`/`periodEnd` (the bill's period — lines carry no own period in v1), `quantity`, `unit`, `unitPrice`, `grossAmount`, `discountAmount`, `netAmount`, `discountNote`. |
-| `usage.*` | `InvoiceUsageSection \| null` | **Replaces the pre-bm47 `annex.*` root.** `null` when the bill has no billed usage rows, or when the annex section is hidden (`includeUsage: false`, D4). Shape (bm49): `rowCount`, `totalAmount`, `totalQuantity` (`null` when units mixed), `unit` (homogeneous grand-total unit or `null`), `states[]`. Each `states[]` entry: `state` (`null` = "Unassigned region"), `label`, `rowCount`, `amount`, `quantity`/`unit` (single-unit subtotal or `null`), `districts[]`. Each `districts[]` entry: `district` (`null` → label "—"), `label`, `rowCount`, `amount`, `quantity`/`unit`, `rows[]`. Each `rows[]` entry: `startDate`, `cell`, `udrType`, `quantity`, `unit`, `amount`. **Source (bm49):** every billed `udr_rated` row for the account read off `rating.udr_rated` (geo from `state`/`district`, bm48/R9) — no longer the bm45 `additional_info.appendix` snapshot. |
+| `taxRateLabel` | `string` | bm70 (D15): `taxes[0]?.rate ?? "0"`, printed as "Tax @ {{taxRateLabel}}%". |
+| `serviceTypes[]` | `InvoiceServiceType[]` | bm70: one per capacity type of service (capacity line offering), sorted by label: `offeringId`, `label`, `utilised`, `unutilised`, `total` (SQL strings, Inv #55). bm71: `regions[]`, the detail pages — each `{ label, rows[], subTotal }`, `label` = `STATE - DISTRICT`, the one part present, or "Unassigned region" (last); each row `{ polygonStartDate, polygonName, capacityMbps, ratePerMbps, amount }`. `regions` is `[]` for a type with no claimed row. **Source (bm71, Inv #56):** the live `udr_rated` query (`listCapacityDetailForInvoice`): polygon from the `polygon_id=` segment of `udr_key`, State/District/start date from `udr_resource`; reconciled per type to Σ `rated_amount`. |
+| `otherCharges[]` | `{ description, amount }[]` | bm70 (D47): one row per non-capacity charge line, in `line_no` order; the block is absent when empty. |
 | `isDraft` / `locale` / `timezone` | — | Also mirrored inside `invoice.isDraft`; kept at the root too since helpers read `locale`/`currency` from `options.data.root` directly. |
 
 **Removed, never reintroduce without a spec change:**
 
 - `accountSummary.*` — dropped in v1 (R2, no balance-brought-forward feature).
 - `invoice.einvoice.*` — no MyInvois/UBL XML in v1 (R3).
+- `chargeSummary[]` — replaced by `serviceTypes`/`otherCharges` (bm70).
+- `lineGroups[]` and `usage.*` — the old line table and the usage annex (bm71, D34/D56). The CSV keeps its `line.*` row scope (`InvoiceLine`).
 
 ## B. Field formats
 
@@ -73,15 +80,16 @@ output contains no `[[` and no `]]` (Inv #46). (bm55-spec cites this section as
 | Directive | Resolution (as built, bm55) |
 | --- | --- |
 | `[[body]]` | Exactly once, in `shell.hbs` only (anywhere else, or a count ≠ 1, fails). Replaced by the visible partials in **manifest `sections` key order** (`header` first), each inserted as authored, indented to the `[[body]]` column and separated by one blank line. Each partial carries its own `<section class="sec sec--{key} sec--half\|full">` wrapper; the generator adds none. A half-width section widens to `sec--full` only when its **layout pair partner** (the adjacent half section in the all-shown order) is hidden; a half section authored without a partner keeps `sec--half`. |
-| `[[if sections.<key>]] … [[/if]]` / `[[if columns.<key>]] … [[/if]]` | Keeps the body when the flag is `true`, otherwise drops it **entirely** (Styling rule 5). The key must be an `InvoiceSectionKey` / `InvoiceColumnKey`. **No `[[else]]` and no nesting**: an `[[if]]` inside an open `[[if]]` fails, as does an unclosed `[[if]]` or a stray `[[/if]]`. |
-| `[[num colCount]]` | `6 + showServicePeriod + showDiscountColumn + showProductId + showUdrCount`. The six fixed columns are `#, Description, Quantity, Unit price, Gross, Net amount`. (The spec's draft formula counted only two optional columns; the seeded v1 renders `colspan="10"` with all four shown.) |
-| `[[num subtotalSpan]]` | `colCount − 2 − showDiscountColumn`: the cells left of Gross (and Discount, when shown). The seeded v1 renders `7`. |
-| `[[num totalSpan]]` | `colCount − 3 − showDiscountColumn` (the spec formula over the corrected `colCount`). Layout v1 does not use it. |
+| `[[if sections.<key>]] … [[/if]]` | Keeps the body when the flag is `true`, otherwise drops it **entirely** (Styling rule 5). The key must be an optional section (`InvoiceOptionalSectionKey`: `payment`, `notes` as of bm71). **No `[[else]]` and no nesting**: an `[[if]]` inside an open `[[if]]` fails, as does an unclosed `[[if]]` or a stray `[[/if]]`. |
+
+**Retired by bm71 (D56):** `[[if columns.<key>]]` and the `[[num colCount|subtotalSpan|totalSpan]]` colspan formulas served only the old line table; both are now unknown directives.
 
 Any unknown directive, unknown key, or a violation of the rules above throws
-`TEMPLATE_GENERATION_FAILED` with `detail: { directive, file }`. A structure that
-hides a mandatory section is refused by the Zod schema (`MANDATORY_SECTION_HIDDEN`),
-and the generator re-asserts that rule. Output uses LF line endings, and
+`TEMPLATE_GENERATION_FAILED` with `detail: { directive, file }`. Since bm71 the
+`structure` stores only the optional sections (`{ sections: { payment, notes },
+columns: {} }`, strict): a mandatory section is always generated, and a structure
+naming one is refused by the Zod schema. The manifest is parsed with
+`validation/billing/layout-manifest.schema.ts` (D38). Output uses LF line endings, and
 directives are removed in place with no reflow.
 
 **Preview-only annotation.** `generate(…, { annotate: true })` is used by the

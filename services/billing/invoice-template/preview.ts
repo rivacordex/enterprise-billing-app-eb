@@ -149,7 +149,6 @@ async function previewSample(
       isDraft: true,
       paymentTermsDays: profile?.paymentTermsDays ?? null,
     },
-    usage: structure.sections.usageAnnex ? sample.usage : null,
     isDraft: true,
     locale,
     timezone: getAppTimezone(),

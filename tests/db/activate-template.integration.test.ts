@@ -20,7 +20,7 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
+import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
 
 // bm58-spec §Tests (+ guardrail 53): activate the working draft on a real
 // database and a real Azurite. Success writes a content-addressed, checksum-
@@ -63,10 +63,12 @@ const SEED_LAYOUT_DIR = path.join(
 function structure(overrides: { notes?: boolean; payment?: boolean } = {}) {
   return {
     sections: {
-      ...Object.fromEntries(INVOICE_SECTION_KEYS.map((k) => [k, true])),
+      ...Object.fromEntries(
+        INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
+      ),
       ...overrides,
     },
-    columns: Object.fromEntries(INVOICE_COLUMN_KEYS.map((k) => [k, true])),
+    columns: {},
   } as Parameters<typeof saveTemplateDraft>[0]["structure"];
 }
 

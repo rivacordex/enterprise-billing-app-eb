@@ -14,7 +14,7 @@ import type postgresjs from "postgres";
 
 import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
+import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
 
 // bm57-spec §Tests: save-draft on a real database. The first save inserts the
 // working DRAFT as v2 (the next after the default v1) with a structure and no
@@ -46,10 +46,12 @@ const ACTOR = "bm57-actor";
 function structure(overrides: { payment?: boolean; notes?: boolean } = {}) {
   return {
     sections: {
-      ...Object.fromEntries(INVOICE_SECTION_KEYS.map((k) => [k, true])),
+      ...Object.fromEntries(
+        INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
+      ),
       ...overrides,
     },
-    columns: Object.fromEntries(INVOICE_COLUMN_KEYS.map((k) => [k, true])),
+    columns: {},
   } as Parameters<typeof saveTemplateDraft>[0]["structure"];
 }
 
@@ -299,15 +301,17 @@ describe.skipIf(!databaseUrl)(
       }
     });
 
-    it("refuses a hidden mandatory section even when called directly, writing nothing", async () => {
+    it("refuses a mandatory section key even when called directly, writing nothing", async () => {
+      // bm71 (D56) — mandatory sections are not part of the stored structure,
+      // so the strict schema refuses the key outright.
       const crafted = structure();
-      crafted.sections.billTo = false;
+      (crafted.sections as Record<string, boolean>).billTo = false;
       expect(
         await saveTemplateDraft(
           { structure: crafted, expectedDraftToken: null },
           ACTOR,
         ),
-      ).toEqual({ ok: false, code: "MANDATORY_SECTION_HIDDEN" });
+      ).toEqual({ ok: false, code: "VALIDATION_ERROR" });
       const drafts = await sql`
         SELECT 1 FROM billing.bill_template_version WHERE status = 'DRAFT'`;
       expect(drafts).toHaveLength(0);

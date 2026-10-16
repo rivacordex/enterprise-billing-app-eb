@@ -15,11 +15,15 @@
 //     `--text-muted`; the label stays `--text-body`, so a locked-on section
 //     never looks switched off;
 //   - read-only (a READ user, or a non-current version opened from history):
-//     sections/columns render as text "Shown"/"Hidden" with no grey wash —
+//     sections render as text "Shown"/"Hidden" with no grey wash —
 //     the placeholder/outline toggles and the source select still drive the
 //     preview;
 //   - the source select offers the layout's sample bill and, only for a
 //     `billrun_view` holder, the most recent posted bills.
+//
+// bm71 (D56): the Usage annex row and the charge-detail column toggles are
+// gone with the old line table; only Payment information and Notes & terms
+// are toggles, the rest are locked mandatory rows.
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -37,9 +41,9 @@ import {
   type ActivateConfirmResult,
 } from "@/components/billing/invoice-settings/activate-version-dialog";
 import {
-  COLUMN_LABELS,
   SECTION_ROWS,
   describeStructureChanges,
+  isOptionalSection,
 } from "@/components/billing/invoice-settings/structure-labels";
 import {
   InvoicePreviewFrame,
@@ -58,23 +62,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import {
-  INVOICE_COLUMN_KEYS,
-  INVOICE_OPTIONAL_SECTION_KEYS,
-  type InvoiceColumnKey,
-  type InvoiceSectionKey,
-  type InvoiceTemplateStructure,
-  type RecentPostedBill,
+import type {
+  InvoiceOptionalSectionKey,
+  InvoiceTemplateStructure,
+  RecentPostedBill,
 } from "@/types/billing";
 
 const SAMPLE = "sample";
 const DEBOUNCE_MS = 400;
 // ui-context §6c — past a normal render window the caption reads "Queued".
 const QUEUED_HINT_DELAY_MS = 2_500;
-
-function isOptional(key: InvoiceSectionKey): boolean {
-  return (INVOICE_OPTIONAL_SECTION_KEYS as readonly string[]).includes(key);
-}
 
 interface PreviewState {
   status: PreviewStatus;
@@ -316,14 +313,9 @@ export function InvoiceStructureForm({
     return { ok: false, message: activateMessage(result) };
   }
 
-  function toggleSection(key: InvoiceSectionKey, value: boolean): void {
+  function toggleSection(key: InvoiceOptionalSectionKey, value: boolean): void {
     markLoading();
     setStructure((s) => ({ ...s, sections: { ...s.sections, [key]: value } }));
-  }
-
-  function toggleColumn(key: InvoiceColumnKey, value: boolean): void {
-    markLoading();
-    setStructure((s) => ({ ...s, columns: { ...s.columns, [key]: value } }));
   }
 
   return (
@@ -334,7 +326,9 @@ export function InvoiceStructureForm({
             Sections
           </legend>
           {SECTION_ROWS.map(({ key, label }) => {
-            const optional = isOptional(key);
+            const optional = isOptionalSection(key);
+            // A mandatory section is always shown and is not stored.
+            const shown = optional ? structure.sections[key] : true;
             const id = `section-${key}`;
             return (
               <div
@@ -346,9 +340,11 @@ export function InvoiceStructureForm({
                   <div className="flex items-center gap-2">
                     <Checkbox
                       id={id}
-                      checked={structure.sections[key]}
+                      checked={shown}
                       disabled={!optional}
-                      onCheckedChange={(v) => toggleSection(key, v === true)}
+                      onCheckedChange={(v) => {
+                        if (optional) toggleSection(key, v === true);
+                      }}
                     />
                     <Label
                       htmlFor={id}
@@ -366,7 +362,7 @@ export function InvoiceStructureForm({
                     <RequiredMark />
                   </span>
                 ) : editable ? null : (
-                  <ReadOnlyValue shown={structure.sections[key]} />
+                  <ReadOnlyValue shown={shown} />
                 )}
                 {hiddenErrors.has(key) ? (
                   <p
@@ -376,49 +372,6 @@ export function InvoiceStructureForm({
                     This section is required and cannot be hidden.
                   </p>
                 ) : null}
-              </div>
-            );
-          })}
-        </fieldset>
-
-        <fieldset className="space-y-3 rounded-md border border-border bg-card p-4">
-          <legend className="px-1 text-overline font-semibold tracking-wider text-muted-foreground uppercase">
-            Charge-detail columns
-          </legend>
-          <p className="text-caption text-muted-foreground">
-            Always shown: #, Description, Quantity, Unit price, Gross, Net
-            amount.
-          </p>
-          {INVOICE_COLUMN_KEYS.map((key) => {
-            const id = `column-${key}`;
-            return (
-              <div
-                key={key}
-                className="flex items-center justify-between gap-3"
-                data-testid={id}
-              >
-                {editable ? (
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id={id}
-                      checked={structure.columns[key]}
-                      onCheckedChange={(v) => toggleColumn(key, v === true)}
-                    />
-                    <Label
-                      htmlFor={id}
-                      className="text-body-sm text-foreground"
-                    >
-                      {COLUMN_LABELS[key]}
-                    </Label>
-                  </div>
-                ) : (
-                  <>
-                    <span className="text-body-sm text-foreground">
-                      {COLUMN_LABELS[key]}
-                    </span>
-                    <ReadOnlyValue shown={structure.columns[key]} />
-                  </>
-                )}
               </div>
             );
           })}
