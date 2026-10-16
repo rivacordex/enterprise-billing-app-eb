@@ -557,7 +557,7 @@ describe.skipIf(
     const dialog = page.getByRole("dialog");
     await dialog
       .getByRole("note")
-      .getByText(/Bank details change on every new invoice/)
+      .getByText(/Bank details change for bill runs started from now on/)
       .waitFor();
     await confirmWithNote(page, "e2e: first profile", "Activate v1");
     await page.getByText("Company profile v1 activated").waitFor();

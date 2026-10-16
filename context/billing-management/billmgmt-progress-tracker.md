@@ -39,7 +39,44 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
 | bm64 | Standard template family in the catalog (`bill_template_family`, `0046` edited in place per D26) | **Built** (2026-10-15, `0e65a57`) — tsc/ESLint/Prettier clean; unit 4593/0; integration 1239/0 (110 skipped); `db:setup` chain ×2 on a fresh disposable DB OK; checklist queries match |
 | bm65 | Template captured at run start and on rerun (`bill_run_account` stamps, migration `0051`) | **Built** (2026-10-15, `9e399b7`) — tsc/ESLint/Prettier clean; unit 4596/0; integration 1245/0 (110 skipped). Code-review findings (xhigh) held pending owner decisions |
 | bm66 | Draft PRO-FORMA renders from the captured template (`RenderMode` run / preview-family, draft route 422) | **Built** (2026-10-16, `4139f02`) — tsc/ESLint/Prettier clean; unit 4615/0; integration 1248/0 (110 skipped) |
-| bm67 | Posted invoices use the captured template (`stampPosted` copies run stamps + family, migration `0052`, NULL-stamp skip) | **Built, awaiting review/commit — full integration run still owed** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4615/0; the 7 affected integration suites 58/0 (posting-skips-null-template, invoice-version-pinning, customer-bill-stamps, draft-uses-run-stamps, invoice-default-resolution, invoice-checksum-tamper, billrun-db-roles). The full integration run was stopped by the host for low memory before it reported; re-run it before commit |
+| bm67 | Posted invoices use the captured template (`stampPosted` copies run stamps + family, migration `0052`, NULL-stamp skip) | **Built** (2026-10-16, `976d2ca`) — tsc/ESLint/Prettier clean; unit 4615/0; full integration run completed with the review fixes below (1254/0, 110 skipped) |
+
+| bm64–67 review fixes | Fixes from the xhigh (bm65) and max (bm65–bm67) code reviews, all items | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4630/0; full integration 1256/0 (110 skipped, run in four foreground chunks); known-issues §24 RESOLVED |
+
+**bm65–bm67 review fixes (2026-10-16):** owner decisions: a blocking approval gate (D58a),
+defer the skip audit row, edit `0051` in place, fix both UI items.
+
+- **D58a (owner):** blocking `template_versions_captured` pre-approval check
+  (`billRunAccountRepository.countMissingTemplateVersion`, PROCESSED accounts with a NULL
+  captured version); the D58 posting skip stays as the backstop. Recorded in the plan (D58a),
+  architecture Inv #58.
+- `0051` edited in place: `template_captured_at timestamptz(3)` (D26 round, owner-approved).
+- Draft 422 copy scoped by reason (`describeInvoiceRenderCode(code, reason)`; the modal shows the
+  route's message); an uncaptured row throws `TEMPLATE_NOT_CAPTURED` (generic text); `run` mode
+  carries `banId` for the TS rule 8 detail.
+- Editor-preview race: the override path refuses a bill posted inside the binder's snapshot.
+- Activation copy: "Activating changes the invoices of bill runs started from now on…"; bank
+  warning "Bank details change for bill runs started from now on."; history caption "In use for
+  new runs" (components, e2e/component tests, UI context).
+- Posting progress lists posting-time skips (`POSTING_SKIP_CODES`) with a neutral Skipped badge
+  and reason, counted apart (`skippedCount`).
+- cm22 guardrail: the exemption is now the `listBanFamilies` function body only; the rest of the
+  file is held to the pairing rule (mutation-checked).
+- Cleanups: `listBanFamilies` ordered by BAN; the lock read drops the always-NULL bill stamps;
+  `stampPosted` takes the derived `PostingTemplateStamps`; stale `btv_one_active_uq` comments.
+- Tests: pre-approval check unit + DB case, capture-service unit test, engine-failure rollback,
+  `timestamptz(3)` precision, column-level grant checks (`bill_run_account` stamps,
+  `customer_bill.ref_bill_template_family_id`), message/route/modal/posting-progress/build cases.
+- Second pass (owner: "fix all the rest"): every §24 item (a–i) fixed — the
+  `BILL_RUN_ACCOUNT_SKIPPED` audit event on both posting skips; capture pruned to the run's
+  partition (new `periodPartition` argument); family-scoped generated reads (save-draft, page,
+  activation retires only within the draft's family); retired/missing families unusable; a
+  NULL family + version for an unresolvable BAN (corrupted catalog or a non-generated
+  reference); `statement_timestamp()`; `toInvoiceRenderResponse` in `lib/http.ts`; Danger
+  `-fg` modal text; CSV/profile read once per run (`resolveSharedCurrentVersions`,
+  `resolveGeneratedForFamily`; `*InFamily` finders removed; guardrail 57 covers all live
+  resolvers). Docs: D35, bm00 §65 and code-standards General rule 2 now say capture runs before
+  the rerun audit with `(tx, billRunId, banIds, periodPartition)`.
 
 **bm67 notes (2026-10-16):**
 

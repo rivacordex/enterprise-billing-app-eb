@@ -169,6 +169,26 @@ describe("GET /billing/bill-runs/[runId]/draft-invoice/[banId]", () => {
     expect(JSON.stringify(body)).not.toContain("BTF00000099");
   });
 
+  it("review fix — a TEMPLATE_VERSION_NOT_FOUND with another cause gets the generic text, not the activate-and-rerun copy", async () => {
+    mockRenderDraftInvoice.mockRejectedValue(
+      new InvoiceRenderError(
+        "TEMPLATE_VERSION_NOT_FOUND",
+        "generated template blob missing",
+        { versionId: "BTV00000002" },
+      ),
+    );
+
+    const response = await GET({} as never, ctx());
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "TEMPLATE_VERSION_NOT_FOUND",
+        message: "Could not render the draft invoice. Please try again.",
+      },
+    });
+  });
+
   it("streams the PDF inline with a DRAFT-<ban> filename for a granted, well-formed request", async () => {
     const response = await GET({} as never, ctx("BRN00000042", "BAN00000001"));
 
