@@ -59,6 +59,7 @@ import {
   type ResolvedTemplate,
 } from "@/types/billing";
 import { SEEDED_GENERATED_ROW } from "@/tests/helpers/seeded-invoice-template";
+import { invoiceRenderInputFixture } from "@/tests/helpers/invoice-render-input-fixtures";
 
 const SEEDED_MAP: CsvColumnMap = csvColumnMapSchema.parse(
   JSON.parse(
@@ -101,56 +102,24 @@ function line(
 function input(
   overrides: Partial<InvoiceRenderInput> = {},
 ): InvoiceRenderInput {
+  const base = invoiceRenderInputFixture();
   return {
-    template: { layoutCode: "INVTPL-STD-A4", layoutVersion: 1, version: 1 },
-    company: null,
-    payment: null,
+    ...base,
     invoice: {
+      ...base.invoice,
       number: "INV00000007",
-      isDraft: false,
       date: "2026-10-01",
       periodStart: "2026-09-01",
       periodEnd: "2026-09-30",
       dueDate: "2026-10-31",
-      paymentTermsDays: null,
-      currency: "MYR",
       billRunId: "BRN00000001",
       cycleName: "Monthly",
-      billRef: "CBL00000001",
-      poRef: null,
-      contractRef: null,
     },
-    customer: {
-      billingAccountId: "BAN00000001",
-      recipientName: null,
-      name: "Acme Sdn Bhd",
-      tradingName: null,
-      registrationNo: null,
-      tin: null,
-      sstRegNo: null,
-      address: null,
-      email: null,
-      phone: null,
-    },
-    totals: {
-      grossTotal: "0.00",
-      discountTotal: "0.00",
-      subtotalExclTax: "0.00",
-      taxTotal: "0.00",
-      totalAmount: "0.00",
-      amountDue: "0.00",
-      totalCharges: "0.00",
-      adjustments: "0.00",
-      otherChargesSubTotal: "0.00",
-    },
-    taxes: [],
-    taxRateLabel: "0",
-    serviceTypes: [],
-    otherCharges: [],
-    lineGroups: [],
-    usage: null,
-    isDraft: false,
-    locale: "en-MY",
+    customer: { ...base.customer, name: "Acme Sdn Bhd" },
+    // Every total RM0.00.
+    totals: Object.fromEntries(
+      Object.keys(base.totals).map((k) => [k, "0.00"]),
+    ) as InvoiceRenderInput["totals"],
     timezone: "Asia/Kuala_Lumpur",
     ...overrides,
   };

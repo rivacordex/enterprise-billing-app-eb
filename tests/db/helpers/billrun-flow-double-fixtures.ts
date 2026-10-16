@@ -1,8 +1,10 @@
 import { and, asc, eq } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/postgres-js";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import type postgresjs from "postgres";
 
-import type * as schema from "@/db/schema";
+import * as schema from "@/db/schema";
+import { appuser } from "@/db/schema/identity";
 import { organization, partyRole } from "@/db/schema/customer";
 import { billCycle } from "@/db/schema/billing/catalogs";
 import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
@@ -33,6 +35,20 @@ export interface FlowDoubleFixturesDeps {
   readonly scheduledRunDate?: string;
 }
 
+export async function dropFlowDoubleSchemas(
+  client: postgresjs.Sql,
+): Promise<void> {
+  await client.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
+  await client.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
+  await client.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
+  await client.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
+  await client.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
+  await client.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
+  await client.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
+  await client.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
+  await client.unsafe('DROP SCHEMA IF EXISTS "partman" CASCADE');
+}
+
 export function createFlowDoubleFixtures(deps: FlowDoubleFixturesDeps) {
   const {
     sql,
@@ -45,17 +61,7 @@ export function createFlowDoubleFixtures(deps: FlowDoubleFixturesDeps) {
   } = deps;
   const scheduledRunDate = deps.scheduledRunDate ?? "2026-07-01";
 
-  async function dropAll(client: postgresjs.Sql): Promise<void> {
-    await client.unsafe('DROP SCHEMA IF EXISTS "inventory" CASCADE');
-    await client.unsafe('DROP SCHEMA IF EXISTS "ordering" CASCADE');
-    await client.unsafe('DROP SCHEMA IF EXISTS "billing" CASCADE');
-    await client.unsafe('DROP SCHEMA IF EXISTS "customer" CASCADE');
-    await client.unsafe('DROP SCHEMA IF EXISTS "product" CASCADE');
-    await client.unsafe('DROP SCHEMA IF EXISTS "rating" CASCADE');
-    await client.unsafe('DROP SCHEMA IF EXISTS "core" CASCADE');
-    await client.unsafe('DROP SCHEMA IF EXISTS "drizzle" CASCADE');
-    await client.unsafe('DROP SCHEMA IF EXISTS "partman" CASCADE');
-  }
+  const dropAll = dropFlowDoubleSchemas;
 
   async function newAccount(label: string, currency = "MYR"): Promise<string> {
     const actorId = getActorId();
@@ -222,4 +228,56 @@ export function createFlowDoubleFixtures(deps: FlowDoubleFixturesDeps) {
     readBill,
     readLines,
   };
+}
+
+// The flow-double suites' beforeAll (bm70 — factored out of
+// invoice-capacity-summary.integration.test.ts, additive like the builder
+// above): drop + migrate a fresh DB, create `billrun_delete_trial_bill` (it
+// lives in db/bootstrap/billrun-db-roles.sql, not a migration, and the
+// aggregation calls it), then insert the fixture operator and bill cycle.
+export async function bootstrapFlowDoubleDatabase(
+  sql: postgresjs.Sql,
+  labelPrefix: string,
+): Promise<{
+  db: ReturnType<typeof drizzle<typeof schema>>;
+  actorId: string;
+  cycleId: string;
+}> {
+  const db = drizzle(sql, { schema });
+  await dropFlowDoubleSchemas(sql);
+  await migrate(db, {
+    migrationsFolder: "./db/migrations",
+    migrationsSchema: "drizzle",
+  });
+
+  await sql.unsafe(`
+    CREATE OR REPLACE FUNCTION "billing".billrun_delete_trial_bill(p_run text, p_ban text)
+    RETURNS integer LANGUAGE sql SECURITY DEFINER SET search_path = billing AS $$
+      WITH d AS (
+        DELETE FROM billing.customer_bill
+         WHERE ref_bill_run_id = p_run
+           AND ref_billing_account_id = p_ban
+           AND ref_inv_document_id IS NULL
+        RETURNING 1
+      )
+      SELECT count(*)::integer FROM d;
+    $$;
+  `);
+
+  const [actor] = await db
+    .insert(appuser)
+    .values({
+      id: crypto.randomUUID(),
+      userName: `${labelPrefix}-fixture-operator`,
+      userEmail: `${crypto.randomUUID()}@example.invalid`,
+      emailVerified: false,
+      authMethod: "LOCAL",
+      status: "ACTIVE",
+    })
+    .returning({ id: appuser.id });
+  const [cycle] = await db
+    .insert(billCycle)
+    .values({ name: `${labelPrefix} Fixture Cycle`, lastEditedBy: null })
+    .returning({ billCycleId: billCycle.billCycleId });
+  return { db, actorId: actor!.id, cycleId: cycle!.billCycleId };
 }

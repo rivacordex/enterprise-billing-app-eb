@@ -4,67 +4,12 @@ import { compileInvoiceTemplate } from "@/services/billing/invoice-template/comp
 import { KNOWN_HELPERS } from "@/services/billing/invoice-template/helpers";
 import { InvoiceRenderError } from "@/types/billing";
 import type { InvoiceRenderInput } from "@/types/billing";
+import { invoiceRenderInputFixture } from "@/tests/helpers/invoice-render-input-fixtures";
 
 // bm47-spec §Design D6, test plan row 2. Each of the nine helpers, compiled
 // through the real locked-down env (`knownHelpersOnly`, `strict`).
 
-function fixture(
-  overrides: Partial<InvoiceRenderInput> = {},
-): InvoiceRenderInput {
-  return {
-    template: { layoutCode: "INVTPL-STD-A4", layoutVersion: 1, version: 1 },
-    company: null,
-    payment: null,
-    invoice: {
-      number: "INV00000001",
-      isDraft: false,
-      date: "2026-09-05",
-      periodStart: "2026-08-01",
-      periodEnd: "2026-08-31",
-      dueDate: "2026-09-15",
-      paymentTermsDays: null,
-      currency: "MYR",
-      billRunId: "BRN00000042",
-      cycleName: "Enterprise Monthly",
-      billRef: "CBL00000001",
-      poRef: null,
-      contractRef: null,
-    },
-    customer: {
-      billingAccountId: "BAN00000001",
-      recipientName: null,
-      name: "Acme",
-      tradingName: null,
-      registrationNo: null,
-      tin: null,
-      sstRegNo: null,
-      address: null,
-      email: null,
-      phone: null,
-    },
-    totals: {
-      grossTotal: "100.00",
-      discountTotal: "0.00",
-      subtotalExclTax: "100.00",
-      taxTotal: "0.00",
-      totalAmount: "100.00",
-      amountDue: "100.00",
-      totalCharges: "100.00",
-      adjustments: "0.00",
-      otherChargesSubTotal: "0.00",
-    },
-    taxes: [],
-    taxRateLabel: "0",
-    serviceTypes: [],
-    otherCharges: [],
-    lineGroups: [],
-    usage: null,
-    isDraft: false,
-    locale: "en-MY",
-    timezone: "UTC",
-    ...overrides,
-  };
-}
+const fixture = invoiceRenderInputFixture;
 
 function render(source: string, data: InvoiceRenderInput): string {
   return compileInvoiceTemplate(source)(data);

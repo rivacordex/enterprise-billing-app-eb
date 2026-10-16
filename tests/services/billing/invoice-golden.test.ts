@@ -25,7 +25,7 @@ import type { InvoiceRenderInput } from "@/types/billing";
 // own `sample-data.json` is executed through the default generated template
 // that layout ships with (the immutable seeded bytes), and the HTML is
 // compared with a committed file under `tests/fixtures/invoice-golden/`.
-// `@font-face` source data is stripped and whitespace normalised, so the
+// `@font-face` source data is stubbed out and whitespace normalised, so the
 // snapshot pins the markup, not font bytes or indentation. A new layout
 // version adds its own directory here and gets its own golden file.
 const SEEDS = join(__dirname, "../../../db/seeds/invoice-templates");
@@ -38,13 +38,15 @@ const LAYOUT_VERSIONS = [
 
 function normalise(html: string): string {
   // Data URIs first: an embedded font's `src: url(data:font/woff2;base64,…)`
-  // has a `;` inside it, which would stop the `src:` strip early (bm70).
+  // has a `;` inside it, which would stop the `src:` strip early (bm70). The
+  // stub is a valid `src` value so the golden file stays parseable CSS (Sonar
+  // css:S4654 flags a bare placeholder as an unknown descriptor value).
   return html
     .replace(
       /data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi,
       "data:<stripped>",
     )
-    .replace(/(@font-face\s*\{[^}]*?src:)[^;}]*/g, "$1 <stripped>")
+    .replace(/(@font-face\s*\{[^}]*?src:)[^;}]*/g, '$1 local("stripped")')
     .replace(/>\s+</g, ">\n<")
     .replace(/[ \t]+/g, " ")
     .replace(/\n\s+/g, "\n")

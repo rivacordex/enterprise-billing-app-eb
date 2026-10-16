@@ -3,106 +3,13 @@ import { describe, expect, it } from "vitest";
 import { bind } from "@/services/billing/invoice-template/bind";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 import { FinalInvoiceNotFoundError, InvoiceRenderError } from "@/types/billing";
+import { rawInvoiceRenderInputFixture } from "@/tests/helpers/invoice-render-input-fixtures";
 
 // bm47-spec §Design D2/D3/D4/D5 + bm49-spec §Design D3/D4/D5/D6 + bm70-spec
 // §6, test plan rows. Pure, DB-free — `bind()` takes no DB/Handlebars/next
 // import.
 
-function rawInput(
-  overrides: Partial<RawInvoiceRenderInput> = {},
-): RawInvoiceRenderInput {
-  return {
-    bill: {
-      customerBillId: "CBL00000001",
-      periodPartition: "2026-08-01",
-      billingAccountId: "BAN00000001",
-      currency: "MYR",
-      billingPeriodStart: "2026-08-01",
-      billingPeriodEnd: "2026-08-31",
-      paymentDueDate: "2026-09-15",
-      subtotal: "150.00",
-      taxTotal: "0.00",
-      totalAmount: "150.00",
-      linesNetSum: "150.00",
-      grossTotal: "150.00",
-      discountTotal: "0.00",
-      usageRatedTotal: "0.00",
-      // Both fixture lines are non-capacity charges (no `:CAPACITY:` key).
-      otherChargesSubTotal: "150.00",
-      adjustments: "0.00",
-      summaryBlocksSum: "150.00",
-    },
-    run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
-    lines: [
-      {
-        lineNo: 1,
-        source: "RECURRING",
-        lineType: "charge",
-        description: "Enterprise Fibre 1Gbps",
-        refProductOfferingId: "POF00000010",
-        udrType: null,
-        udrCount: null,
-        quantity: "1.000000",
-        unit: "EA",
-        snapshotQuantity: "1.000000",
-        snapshotUnitPrice: "50.00",
-        grossAmount: "50.00",
-        discountAmount: "0.00",
-        netAmount: "50.00",
-        discountRate: null,
-        groupGrossTotal: "50.00",
-        groupDiscountTotal: "0.00",
-        groupNetTotal: "50.00",
-      },
-      {
-        lineNo: 2,
-        source: "USAGE",
-        lineType: "charge",
-        description: "RAN Usage",
-        refProductOfferingId: "POF00000020",
-        udrType: "RAN_USAGE",
-        udrCount: 2,
-        quantity: "100.000000",
-        unit: "GB",
-        snapshotQuantity: null,
-        snapshotUnitPrice: null,
-        grossAmount: "120.00",
-        discountAmount: "20.00",
-        netAmount: "100.00",
-        discountRate: "16.666667",
-        groupGrossTotal: "120.00",
-        groupDiscountTotal: "20.00",
-        groupNetTotal: "100.00",
-      },
-    ],
-    serviceTypes: [],
-    otherCharges: [
-      { description: "Enterprise Fibre 1Gbps", amount: "50.00" },
-      { description: "RAN Usage", amount: "100.00" },
-    ],
-    taxItems: [],
-    document: null,
-    customer: {
-      recipientName: "Aisha Rahman",
-      name: "Acme Communications Sdn Bhd",
-      tradingName: "Acme Communications",
-      registrationNumber: "201001098765",
-      taxId: "C98765432109",
-      email: "accounts@acme.example",
-      phone: "+60 3-7654 3210",
-      address: {
-        line1: "Suite 5, Wisma Acme",
-        line2: null,
-        city: "City-01",
-        stateProvince: "State-01",
-        postalCode: "46050",
-        country: "Country-01",
-      },
-    },
-    usage: null,
-    ...overrides,
-  };
-}
+const rawInput = rawInvoiceRenderInputFixture;
 
 const TEMPLATE = { layoutCode: "INVTPL-STD-A4", layoutVersion: 1, version: 1 };
 

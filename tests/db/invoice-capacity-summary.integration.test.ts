@@ -1,16 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type postgresjs from "postgres";
 
-import * as schema from "@/db/schema";
-import { appuser } from "@/db/schema/identity";
-import { billCycle } from "@/db/schema/billing/catalogs";
+import type * as schema from "@/db/schema";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { runAggregation } from "@/tests/db/helpers/extract-flow-sql";
-import { createFlowDoubleFixtures } from "@/tests/db/helpers/billrun-flow-double-fixtures";
+import {
+  bootstrapFlowDoubleDatabase,
+  createFlowDoubleFixtures,
+  dropFlowDoubleSchemas,
+} from "@/tests/db/helpers/billrun-flow-double-fixtures";
 import { createCapacityPricingFixtures } from "@/tests/db/helpers/billrun-capacity-pricing-fixtures";
 import {
   invoiceRenderInputRepository,
@@ -183,51 +184,15 @@ describe.skipIf(!databaseUrl)(
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 5 });
-      await fixtures().dropAll(sql);
-      db = drizzle(sql, { schema });
-      await migrate(db, {
-        migrationsFolder: "./db/migrations",
-        migrationsSchema: "drizzle",
-      });
-
-      // Created by db/bootstrap/billrun-db-roles.sql (not a migration); the
-      // aggregation calls it (the bm42 precedent, verbatim).
-      await sql.unsafe(`
-        CREATE OR REPLACE FUNCTION "billing".billrun_delete_trial_bill(p_run text, p_ban text)
-        RETURNS integer LANGUAGE sql SECURITY DEFINER SET search_path = billing AS $$
-          WITH d AS (
-            DELETE FROM billing.customer_bill
-             WHERE ref_bill_run_id = p_run
-               AND ref_billing_account_id = p_ban
-               AND ref_inv_document_id IS NULL
-            RETURNING 1
-          )
-          SELECT count(*)::integer FROM d;
-        $$;
-      `);
-
-      const [actor] = await db
-        .insert(appuser)
-        .values({
-          id: crypto.randomUUID(),
-          userName: "BM70-fixture-operator",
-          userEmail: `${crypto.randomUUID()}@example.invalid`,
-          emailVerified: false,
-          authMethod: "LOCAL",
-          status: "ACTIVE",
-        })
-        .returning({ id: appuser.id });
-      actorId = actor!.id;
-      const [cycle] = await db
-        .insert(billCycle)
-        .values({ name: "BM70 Fixture Cycle", lastEditedBy: null })
-        .returning({ billCycleId: billCycle.billCycleId });
-      cycleId = cycle!.billCycleId;
+      ({ db, actorId, cycleId } = await bootstrapFlowDoubleDatabase(
+        sql,
+        "BM70",
+      ));
     }, 120_000);
 
     afterAll(async () => {
       if (sql) {
-        await fixtures().dropAll(sql);
+        await dropFlowDoubleSchemas(sql);
         await sql.end();
       }
     }, 60_000);

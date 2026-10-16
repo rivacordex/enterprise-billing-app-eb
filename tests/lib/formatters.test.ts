@@ -12,32 +12,38 @@ import { DEFAULT_LOCALE } from "@/lib/locale";
 import type { SystemConfigDisplayRow } from "@/types/system-config";
 
 describe("formatCalendarDate", () => {
-  it("formats a valid YYYY-MM-DD as dd Mon yyyy", () => {
-    expect(formatCalendarDate("2026-08-01")).toBe("01 Aug 2026");
-    expect(formatCalendarDate("2024-02-29")).toBe("29 Feb 2024"); // leap year
-  });
-
-  it("returns the raw input for a malformed string", () => {
-    expect(formatCalendarDate("not-a-date")).toBe("not-a-date");
-    expect(formatCalendarDate("2026-8-1")).toBe("2026-8-1");
-  });
-
-  it("returns the raw input for an out-of-range month", () => {
-    expect(formatCalendarDate("2026-00-10")).toBe("2026-00-10");
-    expect(formatCalendarDate("2026-13-10")).toBe("2026-13-10");
-  });
-
-  it("returns the raw input for an impossible day", () => {
-    expect(formatCalendarDate("2026-02-30")).toBe("2026-02-30");
-    expect(formatCalendarDate("2026-02-29")).toBe("2026-02-29"); // 2026 not leap
-    expect(formatCalendarDate("2026-04-31")).toBe("2026-04-31");
-    expect(formatCalendarDate("2026-08-00")).toBe("2026-08-00");
+  it.each([
+    ["2026-08-01", "01 Aug 2026"],
+    ["2024-02-29", "29 Feb 2024"], // leap year
+  ])("formats a valid %s as dd Mon yyyy", (input, expected) => {
+    expect(formatCalendarDate(input)).toBe(expected);
   });
 
   // bm69 D21 — the invoice's DD/MM/YYYY style shares the same validation.
-  it("formats a valid YYYY-MM-DD as DD/MM/YYYY under the dmy style", () => {
-    expect(formatCalendarDate("2026-10-15", "dmy")).toBe("15/10/2026");
-    expect(formatCalendarDate("2024-02-29", "dmy")).toBe("29/02/2024"); // leap year
+  it.each([
+    ["2026-10-15", "15/10/2026"],
+    ["2024-02-29", "29/02/2024"], // leap year
+  ])(
+    "formats a valid %s as DD/MM/YYYY under the dmy style",
+    (input, expected) => {
+      expect(formatCalendarDate(input, "dmy")).toBe(expected);
+    },
+  );
+
+  it.each([
+    // malformed
+    "not-a-date",
+    "2026-8-1",
+    // out-of-range month
+    "2026-00-10",
+    "2026-13-10",
+    // impossible day
+    "2026-02-30",
+    "2026-02-29", // 2026 not leap
+    "2026-04-31",
+    "2026-08-00",
+  ])("returns the raw input %s unchanged", (input) => {
+    expect(formatCalendarDate(input)).toBe(input);
   });
 
   it("returns the raw input for an impossible day under the dmy style", () => {
