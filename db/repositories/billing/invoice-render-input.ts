@@ -293,10 +293,13 @@ async function readCapacitySummary(
   const l = customerBillLine;
   const unutilised = sql`SUM(${l.grossAmount} - ${l.ratedAmount})`;
   const utilised = sql`(SUM(${l.netAmount}) - ${unutilised})`;
+  // Sort on the printed label, so a type whose lines carry no description
+  // sorts by its offering-id fallback rather than last (NULLS LAST).
+  const label = sql`COALESCE(min(${l.description}), ${l.refProductOfferingId})`;
   return tx
     .select({
       offeringId: l.refProductOfferingId,
-      label: sql<string>`COALESCE(min(${l.description}), ${l.refProductOfferingId})`,
+      label: sql<string>`${label}`,
       utilised: sql<string>`${utilised}::numeric(18,2)::text`,
       unutilised: sql<string>`${unutilised}::numeric(18,2)::text`,
       total: sql<string>`SUM(${l.netAmount})::numeric(18,2)::text`,
@@ -312,7 +315,7 @@ async function readCapacitySummary(
       ),
     )
     .groupBy(l.refProductOfferingId)
-    .orderBy(sql`min(${l.description})`, asc(l.refProductOfferingId));
+    .orderBy(label, asc(l.refProductOfferingId));
 }
 
 // bm70-spec §Design "Data" — the "Other charges" rows: every non-capacity
