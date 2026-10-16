@@ -360,6 +360,7 @@ export const invoiceRenderInputRepository = {
   ): Promise<(PostedBillStamps & { refInvDocumentId: string | null }) | null> {
     const [row] = await tx
       .select({
+        refBillTemplateFamilyId: customerBill.refBillTemplateFamilyId,
         refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
         refInvoiceProfileVersion: customerBill.refInvoiceProfileVersion,
         refCsvTemplateVersionId: customerBill.refCsvTemplateVersionId,

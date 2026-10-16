@@ -867,9 +867,9 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
 ### General rules (adds to §1)
 
 1. **Resolve once; every run path reads stamps (Inv #51, #53).** Draft render, posting, retry-render and the posted-bill CSV take template versions **only** from stamps: `bill_run_account` stamps inside a run, `customer_bill` stamps after posting. Only two places resolve "current ACTIVE": `captureTemplateStamps` (once per BAN, at run start or rerun) and the Invoice Settings editor's `preview-family` mode. Nothing else under `services/billing/` does. `resolveVersionsForPosting(tx)` is deleted, not deprecated.
-2. **One writer for the run stamps.** `captureTemplateStamps(tx, banIds)` (`services/billing/capture-template-stamps.ts`) is the only code that writes the five stamp columns on `bill_run_account`. It is called in exactly two places, each in the caller's existing transaction:
+2. **One writer for the run stamps.** `captureTemplateStamps(tx, billRunId, banIds, periodPartition)` (`services/billing/capture-template-stamps.ts`) is the only code that writes the five stamp columns on `bill_run_account`. It is called in exactly two places, each in the caller's existing transaction and before the engine is triggered:
    - `trigger-run.ts`, after `billRunAccountRepository.insertSnapshot`;
-   - `rerun-run.ts`, inside `setAttemptForRerun`, for the selected BANs only.
+   - `rerun-run.ts`, for the selected BANs only, **before** the `BILL_RUN_RERUN` audit insert (so the audit lists the stamps) and therefore before `setAttemptForRerun`. _(Corrected 2026-10-16 to match bm65 as built: this rule first said "inside `setAttemptForRerun`", which runs after the audit, and gave a two-argument signature.)_
 
    It issues one set-based statement through `billRunAccountRepository.captureTemplateStamps`, never a per-BAN loop.
 3. **Capture never fails the trigger (Inv #58).** For a BAN whose family has no ACTIVE `generated` version, capture writes the family id and a NULL version and continues. It does not throw, does not set `EXCLUDED`, and does not return a trigger error code. Later, the draft render throws `TEMPLATE_VERSION_NOT_FOUND`, and posting skips the account before creating the INV (D58): `postAccount` reads the run stamp first, and a NULL version marks the account `SKIPPED` with `TEMPLATE_VERSION_NOT_FOUND` (`reason: FAMILY_HAS_NO_ACTIVE_VERSION`). Never pass a NULL version to `stampPosted`.
@@ -975,8 +975,8 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - `InvoiceStructureForm` shows one checkbox, Payment information, plus a **Footnote** field with 1–5 single-line inputs and add/remove buttons, built with React Hook Form `useFieldArray` and the shared `invoice-template-structure.schema.ts` resolver (general §4.12); each input has a `<label>` (general §4.9).
    - Below EDIT, both render read-only.
    - The page heading names the family ("Standard (default)").
-3. **The preview action takes a family.** `previewInvoiceTemplateAction` adds a required `familyId`, validated by the BTF schema; this phase only Standard exists. A `{ billId }` source keeps its `billrun_view` check and renders with that bill's stamps (`preview-posted`).
-4. **The draft PRO-FORMA route renders in run mode.** `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` builds `{ kind: "run", … }` from the `bill_run_account` row. If the row is missing or `EXCLUDED`, it returns 404 without rendering.
+3. **The preview action takes a family.** _(Built (bm66).)_ `previewInvoiceTemplateAction` adds a required `familyId`, validated by the BTF schema; this phase only Standard exists. A `{ billId }` source keeps its `billrun_view` check and renders with that bill's stamps (`preview-posted`).
+4. **The draft PRO-FORMA route renders in run mode.** _(Built (bm66).)_ `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` builds `{ kind: "run", … }` from the `bill_run_account` row. If the row is missing or `EXCLUDED`, it returns 404 without rendering.
 5. **Manage Customer is not touched.** The "Billing account" panel (`components/customers/billing-account-panel.tsx`) and its "Reset to follow active template" button stay as built (D46).
 
 ### Styling (adds to §4 — invoice layout only; app screens unchanged)
@@ -1010,7 +1010,7 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
 ### API routes (adds to §5)
 
 1. **No new handler.** The three M2M `POST` handlers and the route-inventory test (§9 item 11) are unchanged.
-2. **Changed behaviour on one existing route only:** `draft-invoice/[banId]` renders from run stamps (Next.js rule 4). An `InvoiceRenderError` now returns `422 { error: { code, message } }` (general §5.5–§5.6) instead of a generic 500, and `InvoicePreviewModal` shows the code's message via `lib/invoice-render-messages.ts` (bm66). 401/403/404/429/500 are unchanged.
+2. **Changed behaviour on one existing route only:** _(Built (bm66).)_ `draft-invoice/[banId]` renders from run stamps (Next.js rule 4). An `InvoiceRenderError` now returns `422 { error: { code, message } }` (general §5.5–§5.6) instead of a generic 500, and `InvoicePreviewModal` shows the code's message via `lib/invoice-render-messages.ts` (bm66). 401/403/404/429/500 are unchanged.
 3. **`stored-invoice/[banId]` and its `/csv` are unchanged.** They read `customer_bill` stamps; the CSV export is out of scope (known-issues §23j).
 
 ### Data and storage rules (adds to §6)
@@ -1050,7 +1050,7 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - `app_runtime` gets `SELECT` on `bill_template_family` only; this phase has no create or retire screen, so no `INSERT`/`UPDATE`.
    - `billrun_runtime` gets no grant on `bill_template_family` and cannot **write** any new stamp column. It keeps its existing table-level SELECT on `bill_run_account` and `customer_bill`, so it can read them (`customer_bill`'s INSERT/UPDATE grants are column lists that never include stamps).
    - The `app_runtime` grant lives in `db/bootstrap/bootstrap-db-roles.sql`: the new table inherits default-privilege DML, so bm64 REVOKEs INSERT, UPDATE and DELETE, leaving SELECT.
-   - bm68 revokes `billrun_runtime`'s SELECT on `product.ratecard_ran_usage_lkp` and `product.ratecard_version` in `db/bootstrap/billrun-db-roles.sql`: only the removed appendix read them (Inv #23).
+   - bm68 revokes `billrun_runtime`'s SELECT on `product.ratecard_ran_usage_lkp` and `product.ratecard_version` in `db/bootstrap/billrun-db-roles.sql`: only the removed appendix read them (Inv #23). Built (bm68): the bm41 `GRANT` drops the two tables and an explicit, idempotent `REVOKE` follows it; `billrun-db-roles` 17h asserts it over `information_schema`.
 6. **The detail query lives in `rated-lines.repository.ts`, never in `invoice-render-input.ts`.** The source-boundary test keeps `invoice-render-input.ts` free of `rating.`. The query:
    - extends bm49's `listBilledUsageForInvoice`;
    - computes the polygon fields **once** in a CTE: `substring(udr_key from 'polygon_id=([^;|&]+)')` and `split_part(udr_resource, '|', 1..3)`, adjusted to the rating plan's final `udr_key` delimiter;
@@ -1061,11 +1061,11 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
 
    Missing-field detection returns a flag column; the binder throws (General rule 7).
 7. **Amounts come from `invoice-render-input.ts` in SQL.** Per capacity type: `SUM(gross_amount - rated_amount)` (Unutilised) and `SUM(net_amount) - SUM(gross_amount - rated_amount)` (Utilised). The per-type reconciliation compares Σ detail `udr_rated_price` to Σ `rated_amount` as `numeric`, never as floats.
-8. **The flow edit (bm68):**
+8. **The flow edit (bm68). Built (bm68):**
    - remove the SQL from `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml`, the only copy with executable SQL (the flow bm38 promoted);
    - correct the design comments in `workflow-management/flows/bill-run-processor/bill_run_processing.template.yml`, which holds comments only.
 
-   Remove the `appendix` key from the `additional_info` build and the `CAPACITY_APPENDIX_OVER_LIMIT` guard. The extracted-SQL harness tests (`billrun-capacity-appendix`) are updated to assert the key is absent.
+   Remove the `appendix` key from the `additional_info` build and the `CAPACITY_APPENDIX_OVER_LIMIT` guard. The extracted-SQL harness tests are updated to assert the key is absent: bm68 rewrote `billrun-capacity-appendix` as `tests/db/billrun-capacity-trace.integration.test.ts` (no `appendix` key; `pricing`/`calc`/`summary` unchanged at the bm42 anchors; 10,001 polygon rows no longer fail the account), and deleted `CapacityCalcTrace.appendix` / `InvoiceUsageAppendixRow` from `types/billing.ts`.
 9. **Seeds:**
    - The v1 layout and the Standard generated v1 are rewritten in their existing directories, and `checksums.json` is regenerated **only** by `scripts/invoice-templates/write-checksums.ts`. `manifest.json` keeps `"layoutVersion": 1`.
    - The `_SAMPLE_` DB seed stays minimal: 1 MNO, 1 rate-card entry, 2–3 polygons (D52).
@@ -1129,15 +1129,15 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
 
 ### Guardrail tests (extends §9, items 57–67)
 
-57. **[CRITICAL] No live resolution on a run path (Inv #53).** A grep/AST test fails if `resolveVersionsForPosting` exists anywhere, or if `post-run.ts`, `render-invoice-template.ts`, `invoice-csv.ts` or the `draft-invoice` route constructs a `preview-family` mode.
-58. **[CRITICAL] Capture and freeze (Inv #51).** Trigger a run, activate a new Standard version, then render the draft and post. Every draft and posted PDF uses the captured version; `customer_bill` stamps equal `bill_run_account` stamps; `EXCLUDED` rows have NULL stamps; a cancelled-then-re-triggered run has no orphaned stamps.
-59. **Rerun re-capture (Inv #52).** After a new activation, rerunning one BAN changes only that BAN's stamps. Its posted PDF shows the new footnote and the others show the old one. The `BILL_RUN_RERUN` `afterData.templateStamps` lists that BAN.
-60. **No ACTIVE version (Inv #58, D58).** A fixture family with no ACTIVE version:
+57. **[CRITICAL] No live resolution on a run path (Inv #53).** Built (bm67): `tests/guardrails/no-live-template-resolution.test.ts`. A grep/AST test fails if `resolveVersionsForPosting` exists anywhere, or if `post-run.ts`, `render-invoice-template.ts`, `invoice-csv.ts` or the `draft-invoice` route constructs a `preview-family` mode.
+58. **[CRITICAL] Capture and freeze (Inv #51).** Built (bm65–bm67): `run-template-capture`, `draft-uses-run-stamps`, `trigger-run` and guardrail 46 (`invoice-version-pinning`) integration suites. Trigger a run, activate a new Standard version, then render the draft and post. Every draft and posted PDF uses the captured version; `customer_bill` stamps equal `bill_run_account` stamps; `EXCLUDED` rows have NULL stamps; a cancelled-then-re-triggered run has no orphaned stamps.
+59. **Rerun re-capture (Inv #52).** Built (bm65) for the stamps and the audit: `tests/db/run-template-capture.integration.test.ts`; the posted-PDF footnote half needs the bm67 posting reader. After a new activation, rerunning one BAN changes only that BAN's stamps. Its posted PDF shows the new footnote and the others show the old one. The `BILL_RUN_RERUN` `afterData.templateStamps` lists that BAN.
+60. **No ACTIVE version (Inv #58, D58).** Built (bm65–bm67): `run-template-capture` (capture), `draft-uses-run-stamps` (draft 422), `posting-skips-null-template` (posting skip); rerun recovery is bm65's re-capture. A fixture family with no ACTIVE version:
     - the trigger succeeds and the stamp is NULL;
     - the draft render throws `TEMPLATE_VERSION_NOT_FOUND` (`FAMILY_HAS_NO_ACTIVE_VERSION`);
     - posting marks the account `SKIPPED` with that code, consumes no INV number, writes no `customer_bill` stamp, and siblings post;
     - a rerun after activation bills the BAN.
-61. **Catalog schema (fresh DB).**
+61. **Catalog schema (fresh DB).** Built (bm64): `tests/db/invoice-template-catalog.integration.test.ts`, with the grants half in `tests/guardrails/invoice-settings-grants.integration.test.ts`.
     - Every seeded `generated` row has a family, and the CHECK refuses a `generated` row without one.
     - The guard trigger refuses an UPDATE of `ref_bill_template_family_id`.
     - The family-scoped indexes refuse a second non-default ACTIVE or DRAFT in one family.
@@ -1159,8 +1159,8 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
     - the Other charges block is absent when empty and present with a recurring line;
     - dates are `DD/MM/YYYY` and Mbps is whole or 2 decimals.
 65. **v1 checksum pin (Inv #57).** A test holds the SHA-256 of every file under the two v1 seed directories and fails on any change. A footnote activation creates a new version that reuses v1's `ref_layout_version_id`.
-66. **Boundaries (D46, D31).**
-    - No file under `services/billing/**` or `actions/billing/**` imports `services/accounts/**` or writes `billing_account`.
+66. **Boundaries (D46, D31).** Built (bm68): `tests/guardrails/phase3-boundaries.test.ts` (DB-free, static source; mutation-checked).
+    - No file under `services/billing/**` or `actions/billing/**` imports `services/accounts/**` or writes `billing_account`. One pinned exemption: `services/billing/post-run.ts` imports `services/accounts/post-document` and `services/accounts/money` (the Accounts document engine that posting reuses, architecture §Stack "Ledger posting", Inv #6; bm09/bm11). It predates Phase 3 and is not Customer Management. The test pins the exemption exactly and fails if it grows or goes stale. _(Added 2026-10-16 by bm68: the rule as first written had no exemption, so it would fail on the existing posting path.)_ The `billing_account` write search also covers `db/repositories/billing/**`.
     - `invoice-render-input.ts` has no `rating.` reference.
     - Neither flow YAML copy contains `appendix` in the `additional_info` build or `CAPACITY_APPENDIX_OVER_LIMIT`.
 67. **Structure and manifest parity (D56, D38).**

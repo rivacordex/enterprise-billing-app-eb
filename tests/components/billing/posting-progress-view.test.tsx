@@ -32,6 +32,7 @@ function progress(overrides: Partial<PostingProgress> = {}): PostingProgress {
     rows: [],
     postedCount: 1,
     totalCount: 1,
+    skippedCount: 0,
     ...overrides,
   };
 }
@@ -87,4 +88,34 @@ describe("PostingProgressView completion messaging (bm-review fix)", () => {
       expect(getByRole("button")).toBeTruthy();
     },
   );
+
+  // Review fix (2026-10-16) — skipped accounts are visible with their reason,
+  // and the completion message no longer says "All accounts invoiced".
+  it("lists a skipped account with its reason and says so in the completion message", () => {
+    const { getByText, queryByText } = renderView(
+      progress({
+        runStatus: "INVOICED",
+        postedCount: 1,
+        totalCount: 1,
+        skippedCount: 1,
+        rows: [
+          {
+            billingAccountId: "BAN00000002",
+            accountName: "Beta",
+            status: "skipped",
+            invoiceId: null,
+            errorDetail: "No invoice issued: no active template version.",
+            hasStoredInvoice: false,
+          },
+        ],
+      }),
+    );
+    expect(getByText("Skipped")).toBeTruthy();
+    expect(
+      getByText("No invoice issued: no active template version."),
+    ).toBeTruthy();
+    expect(getByText(/1 skipped, no invoice/)).toBeTruthy();
+    expect(getByText(/1 account was skipped with no invoice/)).toBeTruthy();
+    expect(queryByText(/All accounts invoiced/)).toBeNull();
+  });
 });

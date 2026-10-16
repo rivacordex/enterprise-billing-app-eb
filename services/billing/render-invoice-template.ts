@@ -1,4 +1,5 @@
 import { db } from "@/db/client";
+import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { invoiceRenderInputRepository } from "@/db/repositories/billing/invoice-render-input";
 import {
   inlineLogo,
@@ -38,8 +39,10 @@ import type {
 export interface BuildInvoiceHtmlParams {
   runId: string;
   banId: string;
-  // `draft` resolves the current versions; `final` and `preview-posted` (the
-  // editor preview of a posted bill, bm55) resolve the bill's stamps (D1).
+  // `draft` renders the BAN's captured run stamps (bm66, `run` mode) — or,
+  // with an `override`, the render mode the editor preview supplies;
+  // `final` and `preview-posted` (the editor preview of a posted bill, bm55)
+  // resolve the bill's stamps (D1).
   mode: "draft" | "final" | "preview-posted";
   // The final render's requested invoice number — the binder asserts it
   // against the bound `billing.document` row (render-invoice.ts §6). Unused
@@ -49,21 +52,28 @@ export interface BuildInvoiceHtmlParams {
   // admin's unsaved structure: `load` builds the template in memory from the
   // resolved layout (generated + compiled, never stored or memoized) in place
   // of the stored generated version. Draft mode only — a posted bill always
-  // renders its stamped version (Inv #42).
+  // renders its stamped version (Inv #42). bm66/bm67: the override carries
+  // its own live render mode, built by the editor preview (`preview.ts`) for
+  // the family it names — this module never constructs a live mode
+  // (guardrail 57, Inv #53).
   override?: {
     structure: InvoiceTemplateStructure;
     load: (
       resolved: ResolvedTemplate,
     ) => Promise<Pick<LoadedGeneratedTemplate, "invoice" | "footer">>;
+    renderMode: LiveFamilyRenderMode;
   };
 }
+
+// The editor preview's live, family-scoped render mode (bm66).
+type LiveFamilyRenderMode = Extract<RenderMode, { familyId: string }>;
 
 export interface BuildInvoiceHtmlResult {
   html: string;
   footerHtml: string;
   pageSetup: LayoutPageSetup;
-  // D5 step 7 — the versions this render resolved (posting resolves its own
-  // stamps with `resolveVersionsForPosting`; the CSV path resolves separately).
+  // D5 step 7 — the versions this render resolved (posting copies the run
+  // stamps and resolves nothing, bm67; the CSV path resolves separately).
   resolved: ResolvedTemplate;
 }
 
@@ -108,8 +118,39 @@ export async function buildInvoiceHtml({
       });
       if (!stamps) return null;
 
-      const renderMode: RenderMode =
-        mode === "draft" ? { kind: "draft" } : { kind: mode, bill: stamps };
+      // bm66-spec §3 (D33, Inv #51) — a draft in a run renders the BAN's
+      // captured stamps. No row, or an EXCLUDED row (never captured, never
+      // rendered), is not found → 404.
+      // An `override` (draft-only, guarded above) is the editor preview of an
+      // unposted bill: the family's live versions, not the run's.
+      let renderMode: RenderMode;
+      if (override) {
+        // Review fix (Inv #42) — the caller decided "unposted" from an earlier
+        // read; re-check in this snapshot so a bill posted in between never
+        // renders with live versions. Not found → the caller's NOT_FOUND.
+        if (stamps.refInvDocumentId !== null) return null;
+        renderMode = override.renderMode;
+      } else if (mode === "draft") {
+        const runStamps = await billRunAccountRepository.readStamps(
+          tx,
+          runId,
+          banId,
+        );
+        if (!runStamps || runStamps.status === "EXCLUDED") return null;
+        // Review fix — a non-EXCLUDED row with no capture (a run started before
+        // bm65 on a DB not rebuilt per the bm64 runbook) is not "no active
+        // version": say so, so the D55 "activate, then rerun" copy is not shown.
+        if (runStamps.templateCapturedAt === null) {
+          throw new InvoiceRenderError(
+            "TEMPLATE_VERSION_NOT_FOUND",
+            `account ${banId} in run ${runId} has no captured template stamps`,
+            { reason: "TEMPLATE_NOT_CAPTURED", banId },
+          );
+        }
+        renderMode = { kind: "run", stamps: runStamps, banId };
+      } else {
+        renderMode = { kind: mode, bill: stamps };
+      }
       const resolved = await resolveTemplate(tx, renderMode);
 
       // bm49 D4 — a hidden Usage annex skips the usage read (and its

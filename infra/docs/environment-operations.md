@@ -815,6 +815,34 @@ non-zero in two cases. `SEED_CHECKSUM_DRIFT` means the deployed repo files do
 not match the migration. `SEED_BLOB_CONFLICT` means a stored blob differs from
 the repo; the seed never overwrites it, so investigate before going further.
 
+**Fresh rebuild — Invoice Template Phase 3 (bm64, D3/D26).** Phase 3 edits
+migration `0046` in place, and later Phase 3 units rewrite the seeded v1 files
+and their checksums. Drizzle skips a migration it has already recorded, so a
+database that ran the old `0046` keeps the old catalog. The template store is
+also write-once: the seed refuses a stored blob that differs from the repo with
+`SEED_BLOB_CONFLICT` and never overwrites it. Every environment that takes Phase 3
+is therefore rebuilt from an empty database **and** an empty `invoice-templates`
+container. Do these steps in this order:
+
+1. **Drop and recreate the database.** Stop the app and the workflow engine
+   first, so nothing holds a connection. Then run `DROP DATABASE enterprise_billing`
+   against the `postgres` system database (use the 5c script with the `DROP`
+   statement in place of `CREATE`), then run 5c as written.
+2. **Empty the `invoice-templates` container.** Delete and recreate the
+   container (re-running the 6e deploy recreates it). Or delete every blob under
+   `layouts/INVTPL-STD-A4/v1/` and `generated/INVOICE/v1/`.
+3. **Migrate, then bootstrap the roles:** 5d, then all four 5e role scripts and
+   the 5e bill-run grant follow-up. Run the migrations first, because the role
+   GRANTs name schemas that the migrations create. Then run the baseline seed
+   loop above.
+4. **Upload the seeded invoice templates:** the 6e block above. Locally,
+   `npm run db:setup` covers steps 3 and 4: it runs the migrations, the seeds
+   and the template upload. Run `npm run db:bootstrap-roles` (and the other role
+   bootstraps) after it, as `README.md` Part 1 describes.
+
+Check the result: `SELECT bill_template_family_id, code, is_default FROM
+billing.bill_template_family` returns one row, `BTF00000001 | STANDARD | true`.
+
 Access from your laptop via the VPN:
 - **Billing app**: `https://ebill-dev-app.<aca-default-domain>` (HTTPS, port 443)
 - **Kestra UI**: `https://ebill-dev-workflow-engine.<aca-default-domain>:8080`

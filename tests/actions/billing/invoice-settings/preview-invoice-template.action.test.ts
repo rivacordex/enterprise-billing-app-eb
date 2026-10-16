@@ -7,7 +7,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // spy). Covers: READ allowed; no permission → FORBIDDEN; `{ billId }` without
 // `billrun_view` → FORBIDDEN before any read; invalid structure →
 // VALIDATION_ERROR; a posted bill → its stamped version, structure ignored;
-// the rate limit; zero `putObject` and zero DML.
+// the rate limit; zero `putObject` and zero DML. bm66-spec §6 — the input
+// names the template family (`familyId`, required and validated); unposted
+// previews resolve that family's live versions (`preview-family`).
 
 const dml = vi.hoisted(() => ({
   insert: vi.fn(),
@@ -29,6 +31,14 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
     findActive: vi.fn(),
     findDefault: vi.fn(),
     findById: vi.fn(),
+  },
+}));
+vi.mock("@/db/repositories/billing/bill-template-family", () => ({
+  billTemplateFamilyRepository: {
+    findById: vi.fn(async (_db: unknown, id: string) => ({
+      billTemplateFamilyId: id,
+      retiredDatetime: null,
+    })),
   },
 }));
 vi.mock("@/db/repositories/billing/invoice-profile", () => ({
@@ -203,6 +213,9 @@ function setPermissions(map: Record<string, string>, userId = "user-1"): void {
 
 let userSeq = 0;
 
+// bm66 — the Standard family the page hands the form.
+const FAMILY = "BTF00000001";
+
 beforeEach(() => {
   vi.clearAllMocks();
   // A fresh principal per test keeps the in-memory rate limiter independent.
@@ -220,6 +233,7 @@ beforeEach(() => {
         : CSV_ROW,
   );
   repo.findById.mockImplementation(async (_db, id) => ROWS[id] ?? null);
+
   vi.mocked(invoiceProfileRepository.findActiveVersion).mockResolvedValue(null);
 });
 
@@ -230,9 +244,49 @@ function expectNoWrites(): void {
   for (const fn of Object.values(dml)) expect(fn).not.toHaveBeenCalled();
 }
 
+describe("previewInvoiceTemplateAction — familyId (bm66)", () => {
+  it("requires familyId: a missing id is VALIDATION_ERROR, before any read", async () => {
+    const result = await previewInvoiceTemplateAction({
+      structure: ALL_ON,
+      source: "sample",
+    });
+    expect(result).toEqual({ ok: false, code: "VALIDATION_ERROR" });
+    expect(repo.findDefault).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed familyId (not BTF + digits) as VALIDATION_ERROR", async () => {
+    for (const familyId of ["BTV00000002", "BTF", "btf00000001", 1]) {
+      const result = await previewInvoiceTemplateAction({
+        structure: ALL_ON,
+        source: "sample",
+        familyId,
+      });
+      expect(result).toEqual({ ok: false, code: "VALIDATION_ERROR" });
+    }
+    expect(repo.findDefault).not.toHaveBeenCalled();
+  });
+
+  it("the sample preview resolves the named family's versions", async () => {
+    const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
+      structure: ALL_ON,
+      source: "sample",
+    });
+    expect(result.ok).toBe(true);
+    expect(repo.findActive).toHaveBeenCalledWith(expect.anything(), {
+      kind: "generated",
+      familyId: FAMILY,
+    });
+  });
+});
+
 describe("previewInvoiceTemplateAction — authz and validation", () => {
   it("guards on invoice_settings : READ", async () => {
-    await previewInvoiceTemplateAction({ structure: ALL_ON, source: "sample" });
+    await previewInvoiceTemplateAction({
+      familyId: FAMILY,
+      structure: ALL_ON,
+      source: "sample",
+    });
     expect(mockRequirePermission).toHaveBeenCalledWith(
       PERMISSIONS.INVOICE_SETTINGS,
       LEVELS.READ,
@@ -242,6 +296,7 @@ describe("previewInvoiceTemplateAction — authz and validation", () => {
   it("returns FORBIDDEN without invoice_settings (guard redirects)", async () => {
     mockRequirePermission.mockRejectedValue(redirectError());
     const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: ALL_ON,
       source: "sample",
     });
@@ -252,6 +307,7 @@ describe("previewInvoiceTemplateAction — authz and validation", () => {
   it("returns FORBIDDEN for a { billId } source without billrun_view, before any read", async () => {
     setPermissions({ invoice_settings: "EDIT" }, `user-${userSeq}-nobill`);
     const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: ALL_ON,
       source: { billId: "CBL00000007" },
     });
@@ -271,6 +327,7 @@ describe("previewInvoiceTemplateAction — authz and validation", () => {
     ["a missing column", { ...ALL_ON, columns: { showDiscountColumn: true } }],
   ])("returns VALIDATION_ERROR for %s", async (_label, structure) => {
     const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure,
       source: "sample",
     });
@@ -279,6 +336,7 @@ describe("previewInvoiceTemplateAction — authz and validation", () => {
 
   it("returns VALIDATION_ERROR for a malformed bill id", async () => {
     const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: ALL_ON,
       source: { billId: "INV00000001" },
     });
@@ -290,6 +348,7 @@ describe("previewInvoiceTemplateAction — authz and validation", () => {
       null;
     for (let i = 0; i < 31; i++) {
       last = await previewInvoiceTemplateAction({
+        familyId: FAMILY,
         // Valid input that reaches the limiter (a validation failure returns
         // before it); a missing bill keeps each call cheap.
         structure: ALL_ON,
@@ -304,6 +363,7 @@ describe("previewInvoiceTemplateAction — authz and validation", () => {
 describe("previewInvoiceTemplateAction — sample source", () => {
   it("renders the sample bill from the submitted structure as a draft, writing nothing", async () => {
     const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: NO_PAYMENT_NO_DISCOUNT,
       source: "sample",
     });
@@ -323,10 +383,12 @@ describe("previewInvoiceTemplateAction — sample source", () => {
 
   it("adds the annotate/outline preview styles only on request", async () => {
     const plain = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: ALL_ON,
       source: "sample",
     });
     const styled = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: ALL_ON,
       source: "sample",
       annotate: true,
@@ -352,6 +414,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
       refBillTemplateVersionId: "BTV00000002",
     });
     renderInput.readBillStamps.mockResolvedValue({
+      refBillTemplateFamilyId: "BTF00000001",
       refBillTemplateVersionId: "BTV00000002",
       refInvoiceProfileVersion: null,
       refCsvTemplateVersionId: "BTV00000003",
@@ -360,6 +423,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     renderInput.read.mockResolvedValue(rawBill(true));
 
     const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: NO_PAYMENT_NO_DISCOUNT,
       source: { billId: "CBL00000007" },
       annotate: true,
@@ -394,6 +458,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
       refBillTemplateVersionId: null,
     });
     renderInput.readBillStamps.mockResolvedValue({
+      refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
       refInvoiceProfileVersion: null,
       refCsvTemplateVersionId: null,
@@ -402,6 +467,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     renderInput.read.mockResolvedValue(rawBill(false));
 
     const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: NO_PAYMENT_NO_DISCOUNT,
       source: { billId: "CBL00000007" },
     });
@@ -418,6 +484,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
   it("returns NOT_FOUND for an unknown bill", async () => {
     bills.findPreviewTarget.mockResolvedValue(null);
     const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: ALL_ON,
       source: { billId: "CBL00000099" },
     });
@@ -433,6 +500,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
       refBillTemplateVersionId: null,
     });
     renderInput.readBillStamps.mockResolvedValue({
+      refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
       refInvoiceProfileVersion: null,
       refCsvTemplateVersionId: null,
@@ -444,6 +512,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     });
 
     const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
       structure: ALL_ON,
       source: { billId: "CBL00000007" },
     });

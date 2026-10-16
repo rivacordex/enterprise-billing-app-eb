@@ -51,6 +51,9 @@ vi.mock("@/services/billing/scope-accounts", () => ({
 vi.mock("@/services/billing/engine-registry", () => ({
   engineRegistry: { trigger: vi.fn() },
 }));
+vi.mock("@/services/billing/capture-template-stamps", () => ({
+  captureTemplateStamps: vi.fn(),
+}));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
@@ -60,6 +63,7 @@ import { accountingPeriodRepository } from "@/db/repositories/accounts/accountin
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
 import { engineRegistry } from "@/services/billing/engine-registry";
+import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import { triggerRun } from "@/services/billing/trigger-run";
 
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
@@ -81,6 +85,12 @@ const mockFindByPeriodAndCurrency = vi.mocked(
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockScopeAccounts = vi.mocked(scopeAccounts);
 const mockTrigger = vi.mocked(engineRegistry.trigger);
+const mockCaptureTemplateStamps = vi.mocked(captureTemplateStamps);
+
+// bm65 — what the capture service returns for the one PENDING account.
+const STAMPS = [
+  { banId: "BAN00000001", familyId: "BTF00000001", versionId: "BTV00000002" },
+];
 
 const TODAY = "2026-08-19";
 
@@ -127,6 +137,7 @@ beforeEach(() => {
   // period (absent accounting_period row) so the CANCELLED path proceeds.
   mockFindCurrencyByCycleId.mockResolvedValue("MYR");
   mockFindByPeriodAndCurrency.mockResolvedValue(null);
+  mockCaptureTemplateStamps.mockResolvedValue(STAMPS);
 });
 
 describe("triggerRun (bm03-spec §Design/§7)", () => {
@@ -178,9 +189,29 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
           banCount: 1,
           excludedCount: 1,
           executionId: "stub-exec-BRN00000001",
+          templateStamps: STAMPS,
         },
       }),
     );
+  });
+
+  it("bm65 — captures the PENDING accounts' template stamps after the snapshot and before the engine trigger", async () => {
+    mockFindByIdForUpdate.mockResolvedValue(run());
+
+    await triggerRun("BRN00000001", "user-1", TODAY);
+
+    expect(mockCaptureTemplateStamps).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      ["BAN00000001"],
+      // Review fix §24b — pruned to the run's partition (period 2026-07).
+      "2026-07-01",
+    );
+    const capturedAt = mockCaptureTemplateStamps.mock.invocationCallOrder[0]!;
+    expect(mockInsertSnapshot.mock.invocationCallOrder[0]!).toBeLessThan(
+      capturedAt,
+    );
+    expect(capturedAt).toBeLessThan(mockTrigger.mock.invocationCallOrder[0]!);
   });
 
   it("rejects a run that does not exist (NOT_OPERABLE)", async () => {
@@ -233,6 +264,9 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
 
     expect(result).toEqual({ ok: false, code: "ENGINE_UNREACHABLE" });
     expect(mockInsertSnapshot).toHaveBeenCalled(); // written before the engine call inside the (rolled-back) txn
+    // bm65 — the stamps are written inside the same transaction, so the
+    // thrown engine failure rolls them back (DB-proven in the integration suite).
+    expect(mockCaptureTemplateStamps).toHaveBeenCalled();
     expect(mockMarkProcessing).not.toHaveBeenCalled();
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
   });

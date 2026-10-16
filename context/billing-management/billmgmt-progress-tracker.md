@@ -32,6 +32,179 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
   its overview is `billmgmt-update-overview.md`. Parts 1 and 2 (earlier updates) are
   folded into `billmgmt-project-overview.md` (Part 1 fully rolled up 2026-10-15).
 
+## Invoice Template Phase 3 — Bill Run uses the BAN's template (bm64–bm73)
+
+| Unit | What | Status |
+| --- | --- | --- |
+| bm64 | Standard template family in the catalog (`bill_template_family`, `0046` edited in place per D26) | **Built** (2026-10-15, `0e65a57`) — tsc/ESLint/Prettier clean; unit 4593/0; integration 1239/0 (110 skipped); `db:setup` chain ×2 on a fresh disposable DB OK; checklist queries match |
+| bm65 | Template captured at run start and on rerun (`bill_run_account` stamps, migration `0051`) | **Built** (2026-10-15, `9e399b7`) — tsc/ESLint/Prettier clean; unit 4596/0; integration 1245/0 (110 skipped). Code-review findings (xhigh) held pending owner decisions |
+| bm66 | Draft PRO-FORMA renders from the captured template (`RenderMode` run / preview-family, draft route 422) | **Built** (2026-10-16, `4139f02`) — tsc/ESLint/Prettier clean; unit 4615/0; integration 1248/0 (110 skipped) |
+| bm67 | Posted invoices use the captured template (`stampPosted` copies run stamps + family, migration `0052`, NULL-stamp skip) | **Built** (2026-10-16, `976d2ca`) — tsc/ESLint/Prettier clean; unit 4615/0; full integration run completed with the review fixes below (1254/0, 110 skipped) |
+
+| bm64–67 review fixes | Fixes from the xhigh (bm65) and max (bm65–bm67) code reviews, all items | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4630/0; full integration 1256/0 (110 skipped, run in four foreground chunks); known-issues §24 RESOLVED |
+| bm68 | Capacity flow stops writing the appendix (flow SQL, two ratecard grants revoked, appendix types deleted, guardrail 66) | **In progress** (2026-10-16) — code, tests, docs done: tsc/ESLint/Prettier clean; unit 4638/0 (two repo-scan timeouts pass alone); targeted integration 78/78; full integration 1165 passed, 2 failed (E2E journeys stop at INVOICED with no engine, known-issues §4c, identical on baseline) + azurite env file; **live Kestra smoke (spec §6) not yet run** — needs host `npm run dev` |
+
+**bm68 notes (2026-10-16):** guardrail 66 item 3 pins `services/billing/post-run.ts` →
+`services/accounts/post-document` + `services/accounts/money` (ledger posting, Inv #6) as an exact
+allowlist — the spec's literal rule fails on existing code; recorded in code-standards item 66.
+`billrun-capacity-appendix` test renamed to `billrun-capacity-trace`. The bm41 grant drops the two
+ratecard tables and an explicit `REVOKE` follows. TC54 still open (doc correction 3): the capacity
+path is proven by the extracted-SQL suites; the `ci` live run closes it. Hazard: `vitest run` picks
+up `.claude/worktrees/**` and runs their integration files against `.env`'s dev DB — run with
+`--exclude ".claude/**"` until the config excludes it.
+
+**bm65–bm67 review fixes (2026-10-16):** owner decisions: a blocking approval gate (D58a),
+defer the skip audit row, edit `0051` in place, fix both UI items.
+
+- **D58a (owner):** blocking `template_versions_captured` pre-approval check
+  (`billRunAccountRepository.countMissingTemplateVersion`, PROCESSED accounts with a NULL
+  captured version); the D58 posting skip stays as the backstop. Recorded in the plan (D58a),
+  architecture Inv #58.
+- `0051` edited in place: `template_captured_at timestamptz(3)` (D26 round, owner-approved).
+- Draft 422 copy scoped by reason (`describeInvoiceRenderCode(code, reason)`; the modal shows the
+  route's message); an uncaptured row throws `TEMPLATE_NOT_CAPTURED` (generic text); `run` mode
+  carries `banId` for the TS rule 8 detail.
+- Editor-preview race: the override path refuses a bill posted inside the binder's snapshot.
+- Activation copy: "Activating changes the invoices of bill runs started from now on…"; bank
+  warning "Bank details change for bill runs started from now on."; history caption "In use for
+  new runs" (components, e2e/component tests, UI context).
+- Posting progress lists posting-time skips (`POSTING_SKIP_CODES`) with a neutral Skipped badge
+  and reason, counted apart (`skippedCount`).
+- cm22 guardrail: the exemption is now the `listBanFamilies` function body only; the rest of the
+  file is held to the pairing rule (mutation-checked).
+- Cleanups: `listBanFamilies` ordered by BAN; the lock read drops the always-NULL bill stamps;
+  `stampPosted` takes the derived `PostingTemplateStamps`; stale `btv_one_active_uq` comments.
+- Tests: pre-approval check unit + DB case, capture-service unit test, engine-failure rollback,
+  `timestamptz(3)` precision, column-level grant checks (`bill_run_account` stamps,
+  `customer_bill.ref_bill_template_family_id`), message/route/modal/posting-progress/build cases.
+- Second pass (owner: "fix all the rest"): every §24 item (a–i) fixed — the
+  `BILL_RUN_ACCOUNT_SKIPPED` audit event on both posting skips; capture pruned to the run's
+  partition (new `periodPartition` argument); family-scoped generated reads (save-draft, page,
+  activation retires only within the draft's family); retired/missing families unusable; a
+  NULL family + version for an unresolvable BAN (corrupted catalog or a non-generated
+  reference); `statement_timestamp()`; `toInvoiceRenderResponse` in `lib/http.ts`; Danger
+  `-fg` modal text; CSV/profile read once per run (`resolveSharedCurrentVersions`,
+  `resolveGeneratedForFamily`; `*InFamily` finders removed; guardrail 57 covers all live
+  resolvers). Docs: D35, bm00 §65 and code-standards General rule 2 now say capture runs before
+  the rerun audit with `(tx, billRunId, banIds, periodPartition)`.
+
+**bm67 notes (2026-10-16):**
+
+- Migration `0052` (`customer_bill.ref_bill_template_family_id`, nullable plain key, no FK) +
+  journal `idx 52`; Drizzle mirror; `billrun-db-roles.sql` Step 5 comment only (no grant change).
+  `0033` freezes the whole posted row, so the new column is frozen with no trigger change.
+- `lockBillForPosting` returns the BAN's five run stamps as a nested `runStamps` object (same
+  query, no extra lock). **Deviation:** nested because the read already returns the bill's own
+  stamps under the same field names (unused by posting, kept).
+- `postAccount`: D58 skip (captured + NULL version → `SKIPPED` / `TEMPLATE_VERSION_NOT_FOUND`,
+  before any INV, `expectedStatus: PROCESSED`); no-capture guard throws → `POSTING_FAILED`;
+  `stampPosted` gets the explicit run stamps + family (non-null by type).
+  `resolveVersionsForPosting`, `currentVersions` and `PostingVersionStamps` deleted;
+  `PostedBillStamps` gains `refBillTemplateFamilyId` (read by `findForAccount`/`readBillStamps`).
+- **bm66 ↔ bm67 spec conflict — resolved in the specs (2026-10-16):** bm66 had
+  `render-invoice-template.ts` build the `preview-family` mode for the editor override, which
+  guardrail 57 and code-standards Phase 3 TS rule 1 ("only `preview.ts` may construct it")
+  forbid. The override now carries its `renderMode`, built by `preview.ts` (bm66's `familyId`
+  parameter is gone; a missing mode is a type error, so the runtime "no familyId" test was
+  dropped). `specs/bm66` §Design/§3/§4 and `specs/bm67` §5 now say so, with dated correction
+  notes; code-standards already matched.
+- Guardrail 57 (`tests/guardrails/no-live-template-resolution.test.ts`, now as `specs/bm67` §5
+  states) checks **comment-stripped** code: `services/accounts/resolve-ban-template-label.ts` keeps a historical
+  comment naming `resolveVersionsForPosting`, and D46 forbids touching Customer Management files,
+  so the spec's raw `grep -rn resolveVersionsForPosting services db app` still finds that one
+  comment. `preview.ts` does not import `resolveCurrentVersionsForFamily` (it reaches it through
+  `resolveTemplate`), so the importer check is "only these two may", plus a check that only
+  `preview.ts` builds a `preview-family` mode.
+- Guardrail 46 rewritten: capture (v2/profile v1) → activate v3 + profile v2 mid-run → post; A is
+  stamped v2/v1 + `BTF00000001`, equal to its run row, and its final render is v2; account C's
+  later run posts v3/v2. New `posting-skips-null-template.integration.test.ts` (SKIPPED, no
+  document, consecutive INV numbers, siblings + run `INVOICED`; distribution trigger stubbed).
+  `customer-bill-stamps` asserts the family in the same UPDATE and its freeze; schema test.
+- Docs: known-issues §19 closed (and table row 23b); architecture Inv #41/#58 notes and
+  #51/#53/#58 marked built; code-standards guardrails 57, 58, 60 marked built.
+
+**bm66 notes (2026-10-16):**
+
+- `RenderMode` = `run` | `final` | `preview-posted` | `preview-family`; `resolveTemplate` is a
+  `switch` ending in a `never` check. `run` reads only the stamps (never `currentVersion`); a NULL
+  generated stamp throws `TEMPLATE_VERSION_NOT_FOUND` with
+  `{ reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId }` (`familyNotActive`). `preview-family`
+  uses bm65's `resolveCurrentVersionsForFamily`. Posting (`resolveVersionsForPosting`) unchanged.
+- `buildInvoiceHtml` keeps its public `mode: "draft"`: no override → `readStamps` (widened with
+  `status`) → missing/EXCLUDED = `DraftInvoiceNotFoundError` (404); override → requires `familyId`
+  → `preview-family`.
+- Preview: `familyId` required on `previewInvoiceTemplateInputSchema` (`templateFamilyIdSchema`),
+  passed by `InvoiceStructureForm` from the page's `standardFamilyId`
+  (`billTemplateFamilyRepository.findDefault`; a missing default family throws, like a missing
+  default version).
+- Draft route: `InvoiceRenderError` → `422 { error: { code, message } }` (logged code + detail);
+  `lib/invoice-render-messages.ts` `describeInvoiceRenderCode` shared with
+  `InvoicePreviewModal` (unreadable 422 body → generic text).
+- **Test fixture change:** `invoice-render-fixtures.ts` now captures each fixture row with the real
+  `captureTemplateStamps` (a real trigger always captures; without it every fixture draft would hit
+  the NULL-stamp path). Guardrail 46's draft case now starts B's run after v3's activation (spec
+  §6 wording).
+- New `tests/db/draft-uses-run-stamps.integration.test.ts` (mid-run activation keeps the captured
+  version vs `preview-family` showing the new one; EXCLUDED → 404; NULL stamp → 422, via the real
+  route behind a mocked session). It asserts on `resolved.generated` (what `template.version` binds
+  from) and the Notes section, since layout v1 does not print `template.version`.
+- Docs: architecture Inv #42 note, #51 (draft half), #53 marked built; code-standards Phase 3
+  Next.js rules 3–4 and API rule 2 marked built (the 422 contract was already recorded there);
+  UI context §10d records the message map and the two bm66 copy rows.
+
+**bm65 notes (2026-10-15):**
+
+- Migration `0051` (five nullable plain-key stamp columns, no FK) + journal `idx 51`; Drizzle
+  mirror on `bill-run-account.ts`. No grant change.
+- `resolveCurrentVersionsForFamily` (the one run-path resolver, Inv #51/#53) on top of new
+  `findActiveInFamily`/`findDefaultInFamily`; `resolveVersionsForPosting` and draft mode untouched.
+- `billRunAccountRepository.listBanFamilies` (the one sanctioned billing read of the BAN template
+  reference, Inv #54), `captureTemplateStamps` (one `unnest` UPDATE per 1,000-row chunk, never
+  EXCLUDED) and `readStamps`. Array params use the repo's `ARRAY[…]::text[]` idiom (Drizzle
+  expands a bare JS array into a value list).
+- `services/billing/capture-template-stamps.ts` resolves once per distinct family; NULL version
+  for a family with no ACTIVE/default (D55). Wired into `triggerRun` (after `insertSnapshot`,
+  before the engine) and `rerunRun` (step 0, before the audit); both audits carry
+  `templateStamps`.
+- cm22 guardrail: one exemption (`bill-run-account.repository.ts`), asserted non-vacuous;
+  `post-run.ts` asserted never to read the column.
+- Tests: `run-template-capture.integration.test.ts` (activation-after-trigger, rerun re-capture,
+  no-ACTIVE family → NULL never EXCLUDED); `trigger-run.integration` (PENDING stamped, EXCLUDED
+  NULL, audit, cancel → re-trigger fresh); `billrun-db-roles` 17j (billrun_runtime SELECT-only on
+  `bill_run_account`); service unit tests (order + afterData); schema test.
+- `trigger-run.integration` simulates the EXCLUDED account by wrapping the real
+  `scopeAccounts` (the e2e journey's simulated-exclusion precedent); a genuine partial-period
+  exclusion needs the full product-inventory fixture chain.
+- Docs: architecture Inv #51 (capture half), #52, #54 and the `bill_run_account` storage row
+  marked built (storage row now states "no FK"; Inv #52 corrected from `setAttemptForRerun` to
+  `rerunRun` → `captureTemplateStamps`, which is where the code re-captures); code-standards
+  guardrail 59 marked built for the stamp/audit half; custmgmt-architecture Inv #18 note added.
+  Code-standards Data rules 4/5 already carried the spec's corrections.
+
+**bm64 notes (2026-10-15):**
+
+- **Owner confirmed** the fresh-DB round (D26: empty DB + empty `invoice-templates` for every
+  environment) and the family code `STANDARD` before `0046` was edited. `_journal.json` untouched.
+- `0046`: `bill_template_family` (+ seq, `btf_one_default_uq`, `bill_template_family_guard`),
+  `ref_bill_template_family_id` + `btv_generated_has_family`, the four family/format-scoped
+  indexes + `btv_family_ref_idx`, the family in the version guard's identity list, seed
+  `BTF00000001` and `BTV00000002`'s family. Checksums unchanged.
+- `insertDraft` takes `refBillTemplateFamilyId`; `saveTemplateDraft` passes the base version's
+  family (missing family → `TEMPLATE_VERSION_NOT_FOUND`, like a missing layout). Resolution
+  queries unchanged. New read repo `bill-template-family.ts` (`findDefault`, `findById`) for bm65.
+- **Deviation 1 — grants:** `bootstrap-db-roles.sql` also has an explicit
+  `GRANT SELECT … bill_template_family TO app_runtime` before the spec's REVOKE. This matches
+  `bill_format`. Without it, a DB migrated as superuser (the local and Azure scratch path, and the
+  grants test) leaves `app_runtime` with no SELECT, because default privileges never fire there.
+- **Deviation 2 — runbook order:** the spec listed role bootstrap before `db:setup`. On an empty
+  DB the GRANTs need the schemas, so the runbook keeps the repo order: migrate/`db:setup`
+  first, then the role bootstraps.
+- `invoice-csv.integration.test.ts` needed no fixture change: its raw insert is a CSV row, and
+  CSV rows have no family.
+- Doc corrections in spec Open question 1 were already applied in the companion docs; this
+  unit added only the "built (bm64)" markers (architecture Inv #44 note + storage rows,
+  code-standards guardrail 61).
+
 ## Delivered units
 
 ### Phase 1 — control plane (bm01–bm13)

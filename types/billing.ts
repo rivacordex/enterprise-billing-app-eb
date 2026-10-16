@@ -4,6 +4,8 @@
 // (db/schema/billing/bill-run.ts). Composed here in `types/` and returned by
 // the service so the page never re-derives operability (code-standards §2.7).
 
+import type { billRunAccount } from "@/db/schema/billing/bill-run-account";
+import type { billTemplateFamily } from "@/db/schema/billing/bill-template-family";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import type { ConfigStatus } from "@/types/system-config";
 
@@ -330,10 +332,11 @@ export interface BillLineRow {
 
 // bm41-spec §Implementation §3 / billmgmt-code-standards.md §"TypeScript
 // conventions" — the versioned shape of `customer_bill_line.additional_info`.
-// Typing only here; bm42 is the writer and bm45 the invoice-appendix reader.
+// Typing only here; bm42 is the writer. bm68 (D31) removed bm45's per-polygon
+// `appendix` key: the trace is `pricing`, `calc[]` and `summary[]` only.
 //
 // bm42a — money-as-text contract: every monetary amount, rate and decimal
-// quantity inside this trace (`pricing.*`, `calc[*]`, `appendix[*]`) is a JSON
+// quantity inside this trace (`pricing.*`, `calc[*]`) is a JSON
 // STRING at its canonical scale (money 2dp, quantities and rates 6dp, e.g.
 // "100000.00", "400.000000"), matching TS rule 3. Integers that are not money
 // (`v`, `calc[*].udrCount`, `calc[*].band`) stay numbers, and
@@ -347,28 +350,6 @@ export interface CapacityCalcTrace {
   pricing: Record<string, unknown>;
   calc: unknown[];
   summary: unknown[];
-  // bm45-spec §Implementation §1 (Target Capacity Pricing update, Unit 5) —
-  // the per-polygon usage appendix snapshot, written by `aggregation` onto
-  // the capacity line alongside the calc trace (D1 — no new table). Optional:
-  // absent on a pre-bm45 line and on a capacity line with zero claimed
-  // polygons. `state`/`district` are `null` for a polygon with usage but no
-  // matching ratecard row (D3 — surfaced, never dropped).
-  appendix?: InvoiceUsageAppendixRow[];
-}
-
-// bm45-spec §Implementation §1 — one per-polygon row of the invoice usage
-// appendix, as stored in `CapacityCalcTrace.appendix` and read by the final
-// invoice render (`render-invoice.ts`/`render-invoice-template.ts`). `volume`/
-// `amount` are the polygon's SUM(udr_usage_quantity)/SUM(udr_rated_price)
-// over the account's claimed rows for that canonical cell (D2). No `unit`
-// field here (the unit is the capacity line's own `unit` column) — the
-// render orchestrator attaches it when shaping the template param.
-export interface InvoiceUsageAppendixRow {
-  polygon: string;
-  state: string | null;
-  district: string | null;
-  volume: string;
-  amount: string;
 }
 
 // bm28-spec §Design "the udr_rated drill-down". One claimed `rating.udr_rated`
@@ -452,14 +433,25 @@ export interface ErrorRow {
 // accounts carrying no `errorCode` are `pending`; `INVOICED` accounts are
 // `invoiced`; a parked `PROCESSED` account (a tolerated per-account posting
 // failure, Design "PERIOD_CLOSED handling") is `PERIOD_CLOSED` or `failed`
-// depending on its `errorCode`.
+// depending on its `errorCode`. Review fix (2026-10-16) — an account that
+// posting itself skipped (no INV issued) is `skipped`, shown with its reason.
 export const POSTING_ACCOUNT_STATUSES = [
   "pending",
   "invoiced",
   "PERIOD_CLOSED",
   "failed",
+  "skipped",
 ] as const;
 export type PostingAccountStatus = (typeof POSTING_ACCOUNT_STATUSES)[number];
+
+// The `error_code`s `postAccount` writes when it skips an account without an
+// invoice: the zero-total suppression and the D58 NULL-template skip. An
+// account SKIPPED at approval (it was PROCESSING_FAILED/EXCLUDED, never
+// postable) carries neither and stays off the posting view.
+export const POSTING_SKIP_CODES = [
+  "ZERO_TOTAL_NOT_INVOICED",
+  "TEMPLATE_VERSION_NOT_FOUND",
+] as const;
 
 // bm19-spec §Implementation §5 — `true` once the account's final invoice PDF
 // is rendered and stored (`bill_run_invoices` row exists); `false` for an
@@ -479,7 +471,9 @@ export interface PostingProgress {
   runStatus: RunStatus;
   rows: PostingProgressRow[];
   postedCount: number;
+  // Postable accounts, excluding the ones posting skipped.
   totalCount: number;
+  skippedCount: number;
 }
 
 // bm10-spec §Design/§Visual. The public Approve & Post view contracts. They
@@ -494,6 +488,11 @@ export const PRE_APPROVAL_CHECKS = [
   "four_eyes",
   "accounts_terminal",
   "no_rejected_pending",
+  // bm65–bm67 review fix (2026-10-16, owner decision; amends D58) — BLOCKING:
+  // every PROCESSED account must carry a captured generated template version.
+  // A NULL or missing capture (D55) would otherwise be skipped at posting,
+  // after approval, when the account can no longer be rerun.
+  "template_versions_captured",
   // bm32-spec §Design/§Implementation §3 — the orphaned-usage-record count.
   // INFORMATIONAL, never blocking (D32/Inv #25): it always `pass`es and is
   // excluded from `approveRun`'s blocking gate.
@@ -749,7 +748,8 @@ export interface InvoiceUsageSection {
 }
 
 // bm49-spec §Design D3 — the billed-usage-row bound, a named constant equal to
-// bm45's `CAPACITY_APPENDIX_OVER_LIMIT` (the load-tested bound). Over this, the
+// bm45's former appendix bound (the load-tested bound; that flow guard was
+// removed by bm68, so this is now the only per-account row bound). Over this, the
 // bind fails `INVOICE_USAGE_OVER_LIMIT` and the account parks; the repository
 // selects no rows. Changing it is a spec change, not a config value.
 export const INVOICE_USAGE_ROW_LIMIT = 10_000;
@@ -896,6 +896,10 @@ export interface InvoiceTemplateStructure {
   columns: Record<InvoiceColumnKey, boolean>;
 }
 
+// bm64-spec §Design — one `bill_template_family` row (general §2.7). The
+// seeded Standard family (`BTF00000001`) is the default; read by bm65 capture.
+export type BillTemplateFamily = typeof billTemplateFamily.$inferSelect;
+
 // bm55-spec §Design D4 — Version history read model (one row per generated
 // version, newest first). `usedByCount` counts `customer_bill` rows stamped
 // with the version (SQL count, `listForKind`). `createdBy` is the stored
@@ -928,31 +932,68 @@ export interface RecentPostedBill {
 // `services/billing/invoice-template/resolve-template.ts` + `load.ts`.
 // ============================================================================
 
-// The three `customer_bill` stamp columns (bm50 D5). All `null` on a bill
-// posted before bm54, which introduces the stamping.
+// The `customer_bill` template stamp columns (bm50 D5; the family, bm67). All
+// `null` on a bill posted before bm54, which introduces the stamping; the
+// family is `null` on a bill posted before bm67. Resolution never reads the
+// family: the version id already pins the layout.
 export interface PostedBillStamps {
+  refBillTemplateFamilyId: string | null;
   refBillTemplateVersionId: string | null;
   refInvoiceProfileVersion: number | null;
   refCsvTemplateVersionId: string | null;
 }
 
-// bm54-spec §Design D1/D2 — the four values `resolveVersionsForPosting`
-// resolves and `stampPosted` writes in the same UPDATE as
-// `ref_inv_document_id` (Inv #41). Only the profile version can be null (G15 A).
-export interface PostingVersionStamps {
-  refBillFormatId: "INVOICE";
-  refBillTemplateVersionId: string;
-  refInvoiceProfileVersion: number | null;
-  refCsvTemplateVersionId: string;
-}
+// bm65-spec §2 (Inv #51/#52) — the run-start template stamps on one
+// `bill_run_account` row (read by bm66 drafts and bm67 posting). All nullable:
+// EXCLUDED rows are never captured, and a family with no ACTIVE or default
+// generated version captures a NULL version (D55, Inv #58).
+export type RunTemplateStamps = Pick<
+  typeof billRunAccount.$inferSelect,
+  | "refBillTemplateFamilyId"
+  | "refBillTemplateVersionId"
+  | "refInvoiceProfileVersion"
+  | "refCsvTemplateVersionId"
+>;
 
-// D1 — a draft (pro-forma, editor sample preview) resolves the current
-// versions; a final render and the editor preview of a posted bill resolve the
-// bill's stamps (Inv #42 — never the current ACTIVE).
+// bm67-spec §2 — the template stamps `stampPosted` writes, derived from the
+// run stamps (code-standards Phase 3 TS rule 2: one stamp shape, never
+// hand-written). Posting skips a NULL captured version first (D58), so the
+// family, generated and CSV ids are non-null here; the profile may be null
+// (G15 A).
+export type PostingTemplateStamps = {
+  refBillFormatId: "INVOICE";
+  refInvoiceProfileVersion: RunTemplateStamps["refInvoiceProfileVersion"];
+} & {
+  [K in
+    | "refBillTemplateFamilyId"
+    | "refBillTemplateVersionId"
+    | "refCsvTemplateVersionId"]: NonNullable<RunTemplateStamps[K]>;
+};
+
+// bm65-spec §Design — one captured BAN, as listed in the BILL_RUN_TRIGGERED /
+// BILL_RUN_RERUN audit `afterData.templateStamps`. `versionId` may be null (D55);
+// `familyId` is null only when the BAN's family cannot be resolved (a corrupted
+// catalog, or a reference to a non-generated version — review fix §24e).
+export type CapturedTemplateStamp = {
+  banId: string;
+  familyId: string | null;
+  versionId: string | null;
+};
+
+// bm66-spec §Design (D33, Inv #42/#51/#53) — which versions a render uses.
+//   run             → a draft PRO-FORMA inside a run: the BAN's captured
+//                     `bill_run_account` stamps (bm65). Never live.
+//   final           → the bill's stamps (Inv #42 — never the current ACTIVE).
+//   preview-posted  → the editor preview of a posted bill: the bill's stamps.
+//   preview-family  → the Invoice Settings preview: the family's live, current
+//                     versions — the only live render mode.
 export type RenderMode =
-  | { kind: "draft" }
+  // `banId` rides along for the error detail (code-standards Phase 3 TS
+  // rule 8: `{ reason, familyId, banId }`).
+  | { kind: "run"; stamps: RunTemplateStamps; banId: string }
   | { kind: "final"; bill: PostedBillStamps }
-  | { kind: "preview-posted"; bill: PostedBillStamps };
+  | { kind: "preview-posted"; bill: PostedBillStamps }
+  | { kind: "preview-family"; familyId: string };
 
 // D1 — never cached (workflow rules §3.9): every render queries the rows.
 export interface ResolvedTemplate {

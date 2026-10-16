@@ -79,6 +79,7 @@ function renderForm(
       editable
       recentBills={BILLS}
       canPreviewBills
+      familyId="BTF00000001"
       {...props}
     />,
   );
@@ -153,6 +154,8 @@ describe("InvoiceStructureForm — EDIT user", () => {
       source: "sample",
       annotate: false,
       outline: false,
+      // bm66 — the preview names the Standard family it renders with.
+      familyId: "BTF00000001",
     });
 
     fireEvent.click(

@@ -148,4 +148,41 @@ describe("getPostingProgress (bm11-spec §Visual)", () => {
       hasStoredInvoice: false,
     });
   });
+
+  // Review fix (2026-10-16) — an account posting itself skipped (zero total,
+  // or the D58 NULL-template skip) is listed as `skipped` with its reason and
+  // is counted apart from the postable total.
+  it("derives skipped from status=SKIPPED and counts it apart from the postable total", async () => {
+    mockListPostingProgress.mockResolvedValue([
+      {
+        billingAccountId: "BAN00000001",
+        accountName: "Acme",
+        status: "INVOICED",
+        errorCode: null,
+        errorDetail: null,
+        invoiceId: "INV00000001",
+        hasStoredInvoice: true,
+      },
+      {
+        billingAccountId: "BAN00000002",
+        accountName: "Beta",
+        status: "SKIPPED",
+        errorCode: "TEMPLATE_VERSION_NOT_FOUND",
+        errorDetail:
+          "No invoice issued: this account's invoice template family had no active version when the run started.",
+        invoiceId: null,
+        hasStoredInvoice: false,
+      },
+    ] as never);
+
+    const result = await getPostingProgress("BRN00000001");
+
+    expect(result?.rows.map((r) => r.status)).toEqual(["invoiced", "skipped"]);
+    expect(result?.rows[1]?.errorDetail).toContain("No invoice issued");
+    expect(result).toMatchObject({
+      postedCount: 1,
+      totalCount: 1,
+      skippedCount: 1,
+    });
+  });
 });

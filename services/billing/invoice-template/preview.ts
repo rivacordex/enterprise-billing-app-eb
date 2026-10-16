@@ -27,15 +27,18 @@ import {
 // preview. A READ: it writes no blob, no row and no audit. The HTML comes from
 // the real pipeline (bind → helpers → locked Handlebars); there is no PDF.
 //
-//   'sample'        → generate(the current generated version's layout, the
-//                     submitted structure) compiled IN MEMORY (never
-//                     memoized), bound to the layout's verified
+//   'sample'        → generate(the family's current generated version's
+//                     layout, the submitted structure) compiled IN MEMORY
+//                     (never memoized), bound to the layout's verified
 //                     `sample-data.json` as a draft, with the current ACTIVE
-//                     profile (or none, G15) — exactly what new invoices show.
+//                     profile (or none, G15) — exactly what new runs capture.
 //   { billId }      → posted: the bill's STAMPED generated version (the
 //                     submitted structure is ignored) via the binder, as
 //                     issued. Unposted: generated as for 'sample', bound to
 //                     the bill through the binder as a draft.
+//
+// bm66-spec §4 (Inv #53) — every unposted path resolves `preview-family` for
+// the named family: the only live render mode.
 //
 // The caller (the action) has already checked `invoice_settings : READ`, and
 // `billrun_view : READ` for a `{ billId }` source.
@@ -45,6 +48,8 @@ export type PreviewSource = "sample" | { billId: string };
 export interface PreviewInvoiceTemplateParams {
   structure: InvoiceTemplateStructure;
   source: PreviewSource;
+  // bm66 — the template family whose live versions the preview renders.
+  familyId: string;
   annotate?: boolean | undefined;
   outline?: boolean | undefined;
 }
@@ -112,11 +117,15 @@ function layoutLabel(resolved: ResolvedTemplate): string {
 
 async function previewSample(
   structure: InvoiceTemplateStructure,
+  familyId: string,
   annotate: boolean,
 ): Promise<{ html: string; templateLabel: string }> {
   // Rows only; never cached (Inv #42). The profile is the current ACTIVE one,
   // or none (G15 A).
-  const resolved = await resolveTemplate(db, { kind: "draft" });
+  const resolved = await resolveTemplate(db, {
+    kind: "preview-family",
+    familyId,
+  });
   const [tpl, profile, locale] = await Promise.all([
     generateInMemory(resolved, structure, annotate),
     resolved.profileVersion === null
@@ -155,11 +164,16 @@ async function previewSample(
 export async function previewInvoiceTemplate({
   structure,
   source,
+  familyId,
   annotate = false,
   outline = false,
 }: PreviewInvoiceTemplateParams): Promise<PreviewInvoiceTemplateResult> {
   if (source === "sample") {
-    const { html, templateLabel } = await previewSample(structure, annotate);
+    const { html, templateLabel } = await previewSample(
+      structure,
+      familyId,
+      annotate,
+    );
     return {
       html: withPreviewStyles(html, { annotate, outline }),
       templateLabel,
@@ -196,6 +210,7 @@ export async function previewInvoiceTemplate({
     mode: "draft",
     override: {
       structure,
+      renderMode: { kind: "preview-family", familyId },
       load: async (resolved) => {
         const { invoice, footer } = await generateInMemory(
           resolved,

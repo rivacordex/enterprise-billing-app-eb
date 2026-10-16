@@ -115,7 +115,8 @@ GRANT USAGE ON SEQUENCE "billing"."customer_bill_line_seq"     TO billrun_runtim
 -- column-scoped to EXCLUDE the posting stamps (ref_inv_document_id,
 -- posted_attempt, charge_checksum, and — bm50, Inv #41 — ref_bill_format_id,
 -- ref_bill_template_version_id, ref_invoice_profile_version,
--- ref_csv_template_version_id) — app-only, set at posting (bm19/bm54). SELECT
+-- ref_csv_template_version_id, and — bm67 — ref_bill_template_family_id) —
+-- app-only, set at posting (bm19/bm54/bm67). SELECT
 -- only at the table level; DELETE is deliberately NOT a table grant (T10) — a
 -- Postgres DELETE grant cannot be predicate-scoped, so a table-level DELETE
 -- would let the worker wipe every unposted trial bill in the schema. The
@@ -330,16 +331,21 @@ TO billrun_runtime;
 --> statement-breakpoint
 
 -- bm41 (Target Capacity Pricing update, Unit 1) — read-only context the
--- capacity aggregation (bm42) and the invoice appendix (bm45) need: the
--- `udrType` characteristic off `product_specifications`, and the per-polygon
--- ratecard lookup off `ratecard_ran_usage_lkp`/`ratecard_version`. SELECT
--- only, enumerated per table (Inv #23), never ON ALL TABLES; `USAGE ON SCHEMA
--- "product"` already held above — no write grant of any kind on these tables.
+-- capacity aggregation (bm42) needs: the `udrType` characteristic off
+-- `product_specifications`. SELECT only, enumerated per table (Inv #23), never
+-- ON ALL TABLES; `USAGE ON SCHEMA "product"` already held above — no write
+-- grant of any kind on this table.
 GRANT SELECT ON TABLE
-  "product"."product_specifications",
-  "product"."ratecard_ran_usage_lkp",
-  "product"."ratecard_version"
+  "product"."product_specifications"
 TO billrun_runtime;
+--> statement-breakpoint
+
+-- bm68 (D31, Inv #23) — the bm45 invoice appendix, the only reader of the
+-- per-polygon ratecard (`ratecard_ran_usage_lkp`/`ratecard_version`), is gone
+-- from the processing flow, so bm41's SELECT on those two tables is revoked.
+-- Explicit so an already-bootstrapped database loses it too; idempotent on a
+-- re-run (revoking an absent privilege is a no-op).
+REVOKE SELECT ON TABLE "product"."ratecard_ran_usage_lkp", "product"."ratecard_version" FROM billrun_runtime;
 --> statement-breakpoint
 
 -- Step 9 — the run-state write REVOKE (billmgmt-architecture.md Inv #2). Strictly

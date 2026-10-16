@@ -10,9 +10,9 @@ import { persistablePricingComponentSchema } from "@/validation/product/pricing-
 // copies were byte-identical bar "BM42"/"BM43" label strings — a duplication
 // bm43's own round-2 SonarQube fix (billmgmt-progress-tracker.md) deliberately
 // left in place, with the rule that a THIRD capacity-pricing unit needing the
-// same fixtures is the trigger to extract this file. bm45
-// (billrun-capacity-appendix.integration.test.ts) is that third unit, so bm42
-// and bm43 are switched to consume this too. bm28/bm29/bm35 (non-capacity flow
+// same fixtures is the trigger to extract this file. bm45 (its appendix suite,
+// rewritten by bm68 as billrun-capacity-trace.integration.test.ts) was that
+// third unit, so bm42 and bm43 are switched to consume this too. bm28/bm29/bm35 (non-capacity flow
 // doubles) are unaffected — see billrun-flow-double-fixtures.ts for that
 // separate, more generic scaffolding, which this file's `newOffering`/
 // `newProductSpec` deps are expected to come from.
@@ -35,9 +35,7 @@ export interface CapacityPricingFixturesDeps {
     name: string,
     defaultValue: string,
   ) => Promise<void>;
-  // Only used by setupSingleAccountCapacity (bm42/bm43's shape; bm45 has its
-  // own differently-shaped setupAccount and never calls it, but still needs
-  // to supply these three since the interface is uniform across callers).
+  // Only used by setupSingleAccountCapacity (the bm42/bm43/bm68 shape).
   readonly newAccount: (label: string) => Promise<string>;
   readonly newRun: (runId: string) => Promise<void>;
   readonly newInventory: (args: {
@@ -237,10 +235,8 @@ export function createCapacityPricingFixtures(
   }
 
   // Shared single-account capacity fixture: account + offering + run +
-  // inventory, keyed off `label` (bm42/bm43's shape — reduces the setup
-  // duplication that recurs across their own anchor/guard test cases; bm45
-  // has its own differently-shaped setupAccount, which also seeds the
-  // ratecard-lookup specs this one doesn't, and doesn't call this).
+  // inventory, keyed off `label` (bm42/bm43/bm68's shape — reduces the setup
+  // duplication that recurs across their own anchor/guard test cases).
   async function setupSingleAccountCapacity(
     label: string,
     offeringName: string,
@@ -276,8 +272,8 @@ export function createCapacityPricingFixtures(
   // DB-gated unit test. `rate`/`priceRef` NULL exercises TC35 (a NULL/non-
   // PER_UNIT row must still count as a CAPACITY_RATE_MISMATCH via IS DISTINCT
   // FROM, never slip past three-valued SQL logic). `udrKey` defaults to a
-  // per-call sequence key; bm45's appendix join needs a caller-supplied
-  // canonical cell key instead, so it's an override, not a fixed shape.
+  // per-call sequence key; a multi-polygon case (bm68's trace suite) passes a
+  // caller-supplied polygon key instead, so it's an override, not a fixed shape.
   async function insertCapacityVolumeRow(args: {
     subRef: string;
     runId: string;

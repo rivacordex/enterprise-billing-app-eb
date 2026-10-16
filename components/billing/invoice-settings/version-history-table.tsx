@@ -51,7 +51,7 @@ interface NormalizedRow {
   usedByCount: number;
   viewParam: string;
   downloadHref: string | null;
-  // bm58 D5: "In use for new invoices" on the non-default ACTIVE version,
+  // bm58 D5: "In use for new runs" on the non-default ACTIVE version,
   // "Fallback" on the default while a non-default version is in use.
   caption: string | null;
 }
@@ -107,7 +107,7 @@ function normalize(props: VersionHistoryTableProps): NormalizedRow[] {
     viewParam: row.billTemplateVersionId,
     caption:
       row.status === "ACTIVE" && !row.isDefault
-        ? "In use for new invoices"
+        ? "In use for new runs"
         : row.isDefault && nonDefaultInUse
           ? "Fallback"
           : null,

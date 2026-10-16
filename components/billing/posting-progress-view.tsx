@@ -34,6 +34,9 @@ const statusBadgeVariants = cva(
           "bg-[color:var(--color-warning-50)] text-[color:var(--color-warning-700)]",
         failed:
           "bg-[color:var(--color-danger-50)] text-[color:var(--color-danger-700)]",
+        // Same neutral family as AccountStatusBadge's SKIPPED.
+        skipped:
+          "bg-[color:var(--color-neutral-100)] text-[color:var(--text-disabled)]",
       } satisfies Record<PostingAccountStatus, string>,
     },
   },
@@ -44,6 +47,7 @@ const STATUS_LABEL: Record<PostingAccountStatus, string> = {
   invoiced: "Invoiced",
   PERIOD_CLOSED: "Period closed",
   failed: "Failed",
+  skipped: "Skipped",
 };
 
 export interface PostingProgressViewProps {
@@ -116,10 +120,13 @@ export function PostingProgressView({
         </p>
         <p className="text-body-sm font-medium text-foreground">
           {progress.postedCount}/{progress.totalCount} posted
+          {progress.skippedCount > 0
+            ? ` · ${progress.skippedCount} skipped, no invoice`
+            : null}
         </p>
       </header>
 
-      {progress.totalCount === 0 ? (
+      {progress.rows.length === 0 ? (
         <p className="text-body-sm text-muted-foreground">
           No postable accounts on this run.
         </p>
@@ -179,9 +186,11 @@ export function PostingProgressView({
           aria-live="polite"
           className="text-body-sm font-medium text-[color:var(--color-success-700)]"
         >
-          {progress.postedCount > 0
-            ? "All accounts invoiced. See the Distribution tab for delivery progress."
-            : "Posting complete. No invoices were posted."}
+          {progress.skippedCount > 0
+            ? `Posting complete. ${progress.skippedCount} ${progress.skippedCount === 1 ? "account was" : "accounts were"} skipped with no invoice; see the reason on each. ${progress.postedCount > 0 ? "See the Distribution tab for delivery progress." : "No invoices were posted."}`
+            : progress.postedCount > 0
+              ? "All accounts invoiced. See the Distribution tab for delivery progress."
+              : "Posting complete. No invoices were posted."}
         </p>
       ) : canPost ? (
         <Button

@@ -9,7 +9,8 @@ import { stripComments } from "@/tests/helpers/strip-code-comments";
 // Turns the update's negative-space rules into permanent CI facts: customer
 // screens and the new Accounts read services never import a mutation path
 // (custmgmt Inv. #11), posting never reads billing_account's template
-// reference (Inv. #18), one validator, and two writers of the column. Pure
+// reference (Inv. #18) — run-start capture is the one reader (billing Inv #54,
+// bm65) — one validator, and two writers of the column. Pure
 // node:fs/node:path static-source assertions over production source (never
 // tests/) — no jsdom, no DB. Same shape as customer-module-boundaries.test.ts.
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -132,7 +133,42 @@ const CUSTOMER_BILL_STAMP_FILES = [
   "db/repositories/billing/invoice-render-input.ts",
 ];
 
+// bm65 (billing Inv #54, D46) — the one sanctioned billing reader of the BAN
+// template reference: the run-start capture SELECT (`listBanFamilies`). The
+// exemption is that ONE function (Inv #54 names it), not the file: its body is
+// cut out before the scan, and the rest of the file — which joins
+// billingAccount for names and has bill_run_account's own same-named stamp
+// column — is held to the direct-pairing rule, like the customer_bill stamp
+// files. Posting files stay held to "never reads" (review fix, 2026-10-16).
+const RUN_START_CAPTURE = {
+  file: "db/repositories/billing/bill-run-account.repository.ts",
+  fn: "listBanFamilies",
+};
+
+// The text of `async <name>(…) { … }` — from the declaration through its
+// matching closing brace — or `null` when the file has no such method.
+function methodBody(code: string, name: string): string | null {
+  const start = code.search(new RegExp(`\\basync\\s+${name}\\s*\\(`));
+  if (start === -1) return null;
+  // The body's brace follows the parameter list or the return type (`) {` /
+  // `> {`), never a type literal's (`<{ … }>`).
+  const brace = /[)>]\s*\{/.exec(code.slice(start));
+  if (!brace) return null;
+  const open = start + brace.index + brace[0].length - 1;
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === "{") depth++;
+    else if (code[i] === "}" && --depth === 0) return code.slice(start, i + 1);
+  }
+  return null;
+}
+
 function readsBanTemplateColumn(relative: string, code: string): boolean {
+  if (relative === RUN_START_CAPTURE.file) {
+    const body = methodBody(code, RUN_START_CAPTURE.fn);
+    const rest = body === null ? code : code.replace(body, "");
+    return BAN_TEMPLATE_PAIRINGS.some((re) => re.test(rest));
+  }
   if (BAN_TEMPLATE_PAIRINGS.some((re) => re.test(code))) return true;
   if (CUSTOMER_BILL_STAMP_FILES.includes(relative)) return false;
   return BAN_TABLE.test(code) && TEMPLATE_COLUMN.test(code);
@@ -312,6 +348,27 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
         exempt,
       ).toBe(true);
     }
+
+    // bm65 — the run-start capture exemption is scanned, the exempt function
+    // exists and itself reads the column (not vacuous), and posting is still
+    // held to "never reads".
+    const capture = files.find(
+      ({ relative }) => relative === RUN_START_CAPTURE.file,
+    );
+    expect(capture, RUN_START_CAPTURE.file).toBeDefined();
+    const captureBody = methodBody(capture!.code, RUN_START_CAPTURE.fn);
+    expect(captureBody, RUN_START_CAPTURE.fn).not.toBeNull();
+    expect(
+      BAN_TABLE.test(captureBody!) && TEMPLATE_COLUMN.test(captureBody!),
+      `${RUN_START_CAPTURE.fn} reads billing_account.ref_bill_template_version_id`,
+    ).toBe(true);
+    const postRun = files.find(
+      ({ relative }) => relative === "services/billing/post-run.ts",
+    );
+    expect(postRun).toBeDefined();
+    expect(readsBanTemplateColumn(postRun!.relative, postRun!.code)).toBe(
+      false,
+    );
 
     // Not vacuous: the allowed customer_bill stamp is in the scanned set.
     expect(

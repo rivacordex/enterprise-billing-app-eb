@@ -848,7 +848,15 @@ Bills posted before bm54 are **not back-stamped**: `0033` refuses the
 `UPDATE`, so they keep `NULL` stamps for good and keep rendering as described
 above.
 
-## 19. 🟡 An activation during a run can give that run's accounts different template versions (bm54, by design)
+## 19. 🟢 RESOLVED (bm67) — An activation during a run can give that run's accounts different template versions (bm54, by design)
+
+> **Closed 2026-10-16 by Invoice Template Phase 3 (bm65–bm67).** Each BAN's
+> template family and versions are captured onto its `bill_run_account` row at
+> run start (bm65); the draft renders those stamps (bm66) and posting copies
+> them onto the bill (bm67) — `resolveVersionsForPosting` is deleted. A version
+> activated mid-run never reaches that run; only a rerun re-captures, and only
+> for the rerun BANs (Inv #51–#53). Proven by guardrail 46 (capture → activate
+> → post) and guardrail 57. The text below is the original record.
 
 **Where:** `services/billing/invoice-template/resolve-template.ts`
 (`resolveVersionsForPosting`), `services/billing/post-run.ts` (`postAccount`).
@@ -1025,7 +1033,7 @@ stay, each accepted or owned elsewhere:
 | #   | Residual | Effect | Owner / next step |
 | --- | -------- | ------ | ----------------- |
 | 23a | **Bills posted before bm54 are unstamped** (§18). | They render with the immutable default and no company profile. | By design (Inv #42). |
-| 23b | **A mid-run activation splits a run's versions** (§19). | Each bill records what it was posted under. | By design. |
+| 23b | **A mid-run activation splits a run's versions** (§19). | Each bill records what it was posted under. | ~~By design.~~ **Resolved (bm67):** the run's captured stamps freeze its versions. |
 | 23c | **`ratecard` role grants are never seeded** (section above). | The Rate Card page needs a hand-assigned grant. | Rate-card follow-up. |
 | 23d | **Orphan template/logo blobs are tolerated.** A failed activation or upload transaction leaves its write-once, content-addressed blob behind (code-standards Part 2 General rule 10, data rule 7). | Storage only: an identical retry reuses it; nothing references it. | By design; no retention job in v1 (G10). |
 | 23e | **Layout v1 ships placeholder `@font-face` sources** (G8 decided: IBM Plex embedded). | Rendered invoices fall back to a system font; no font is ever fetched. | The layout v2 unit (with §20's annex CSS). |
@@ -1042,3 +1050,48 @@ stay, each accepted or owned elsewhere:
 | 23p | **The USAGE `ChargeSourceBadge` uses the Info colour family** (found 2026-10-12, verified against dev1 `614743a`). `components/billing/charge-source-badge.tsx` (~l.21-22) styles USAGE with `--color-info-50/700`, but `billmgmt-ui-context.md` §6 reserves info for status and specifies Cyan for the USAGE category. | Low-severity UI conformance gap: a category badge reads as a status. | OPEN. Switch USAGE to the Cyan tokens. |
 | 23q | **`InfoBadge` in the Uncharged table has no icon** (found 2026-10-12, verified against dev1 `614743a`). `components/billing/uncharged-table.tsx` (`InfoBadge`, ~l.47-53; labels such as "Not used"/"Orphan") renders colour + label only, breaking the ui-context rule that colour always pairs with an icon and a label. | Low-severity UI conformance and accessibility gap. | OPEN. Add an icon to `InfoBadge`. |
 | 23r | **"Use the current app logo" import (bm60 D8) rejects the shipped logo files** (found 2026-10-12, verified against dev1 `614743a`). `importAppLogo` (`services/billing/invoice-profile/upload-logo.ts` ~l.233-236) reads `getBrandingLogo()?.src`, falling back to `/brand/invoice-logo-default.svg`. Both that file and `public/brand/logo.svg` (the default `app_logo_path`) declare `width="918.000000pt" height="612.000000pt"` and start with `<!DOCTYPE svg …>`. `svgDimensions` (`image-dimensions.ts` ~l.192-210) refuses any unit other than unitless/`px`, so check 3 fails with `dimensions` ("SVG width/height must be unitless or px"); the `<!doctype` ban in `sanitize-logo.ts` (~l.52) would refuse it next anyway. `tests/actions/billing/invoice-settings/upload-logo.action.test.ts` mocks the service, so no test exercises the real files. | With default branding the import button always fails; an operator must upload a logo file by hand. | OPEN. Either ship a sanitizer-clean default SVG (unitless/px `width`/`height`, no DOCTYPE) or normalise `pt` and strip the DOCTYPE on the import path only; add a test that imports the real shipped file. |
+
+## 24. 🟢 RESOLVED — Invoice Template Phase 3 code-review items (bm65–bm67 reviews, 2026-10-16)
+
+Both code reviews (xhigh on bm65, max on bm65–bm67) are closed. Owner decisions:
+a blocking approval gate (D58a), `0051` edited in place, both UI fixes, and —
+after first deferring it — the skip audit row. Each item below was first
+recorded as deferred and is now fixed:
+
+- **24a. 🟢 A posting skip writes an AUDIT_LOG row.** New event
+  `BILL_RUN_ACCOUNT_SKIPPED` (classified "Change"), written in the posting
+  transaction by `skipAccount` for both the zero-total and the D58 template skip
+  (`afterData`: banId, status, code, customerBillId, and the family for D58).
+- **24b. 🟢 Capture is pruned to the run's partition.**
+  `captureTemplateStamps(tx, billRunId, banIds, periodPartition)`; the UPDATE
+  filters `period_partition`. (`readStamps` is a one-row read in a short
+  read-only transaction and is left unpruned.)
+- **24c. 🟢 Generated-version reads are family-scoped.** `findActive`,
+  `findDefault`, `findDraft`, `retireActive` and `listForKind` take an optional
+  `familyId`; save-draft, the Invoice Settings page and activation's draft read
+  use the Standard family, and activation retires only within the draft's own
+  family. `lockKind`/version numbering stay per kind (`btv_version_uq`). The
+  Customer Management label reader is unchanged (D46).
+- **24d. 🟢 A retired or missing family is not usable.**
+  `resolveGeneratedForFamily` returns `null` for it, so capture stamps a NULL
+  version (blocked at approval, D58a) and `preview-family` throws.
+- **24e. 🟢 Capture is never silent.** Every BAN gets a row: a missing default
+  family, or a BAN reference to a non-generated version, yields a NULL family
+  and version (General rule 3: capture never fails the trigger), which the
+  approval gate then stops.
+- **24f. 🟢 `template_captured_at = statement_timestamp()`** — when the capture
+  UPDATE ran, after the catalog read, not the transaction start.
+- **24g. 🟢 The draft route's 422 goes through `toInvoiceRenderResponse`**
+  (`lib/http.ts`, next to `toHttpResponse`). The route's other bodies
+  (401/403/404/429/500) are bm18's and unchanged.
+- **24h. 🟢 The draft preview modal's error text is Danger `-fg`**
+  (`--color-danger-700`), per UI context §10d.
+- **24i. 🟢 Cleanups:** capture reads CSV/profile once per run
+  (`resolveSharedCurrentVersions`); the duplicate `*InFamily` finders are gone
+  (the family filter is on `findActive`/`findDefault`). The resolver's live
+  exports are `resolveCurrentVersionsForFamily` (preview),
+  `resolveGeneratedForFamily` and `resolveSharedCurrentVersions` (capture);
+  guardrail 57 covers all three.
+
+Kept as specified: the audit `templateStamps` stays one entry per BAN (D35; the
+review found it negligible at today's run sizes).

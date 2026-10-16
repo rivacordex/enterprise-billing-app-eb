@@ -1,4 +1,5 @@
 import { db } from "@/db/client";
+import type { Database } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
@@ -11,7 +12,6 @@ import { postDocument } from "@/services/accounts/post-document";
 import type { PostDocumentResult } from "@/services/accounts/post-document";
 import * as money from "@/services/accounts/money";
 import { firstOfMonth } from "@/services/billing/derive-periods";
-import { resolveVersionsForPosting } from "@/services/billing/invoice-template/resolve-template";
 import { renderFinalInvoice } from "@/services/billing/render-invoice";
 import { blobStore } from "@/services/billing/blob-store";
 import { triggerDistribution } from "@/services/billing/distribute-run";
@@ -246,8 +246,61 @@ function describePostFailure(
 //      any posted legs) rolls back.
 //   5. Stamp the bill (`ref_inv_document_id`/`posted_attempt`/
 //      `charge_checksum`/`category='normal'` + the four invoice-template
-//      version stamps, bm54) and mark the account
-//      `INVOICED` — all inside the same transaction as steps 3-4.
+//      version stamps and the family, copied from the BAN's run stamps —
+//      bm67, D23/Inv #41) and mark the account `INVOICED` — all inside the
+//      same transaction as steps 3-4. A BAN whose captured version is NULL is
+//      skipped before any INV is created (bm67, D58).
+// Review fix (2026-10-16, known-issues §24a; general §1.7) — a posting-time
+// skip (no INV issued) is a mutation like any other: the account's
+// PROCESSED → SKIPPED change and its AUDIT_LOG row share the posting
+// transaction.
+async function skipAccount(
+  tx: Database,
+  billRunId: string,
+  billingAccountId: string,
+  actorId: string,
+  reason: {
+    errorCode: "ZERO_TOTAL_NOT_INVOICED" | "TEMPLATE_VERSION_NOT_FOUND";
+    errorDetail: string;
+    customerBillId: string;
+    familyId?: string | null;
+  },
+): Promise<void> {
+  const skipped = await billRunAccountRepository.updateStatus(
+    tx,
+    billRunId,
+    billingAccountId,
+    {
+      status: "SKIPPED",
+      errorCode: reason.errorCode,
+      errorDetail: reason.errorDetail,
+      expectedStatus: "PROCESSED",
+    },
+  );
+  if (!skipped) {
+    // The guarded write matched no row: the account is no longer `PROCESSED`.
+    // Throw so the transaction rolls back and no audit row records a
+    // transition that did not happen.
+    throw new Error(
+      `postAccount: account ${billingAccountId} in run ${billRunId} is no longer PROCESSED; skip not applied`,
+    );
+  }
+  await insertAuditEvent(tx, {
+    eventType: "BILL_RUN_ACCOUNT_SKIPPED",
+    actorUserId: actorId,
+    targetEntity: "BILL_RUN",
+    targetId: billRunId,
+    beforeData: { banId: billingAccountId, status: "PROCESSED" },
+    afterData: {
+      banId: billingAccountId,
+      status: "SKIPPED",
+      code: reason.errorCode,
+      customerBillId: reason.customerBillId,
+      ...(reason.familyId !== undefined ? { familyId: reason.familyId } : {}),
+    },
+  });
+}
+
 export async function postAccount(
   run: BillRun,
   billingAccountId: string,
@@ -328,20 +381,54 @@ export async function postAccount(
         // stays fully billable next period. The account remains visible on the
         // run and on the Uncharged tab (Inv #22), so a zero-charge account is
         // accounted for, never silently dropped.
-        await billRunAccountRepository.updateStatus(
-          tx,
-          run.billRunId,
-          billingAccountId,
-          {
-            status: "SKIPPED",
-            errorCode: "ZERO_TOTAL_NOT_INVOICED",
-            errorDetail:
-              "No invoice issued: the bill totals zero. The account produced no billable charge for this period and appears on the Uncharged tab.",
-            expectedStatus: "PROCESSED",
-          },
-        );
+        await skipAccount(tx, run.billRunId, billingAccountId, actorId, {
+          errorCode: "ZERO_TOTAL_NOT_INVOICED",
+          errorDetail:
+            "No invoice issued: the bill totals zero. The account produced no billable charge for this period and appears on the Uncharged tab.",
+          customerBillId: bill.customerBillId,
+        });
         return { status: "skipped" } as const;
       }
+
+      // bm67-spec §Design step 4 (D58, Inv #58, Inv #7) — the BAN's family had
+      // no ACTIVE version when the run started, so capture stamped a NULL
+      // version (D55). Posting must not render it with the default (a posted
+      // bill with a NULL version stamp would, Inv #42), so the account is
+      // skipped BEFORE the INV exists: no invoice number is used, the bill is
+      // not finalized (still rerunnable before approval), and next period's
+      // run captures it again. `SKIPPED` leaves `PROCESSED`, so the run can
+      // still reach `INVOICED` (the zero-total precedent above).
+      const runStamps = bill.runStamps;
+      if (
+        runStamps.templateCapturedAt !== null &&
+        runStamps.refBillTemplateVersionId === null
+      ) {
+        await skipAccount(tx, run.billRunId, billingAccountId, actorId, {
+          errorCode: "TEMPLATE_VERSION_NOT_FOUND",
+          errorDetail:
+            "No invoice issued: this account's invoice template family had no active version when the run started. Activate a version in Invoice Settings and rerun the account.",
+          customerBillId: bill.customerBillId,
+          familyId: runStamps.refBillTemplateFamilyId,
+        });
+        return { status: "skipped" } as const;
+      }
+
+      // bm67-spec §Design step 5 — a guard, not a feature: an account captured
+      // before bm65 (impossible on the fresh DB) fails loud through the
+      // existing POSTING_FAILED path rather than resolving "current" live.
+      if (
+        runStamps.templateCapturedAt === null ||
+        runStamps.refBillTemplateFamilyId === null ||
+        runStamps.refBillTemplateVersionId === null ||
+        runStamps.refCsvTemplateVersionId === null
+      ) {
+        throw new Error(
+          `postAccount: account ${billingAccountId} in run ${run.billRunId} has no captured template stamps`,
+        );
+      }
+      const capturedFamilyId = runStamps.refBillTemplateFamilyId;
+      const capturedVersionId = runStamps.refBillTemplateVersionId;
+      const capturedCsvVersionId = runStamps.refCsvTemplateVersionId;
 
       const doc = await documentRepository.insert(tx, "INV", {
         state: "draft",
@@ -414,10 +501,11 @@ export async function postAccount(
           bill.customerBillId,
           bill.periodPartition,
         );
-      // bm54-spec §Design D1/D2 (Inv #41) — the versions this bill is posted
-      // under (DB rows only, no blob I/O), stamped in the same UPDATE as the
-      // finalization latch below.
-      const versions = await resolveVersionsForPosting(tx);
+      // bm54-spec §Design D2 (Inv #41), bm67-spec §Design step 7 (D23, Inv
+      // #51) — the versions this bill is posted under are the BAN's run
+      // stamps, captured at run start: posting resolves nothing, so a version
+      // activated mid-run never reaches this bill. Stamped in the same UPDATE
+      // as the finalization latch below.
       const stamped = await customerBillRepository.stampPosted(
         tx,
         bill.customerBillId,
@@ -426,7 +514,11 @@ export async function postAccount(
           refInvDocumentId: doc.documentId,
           postedAttempt: bill.attemptCount,
           chargeChecksum,
-          ...versions,
+          refBillFormatId: "INVOICE",
+          refBillTemplateFamilyId: capturedFamilyId,
+          refBillTemplateVersionId: capturedVersionId,
+          refInvoiceProfileVersion: runStamps.refInvoiceProfileVersion,
+          refCsvTemplateVersionId: capturedCsvVersionId,
         },
       );
       if (!stamped) {

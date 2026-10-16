@@ -269,7 +269,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         WHERE bill_template_version_id = 'BTV00000002'`;
       expect(def).toMatchObject({ status: "ACTIVE", is_default: true });
       clearLoadedTemplateMemo();
-      const resolved = await resolveTemplate(db, { kind: "draft" });
+      const resolved = await resolveTemplate(db, {
+        kind: "preview-family",
+        familyId: "BTF00000001",
+      });
       expect(resolved.generated.billTemplateVersionId).toBe(result.versionId);
     }, 120_000);
 
@@ -545,8 +548,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       });
       await sql`
         INSERT INTO billing.bill_template_version
-          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, ref_layout_version_id, structure, created_by)
-        VALUES ('BTV00000091', 'INVOICE', 'generated', ${nextNo}, 'DRAFT', 'BTV00000090',
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, ref_layout_version_id, ref_bill_template_family_id, structure, created_by)
+        VALUES ('BTV00000091', 'INVOICE', 'generated', ${nextNo}, 'DRAFT', 'BTV00000090', 'BTF00000001',
                 ${JSON.stringify(structure())}::jsonb, ${ACTOR})`;
       const draft = (await billTemplateVersionRepository.findDraft(db, {
         kind: "generated",

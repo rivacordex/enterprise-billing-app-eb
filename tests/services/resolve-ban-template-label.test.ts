@@ -10,7 +10,7 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
 }));
 vi.mock("@/services/billing/invoice-template/resolve-template", () => ({
   resolveTemplate: vi.fn(),
-  resolveVersionsForPosting: vi.fn(),
+  resolveCurrentVersionsForFamily: vi.fn(),
 }));
 
 import type { Database } from "@/db/client";
@@ -89,8 +89,10 @@ describe("BAN template label", () => {
     banTemplateLabel("BTV00000002", "x");
 
     expect(vi.mocked(resolver.resolveTemplate)).not.toHaveBeenCalled();
+    // bm67 — `resolveVersionsForPosting` is deleted; the label never calls the
+    // family resolver either.
     expect(
-      vi.mocked(resolver.resolveVersionsForPosting),
+      vi.mocked(resolver.resolveCurrentVersionsForFamily),
     ).not.toHaveBeenCalled();
   });
 });

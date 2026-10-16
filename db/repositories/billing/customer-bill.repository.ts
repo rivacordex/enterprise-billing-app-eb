@@ -15,7 +15,11 @@ import { billingAccount } from "@/db/schema/billing/accounts";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import { customerBill } from "@/db/schema/billing/customer-bill";
-import type { PostedBillStamps, PostingVersionStamps } from "@/types/billing";
+import type {
+  PostedBillStamps,
+  PostingTemplateStamps,
+  RunTemplateStamps,
+} from "@/types/billing";
 
 // bm05-spec §Design/§Implementation §4-5, trimmed bm16-spec §Design "Fork B".
 // `listForRun` backs the Customers & Bills tab read. The trial-bill write
@@ -324,22 +328,22 @@ export const customerBillRepository = {
     billRunId: string,
     billingAccountId: string,
     periodPartition: string,
-  ): Promise<
-    | ({
-        customerBillId: string;
-        periodPartition: string;
-        subtotal: string;
-        taxTotal: string;
-        totalAmount: string;
-        refInvDocumentId: string | null;
-        attemptCount: number;
-        refFinancialAccountId: string;
-        currency: string;
-        // bm54 — the bill's version stamps (NULL until posted / pre-bm54).
-        refBillFormatId: string | null;
-      } & PostedBillStamps)
-    | null
-  > {
+  ): Promise<{
+    customerBillId: string;
+    periodPartition: string;
+    subtotal: string;
+    taxTotal: string;
+    totalAmount: string;
+    refInvDocumentId: string | null;
+    attemptCount: number;
+    refFinancialAccountId: string;
+    currency: string;
+    // bm67-spec §Design (D23, Inv #51) — the BAN's five run-start template
+    // stamps from the `bill_run_account` row this read already joins (no
+    // second query, no extra lock). Posting copies them onto the bill.
+    // (The bill's own stamps are not read: they are NULL until posted.)
+    runStamps: RunTemplateStamps & { templateCapturedAt: Date | null };
+  } | null> {
     // Postgres requires `FOR UPDATE OF <unqualified name>`, but drizzle
     // schema-qualifies base tables (`"billing"."customer_bill"`), which
     // Postgres rejects. Aliasing the locked table emits the bare alias in the
@@ -360,10 +364,13 @@ export const customerBillRepository = {
         attemptCount: billRunAccount.attemptCount,
         refFinancialAccountId: billingAccount.refFinancialAccountId,
         currency: billingAccount.currency,
-        refBillFormatId: cb.refBillFormatId,
-        refBillTemplateVersionId: cb.refBillTemplateVersionId,
-        refInvoiceProfileVersion: cb.refInvoiceProfileVersion,
-        refCsvTemplateVersionId: cb.refCsvTemplateVersionId,
+        runStamps: {
+          refBillTemplateFamilyId: billRunAccount.refBillTemplateFamilyId,
+          refBillTemplateVersionId: billRunAccount.refBillTemplateVersionId,
+          refInvoiceProfileVersion: billRunAccount.refInvoiceProfileVersion,
+          refCsvTemplateVersionId: billRunAccount.refCsvTemplateVersionId,
+          templateCapturedAt: billRunAccount.templateCapturedAt,
+        },
       })
       .from(cb)
       .innerJoin(
@@ -421,7 +428,9 @@ export const customerBillRepository = {
   // bm54-spec §Design D2 (Inv #41) — the four invoice-template version stamps
   // ride in this SAME statement (not a second UPDATE, not a trigger). Once it
   // commits, the finalization guard (0033) refuses every further UPDATE, so a
-  // stamp can never be added or corrected afterwards (guardrail 46).
+  // stamp can never be added or corrected afterwards (guardrail 46). bm67 —
+  // the stamps are the BAN's run stamps, plus the family; the version id is
+  // non-null by type (posting skips a NULL-version BAN first, D58).
   async stampPosted(
     tx: Database,
     customerBillId: string,
@@ -430,7 +439,7 @@ export const customerBillRepository = {
       refInvDocumentId: string;
       postedAttempt: number;
       chargeChecksum: string;
-    } & PostingVersionStamps,
+    } & PostingTemplateStamps,
   ): Promise<boolean> {
     const stamped = await tx
       .update(customerBill)
@@ -440,6 +449,7 @@ export const customerBillRepository = {
         chargeChecksum: data.chargeChecksum,
         category: "normal",
         refBillFormatId: data.refBillFormatId,
+        refBillTemplateFamilyId: data.refBillTemplateFamilyId,
         refBillTemplateVersionId: data.refBillTemplateVersionId,
         refInvoiceProfileVersion: data.refInvoiceProfileVersion,
         refCsvTemplateVersionId: data.refCsvTemplateVersionId,
@@ -504,6 +514,7 @@ export const customerBillRepository = {
         paymentDueDate: customerBill.paymentDueDate,
         refInvDocumentId: customerBill.refInvDocumentId,
         refBillFormatId: customerBill.refBillFormatId,
+        refBillTemplateFamilyId: customerBill.refBillTemplateFamilyId,
         refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
         refInvoiceProfileVersion: customerBill.refInvoiceProfileVersion,
         refCsvTemplateVersionId: customerBill.refCsvTemplateVersionId,

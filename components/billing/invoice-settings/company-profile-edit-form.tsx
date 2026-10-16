@@ -82,7 +82,7 @@ const SAVE_FAILED_MESSAGE = "The draft could not be saved. Please try again.";
 export const NO_CHANGES_MESSAGE = "No changes — nothing was saved.";
 
 export const BANK_CHANGE_WARNING =
-  "Bank details change on every new invoice. Customers will be asked to pay into the new account from the next bill run.";
+  "Bank details change for bill runs started from now on. Customers will be asked to pay into the new account from the next bill run.";
 
 const ACTIVATE_MESSAGES: Record<
   Extract<ActivateProfileActionResult, { ok: false }>["code"],

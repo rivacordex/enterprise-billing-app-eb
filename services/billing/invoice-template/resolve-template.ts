@@ -1,19 +1,26 @@
 import type { Database } from "@/db/client";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import {
   InvoiceRenderError,
-  type PostingVersionStamps,
   type RenderMode,
   type ResolvedTemplate,
   type TemplateKind,
 } from "@/types/billing";
 
-// bm53-spec §Design D1 (Inv #42) — which versions a render uses.
+// bm53-spec §Design D1 (Inv #42), bm66-spec §Design (D33, Inv #51/#53) —
+// which versions a render uses.
 //
-//   draft                   → the non-default ACTIVE ?? the default; the ACTIVE
-//                             `invoice.profile` version ?? null (G15 A).
+//   run                     → a draft PRO-FORMA in a run: exactly the BAN's
+//                             captured `bill_run_account` stamps (bm65). Never
+//                             live. A NULL generated stamp (its family had no
+//                             ACTIVE version at capture, D55) throws
+//                             `TEMPLATE_VERSION_NOT_FOUND` — never the default
+//                             (architecture P3). A NULL profile stays NULL.
+//   preview-family          → the Invoice Settings preview: the family's live,
+//                             current versions (`resolveCurrentVersionsForFamily`).
 //   final / preview-posted  → the bill's stamps. A posted bill NEVER resolves
 //                             the current ACTIVE (code-standards General rule 4).
 //                             An unstamped column resolves the immutable default
@@ -21,8 +28,13 @@ import {
 //                             stamps at all, so they render with the default —
 //                             deterministic, and identical to what was ACTIVE
 //                             then (nothing is activatable before bm58).
-//   posting (bm54)          → `resolveVersionsForPosting`: the same "current"
-//                             as draft, returned as the four stamp values.
+//   run start (bm65)        → `resolveCurrentVersionsForFamily`: "current"
+//                             within one template family, captured onto
+//                             `bill_run_account` at trigger and rerun.
+//
+// Posting resolves nothing: it copies the BAN's run stamps onto the bill (bm67,
+// Inv #41 amended). The only live resolutions are run-start capture and
+// `preview-family` (Inv #53, guardrail 57).
 //
 // "No template" cannot occur: the default rows are trigger-protected (bm50 D2).
 // If one is missing anyway (corrupted DB) this throws
@@ -77,40 +89,73 @@ async function versionById(
   return row;
 }
 
-// The one definition of "current" (bm54-spec §Design D1): shared by the draft
-// render and the posting stamp, so a pro-forma and the bill posted next can
-// never disagree on which versions are current.
-async function currentVersions(db: Database): Promise<{
-  generated: BillTemplateVersion;
+// bm65-spec §3 (Inv #51, #53) — the live resolutions, used only by run-start
+// capture and the Invoice Settings `preview-family` mode (guardrail 57).
+//
+// `resolveGeneratedForFamily`: the family's non-default ACTIVE generated
+// version, else the family's default, else `null` — no throw (D55, Inv #58: a
+// family with no ACTIVE version is stamped NULL and acted on by approval,
+// render and posting). Review fix (known-issues §24d, D44) — a family that is
+// retired, or does not exist, is not usable, so it also yields `null`.
+export async function resolveGeneratedForFamily(
+  db: Database,
+  familyId: string,
+): Promise<BillTemplateVersion | null> {
+  const family = await billTemplateFamilyRepository.findById(db, familyId);
+  if (!family || family.retiredDatetime !== null) return null;
+  return (
+    (await billTemplateVersionRepository.findActive(db, {
+      kind: "generated",
+      familyId,
+    })) ??
+    (await billTemplateVersionRepository.findDefault(db, {
+      kind: "generated",
+      familyId,
+    }))
+  );
+}
+
+// The global current versions every family shares: the CSV (non-default
+// ACTIVE ?? default) and the ACTIVE profile ?? null (G15 A). Capture reads them
+// once per run, not once per family (review fix, §24i).
+export async function resolveSharedCurrentVersions(db: Database): Promise<{
   csv: BillTemplateVersion;
   profileVersion: number | null;
 }> {
-  const [generated, csv, profileVersion] = await Promise.all([
-    currentVersion(db, "generated"),
+  const [csv, profileVersion] = await Promise.all([
     currentVersion(db, "csv"),
     invoiceProfileRepository.findActiveVersion(db),
   ]);
-  return { generated, csv, profileVersion };
+  return { csv, profileVersion };
 }
 
-// bm54-spec §Design D1 (Inv #41) — the versions a bill is posted under, read
-// inside `postAccount`'s money transaction and written by `stampPosted` in the
-// same UPDATE as `ref_inv_document_id`. DB rows only: no blob read, no compile
-// — posting must never fail or slow because a template is unreadable (a bad
-// template parks the render afterwards, Inv #40). The catalog rows are read
-// without a lock, so an activation mid-run can give accounts of one run
-// different versions; each bill records exactly what it was posted under.
-export async function resolveVersionsForPosting(
-  tx: Database,
-): Promise<PostingVersionStamps> {
-  const { generated, csv, profileVersion } = await currentVersions(tx);
-  return {
-    refBillFormatId: "INVOICE",
-    refBillTemplateVersionId: generated.billTemplateVersionId,
-    // G15 A — no ACTIVE profile ⇒ stamped NULL.
-    refInvoiceProfileVersion: profileVersion,
-    refCsvTemplateVersionId: csv.billTemplateVersionId,
-  };
+// Both of the above for one family — the `preview-family` mode.
+export async function resolveCurrentVersionsForFamily(
+  db: Database,
+  familyId: string,
+): Promise<{
+  generated: BillTemplateVersion | null;
+  csv: BillTemplateVersion;
+  profileVersion: number | null;
+}> {
+  const [generated, shared] = await Promise.all([
+    resolveGeneratedForFamily(db, familyId),
+    resolveSharedCurrentVersions(db),
+  ]);
+  return { generated, ...shared };
+}
+
+// bm66-spec §2 (D55) — a family with no ACTIVE (or default) generated
+// version: the run's stamp is NULL, or the preview family has nothing to show.
+function familyNotActive(
+  familyId: string | null,
+  banId: string | null,
+): InvoiceRenderError {
+  return new InvoiceRenderError(
+    "TEMPLATE_VERSION_NOT_FOUND",
+    `template family ${familyId ?? "(none)"} has no active generated version`,
+    { reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId, banId },
+  );
 }
 
 export async function resolveTemplate(
@@ -121,20 +166,54 @@ export async function resolveTemplate(
   let csv: BillTemplateVersion;
   let profileVersion: number | null;
 
-  if (mode.kind === "draft") {
-    ({ generated, csv, profileVersion } = await currentVersions(db));
-  } else {
-    const { bill } = mode;
-    [generated, csv] = await Promise.all([
-      bill.refBillTemplateVersionId === null
-        ? defaultVersion(db, "generated")
-        : versionById(db, bill.refBillTemplateVersionId, "generated"),
-      bill.refCsvTemplateVersionId === null
-        ? defaultVersion(db, "csv")
-        : versionById(db, bill.refCsvTemplateVersionId, "csv"),
-    ]);
-    // G15 A — a `null` stamp stays `null` (never the current ACTIVE).
-    profileVersion = bill.refInvoiceProfileVersion;
+  switch (mode.kind) {
+    case "run": {
+      const { stamps } = mode;
+      if (stamps.refBillTemplateVersionId === null) {
+        throw familyNotActive(stamps.refBillTemplateFamilyId, mode.banId);
+      }
+      if (stamps.refCsvTemplateVersionId === null) {
+        throw notFound("the run stamp has no CSV template version", {
+          familyId: stamps.refBillTemplateFamilyId,
+        });
+      }
+      [generated, csv] = await Promise.all([
+        versionById(db, stamps.refBillTemplateVersionId, "generated"),
+        versionById(db, stamps.refCsvTemplateVersionId, "csv"),
+      ]);
+      // G15 A — a `null` stamp stays `null` (never the current ACTIVE).
+      profileVersion = stamps.refInvoiceProfileVersion;
+      break;
+    }
+    case "preview-family": {
+      const current = await resolveCurrentVersionsForFamily(db, mode.familyId);
+      if (current.generated === null) {
+        throw familyNotActive(mode.familyId, null);
+      }
+      generated = current.generated;
+      csv = current.csv;
+      profileVersion = current.profileVersion;
+      break;
+    }
+    case "final":
+    case "preview-posted": {
+      const { bill } = mode;
+      [generated, csv] = await Promise.all([
+        bill.refBillTemplateVersionId === null
+          ? defaultVersion(db, "generated")
+          : versionById(db, bill.refBillTemplateVersionId, "generated"),
+        bill.refCsvTemplateVersionId === null
+          ? defaultVersion(db, "csv")
+          : versionById(db, bill.refCsvTemplateVersionId, "csv"),
+      ]);
+      // G15 A — a `null` stamp stays `null` (never the current ACTIVE).
+      profileVersion = bill.refInvoiceProfileVersion;
+      break;
+    }
+    default: {
+      const exhaustive: never = mode;
+      throw new Error(`unknown render mode ${JSON.stringify(exhaustive)}`);
+    }
   }
 
   if (generated.refLayoutVersionId === null) {

@@ -64,10 +64,10 @@ vi.mock("@/services/billing/render-invoice", () => ({
 vi.mock("@/services/billing/blob-store", () => ({
   blobStore: { putInvoice: vi.fn(), getObject: vi.fn(), getInvoice: vi.fn() },
 }));
-// bm54-spec §Design D1 — the REAL `resolveVersionsForPosting` runs inside the
-// posting transaction over these mocked catalog/profile reads, so the suite
-// proves posting resolves from DB rows only (the blob-store mock above is the
-// no-blob-I/O spy).
+// bm67-spec §Design — posting resolves nothing: it copies the BAN's run stamps
+// (returned by `lockBillForPosting`). These catalog/profile reads are mocked
+// only so the suite can prove posting never calls them (the blob-store mock
+// above is the no-blob-I/O spy).
 vi.mock("@/db/repositories/billing/bill-template-version", () => ({
   billTemplateVersionRepository: {
     findById: vi.fn(),
@@ -175,9 +175,19 @@ function bill(overrides: Record<string, unknown> = {}) {
     attemptCount: 1,
     refFinancialAccountId: "FIN00000001",
     currency: "MYR",
+    // bm67 — the BAN's run-start template stamps (bm65 capture).
+    runStamps: RUN_STAMPS,
     ...overrides,
   } as never;
 }
+
+const RUN_STAMPS = {
+  refBillTemplateFamilyId: "BTF00000001",
+  refBillTemplateVersionId: "BTV00000007",
+  refInvoiceProfileVersion: 2,
+  refCsvTemplateVersionId: "BTV00000003",
+  templateCapturedAt: new Date("2026-08-01T00:00:00Z"),
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -355,10 +365,12 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         refInvDocumentId: "INV00000001",
         postedAttempt: 1,
         chargeChecksum: "abc123",
-        // bm54 — the four version stamps ride in the same stamp call.
+        // bm54 — the version stamps ride in the same stamp call; bm67 —
+        // copied from the BAN's run stamps, with the family.
         refBillFormatId: "INVOICE",
-        refBillTemplateVersionId: "BTV00000002",
-        refInvoiceProfileVersion: 1,
+        refBillTemplateFamilyId: "BTF00000001",
+        refBillTemplateVersionId: "BTV00000007",
+        refInvoiceProfileVersion: 2,
         refCsvTemplateVersionId: "BTV00000003",
       },
     );
@@ -421,6 +433,20 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         expectedStatus: "PROCESSED",
       }),
     );
+    // Review fix §24a (general §1.7) — the skip is audited in the same txn.
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "BILL_RUN_ACCOUNT_SKIPPED",
+        targetEntity: "BILL_RUN",
+        targetId: "BRN00000001",
+        afterData: expect.objectContaining({
+          banId: "BAN00000001",
+          status: "SKIPPED",
+          code: "ZERO_TOTAL_NOT_INVOICED",
+        }),
+      }),
+    );
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -429,6 +455,23 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         ],
       },
     });
+  });
+
+  // The SKIPPED write is guarded on `PROCESSED`; when it matches no row the
+  // transaction throws, so no audit row records a skip that did not happen.
+  it("a skip whose guarded write matches no row writes no audit event", async () => {
+    mockLockBill.mockResolvedValue(
+      bill({ subtotal: "0.00", taxTotal: "0.00", totalAmount: "0.00" }),
+    );
+    mockUpdateStatus.mockResolvedValue(false);
+
+    await postRun("BRN00000001", "user-1");
+
+    expect(mockInsertAuditEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "BILL_RUN_ACCOUNT_SKIPPED" }),
+    );
+    expect(mockDocInsert).not.toHaveBeenCalled();
   });
 
   // [CRITICAL] The skip is EXACTLY zero, never `<= 0`. A negative total is a
@@ -703,8 +746,8 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
 
 // bm19-spec §Design "Render + store is a SEPARATE step from the posting
 // transaction (D10)" / §Implementation §4.
-describe("postAccount — posting-time version stamps (bm54-spec §Design D1/D2)", () => {
-  it("stampPosted receives the four stamps resolved inside the posting transaction: the non-default ACTIVE generated/CSV versions over the defaults", async () => {
+describe("postAccount — posting copies the run stamps (bm67-spec §Design, D23/D58)", () => {
+  it("[CRITICAL] stampPosted receives the BAN's run stamps and family — even when a newer ACTIVE exists; posting resolves nothing", async () => {
     mockFindActiveTemplate.mockImplementation(
       async (_db, { kind }) =>
         ({
@@ -716,14 +759,6 @@ describe("postAccount — posting-time version stamps (bm54-spec §Design D1/D2)
 
     await postRun("BRN00000001", "user-1");
 
-    // Resolved on the posting transaction, not the pool.
-    expect(mockFindActiveTemplate).toHaveBeenCalledWith(txStub, {
-      kind: "generated",
-    });
-    expect(mockFindActiveTemplate).toHaveBeenCalledWith(txStub, {
-      kind: "csv",
-    });
-    expect(mockFindActiveProfile).toHaveBeenCalledWith(txStub);
     expect(mockStampPosted).toHaveBeenCalledWith(
       txStub,
       "CBL00000001",
@@ -731,15 +766,22 @@ describe("postAccount — posting-time version stamps (bm54-spec §Design D1/D2)
       expect.objectContaining({
         refInvDocumentId: "INV00000001",
         refBillFormatId: "INVOICE",
-        refBillTemplateVersionId: "BTV00000010",
-        refInvoiceProfileVersion: 3,
-        refCsvTemplateVersionId: "BTV00000011",
+        refBillTemplateFamilyId: "BTF00000001",
+        refBillTemplateVersionId: "BTV00000007",
+        refInvoiceProfileVersion: 2,
+        refCsvTemplateVersionId: "BTV00000003",
       }),
     );
+    // Inv #53 / guardrail 57 — no "current" lookup on the posting path.
+    expect(mockFindActiveTemplate).not.toHaveBeenCalled();
+    expect(mockFindDefaultTemplate).not.toHaveBeenCalled();
+    expect(mockFindActiveProfile).not.toHaveBeenCalled();
   });
 
-  it("G15 A — no ACTIVE company profile at posting stamps refInvoiceProfileVersion: null", async () => {
-    mockFindActiveProfile.mockResolvedValue(null);
+  it("G15 A — a NULL profile stamp is stamped as refInvoiceProfileVersion: null", async () => {
+    mockLockBill.mockResolvedValue(
+      bill({ runStamps: { ...RUN_STAMPS, refInvoiceProfileVersion: null } }),
+    );
 
     await postRun("BRN00000001", "user-1");
 
@@ -748,14 +790,13 @@ describe("postAccount — posting-time version stamps (bm54-spec §Design D1/D2)
       "CBL00000001",
       "2026-07-01",
       expect.objectContaining({
-        refBillTemplateVersionId: "BTV00000002",
+        refBillTemplateVersionId: "BTV00000007",
         refInvoiceProfileVersion: null,
-        refCsvTemplateVersionId: "BTV00000003",
       }),
     );
   });
 
-  it("[CRITICAL] resolveVersionsForPosting makes no blob call — the posting transaction reads DB rows only", async () => {
+  it("[CRITICAL] the posting transaction makes no blob call — it reads DB rows only", async () => {
     // Fail the post-commit render so ONLY the posting transaction's I/O is
     // observed (the render hook's own blob writes are not under test here).
     mockRenderFinalInvoice.mockRejectedValue(new Error("render skipped"));
@@ -768,34 +809,75 @@ describe("postAccount — posting-time version stamps (bm54-spec §Design D1/D2)
     expect(mockPutInvoice).not.toHaveBeenCalled();
   });
 
-  it("the stamps are resolved AFTER the bill is locked and BEFORE stampPosted, inside the same transaction", async () => {
-    await postRun("BRN00000001", "user-1");
-
-    const lockOrder = mockLockBill.mock.invocationCallOrder[0]!;
-    const resolveOrder = mockFindActiveProfile.mock.invocationCallOrder[0]!;
-    const stampOrder = mockStampPosted.mock.invocationCallOrder[0]!;
-    expect(lockOrder).toBeLessThan(resolveOrder);
-    expect(resolveOrder).toBeLessThan(stampOrder);
-  });
-
-  it("a skipped (already-posted) or zero-total bill resolves no versions", async () => {
-    mockLockBill.mockResolvedValue(bill({ refInvDocumentId: "INV00000099" }));
-    await postRun("BRN00000001", "user-1");
+  it("[CRITICAL] D58 — a NULL captured version is SKIPPED with TEMPLATE_VERSION_NOT_FOUND before any INV: no document, no stamp, no number used", async () => {
     mockLockBill.mockResolvedValue(
-      bill({ subtotal: "0.00", taxTotal: "0.00", totalAmount: "0.00" }),
+      bill({
+        runStamps: {
+          ...RUN_STAMPS,
+          refBillTemplateFamilyId: "BTF00000099",
+          refBillTemplateVersionId: null,
+        },
+      }),
     );
-    await postRun("BRN00000001", "user-1");
-
-    expect(mockFindActiveProfile).not.toHaveBeenCalled();
-    expect(mockFindDefaultTemplate).not.toHaveBeenCalled();
-  });
-
-  it("a catalog read failure rolls the whole posting transaction back — no stamp, account parked", async () => {
-    mockFindDefaultTemplate.mockResolvedValue(null);
 
     const result = await postRun("BRN00000001", "user-1");
 
+    expect(mockDocInsert).not.toHaveBeenCalled();
+    expect(mockLineInsert).not.toHaveBeenCalled();
+    expect(mockPostDocument).not.toHaveBeenCalled();
     expect(mockStampPosted).not.toHaveBeenCalled();
+    expect(mockUpdateStatus).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      "BAN00000001",
+      expect.objectContaining({
+        status: "SKIPPED",
+        errorCode: "TEMPLATE_VERSION_NOT_FOUND",
+        expectedStatus: "PROCESSED",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        results: [
+          { billingAccountId: "BAN00000001", result: { status: "skipped" } },
+        ],
+      },
+    });
+    expect(mockRenderFinalInvoice).not.toHaveBeenCalled();
+    // Review fix §24a — audited in the posting transaction, with the family.
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "BILL_RUN_ACCOUNT_SKIPPED",
+        afterData: expect.objectContaining({
+          banId: "BAN00000001",
+          code: "TEMPLATE_VERSION_NOT_FOUND",
+          familyId: "BTF00000099",
+        }),
+      }),
+    );
+  });
+
+  it("an account with no captured stamps (pre-bm65) fails loud — parked POSTING_FAILED, never resolved live", async () => {
+    mockLockBill.mockResolvedValue(
+      bill({
+        runStamps: {
+          refBillTemplateFamilyId: null,
+          refBillTemplateVersionId: null,
+          refInvoiceProfileVersion: null,
+          refCsvTemplateVersionId: null,
+          templateCapturedAt: null,
+        },
+      }),
+    );
+
+    const result = await postRun("BRN00000001", "user-1");
+
+    expect(mockDocInsert).not.toHaveBeenCalled();
+    expect(mockStampPosted).not.toHaveBeenCalled();
+    expect(mockFindActiveTemplate).not.toHaveBeenCalled();
+    expect(mockFindDefaultTemplate).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -807,6 +889,33 @@ describe("postAccount — posting-time version stamps (bm54-spec §Design D1/D2)
         ],
       },
     });
+  });
+
+  it("a skipped (already-posted) or zero-total bill is not checked for stamps", async () => {
+    mockLockBill.mockResolvedValue(
+      bill({
+        refInvDocumentId: "INV00000099",
+        runStamps: { ...RUN_STAMPS, refBillTemplateVersionId: null },
+      }),
+    );
+    await postRun("BRN00000001", "user-1");
+    mockLockBill.mockResolvedValue(
+      bill({
+        subtotal: "0.00",
+        taxTotal: "0.00",
+        totalAmount: "0.00",
+        runStamps: { ...RUN_STAMPS, refBillTemplateVersionId: null },
+      }),
+    );
+    await postRun("BRN00000001", "user-1");
+
+    // Neither path reached the D58 skip.
+    expect(mockUpdateStatus).not.toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      "BAN00000001",
+      expect.objectContaining({ errorCode: "TEMPLATE_VERSION_NOT_FOUND" }),
+    );
   });
 });
 

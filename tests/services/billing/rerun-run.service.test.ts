@@ -44,6 +44,9 @@ vi.mock("@/db/repositories/audit.repository", () => ({
 vi.mock("@/services/billing/engine-registry", () => ({
   engineRegistry: { trigger: vi.fn() },
 }));
+vi.mock("@/services/billing/capture-template-stamps", () => ({
+  captureTemplateStamps: vi.fn(),
+}));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
@@ -51,6 +54,7 @@ import { customerBillRepository } from "@/db/repositories/billing/customer-bill.
 import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { engineRegistry } from "@/services/billing/engine-registry";
+import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import { rerunRun } from "@/services/billing/rerun-run";
 import type { RerunRunParams } from "@/services/billing/rerun-run";
 
@@ -65,6 +69,13 @@ const mockSumTotals = vi.mocked(customerBillRepository.sumTotalsForAccounts);
 const mockRelease = vi.mocked(udrStatusRepository.release);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockTrigger = vi.mocked(engineRegistry.trigger);
+const mockCaptureTemplateStamps = vi.mocked(captureTemplateStamps);
+
+// bm65 — what the capture service returns for the two eligible accounts.
+const STAMPS = [
+  { banId: "BAN00000001", familyId: "BTF00000001", versionId: "BTV00000002" },
+  { banId: "BAN00000002", familyId: "BTF00000001", versionId: "BTV00000002" },
+];
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
@@ -112,6 +123,7 @@ beforeEach(() => {
   mockListForRerun.mockResolvedValue(ACCOUNTS);
   mockListPosted.mockResolvedValue([]);
   mockSumTotals.mockResolvedValue("215.00");
+  mockCaptureTemplateStamps.mockResolvedValue(STAMPS);
 });
 
 describe("rerunRun (bm08-spec §Design/§1)", () => {
@@ -132,6 +144,7 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
           fromStage: "validation",
           attempt: 2,
           reason: "profile fixed",
+          templateStamps: STAMPS,
         },
       }),
     );
@@ -139,6 +152,23 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     const auditOrder = mockInsertAuditEvent.mock.invocationCallOrder[0];
     const engineOrder = mockTrigger.mock.invocationCallOrder[0];
     expect(auditOrder).toBeLessThan(engineOrder as number);
+  });
+
+  it("bm65 — re-captures the template stamps for exactly the rerun BANs, before the audit and the engine re-trigger", async () => {
+    await rerunRun(params(), "user-1");
+
+    expect(mockCaptureTemplateStamps).toHaveBeenCalledWith(
+      txStub,
+      "BRN00000001",
+      ["BAN00000001", "BAN00000002"],
+      // Review fix §24b — pruned to the run's partition (period 2026-07).
+      "2026-07-01",
+    );
+    const capturedAt = mockCaptureTemplateStamps.mock.invocationCallOrder[0]!;
+    expect(capturedAt).toBeLessThan(
+      mockInsertAuditEvent.mock.invocationCallOrder[0]!,
+    );
+    expect(capturedAt).toBeLessThan(mockTrigger.mock.invocationCallOrder[0]!);
   });
 
   it("[CRITICAL] scopes the attempt bump to the selected accounts only — others and EXCLUDED are untouched", async () => {
@@ -314,6 +344,8 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     expect(mockInsertAuditEvent).toHaveBeenCalled();
     expect(mockSetAttempt).toHaveBeenCalled();
     expect(mockRelease).toHaveBeenCalled();
+    // bm65 — the re-captured stamps are in the same rolled-back transaction.
+    expect(mockCaptureTemplateStamps).toHaveBeenCalled();
     expect(mockMarkRerunProcessing).not.toHaveBeenCalled();
   });
 

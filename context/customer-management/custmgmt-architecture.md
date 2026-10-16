@@ -111,6 +111,8 @@ Platform Invariants (`architecture.md` §7) all apply. Additional rules this mod
 17. **A template reset is a BAN change, not a customer-record change** (decided 2026-10-10). It is guarded by the BAN's own lock (a compare-and-set on `billing_account.last_modified` in `billingAccountRepository.setTemplateRef`, the ac16 `close` shape), writes its own audit event, and does **not** bump `party_role.last_modified_datetime`. Inv. #6 keeps governing org, role, status and contact mutations; onboarding still locks the party role because it changes the customer's status.
 18. **The customer screen never implies a template binding the invoice does not use.** In v1 the column accepts `NULL` only and posting ignores it. The screen shows `NULL` as "Follows active template (currently: <name> vN), as of now" (a live lookup, never persisted or cached) and any non-`NULL` value as "Template reference not supported yet", offers no choice beyond *Follow active template*, and a non-`NULL` value is rejected server-side (`TEMPLATE_NOT_BINDABLE`). Lifting that rule is part of one indivisible Phase 3 change owned with Billing (the Billing architecture's Inv. #51–#54 define the column's meaning).
 
+    > **Note 2026-10-15 (billing bm65).** Posting still never reads this column. Billing's run-start capture (`billRunAccountRepository.listBanFamilies`, billing Inv #54) is the one sanctioned reader: it maps the BAN's reference to a template family when a run is triggered or rerun. No Customer Management file changed.
+
 ---
 
 ## 7. Invoice Template Binding update — architecture deltas (2026-10-10; built 2026-10-13)

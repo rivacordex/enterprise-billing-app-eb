@@ -21,6 +21,7 @@ import { seedGlMappings } from "@/db/seeds/accounts/seed-gl-mappings";
 import { seedReasonCodes } from "@/db/seeds/accounts/seed-reason-codes";
 import { seedSysAccounts } from "@/db/seeds/accounts/seed-sys-accounts";
 import { blobStore } from "@/services/billing/blob-store";
+import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import type { PostAccountResult } from "@/services/billing/post-run";
 import { createFlowDoubleFixtures } from "@/tests/db/helpers/billrun-flow-double-fixtures";
 
@@ -118,10 +119,10 @@ export async function insertGeneratedTemplateFixture(
   await sql`
     INSERT INTO billing.bill_template_version
       (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
-       ref_layout_version_id, structure, blob_ref, checksum, checksum_algorithm,
+       ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum, checksum_algorithm,
        change_note, activated_datetime)
     SELECT ${args.id}, 'INVOICE', 'generated', ${args.versionNo}, 'ACTIVE', false,
-           'BTV00000001', structure, ${`invoice-templates/${dir}`},
+           'BTV00000001', 'BTF00000001', structure, ${`invoice-templates/${dir}`},
            ${createHash("sha256").update(index).digest("hex")}, 'sha256',
            ${`bm54 fixture generated v${args.versionNo}`}, now()
     FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
@@ -224,6 +225,15 @@ export async function setupInvoiceRenderFixtures(
         (ref_bill_run_id, ref_billing_account_id, period_partition, status, attempt_count)
       VALUES (${args.runId}, ${banId}, ${FIXTURE_PARTITION},
               ${args.posted ? "INVOICED" : "PROCESSED"}, 1)`;
+    // bm65/bm66 — a real trigger captures every non-EXCLUDED row's template
+    // stamps, and a draft render reads only them (run mode). Capture with the
+    // real service, so the row carries the versions current at fixture time.
+    await captureTemplateStamps(
+      db as unknown as Database,
+      args.runId,
+      [banId],
+      FIXTURE_PARTITION,
+    );
 
     return sql.begin(async (tx) => {
       await tx`SET LOCAL session_replication_role = replica`;

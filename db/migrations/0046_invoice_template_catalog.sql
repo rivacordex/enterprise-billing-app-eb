@@ -4,12 +4,68 @@
 -- INVTPL-STD-A4 v1, default generated v1, CSV v1), and the invoice_settings
 -- permission row. Schema + seed only — no consumer reads these until bm53.
 -- Inv #41/#42/#44/#23; code-standards Part 2 data rules; G3/G6/G7/G10/G12.
+-- bm64 (Invoice Template Phase 3) — EDITED IN PLACE under D26 (fresh-DB round,
+-- D3): adds billing.bill_template_family with the one seeded family Standard,
+-- and makes every generated bill_template_version belong to a family
+-- (btv_generated_has_family; family-scoped ACTIVE/DRAFT indexes). Inv #44/#54.
 
 CREATE TABLE "billing"."bill_format" (
   "bill_format_id" text PRIMARY KEY CHECK ("bill_format_id" IN ('INVOICE')),
   "name" text NOT NULL,
   "created_datetime" timestamptz NOT NULL DEFAULT now()
 );
+--> statement-breakpoint
+-- bm64 — template families (D44). No status column: a family is usable when
+-- retired_datetime IS NULL and it has an ACTIVE generated version. code is
+-- unique across retired rows (a family code is never reused).
+CREATE SEQUENCE "billing"."bill_template_family_seq" START 1;
+--> statement-breakpoint
+CREATE TABLE "billing"."bill_template_family" (
+  "bill_template_family_id" text PRIMARY KEY DEFAULT 'BTF' || lpad(nextval('billing.bill_template_family_seq')::text, 8, '0'),
+  "code"              text NOT NULL,
+  "name"              text NOT NULL,
+  "kind"              text NOT NULL CHECK ("kind" = 'generated'),
+  "is_default"        boolean NOT NULL DEFAULT false,
+  "retired_datetime"  timestamptz,
+  "created_by"        text REFERENCES "core"."appuser"("user_id") ON DELETE SET NULL,
+  "created_datetime"  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT "btf_code_uq" UNIQUE ("code"),
+  CONSTRAINT "btf_default_not_retired" CHECK (NOT ("is_default" AND "retired_datetime" IS NOT NULL))
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX "btf_one_default_uq" ON "billing"."bill_template_family" ("kind") WHERE "is_default";
+--> statement-breakpoint
+-- bm64 — family guard (the bill_template_version_guard pattern). name, code and
+-- kind are immutable; the only permitted UPDATE is retired_datetime NULL -> a
+-- value on a non-default family. Rows are never deleted.
+CREATE FUNCTION "billing"."bill_template_family_guard"() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'VERSION_DELETE_FORBIDDEN: bill_template_family rows are never deleted (%).', OLD.bill_template_family_id USING ERRCODE = '23001';
+  END IF;
+
+  IF OLD.is_default THEN
+    RAISE EXCEPTION 'DEFAULT_VERSION_IMMUTABLE: the default family % cannot be modified.', OLD.bill_template_family_id USING ERRCODE = '23001';
+  END IF;
+
+  IF OLD.retired_datetime IS NULL AND NEW.retired_datetime IS NOT NULL
+     AND NEW.bill_template_family_id IS NOT DISTINCT FROM OLD.bill_template_family_id
+     AND NEW.code IS NOT DISTINCT FROM OLD.code
+     AND NEW.name IS NOT DISTINCT FROM OLD.name
+     AND NEW.kind IS NOT DISTINCT FROM OLD.kind
+     AND NEW.is_default IS NOT DISTINCT FROM OLD.is_default
+     AND NEW.created_by IS NOT DISTINCT FROM OLD.created_by
+     AND NEW.created_datetime IS NOT DISTINCT FROM OLD.created_datetime THEN
+    RETURN NEW;
+  END IF;
+
+  RAISE EXCEPTION 'VERSION_IMMUTABLE: bill_template_family allows only retirement (retired_datetime NULL -> a value) (%).', OLD.bill_template_family_id USING ERRCODE = '23001';
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER "bill_template_family_guard_trg" BEFORE UPDATE OR DELETE ON "billing"."bill_template_family"
+  FOR EACH ROW EXECUTE FUNCTION "billing"."bill_template_family_guard"();
 --> statement-breakpoint
 CREATE SEQUENCE "billing"."bill_template_version_seq" START 1;
 --> statement-breakpoint
@@ -22,6 +78,7 @@ CREATE TABLE "billing"."bill_template_version" (
   "is_default"           boolean NOT NULL DEFAULT false,
   "layout_code"          text,
   "ref_layout_version_id" text REFERENCES "billing"."bill_template_version"("bill_template_version_id"),
+  "ref_bill_template_family_id" text REFERENCES "billing"."bill_template_family"("bill_template_family_id"),
   "structure"            jsonb,
   "page_setup"           jsonb,
   "blob_ref"             text,
@@ -41,19 +98,30 @@ CREATE TABLE "billing"."bill_template_version" (
   CONSTRAINT "btv_generated_has_layout" CHECK ("kind" <> 'generated' OR ("ref_layout_version_id" IS NOT NULL AND "structure" IS NOT NULL)),
   CONSTRAINT "btv_layout_has_code" CHECK ("kind" <> 'layout' OR ("layout_code" IS NOT NULL AND "page_setup" IS NOT NULL)),
   CONSTRAINT "btv_draft_only_generated" CHECK ("status" <> 'DRAFT' OR "kind" = 'generated'),
-  CONSTRAINT "btv_default_not_draft" CHECK (NOT "is_default" OR "status" = 'ACTIVE')
+  CONSTRAINT "btv_default_not_draft" CHECK (NOT "is_default" OR "status" = 'ACTIVE'),
+  CONSTRAINT "btv_generated_has_family" CHECK ("kind" <> 'generated' OR "ref_bill_template_family_id" IS NOT NULL)
 );
 --> statement-breakpoint
+-- bm64 — generated versions are family-scoped: per family at most one
+-- non-default ACTIVE and one DRAFT. Layout and CSV keep (format, kind). The one
+-- default generated version lives only in the default family (architecture P7),
+-- so btv_one_default_uq keeps (format, kind).
+CREATE UNIQUE INDEX "btv_one_active_family_uq" ON "billing"."bill_template_version" ("ref_bill_template_family_id")
+  WHERE "kind" = 'generated' AND "status" = 'ACTIVE' AND NOT "is_default";
+--> statement-breakpoint
 CREATE UNIQUE INDEX "btv_one_active_uq" ON "billing"."bill_template_version" ("ref_bill_format_id", "kind")
-  WHERE "status" = 'ACTIVE' AND NOT "is_default";
+  WHERE "kind" <> 'generated' AND "status" = 'ACTIVE' AND NOT "is_default";
 --> statement-breakpoint
 CREATE UNIQUE INDEX "btv_one_default_uq" ON "billing"."bill_template_version" ("ref_bill_format_id", "kind")
   WHERE "is_default";
 --> statement-breakpoint
-CREATE UNIQUE INDEX "btv_one_draft_uq" ON "billing"."bill_template_version" ("ref_bill_format_id", "kind")
+-- DRAFT is generated-only (btv_draft_only_generated).
+CREATE UNIQUE INDEX "btv_one_draft_uq" ON "billing"."bill_template_version" ("ref_bill_template_family_id")
   WHERE "status" = 'DRAFT';
 --> statement-breakpoint
 CREATE INDEX "btv_layout_ref_idx" ON "billing"."bill_template_version" ("ref_layout_version_id");
+--> statement-breakpoint
+CREATE INDEX "btv_family_ref_idx" ON "billing"."bill_template_version" ("ref_bill_template_family_id");
 --> statement-breakpoint
 CREATE SEQUENCE "billing"."bill_asset_seq" START 1;
 --> statement-breakpoint
@@ -104,6 +172,7 @@ BEGIN
      OR NEW.kind IS DISTINCT FROM OLD.kind
      OR NEW.version_no IS DISTINCT FROM OLD.version_no
      OR NEW.is_default IS DISTINCT FROM OLD.is_default
+     OR NEW.ref_bill_template_family_id IS DISTINCT FROM OLD.ref_bill_template_family_id
      OR NEW.created_by IS DISTINCT FROM OLD.created_by
      OR NEW.created_datetime IS DISTINCT FROM OLD.created_datetime THEN
     RAISE EXCEPTION 'VERSION_IMMUTABLE: identity columns of % cannot change.', OLD.bill_template_version_id USING ERRCODE = '23001';
@@ -212,6 +281,13 @@ ALTER TABLE "billing"."customer_bill" ADD COLUMN "ref_csv_template_version_id" t
 -- recomputed by tests/db/invoice-template-seed-checksums.test.ts.
 INSERT INTO "billing"."bill_format" ("bill_format_id", "name") VALUES ('INVOICE', 'Tax invoice');
 --> statement-breakpoint
+-- bm64 — the one seeded family, Standard (the default). Only the generated
+-- version below belongs to it; layout and CSV rows have no family.
+INSERT INTO "billing"."bill_template_family" ("bill_template_family_id", "code", "name", "kind", "is_default")
+VALUES ('BTF00000001', 'STANDARD', 'Standard', 'generated', true);
+--> statement-breakpoint
+SELECT setval('billing.bill_template_family_seq', 1);
+--> statement-breakpoint
 INSERT INTO "billing"."bill_template_version"
   ("bill_template_version_id", "ref_bill_format_id", "kind", "version_no", "status", "is_default",
    "layout_code", "page_setup", "blob_ref", "checksum", "checksum_algorithm", "change_note", "activated_datetime")
@@ -225,10 +301,10 @@ VALUES
 --> statement-breakpoint
 INSERT INTO "billing"."bill_template_version"
   ("bill_template_version_id", "ref_bill_format_id", "kind", "version_no", "status", "is_default",
-   "ref_layout_version_id", "structure", "blob_ref", "checksum", "checksum_algorithm", "change_note", "activated_datetime")
+   "ref_layout_version_id", "ref_bill_template_family_id", "structure", "blob_ref", "checksum", "checksum_algorithm", "change_note", "activated_datetime")
 VALUES
   ('BTV00000002', 'INVOICE', 'generated', 1, 'ACTIVE', true,
-   'BTV00000001',
+   'BTV00000001', 'BTF00000001',
    '{"sections":{"billTo":true,"identification":true,"amountDue":true,"chargeSummary":true,"taxSummary":true,"payment":true,"chargeDetails":true,"usageAnnex":true,"notes":true},"columns":{"showServicePeriod":true,"showDiscountColumn":true,"showProductId":true,"showUdrCount":true}}'::jsonb,
    'invoice-templates/generated/INVOICE/v1/',
    '361d449e2600c67552ad0922783f5b339352917ca22b9311f8c5dd4a2bfc7d3b', 'sha256',

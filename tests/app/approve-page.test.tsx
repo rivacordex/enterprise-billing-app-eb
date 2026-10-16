@@ -88,6 +88,7 @@ beforeEach(() => {
     runStatus: "APPROVED",
     rows: [],
     postedCount: 0,
+    skippedCount: 0,
     totalCount: 0,
   });
   mockGetAppLocale.mockResolvedValue("en-MY");

@@ -88,7 +88,7 @@ Decomposition of the Billing Management (Bill Run) module into build units. This
     - Within the family it takes the non-default ACTIVE version, else the default.
     - No ACTIVE version → family stamped with a NULL version. It never throws and never marks the account `EXCLUDED` (D55).
     - EXCLUDED rows stay NULL.
-  - Called from `trigger-run.ts` after `insertSnapshot`, and from `rerun-run.ts` `setAttemptForRerun` for the selected BANs only.
+  - Called from `trigger-run.ts` after `insertSnapshot`, and from `rerun-run.ts` for the selected BANs only, before the `BILL_RUN_RERUN` audit (so it lists the stamps). _(Corrected 2026-10-16 from "`setAttemptForRerun`", which runs after that audit.)_
   - `BILL_RUN_TRIGGERED` and `BILL_RUN_RERUN` `afterData.templateStamps`.
 - **Visible result:** after **Run**, every non-EXCLUDED account row carries Standard and its version, and the Audit tab's trigger row lists them. Rerunning one BAN after a new activation changes only that BAN's stamps. Guardrail item 59; the capture half of item 60.
 - **Depends on:** 64.

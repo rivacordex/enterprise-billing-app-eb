@@ -1,5 +1,6 @@
 import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { blobStore } from "@/services/billing/blob-store";
 import {
@@ -198,10 +199,15 @@ export async function activateTemplate(
   }
   const { draftId, expectedDraftToken, changeNote } = parsed.data;
 
-  // Step 2: the draft, as the form last saw it.
-  const draft = await billTemplateVersionRepository.findDraft(db, {
-    kind: "generated",
-  });
+  // Step 2: the draft, as the form last saw it — the Standard (default)
+  // family's working draft (D45; review fix §24c).
+  const family = await billTemplateFamilyRepository.findDefault(db);
+  const draft = family
+    ? await billTemplateVersionRepository.findDraft(db, {
+        kind: "generated",
+        familyId: family.billTemplateFamilyId,
+      })
+    : null;
   if (
     !draft ||
     draft.billTemplateVersionId !== draftId ||
@@ -290,7 +296,8 @@ export async function activateTemplate(
     }
   }
 
-  // Step 8: one transaction. Retire BEFORE promote (`btv_one_active_uq`).
+  // Step 8: one transaction. Retire BEFORE promote
+  // (`btv_one_active_family_uq`, bm64).
   const blobRef = `${CONTAINER}/${dir}/`;
   try {
     return await db.transaction(async (tx): Promise<ActivateTemplateResult> => {
@@ -304,13 +311,18 @@ export async function activateTemplate(
         throw new ActivationRollback("DRAFT_CONFLICT");
       }
 
+      // Review fix (§24c) — retire only within the draft's own family, so a
+      // second family's ACTIVE version is never touched.
+      const familyId = locked.refBillTemplateFamilyId ?? undefined;
       const retired = await billTemplateVersionRepository.retireActive(tx, {
         kind: "generated",
+        ...(familyId !== undefined ? { familyId } : {}),
       });
       const previous =
         retired ??
         (await billTemplateVersionRepository.findDefault(tx, {
           kind: "generated",
+          ...(familyId !== undefined ? { familyId } : {}),
         }));
 
       const promoted = await billTemplateVersionRepository.promoteDraft(tx, {

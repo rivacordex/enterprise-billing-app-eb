@@ -113,6 +113,60 @@ describe("InvoicePreviewModal", () => {
     ).toBeTruthy();
   });
 
+  // bm66-spec §5 / UI context §10d — a 422 carries the render failure's code;
+  // the modal shows that code's message, keeping the error layout and Retry.
+  it("shows the route's message for a 422 render failure (bm66; review fix: the route scopes the copy by reason)", async () => {
+    const message =
+      "This account's invoice template has no active version. Activate one in Invoice Settings, then rerun this account.";
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        error: { code: "TEMPLATE_VERSION_NOT_FOUND", message },
+      }),
+    } as never);
+    renderModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /preview pro-forma/i }));
+
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^retry$/i })).toBeTruthy();
+  });
+
+  it("falls back to the code's own text for a 422 with a code but no message", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        error: { code: "INVOICE_USAGE_OVER_LIMIT" },
+      }),
+    } as never);
+    renderModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /preview pro-forma/i }));
+
+    expect(
+      await screen.findByText(/more than 10,000 billed usage records/i),
+    ).toBeTruthy();
+  });
+
+  it("falls back to the generic text for a 422 whose body is unreadable (bm66)", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => {
+        throw new SyntaxError("not json");
+      },
+    } as never);
+    renderModal();
+
+    fireEvent.click(screen.getByRole("button", { name: /preview pro-forma/i }));
+
+    expect(
+      await screen.findByText(/could not render the draft invoice/i),
+    ).toBeTruthy();
+  });
+
   it("shows a rate-limit reason for a 429", async () => {
     vi.mocked(fetch).mockResolvedValue({ ok: false, status: 429 } as never);
     renderModal();

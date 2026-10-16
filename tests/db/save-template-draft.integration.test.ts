@@ -37,10 +37,7 @@ import {
   isDraftRaceViolation,
   saveTemplateDraft,
 } from "@/services/billing/invoice-template/save-template-draft";
-import {
-  resolveTemplate,
-  resolveVersionsForPosting,
-} from "@/services/billing/invoice-template/resolve-template";
+import { resolveTemplate } from "@/services/billing/invoice-template/resolve-template";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import type { Database } from "@/db/client";
 
@@ -150,6 +147,9 @@ describe.skipIf(!databaseUrl)(
         is_default: false,
         version_no: 2,
         ref_layout_version_id: "BTV00000001",
+        // bm64 — the draft takes the family of the version it is built from
+        // (the seeded default BTV00000002, in Standard).
+        ref_bill_template_family_id: "BTF00000001",
         blob_ref: null,
         checksum: null,
         created_by: ACTOR,
@@ -314,7 +314,9 @@ describe.skipIf(!databaseUrl)(
       expect(await auditRows()).toHaveLength(0);
     });
 
-    it("the DRAFT is never resolved: draft and posting still use the ACTIVE/default version", async () => {
+    // bm67 — posting no longer resolves (it copies the run stamps), so only
+    // the live preview resolution is checked here.
+    it("the DRAFT is never resolved: the live preview still uses the ACTIVE/default version", async () => {
       await saveTemplateDraft(
         { structure: structure({ payment: false }), expectedDraftToken: null },
         ACTOR,
@@ -324,11 +326,10 @@ describe.skipIf(!databaseUrl)(
       });
       expect(draft?.status).toBe("DRAFT");
 
-      const resolved = await resolveTemplate(db, { kind: "draft" });
-      const posting = await db.transaction((tx) =>
-        resolveVersionsForPosting(tx),
-      );
-      expect(posting.refBillTemplateVersionId).toBe("BTV00000002");
+      const resolved = await resolveTemplate(db, {
+        kind: "preview-family",
+        familyId: "BTF00000001",
+      });
       expect(resolved.generated.billTemplateVersionId).toBe("BTV00000002");
       expect(resolved.generated.status).toBe("ACTIVE");
       expect(
@@ -345,8 +346,8 @@ describe.skipIf(!databaseUrl)(
       );
       const err = await sql`
         INSERT INTO billing.bill_template_version
-          (ref_bill_format_id, kind, version_no, status, ref_layout_version_id, structure)
-        VALUES ('INVOICE', 'generated', 99, 'DRAFT', 'BTV00000001', ${JSON.stringify(structure())}::jsonb)`.then(
+          (ref_bill_format_id, kind, version_no, status, ref_layout_version_id, ref_bill_template_family_id, structure)
+        VALUES ('INVOICE', 'generated', 99, 'DRAFT', 'BTV00000001', 'BTF00000001', ${JSON.stringify(structure())}::jsonb)`.then(
         () => null,
         (e: unknown) => e,
       );

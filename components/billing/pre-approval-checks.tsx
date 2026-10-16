@@ -21,6 +21,7 @@ const CHECK_LABELS: Record<PreApprovalCheckKey, string> = {
   four_eyes: "Approver differs from the trigger actor",
   accounts_terminal: "All accounts terminal",
   no_rejected_pending: "No accounts pending reject-reprocess",
+  template_versions_captured: "Every account has an invoice template version",
   orphan_count: "Orphaned usage records",
   zero_total_bills: "Zero-total bills",
 };

@@ -53,6 +53,18 @@ export const billRunAccount = billing.table(
       precision: 3,
       mode: "date",
     }),
+    // bm65 (migration 0051, Inv #51/#52) — the run-start template stamps.
+    // Nullable plain keys with no FK (the 0029/0046 posting-stamp rule); NULL on
+    // EXCLUDED rows. Written only by `captureTemplateStamps`.
+    refBillTemplateFamilyId: text("ref_bill_template_family_id"),
+    refBillTemplateVersionId: text("ref_bill_template_version_id"),
+    refInvoiceProfileVersion: integer("ref_invoice_profile_version"),
+    refCsvTemplateVersionId: text("ref_csv_template_version_id"),
+    templateCapturedAt: timestamp("template_captured_at", {
+      withTimezone: true,
+      precision: 3,
+      mode: "date",
+    }),
   },
   (t) => [
     // Composite PK is required because period_partition is the partition key

@@ -105,6 +105,10 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   // ledger): Additive, like BILL_RUN_MATERIALIZED — new INV documents now
   // exist, not merely a status flip.
   BILL_RUN_POSTED: "Additive",
+  // Review fix (2026-10-16, known-issues §24a; general §1.7) — posting set an
+  // account SKIPPED without an invoice (zero total, or the D58 NULL-template
+  // skip): a state transition, written in the same transaction.
+  BILL_RUN_ACCOUNT_SKIPPED: "Change",
   // bm12 — Cancel run: PROCESSING → CANCELLED, a state transition (the
   // Layer-3 escape hatch for a wedged execution).
   BILL_RUN_CANCELLED: "Change",

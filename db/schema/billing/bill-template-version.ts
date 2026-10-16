@@ -35,6 +35,10 @@ export const billTemplateVersion = billing.table("bill_template_version", {
   isDefault: boolean("is_default").notNull().default(false),
   layoutCode: text("layout_code"),
   refLayoutVersionId: text("ref_layout_version_id"),
+  // bm64 — the family of a `generated` version (`btv_generated_has_family`);
+  // NULL for layout/CSV. Plain text like `ref_layout_version_id` (the FK lives
+  // in the migration). An identity column: the guard trigger refuses a change.
+  refBillTemplateFamilyId: text("ref_bill_template_family_id"),
   // bm55-spec §Design D2 — typed from the Zod schema (general §6.17).
   structure: jsonb("structure").$type<InvoiceTemplateStructureInput>(),
   pageSetup: jsonb("page_setup").$type<LayoutPageSetup>(),
