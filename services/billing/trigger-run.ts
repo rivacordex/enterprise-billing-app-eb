@@ -8,6 +8,7 @@ import { customerBillRepository } from "@/db/repositories/billing/customer-bill.
 import { billRunProcessingForceFail } from "@/lib/config";
 import { getBusinessToday } from "@/services/billing/business-today";
 import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
+import { firstOfMonth } from "@/services/billing/derive-periods";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
@@ -140,7 +141,12 @@ export async function triggerRun(
       await billRunAccountRepository.insertSnapshot(tx, snapshotRows);
 
       const banIds = pending.map((p) => p.refBillingAccountId);
-      const stamps = await captureTemplateStamps(tx, run.billRunId, banIds);
+      const stamps = await captureTemplateStamps(
+        tx,
+        run.billRunId,
+        banIds,
+        firstOfMonth(run.periodStart),
+      );
       let executionRef;
       try {
         executionRef = await engineRegistry.trigger(

@@ -87,6 +87,7 @@ const RUN_STAMPS = {
   refBillTemplateVersionId: "BTV00000002",
   refInvoiceProfileVersion: null,
   refCsvTemplateVersionId: "BTV00000003",
+  templateCapturedAt: new Date("2026-07-01T00:00:00Z"),
 };
 
 const LAYOUT = {
@@ -190,6 +191,7 @@ describe("buildInvoiceHtml — not found", () => {
       refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
       refCsvTemplateVersionId: null,
+      templateCapturedAt: null,
     });
     await expect(
       buildInvoiceHtml({
@@ -268,8 +270,49 @@ describe("buildInvoiceHtml — resolution mode (D1)", () => {
     );
     expect(mockResolve).toHaveBeenCalledWith(
       {},
-      { kind: "run", stamps: RUN_STAMPS },
+      { kind: "run", stamps: RUN_STAMPS, banId: "BAN00000001" },
     );
+  });
+
+  it("review fix (Inv #42) — an override for a bill that is already posted in this snapshot is not found, never rendered live", async () => {
+    mockStamps.mockResolvedValue({
+      ...NULL_STAMPS,
+      refInvDocumentId: "INV00000005",
+    });
+    await expect(
+      buildInvoiceHtml({
+        runId: "BRN00000042",
+        banId: "BAN00000001",
+        mode: "draft",
+        override: {
+          structure: SEEDED_GENERATED_ROW.structure!,
+          load: async () => ({ invoice: () => "", footer: () => "" }),
+          renderMode: { kind: "preview-family", familyId: "BTF00000001" },
+        },
+      }),
+    ).rejects.toBeInstanceOf(DraftInvoiceNotFoundError);
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it("review fix — an uncaptured run row throws TEMPLATE_VERSION_NOT_FOUND (TEMPLATE_NOT_CAPTURED), not the D55 reason", async () => {
+    mockRunStamps.mockResolvedValue({
+      ...RUN_STAMPS,
+      refBillTemplateFamilyId: null,
+      refBillTemplateVersionId: null,
+      refCsvTemplateVersionId: null,
+      templateCapturedAt: null,
+    });
+    await expect(
+      buildInvoiceHtml({
+        runId: "BRN00000042",
+        banId: "BAN00000001",
+        mode: "draft",
+      }),
+    ).rejects.toMatchObject({
+      code: "TEMPLATE_VERSION_NOT_FOUND",
+      detail: { reason: "TEMPLATE_NOT_CAPTURED", banId: "BAN00000001" },
+    });
+    expect(mockResolve).not.toHaveBeenCalled();
   });
 
   // bm67 — the override carries the live mode its caller (the editor

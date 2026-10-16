@@ -1,4 +1,5 @@
 import { db } from "@/db/client";
+import type { Database } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
@@ -249,6 +250,44 @@ function describePostFailure(
 //      bm67, D23/Inv #41) and mark the account `INVOICED` — all inside the
 //      same transaction as steps 3-4. A BAN whose captured version is NULL is
 //      skipped before any INV is created (bm67, D58).
+// Review fix (2026-10-16, known-issues §24a; general §1.7) — a posting-time
+// skip (no INV issued) is a mutation like any other: the account's
+// PROCESSED → SKIPPED change and its AUDIT_LOG row share the posting
+// transaction.
+async function skipAccount(
+  tx: Database,
+  billRunId: string,
+  billingAccountId: string,
+  actorId: string,
+  reason: {
+    errorCode: "ZERO_TOTAL_NOT_INVOICED" | "TEMPLATE_VERSION_NOT_FOUND";
+    errorDetail: string;
+    customerBillId: string;
+    familyId?: string | null;
+  },
+): Promise<void> {
+  await billRunAccountRepository.updateStatus(tx, billRunId, billingAccountId, {
+    status: "SKIPPED",
+    errorCode: reason.errorCode,
+    errorDetail: reason.errorDetail,
+    expectedStatus: "PROCESSED",
+  });
+  await insertAuditEvent(tx, {
+    eventType: "BILL_RUN_ACCOUNT_SKIPPED",
+    actorUserId: actorId,
+    targetEntity: "BILL_RUN",
+    targetId: billRunId,
+    beforeData: { banId: billingAccountId, status: "PROCESSED" },
+    afterData: {
+      banId: billingAccountId,
+      status: "SKIPPED",
+      code: reason.errorCode,
+      customerBillId: reason.customerBillId,
+      ...(reason.familyId !== undefined ? { familyId: reason.familyId } : {}),
+    },
+  });
+}
+
 export async function postAccount(
   run: BillRun,
   billingAccountId: string,
@@ -329,18 +368,12 @@ export async function postAccount(
         // stays fully billable next period. The account remains visible on the
         // run and on the Uncharged tab (Inv #22), so a zero-charge account is
         // accounted for, never silently dropped.
-        await billRunAccountRepository.updateStatus(
-          tx,
-          run.billRunId,
-          billingAccountId,
-          {
-            status: "SKIPPED",
-            errorCode: "ZERO_TOTAL_NOT_INVOICED",
-            errorDetail:
-              "No invoice issued: the bill totals zero. The account produced no billable charge for this period and appears on the Uncharged tab.",
-            expectedStatus: "PROCESSED",
-          },
-        );
+        await skipAccount(tx, run.billRunId, billingAccountId, actorId, {
+          errorCode: "ZERO_TOTAL_NOT_INVOICED",
+          errorDetail:
+            "No invoice issued: the bill totals zero. The account produced no billable charge for this period and appears on the Uncharged tab.",
+          customerBillId: bill.customerBillId,
+        });
         return { status: "skipped" } as const;
       }
 
@@ -357,18 +390,13 @@ export async function postAccount(
         runStamps.templateCapturedAt !== null &&
         runStamps.refBillTemplateVersionId === null
       ) {
-        await billRunAccountRepository.updateStatus(
-          tx,
-          run.billRunId,
-          billingAccountId,
-          {
-            status: "SKIPPED",
-            errorCode: "TEMPLATE_VERSION_NOT_FOUND",
-            errorDetail:
-              "No invoice issued: this account's invoice template family had no active version when the run started. Activate a version in Invoice Settings and rerun the account.",
-            expectedStatus: "PROCESSED",
-          },
-        );
+        await skipAccount(tx, run.billRunId, billingAccountId, actorId, {
+          errorCode: "TEMPLATE_VERSION_NOT_FOUND",
+          errorDetail:
+            "No invoice issued: this account's invoice template family had no active version when the run started. Activate a version in Invoice Settings and rerun the account.",
+          customerBillId: bill.customerBillId,
+          familyId: runStamps.refBillTemplateFamilyId,
+        });
         return { status: "skipped" } as const;
       }
 

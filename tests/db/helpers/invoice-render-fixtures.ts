@@ -228,7 +228,12 @@ export async function setupInvoiceRenderFixtures(
     // bm65/bm66 — a real trigger captures every non-EXCLUDED row's template
     // stamps, and a draft render reads only them (run mode). Capture with the
     // real service, so the row carries the versions current at fixture time.
-    await captureTemplateStamps(db as unknown as Database, args.runId, [banId]);
+    await captureTemplateStamps(
+      db as unknown as Database,
+      args.runId,
+      [banId],
+      FIXTURE_PARTITION,
+    );
 
     return sql.begin(async (tx) => {
       await tx`SET LOCAL session_replication_role = replica`;

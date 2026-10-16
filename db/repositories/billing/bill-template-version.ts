@@ -31,6 +31,14 @@ export interface TemplateVersionWithUsage extends BillTemplateVersion {
   usedByCount: number;
 }
 
+// Review fix (known-issues §24c) — the optional family filter shared by the
+// generated-version reads/writes; `undefined` adds no condition.
+function familyScope(familyId: string | undefined) {
+  return familyId === undefined
+    ? undefined
+    : eq(billTemplateVersion.refBillTemplateFamilyId, familyId);
+}
+
 export const billTemplateVersionRepository = {
   async findById(
     db: Database,
@@ -45,11 +53,14 @@ export const billTemplateVersionRepository = {
   },
 
   // The current non-default ACTIVE row for the kind, or `null` — resolution
-  // order is pinned → this → default (G3/C3). The partial unique index
-  // `btv_one_active_uq` guarantees at most one.
+  // order is pinned → this → default (G3/C3). For layout/CSV `btv_one_active_uq`
+  // guarantees at most one. For `generated`, uniqueness is per family since
+  // bm64 (`btv_one_active_family_uq`), so generated callers pass `familyId`
+  // (review fix, known-issues §24c); without it the read is exact only while
+  // one family exists (the Customer Management label reader, D46).
   async findActive(
     db: Database,
-    { kind }: { kind: TemplateKind },
+    { kind, familyId }: { kind: TemplateKind; familyId?: string },
   ): Promise<BillTemplateVersion | null> {
     const [row] = await db
       .select()
@@ -58,6 +69,7 @@ export const billTemplateVersionRepository = {
         and(
           eq(billTemplateVersion.refBillFormatId, INVOICE),
           eq(billTemplateVersion.kind, kind),
+          familyScope(familyId),
           eq(billTemplateVersion.status, "ACTIVE"),
           eq(billTemplateVersion.isDefault, false),
         ),
@@ -66,9 +78,12 @@ export const billTemplateVersionRepository = {
     return row ?? null;
   },
 
+  // The kind's default row, or `null`. A generated default exists only in the
+  // default family (`btv_one_default_uq`, architecture P7), so a non-default
+  // `familyId` yields `null`.
   async findDefault(
     db: Database,
-    { kind }: { kind: TemplateKind },
+    { kind, familyId }: { kind: TemplateKind; familyId?: string },
   ): Promise<BillTemplateVersion | null> {
     const [row] = await db
       .select()
@@ -77,49 +92,7 @@ export const billTemplateVersionRepository = {
         and(
           eq(billTemplateVersion.refBillFormatId, INVOICE),
           eq(billTemplateVersion.kind, kind),
-          eq(billTemplateVersion.isDefault, true),
-        ),
-      )
-      .limit(1);
-    return row ?? null;
-  },
-
-  // bm65-spec §3 — the family's non-default ACTIVE `generated` version, or
-  // `null`. `btv_one_active_family_uq` guarantees at most one.
-  async findActiveInFamily(
-    db: Database,
-    { familyId }: { familyId: string },
-  ): Promise<BillTemplateVersion | null> {
-    const [row] = await db
-      .select()
-      .from(billTemplateVersion)
-      .where(
-        and(
-          eq(billTemplateVersion.refBillFormatId, INVOICE),
-          eq(billTemplateVersion.kind, "generated"),
-          eq(billTemplateVersion.refBillTemplateFamilyId, familyId),
-          eq(billTemplateVersion.status, "ACTIVE"),
-          eq(billTemplateVersion.isDefault, false),
-        ),
-      )
-      .limit(1);
-    return row ?? null;
-  },
-
-  // bm65-spec §3 — the family's default `generated` version, or `null`. Only
-  // the default family holds one (`btv_one_default_uq`, architecture P7).
-  async findDefaultInFamily(
-    db: Database,
-    { familyId }: { familyId: string },
-  ): Promise<BillTemplateVersion | null> {
-    const [row] = await db
-      .select()
-      .from(billTemplateVersion)
-      .where(
-        and(
-          eq(billTemplateVersion.refBillFormatId, INVOICE),
-          eq(billTemplateVersion.kind, "generated"),
-          eq(billTemplateVersion.refBillTemplateFamilyId, familyId),
+          familyScope(familyId),
           eq(billTemplateVersion.isDefault, true),
         ),
       )
@@ -132,7 +105,11 @@ export const billTemplateVersionRepository = {
   // or the CSV stamp). Counted in SQL (no JS reduce).
   async listForKind(
     db: Database,
-    { kind, withUsage = true }: { kind: TemplateKind; withUsage?: boolean },
+    {
+      kind,
+      withUsage = true,
+      familyId,
+    }: { kind: TemplateKind; withUsage?: boolean; familyId?: string },
   ): Promise<TemplateVersionWithUsage[]> {
     // `withUsage: false` skips the `customer_bill` count (callers that only
     // need labels, e.g. layout versions, whose count is always 0).
@@ -152,6 +129,7 @@ export const billTemplateVersionRepository = {
         and(
           eq(billTemplateVersion.refBillFormatId, INVOICE),
           eq(billTemplateVersion.kind, kind),
+          familyScope(familyId),
         ),
       )
       .orderBy(desc(billTemplateVersion.versionNo));
@@ -198,7 +176,7 @@ export const billTemplateVersionRepository = {
   // with its concurrency token.
   async findDraft(
     db: Database,
-    { kind }: { kind: TemplateKind },
+    { kind, familyId }: { kind: TemplateKind; familyId?: string },
   ): Promise<TemplateDraftRow | null> {
     const [row] = await db
       .select({ version: billTemplateVersion, token: draftToken })
@@ -207,6 +185,7 @@ export const billTemplateVersionRepository = {
         and(
           eq(billTemplateVersion.refBillFormatId, INVOICE),
           eq(billTemplateVersion.kind, kind),
+          familyScope(familyId),
           eq(billTemplateVersion.status, "DRAFT"),
         ),
       )
@@ -298,13 +277,14 @@ export const billTemplateVersionRepository = {
   },
 
   // bm58 D2 step 8 — retire the current NON-default ACTIVE of the kind, if any.
-  // MUST run before `promoteDraft`: `btv_one_active_uq` is checked per
+  // MUST run before `promoteDraft`: the one-ACTIVE indexes
+  // (`btv_one_active_family_uq` for generated, bm64) are checked per
   // statement, so promoting first would violate it. The default row is never
   // touched (it is excluded here, and the guard trigger would refuse anyway).
   // Returns the retired row, or `null` when only the default was in use.
   async retireActive(
     tx: Database,
-    { kind }: { kind: TemplateKind },
+    { kind, familyId }: { kind: TemplateKind; familyId?: string },
   ): Promise<BillTemplateVersion | null> {
     const [row] = await tx
       .update(billTemplateVersion)
@@ -317,6 +297,9 @@ export const billTemplateVersionRepository = {
         and(
           eq(billTemplateVersion.refBillFormatId, INVOICE),
           eq(billTemplateVersion.kind, kind),
+          // Review fix (§24c) — activation retires only within the draft's
+          // own family, never another family's ACTIVE version.
+          familyScope(familyId),
           eq(billTemplateVersion.status, "ACTIVE"),
           eq(billTemplateVersion.isDefault, false),
         ),

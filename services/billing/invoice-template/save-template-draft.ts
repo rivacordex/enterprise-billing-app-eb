@@ -1,5 +1,6 @@
 import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import {
   InvoiceRenderError,
@@ -73,8 +74,20 @@ export async function saveTemplateDraft(
       async (tx): Promise<SaveTemplateDraftResult> => {
         // Serialise draft writers first (see `lockKind`).
         await billTemplateVersionRepository.lockKind(tx, { kind: "generated" });
+        // Review fix (known-issues §24c) — the editor edits the Standard
+        // (default) family (D45); every generated read is scoped to it.
+        const family = await billTemplateFamilyRepository.findDefault(tx);
+        if (!family) {
+          throw new InvoiceRenderError(
+            "TEMPLATE_VERSION_NOT_FOUND",
+            "no default template family to save a draft into",
+            { reason: "FAMILY_NOT_FOUND" },
+          );
+        }
+        const familyId = family.billTemplateFamilyId;
         const draft = await billTemplateVersionRepository.findDraft(tx, {
           kind: "generated",
+          familyId,
         });
 
         if (draft) {
@@ -122,9 +135,11 @@ export async function saveTemplateDraft(
         const current =
           (await billTemplateVersionRepository.findActive(tx, {
             kind: "generated",
+            familyId,
           })) ??
           (await billTemplateVersionRepository.findDefault(tx, {
             kind: "generated",
+            familyId,
           }));
         if (!current?.refLayoutVersionId || !current.refBillTemplateFamilyId) {
           throw new InvoiceRenderError(

@@ -945,6 +945,19 @@ describe.skipIf(!databaseUrl)(
           WHERE grantee = 'billrun_runtime' AND table_schema = 'billing'
             AND table_name = 'bill_run_account'`;
         expect(privs.map((p) => p.privilege_type).sort()).toEqual(["SELECT"]);
+        // Review fix — a column-scoped grant shows in column_privileges, not
+        // role_table_grants: none of the five stamp columns may be writable.
+        const columnPrivs = await sql<
+          { column_name: string; privilege_type: string }[]
+        >`
+          SELECT column_name, privilege_type FROM information_schema.column_privileges
+          WHERE grantee = 'billrun_runtime' AND table_schema = 'billing'
+            AND table_name = 'bill_run_account'
+            AND column_name IN ('ref_bill_template_family_id', 'ref_bill_template_version_id',
+                                'ref_invoice_profile_version', 'ref_csv_template_version_id',
+                                'template_captured_at')
+            AND privilege_type IN ('INSERT', 'UPDATE')`;
+        expect(columnPrivs).toEqual([]);
         await expect(
           billrunRuntime`SELECT ref_bill_template_family_id, ref_bill_template_version_id,
                                 ref_invoice_profile_version, ref_csv_template_version_id,

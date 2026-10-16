@@ -14,6 +14,7 @@ import { billRun } from "@/db/schema/billing/bill-run";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
+import { engineRegistry } from "@/services/billing/engine-registry";
 import type { triggerRun as TriggerRun } from "@/services/billing/trigger-run";
 import type * as ScopeAccountsModule from "@/services/billing/scope-accounts";
 
@@ -408,6 +409,37 @@ describe.skipIf(!databaseUrl)(
           UPDATE billing.bill_template_version SET status = 'RETIRED', retired_datetime = now()
           WHERE bill_template_version_id = 'BTV00000065'`;
       }
+    });
+
+    // bm65 checklist ("a forced engine failure leaves no stamps") — the
+    // capture runs inside the trigger transaction, so the rollback removes it.
+    it("bm65 — an engine failure rolls the capture back with the snapshot: no row, no stamp", async () => {
+      const previousCycleId = cycleId;
+      cycleId = await newCycle("BM65VERIFY Engine-down Cycle");
+      await newBillingAccount();
+      const runId = await newScheduledRun({
+        periodStart: "2026-06-01",
+        periodEnd: "2026-06-30",
+        scheduledRunDate: "2026-07-01",
+      });
+      cycleId = previousCycleId;
+
+      const spy = vi
+        .spyOn(engineRegistry, "trigger")
+        .mockRejectedValueOnce(new Error("engine down"));
+      try {
+        const result = await triggerRun(runId, actorId, "2026-07-01");
+        expect(result).toEqual({ ok: false, code: "ENGINE_UNREACHABLE" });
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(await stampRows(runId)).toEqual([]);
+      const [run] = await db
+        .select()
+        .from(billRun)
+        .where(eq(billRun.billRunId, runId));
+      expect(run?.status).toBe("SCHEDULED");
     });
 
     it("returns NO_ELIGIBLE_ACCOUNTS and writes no snapshot rows when the cycle has no active accounts", async () => {

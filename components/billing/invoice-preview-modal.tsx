@@ -106,13 +106,16 @@ export function InvoicePreviewModal({
       if (!response.ok) {
         // bm66-spec §5 — a 422 carries the render failure's code; show its
         // message (UI context §10d). Anything else keeps the status text.
-        const code =
-          response.status === 422 ? await readRenderErrorCode(response) : null;
+        const rendered =
+          response.status === 422 ? await readRenderError(response) : null;
         if (isStale()) return;
         setErrorMessage(
-          code === null
+          rendered === null
             ? describeRenderError(response.status)
-            : describeInvoiceRenderCode(code),
+            : // The route computed the safe text from the code AND its reason
+              // (only the D55 cause gets the "activate, then rerun" copy); the
+              // code alone is the fallback for a body without a message.
+              (rendered.message ?? describeInvoiceRenderCode(rendered.code)),
         );
         setState("error");
         return;
@@ -229,7 +232,9 @@ export function InvoicePreviewModal({
 
           {state === "error" && (
             <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-              <p className="max-w-sm text-body-sm text-destructive">
+              {/* UI context section 10d: the reason renders in Danger -fg
+                  (danger-700), not the danger-500 base (review fix 24h). */}
+              <p className="max-w-sm text-body-sm text-[color:var(--color-danger-700)]">
                 {errorMessage}
               </p>
               <Button type="button" variant="outline" onClick={startRender}>
@@ -252,16 +257,22 @@ export function InvoicePreviewModal({
 }
 
 // The draft route's 422 envelope: `{ error: { code, message } }`. An
-// unreadable body falls back to the status text.
-async function readRenderErrorCode(
+// unreadable body (or one without a code) falls back to the status text.
+async function readRenderError(
   response: Response,
-): Promise<InvoiceErrorCode | null> {
+): Promise<{ code: InvoiceErrorCode; message: string | null } | null> {
   try {
     const body = (await response.json()) as {
-      error?: { code?: unknown };
+      error?: { code?: unknown; message?: unknown };
     };
     const code = body.error?.code;
-    return typeof code === "string" ? (code as InvoiceErrorCode) : null;
+    if (typeof code !== "string") return null;
+    const message = body.error?.message;
+    return {
+      code: code as InvoiceErrorCode,
+      message:
+        typeof message === "string" && message.length > 0 ? message : null,
+    };
   } catch {
     return null;
   }

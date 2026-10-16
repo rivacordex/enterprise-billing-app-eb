@@ -16,7 +16,10 @@ vi.mock("@/db/repositories/audit-log.repository", () => ({
   auditLogRepository: { listActorIdsForEvents: vi.fn() },
 }));
 vi.mock("@/db/repositories/billing/bill-run-account.repository", () => ({
-  billRunAccountRepository: { listStatusesForRun: vi.fn() },
+  billRunAccountRepository: {
+    listStatusesForRun: vi.fn(),
+    countMissingTemplateVersion: vi.fn(),
+  },
 }));
 vi.mock("@/db/repositories/billing/bill-run-account-stage.repository", () => ({
   billRunAccountStageRepository: { listRejectedPendingForRun: vi.fn() },
@@ -47,6 +50,9 @@ const mockFindPeriod = vi.mocked(
 );
 const mockResolveGlCode = vi.mocked(ledgerRepository.resolveGlCodeByName);
 const mockListStatuses = vi.mocked(billRunAccountRepository.listStatusesForRun);
+const mockCountMissingTemplate = vi.mocked(
+  billRunAccountRepository.countMissingTemplateVersion,
+);
 const mockListCurrencies = vi.mocked(
   customerBillRepository.listPostableCurrencies,
 );
@@ -104,14 +110,14 @@ beforeEach(() => {
   mockListRejectedPending.mockResolvedValue([]); // no rejected accounts by default
   mockCountOrphans.mockResolvedValue(0); // no orphans by default
   mockCountZeroTotal.mockResolvedValue(0); // no zero-total bills by default
-  mockCountZeroTotal.mockResolvedValue(0); // no zero-total bills by default
+  mockCountMissingTemplate.mockResolvedValue(0); // every account captured
 });
 
 describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 7th, 2026-09-17 an 8th)", () => {
-  it("returns all eight checks passing on a clean run", async () => {
+  it("returns all nine checks passing on a clean run", async () => {
     const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
 
-    expect(checks).toHaveLength(8);
+    expect(checks).toHaveLength(9);
     for (const c of checks) {
       expect(c.pass).toBe(true);
       expect(c.remediation).toBeNull();
@@ -372,5 +378,43 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 
     const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
 
     expect(byKey(checks, "no_rejected_pending")).toMatchObject({ pass: true });
+  });
+
+  // bm65–bm67 review fix (owner decision 2026-10-16; amends D58).
+  it("[CRITICAL] template_versions_captured BLOCKS while a PROCESSED account has no captured template version", async () => {
+    mockCountMissingTemplate.mockResolvedValue(2);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+    const check = byKey(checks, "template_versions_captured");
+
+    expect(check).toMatchObject({ pass: false });
+    expect(check?.informational).toBeUndefined();
+    expect(check?.remediation).toContain(
+      "2 accounts have no invoice template version",
+    );
+    expect(check?.remediation).toContain("then rerun those accounts");
+    expect(mockCountMissingTemplate).toHaveBeenCalledWith(
+      dbStub,
+      "BRN00000001",
+    );
+  });
+
+  it("template_versions_captured agrees in number for one account", async () => {
+    mockCountMissingTemplate.mockResolvedValue(1);
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "template_versions_captured")?.remediation).toContain(
+      "1 account has no invoice template version",
+    );
+  });
+
+  it("template_versions_captured passes when every account is captured", async () => {
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "template_versions_captured")).toMatchObject({
+      pass: true,
+      remediation: null,
+    });
   });
 });

@@ -31,8 +31,14 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
     findActive: vi.fn(),
     findDefault: vi.fn(),
     findById: vi.fn(),
-    findActiveInFamily: vi.fn(),
-    findDefaultInFamily: vi.fn(),
+  },
+}));
+vi.mock("@/db/repositories/billing/bill-template-family", () => ({
+  billTemplateFamilyRepository: {
+    findById: vi.fn(async (_db: unknown, id: string) => ({
+      billTemplateFamilyId: id,
+      retiredDatetime: null,
+    })),
   },
 }));
 vi.mock("@/db/repositories/billing/invoice-profile", () => ({
@@ -227,10 +233,7 @@ beforeEach(() => {
         : CSV_ROW,
   );
   repo.findById.mockImplementation(async (_db, id) => ROWS[id] ?? null);
-  repo.findActiveInFamily.mockResolvedValue(null);
-  repo.findDefaultInFamily.mockImplementation(async (_db, { familyId }) =>
-    familyId === FAMILY ? SEEDED_GENERATED_ROW : null,
-  );
+
   vi.mocked(invoiceProfileRepository.findActiveVersion).mockResolvedValue(null);
 });
 
@@ -248,7 +251,7 @@ describe("previewInvoiceTemplateAction — familyId (bm66)", () => {
       source: "sample",
     });
     expect(result).toEqual({ ok: false, code: "VALIDATION_ERROR" });
-    expect(repo.findDefaultInFamily).not.toHaveBeenCalled();
+    expect(repo.findDefault).not.toHaveBeenCalled();
   });
 
   it("rejects a malformed familyId (not BTF + digits) as VALIDATION_ERROR", async () => {
@@ -260,7 +263,7 @@ describe("previewInvoiceTemplateAction — familyId (bm66)", () => {
       });
       expect(result).toEqual({ ok: false, code: "VALIDATION_ERROR" });
     }
-    expect(repo.findDefaultInFamily).not.toHaveBeenCalled();
+    expect(repo.findDefault).not.toHaveBeenCalled();
   });
 
   it("the sample preview resolves the named family's versions", async () => {
@@ -270,7 +273,8 @@ describe("previewInvoiceTemplateAction — familyId (bm66)", () => {
       source: "sample",
     });
     expect(result.ok).toBe(true);
-    expect(repo.findActiveInFamily).toHaveBeenCalledWith(expect.anything(), {
+    expect(repo.findActive).toHaveBeenCalledWith(expect.anything(), {
+      kind: "generated",
       familyId: FAMILY,
     });
   });

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
@@ -9,6 +9,7 @@ import { billingAccount } from "@/db/schema/billing/accounts";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
+import { POSTING_SKIP_CODES } from "@/types/billing";
 import type {
   AccountStatus,
   ErrorClass,
@@ -33,26 +34,38 @@ function textArray(values: (string | null)[]) {
 // needs as the engine progresses.
 export const billRunAccountRepository = {
   // bm65-spec §4 — the family each BAN is captured with: the family of the
-  // version its `ref_bill_template_version_id` names (follow-the-line, 0050),
-  // else the default family. This is the one sanctioned billing read of the BAN
-  // template reference (Inv #54, D46); posting never reads it.
+  // `generated` version its `ref_bill_template_version_id` names
+  // (follow-the-line, 0050), or the default family when that reference is
+  // NULL. This is the one sanctioned billing read of the BAN template
+  // reference (Inv #54, D46); posting never reads it. Review fix (§24e) —
+  // every BAN gets a row: a reference to a non-generated version, or a missing
+  // default family, yields a NULL family instead of silently defaulting or
+  // dropping the BAN, and capture stamps it with a NULL version.
   async listBanFamilies(
     tx: Database,
     banIds: string[],
-  ): Promise<{ banId: string; familyId: string }[]> {
-    const out: { banId: string; familyId: string }[] = [];
+  ): Promise<{ banId: string; familyId: string | null }[]> {
+    const out: { banId: string; familyId: string | null }[] = [];
     for (let i = 0; i < banIds.length; i += CAPTURE_CHUNK_SIZE) {
       const chunk = banIds.slice(i, i + CAPTURE_CHUNK_SIZE);
-      const rows = await tx.execute<{ ban_id: string; family_id: string }>(sql`
+      const rows = await tx.execute<{
+        ban_id: string;
+        family_id: string | null;
+      }>(sql`
         SELECT ba.billing_account_id AS ban_id,
-               COALESCE(btv.ref_bill_template_family_id, dft.bill_template_family_id) AS family_id
+               CASE WHEN ba.ref_bill_template_version_id IS NULL
+                    THEN dft.bill_template_family_id
+                    ELSE btv.ref_bill_template_family_id
+               END AS family_id
         FROM billing.billing_account ba
         LEFT JOIN billing.bill_template_version btv
           ON btv.bill_template_version_id = ba.ref_bill_template_version_id
-        CROSS JOIN (
+         AND btv.kind = 'generated'
+        LEFT JOIN (
           SELECT bill_template_family_id FROM billing.bill_template_family WHERE is_default
-        ) dft
-        WHERE ba.billing_account_id = ANY(${textArray(chunk)})`);
+        ) dft ON true
+        WHERE ba.billing_account_id = ANY(${textArray(chunk)})
+        ORDER BY ba.billing_account_id`);
       for (const r of rows)
         out.push({ banId: r.ban_id, familyId: r.family_id });
     }
@@ -66,7 +79,15 @@ export const billRunAccountRepository = {
   async captureTemplateStamps(
     tx: Database,
     billRunId: string,
-    rows: { banId: string; familyId: string; versionId: string | null }[],
+    // The run's partition (the 1st of its period month, Inv #11): pruning the
+    // UPDATE to it keeps the trigger transaction off every other partition
+    // while it waits on the engine call (review fix §24b).
+    periodPartition: string,
+    rows: {
+      banId: string;
+      familyId: string | null;
+      versionId: string | null;
+    }[],
     shared: { profileVersion: number | null; csvVersionId: string },
   ): Promise<void> {
     for (let i = 0; i < rows.length; i += CAPTURE_CHUNK_SIZE) {
@@ -77,16 +98,42 @@ export const billRunAccountRepository = {
             ref_bill_template_version_id = u.version_id,
             ref_invoice_profile_version = ${shared.profileVersion}::integer,
             ref_csv_template_version_id = ${shared.csvVersionId},
-            template_captured_at = now()
+            -- statement time, not transaction start: the capture is stamped
+            -- when the catalog was read, never before an activation it saw
+            -- (review fix §24f).
+            template_captured_at = statement_timestamp()
         FROM unnest(
           ${textArray(chunk.map((r) => r.banId))},
           ${textArray(chunk.map((r) => r.familyId))},
           ${textArray(chunk.map((r) => r.versionId))}
         ) AS u(ban_id, family_id, version_id)
         WHERE bra.ref_bill_run_id = ${billRunId}
+          AND bra.period_partition = ${periodPartition}::date
           AND bra.ref_billing_account_id = u.ban_id
           AND bra.status <> 'EXCLUDED'`);
     }
+  },
+
+  // bm65–bm67 review fix (2026-10-16; amends D58) — the PROCESSED accounts
+  // whose captured generated template version is NULL: their family had no
+  // ACTIVE version at capture (D55), or the row was never captured. Feeds the
+  // blocking `template_versions_captured` pre-approval check. EXCLUDED and
+  // PROCESSING_FAILED accounts are excluded: approval skips them anyway.
+  async countMissingTemplateVersion(
+    db: Database,
+    billRunId: string,
+  ): Promise<number> {
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(billRunAccount)
+      .where(
+        and(
+          eq(billRunAccount.refBillRunId, billRunId),
+          eq(billRunAccount.status, "PROCESSED"),
+          sql`${billRunAccount.refBillTemplateVersionId} IS NULL`,
+        ),
+      );
+    return row?.count ?? 0;
   },
 
   // bm65-spec §4 — one BAN's run-start stamps (bm66 drafts, bm67 posting), or
@@ -97,10 +144,17 @@ export const billRunAccountRepository = {
     tx: Database,
     billRunId: string,
     banId: string,
-  ): Promise<(RunTemplateStamps & { status: AccountStatus }) | null> {
+  ): Promise<
+    | (RunTemplateStamps & {
+        status: AccountStatus;
+        templateCapturedAt: Date | null;
+      })
+    | null
+  > {
     const [row] = await tx
       .select({
         status: billRunAccount.status,
+        templateCapturedAt: billRunAccount.templateCapturedAt,
         refBillTemplateFamilyId: billRunAccount.refBillTemplateFamilyId,
         refBillTemplateVersionId: billRunAccount.refBillTemplateVersionId,
         refInvoiceProfileVersion: billRunAccount.refInvoiceProfileVersion,
@@ -370,7 +424,15 @@ export const billRunAccountRepository = {
       .where(
         and(
           eq(billRunAccount.refBillRunId, billRunId),
-          inArray(billRunAccount.status, ["PROCESSED", "INVOICED"]),
+          // Review fix (2026-10-16) — plus the accounts posting itself skipped
+          // (`POSTING_SKIP_CODES`), so their reason is visible on the run.
+          or(
+            inArray(billRunAccount.status, ["PROCESSED", "INVOICED"]),
+            and(
+              eq(billRunAccount.status, "SKIPPED"),
+              inArray(billRunAccount.errorCode, [...POSTING_SKIP_CODES]),
+            ),
+          ),
         ),
       )
       .orderBy(billingAccount.name);

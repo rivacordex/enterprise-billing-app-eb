@@ -51,6 +51,11 @@ const LIVE_RESOLVER_IMPORTERS = [
 ];
 const RESOLVER_FILE = "services/billing/invoice-template/resolve-template.ts";
 
+// The live resolver exports (review fix: the family resolver was split into
+// its generated and shared halves so capture reads CSV/profile once).
+const LIVE_RESOLVERS =
+  /\b(?:resolveCurrentVersionsForFamily|resolveGeneratedForFamily|resolveSharedCurrentVersions)\b/;
+
 describe("guardrail 57 — no live template resolution on a run path", () => {
   const productionFiles = ["services", "db", "app"].flatMap(collect);
 
@@ -68,21 +73,21 @@ describe("guardrail 57 — no live template resolution on a run path", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("no run-path file builds a preview-family mode or imports resolveCurrentVersionsForFamily", () => {
+  it("no run-path file builds a preview-family mode or imports a live resolver", () => {
     for (const file of RUN_PATH_FILES) {
       const source = code(file);
       expect(source, file).not.toMatch(/["']preview-family["']/);
-      expect(source, file).not.toMatch(/\bresolveCurrentVersionsForFamily\b/);
+      expect(source, file).not.toMatch(LIVE_RESOLVERS);
     }
   });
 
   // `preview.ts` reaches the live resolver through `resolveTemplate`'s
   // `preview-family` case rather than importing it, so the check is "no file
   // outside these two imports it", with capture as the one direct importer.
-  it("only capture-template-stamps.ts and preview.ts may import resolveCurrentVersionsForFamily", () => {
+  it("only capture-template-stamps.ts and preview.ts may import a live resolver", () => {
     const importers = productionFiles
       .filter((f) => f !== RESOLVER_FILE)
-      .filter((f) => /\bresolveCurrentVersionsForFamily\b/.test(code(f)));
+      .filter((f) => LIVE_RESOLVERS.test(code(f)));
     for (const importer of importers) {
       expect(LIVE_RESOLVER_IMPORTERS, importer).toContain(importer);
     }

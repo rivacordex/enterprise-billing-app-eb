@@ -222,6 +222,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       }
     }, 60_000);
 
+    it("0051 stores template_captured_at at millisecond precision (timestamptz(3), Data rule 4)", async () => {
+      const [col] = await sql<{ datetime_precision: number }[]>`
+        SELECT datetime_precision FROM information_schema.columns
+        WHERE table_schema = 'billing' AND table_name = 'bill_run_account'
+          AND column_name = 'template_captured_at'`;
+      expect(col?.datetime_precision).toBe(3);
+    });
+
     it("1. an activation after the trigger leaves the captured stamps unchanged", async () => {
       const cycleId = await newCycle("BM65VERIFY Activation Cycle");
       const ban = await newBillingAccount(cycleId);
@@ -351,6 +359,86 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           { banId: boundBan, familyId: "BTF00000099", versionId: null },
         ]),
       );
+    });
+
+    // Review fixes (2026-10-16, known-issues §24c/§24d/§24e).
+    it("4. a second family: Standard activation never retires its ACTIVE version; a retired family captures a NULL version", async () => {
+      await sql`
+        INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, kind)
+        VALUES ('BTF00000088', 'BM65-SECOND', 'Second family', 'generated')`;
+      await sql`
+        INSERT INTO billing.bill_template_version
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
+           ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum,
+           checksum_algorithm, change_note, activated_datetime)
+        SELECT 'BTV00000088', 'INVOICE', 'generated', 88, 'ACTIVE', false,
+               'BTV00000001', 'BTF00000088', structure, 'invoice-templates/generated/INVOICE/v88/',
+               ${"8".repeat(64)}, 'sha256', 'bm65 second-family fixture', now()
+        FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
+
+      // §24c — activating a Standard version retires only Standard's ACTIVE.
+      await activateNewStandardVersion("bm65 second-family activation");
+      const [second] = await sql<{ status: string }[]>`
+        SELECT status FROM billing.bill_template_version
+        WHERE bill_template_version_id = 'BTV00000088'`;
+      expect(second?.status).toBe("ACTIVE");
+
+      // A BAN following the second family captures its ACTIVE version.
+      const cycleId = await newCycle("BM65VERIFY Second Family Cycle");
+      const ban = await newBillingAccount(cycleId);
+      await sql`
+        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000088'
+        WHERE billing_account_id = ${ban}`;
+      const runId = await newScheduledRun(cycleId);
+      expect((await triggerRun(runId, ACTOR, "2026-07-01")).ok).toBe(true);
+      expect((await stamps(runId)).get(ban)).toMatchObject({
+        ref_bill_template_family_id: "BTF00000088",
+        ref_bill_template_version_id: "BTV00000088",
+      });
+
+      // §24d (D44) — once the family is retired it is not usable: a rerun
+      // re-captures the family with a NULL version, though its version stays
+      // ACTIVE.
+      await sql`
+        UPDATE billing.bill_template_family SET retired_datetime = now()
+        WHERE bill_template_family_id = 'BTF00000088'`;
+      await sql`UPDATE billing.bill_run SET status = 'PROCESSED' WHERE bill_run_id = ${runId}`;
+      await sql`UPDATE billing.bill_run_account SET status = 'PROCESSED' WHERE ref_bill_run_id = ${runId}`;
+      const rerun = await rerunRun(
+        {
+          billRunId: runId,
+          accountIds: [ban],
+          fromStage: "validation",
+          reason: "bm65 retired family",
+        },
+        ACTOR,
+      );
+      expect(rerun.ok).toBe(true);
+      expect((await stamps(runId)).get(ban)).toMatchObject({
+        ref_bill_template_family_id: "BTF00000088",
+        ref_bill_template_version_id: null,
+      });
+    });
+
+    it("5. a BAN bound to a non-generated version is captured with a NULL family and version, never silently Standard (§24e)", async () => {
+      const cycleId = await newCycle("BM65VERIFY Wrong Kind Cycle");
+      const ban = await newBillingAccount(cycleId);
+      // BTV00000003 is the CSV version: the 0050 FK allows it, the column's
+      // meaning (generated only) does not.
+      await sql`
+        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000003'
+        WHERE billing_account_id = ${ban}`;
+      const runId = await newScheduledRun(cycleId);
+
+      const result = await triggerRun(runId, ACTOR, "2026-07-01");
+      expect(result.ok).toBe(true);
+      const row = (await stamps(runId)).get(ban);
+      expect(row).toMatchObject({
+        status: "PENDING",
+        ref_bill_template_family_id: null,
+        ref_bill_template_version_id: null,
+      });
+      expect(row?.template_captured_at).not.toBeNull();
     });
   },
 );

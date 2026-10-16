@@ -25,6 +25,8 @@ import { captureTemplateStamps } from "@/services/billing/capture-template-stamp
 import { triggerDistribution } from "@/services/billing/distribute-run";
 import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
 import { postRun } from "@/services/billing/post-run";
+import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
+import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
 import {
   setupInvoiceRenderFixtures,
@@ -94,14 +96,21 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       await sql`
         UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000099'
         WHERE billing_account_id = ${nullBan}`;
-      await captureTemplateStamps(fx.db, RUN, [nullBan]);
+      await captureTemplateStamps(fx.db, RUN, [nullBan], "2026-06-01");
 
-      // Approve (the approve service's checks are out of scope here).
+      // The run finished processing. Approval is driven by raw SQL below: the
+      // blocking `template_versions_captured` check (review fix) refuses the
+      // real approve for this run — asserted in its own case — and this suite
+      // proves posting's D58 skip still holds as the backstop.
+      await sql`UPDATE billing.bill_run SET status = 'PROCESSED' WHERE bill_run_id = ${RUN}`;
+    }, 240_000);
+
+    async function approveBySql(): Promise<void> {
       await sql`
         UPDATE billing.bill_run SET status = 'APPROVED', approved_by = ${actorId},
                approved_at = now(), gl_event_at = scheduled_run_date
         WHERE bill_run_id = ${RUN}`;
-    }, 240_000);
+    }
 
     afterAll(async () => {
       clearLoadedTemplateMemo();
@@ -141,7 +150,21 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       });
     });
 
-    it("[CRITICAL] postRun skips it before the INV — SKIPPED / TEMPLATE_VERSION_NOT_FOUND, no document, no gap; siblings and the run are INVOICED", async () => {
+    it("[CRITICAL] review fix — the blocking template_versions_captured check refuses approval while the NULL-version account is PROCESSED", async () => {
+      const run = await billRunRepository.findByIdForUpdate(fx.db, RUN);
+      const checks = await runPreApprovalChecks(fx.db, run!, actorId);
+      const check = checks.find(
+        (c) => c.check === "template_versions_captured",
+      );
+      expect(check).toMatchObject({ pass: false });
+      expect(check?.informational).toBeUndefined();
+      expect(check?.remediation).toContain(
+        "1 account has no invoice template version",
+      );
+    });
+
+    it("[CRITICAL] D58 backstop — postRun skips it before the INV — SKIPPED / TEMPLATE_VERSION_NOT_FOUND, no document, no gap; siblings and the run are INVOICED", async () => {
+      await approveBySql();
       const result = await postRun(RUN, actorId);
       expect(result.ok).toBe(true);
 
@@ -187,6 +210,19 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         SELECT status FROM billing.bill_run WHERE bill_run_id = ${RUN}`;
       expect(run?.status).toBe("INVOICED");
       expect(vi.mocked(triggerDistribution)).toHaveBeenCalledWith(RUN, null);
+
+      // Review fix §24a (general §1.7) — the skip is audited with the change.
+      const audit = await sql<{ after_data: Record<string, unknown> }[]>`
+        SELECT after_data FROM core.audit_log
+        WHERE event_type = 'BILL_RUN_ACCOUNT_SKIPPED' AND target_id = ${RUN}`;
+      expect(audit.map((a) => a.after_data)).toEqual([
+        expect.objectContaining({
+          banId: nullBan,
+          status: "SKIPPED",
+          code: "TEMPLATE_VERSION_NOT_FOUND",
+          familyId: "BTF00000099",
+        }),
+      ]);
     }, 180_000);
 
     it("the siblings' bills carry the Standard family and its captured version", async () => {

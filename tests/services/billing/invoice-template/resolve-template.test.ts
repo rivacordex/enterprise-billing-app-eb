@@ -11,15 +11,19 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
     findById: vi.fn(),
     findActive: vi.fn(),
     findDefault: vi.fn(),
-    findActiveInFamily: vi.fn(),
-    findDefaultInFamily: vi.fn(),
   },
+}));
+// Review fix (§24d) — the family resolver reads the family to refuse a
+// retired one.
+vi.mock("@/db/repositories/billing/bill-template-family", () => ({
+  billTemplateFamilyRepository: { findById: vi.fn() },
 }));
 vi.mock("@/db/repositories/billing/invoice-profile", () => ({
   invoiceProfileRepository: { findActiveVersion: vi.fn() },
 }));
 
 import type { Database } from "@/db/client";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
@@ -28,6 +32,7 @@ import { InvoiceRenderError, type TemplateKind } from "@/types/billing";
 import { SEEDED_GENERATED_ROW } from "@/tests/helpers/seeded-invoice-template";
 
 const repo = vi.mocked(billTemplateVersionRepository);
+const familyRepo = vi.mocked(billTemplateFamilyRepository);
 const profileRepo = vi.mocked(invoiceProfileRepository);
 const DB = {} as Database;
 
@@ -80,15 +85,27 @@ beforeEach(() => {
   vi.clearAllMocks();
   repo.findById.mockImplementation(async (_db, id) => ROWS.get(id) ?? null);
   repo.findActive.mockResolvedValue(null);
-  repo.findDefault.mockImplementation(async (_db, { kind }) => DEFAULTS[kind]);
-  repo.findActiveInFamily.mockResolvedValue(null);
-  repo.findDefaultInFamily.mockImplementation(async (_db, { familyId }) =>
-    familyId === STANDARD ? DEFAULT_GENERATED : null,
+  // The generated default exists only in the default family (Standard).
+  repo.findDefault.mockImplementation(async (_db, { kind, familyId }) =>
+    kind === "generated" && familyId !== undefined && familyId !== STANDARD
+      ? null
+      : DEFAULTS[kind],
   );
+  familyRepo.findById.mockImplementation(async (_db, id) => ({
+    billTemplateFamilyId: id,
+    code: id,
+    name: id,
+    kind: "generated",
+    isDefault: id === STANDARD,
+    retiredDatetime: null,
+    createdBy: null,
+    createdDatetime: new Date("2026-10-15T00:00:00Z"),
+  }));
   profileRepo.findActiveVersion.mockResolvedValue(null);
 });
 
 const STANDARD = "BTF00000001";
+const BAN = "BAN00000001";
 
 function runStamps(
   overrides: Partial<{
@@ -121,10 +138,13 @@ describe("resolveTemplate — run (the BAN's captured stamps)", () => {
     repo.findActive.mockImplementation(async (_db, { kind }) =>
       kind === "generated" ? ACTIVE_GENERATED : ACTIVE_CSV,
     );
-    repo.findActiveInFamily.mockResolvedValue(ACTIVE_GENERATED);
     profileRepo.findActiveVersion.mockResolvedValue(9);
 
-    const r = await resolveTemplate(DB, { kind: "run", stamps: runStamps() });
+    const r = await resolveTemplate(DB, {
+      kind: "run",
+      stamps: runStamps(),
+      banId: BAN,
+    });
     expect(r.generated.billTemplateVersionId).toBe("BTV00000007");
     expect(r.csv.billTemplateVersionId).toBe("BTV00000003");
     expect(r.layout.billTemplateVersionId).toBe("BTV00000001");
@@ -132,8 +152,7 @@ describe("resolveTemplate — run (the BAN's captured stamps)", () => {
     // `run` is not a live mode: no "current" lookup of any kind.
     expect(repo.findActive).not.toHaveBeenCalled();
     expect(repo.findDefault).not.toHaveBeenCalled();
-    expect(repo.findActiveInFamily).not.toHaveBeenCalled();
-    expect(repo.findDefaultInFamily).not.toHaveBeenCalled();
+    expect(familyRepo.findById).not.toHaveBeenCalled();
     expect(profileRepo.findActiveVersion).not.toHaveBeenCalled();
   });
 
@@ -141,6 +160,7 @@ describe("resolveTemplate — run (the BAN's captured stamps)", () => {
     const r = await resolveTemplate(DB, {
       kind: "run",
       stamps: runStamps({ refInvoiceProfileVersion: null }),
+      banId: BAN,
     });
     expect(r.profileVersion).toBeNull();
   });
@@ -152,6 +172,7 @@ describe("resolveTemplate — run (the BAN's captured stamps)", () => {
         refBillTemplateFamilyId: "BTF00000099",
         refBillTemplateVersionId: null,
       }),
+      banId: BAN,
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(InvoiceRenderError);
     expect(err).toMatchObject({
@@ -159,6 +180,8 @@ describe("resolveTemplate — run (the BAN's captured stamps)", () => {
       detail: {
         reason: "FAMILY_HAS_NO_ACTIVE_VERSION",
         familyId: "BTF00000099",
+        // code-standards Phase 3 TS rule 8 — the BAN rides in the detail.
+        banId: BAN,
       },
     });
     expect(repo.findDefault).not.toHaveBeenCalled();
@@ -176,6 +199,7 @@ describe("resolveTemplate — run (the BAN's captured stamps)", () => {
           resolveTemplate(DB, {
             kind: "run",
             stamps: runStamps({ refBillTemplateVersionId: id }),
+            banId: BAN,
           }),
         ),
       ).toBe("TEMPLATE_VERSION_NOT_FOUND");
@@ -192,15 +216,19 @@ describe("resolveTemplate — preview-family (the family's live versions)", () =
     expect(r.generated.billTemplateVersionId).toBe("BTV00000002");
     expect(r.csv.billTemplateVersionId).toBe("BTV00000003");
     expect(r.layout.billTemplateVersionId).toBe("BTV00000001");
-    expect(repo.findActiveInFamily).toHaveBeenCalledWith(DB, {
+    expect(repo.findActive).toHaveBeenCalledWith(DB, {
+      kind: "generated",
       familyId: STANDARD,
     });
   });
 
   it("resolves the family's non-default ACTIVE, the current CSV and the ACTIVE profile", async () => {
-    repo.findActiveInFamily.mockResolvedValue(ACTIVE_GENERATED);
-    repo.findActive.mockImplementation(async (_db, { kind }) =>
-      kind === "csv" ? ACTIVE_CSV : null,
+    repo.findActive.mockImplementation(async (_db, { kind, familyId }) =>
+      kind === "csv"
+        ? ACTIVE_CSV
+        : kind === "generated" && familyId === STANDARD
+          ? ACTIVE_GENERATED
+          : null,
     );
     profileRepo.findActiveVersion.mockResolvedValue(4);
     const r = await resolveTemplate(DB, {
@@ -229,6 +257,26 @@ describe("resolveTemplate — preview-family (the family's live versions)", () =
         reason: "FAMILY_HAS_NO_ACTIVE_VERSION",
         familyId: "BTF00000099",
       },
+    });
+  });
+
+  it("review fix (D44, §24d) — a retired family is not usable: TEMPLATE_VERSION_NOT_FOUND, never its ACTIVE version", async () => {
+    familyRepo.findById.mockResolvedValue({
+      billTemplateFamilyId: "BTF00000077",
+      code: "RETIRED",
+      name: "Retired",
+      kind: "generated",
+      isDefault: false,
+      retiredDatetime: new Date("2026-10-15T00:00:00Z"),
+      createdBy: null,
+      createdDatetime: new Date("2026-10-01T00:00:00Z"),
+    });
+    repo.findActive.mockResolvedValue(ACTIVE_GENERATED);
+    await expect(
+      resolveTemplate(DB, { kind: "preview-family", familyId: "BTF00000077" }),
+    ).rejects.toMatchObject({
+      code: "TEMPLATE_VERSION_NOT_FOUND",
+      detail: { reason: "FAMILY_HAS_NO_ACTIVE_VERSION" },
     });
   });
 
@@ -330,8 +378,10 @@ describe.each(["final", "preview-posted"] as const)(
 
 describe("resolveTemplate — layout", () => {
   it("a generated version whose layout is missing → TEMPLATE_VERSION_NOT_FOUND", async () => {
-    repo.findDefaultInFamily.mockResolvedValue(
-      row("BTV00000002", "generated", { refLayoutVersionId: "BTV00088888" }),
+    repo.findDefault.mockImplementation(async (_db, { kind }) =>
+      kind === "generated"
+        ? row("BTV00000002", "generated", { refLayoutVersionId: "BTV00088888" })
+        : DEFAULTS[kind],
     );
     expect(
       await codeOf(
@@ -343,7 +393,8 @@ describe("resolveTemplate — layout", () => {
   it("is re-queried on every call (never cached, workflow rules §3.9)", async () => {
     await resolveTemplate(DB, { kind: "preview-family", familyId: STANDARD });
     await resolveTemplate(DB, { kind: "preview-family", familyId: STANDARD });
-    expect(repo.findDefaultInFamily).toHaveBeenCalledTimes(2);
+    // Twice per call: the family's generated default and the CSV default.
+    expect(repo.findDefault).toHaveBeenCalledTimes(4);
     expect(repo.findById).toHaveBeenCalledTimes(2);
   });
 });

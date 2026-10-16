@@ -125,6 +125,10 @@ export async function buildInvoiceHtml({
       // unposted bill: the family's live versions, not the run's.
       let renderMode: RenderMode;
       if (override) {
+        // Review fix (Inv #42) — the caller decided "unposted" from an earlier
+        // read; re-check in this snapshot so a bill posted in between never
+        // renders with live versions. Not found → the caller's NOT_FOUND.
+        if (stamps.refInvDocumentId !== null) return null;
         renderMode = override.renderMode;
       } else if (mode === "draft") {
         const runStamps = await billRunAccountRepository.readStamps(
@@ -133,7 +137,17 @@ export async function buildInvoiceHtml({
           banId,
         );
         if (!runStamps || runStamps.status === "EXCLUDED") return null;
-        renderMode = { kind: "run", stamps: runStamps };
+        // Review fix — a non-EXCLUDED row with no capture (a run started before
+        // bm65 on a DB not rebuilt per the bm64 runbook) is not "no active
+        // version": say so, so the D55 "activate, then rerun" copy is not shown.
+        if (runStamps.templateCapturedAt === null) {
+          throw new InvoiceRenderError(
+            "TEMPLATE_VERSION_NOT_FOUND",
+            `account ${banId} in run ${runId} has no captured template stamps`,
+            { reason: "TEMPLATE_NOT_CAPTURED", banId },
+          );
+        }
+        renderMode = { kind: "run", stamps: runStamps, banId };
       } else {
         renderMode = { kind: mode, bill: stamps };
       }

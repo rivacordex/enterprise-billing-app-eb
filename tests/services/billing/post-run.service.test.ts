@@ -433,6 +433,20 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         expectedStatus: "PROCESSED",
       }),
     );
+    // Review fix §24a (general §1.7) — the skip is audited in the same txn.
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "BILL_RUN_ACCOUNT_SKIPPED",
+        targetEntity: "BILL_RUN",
+        targetId: "BRN00000001",
+        afterData: expect.objectContaining({
+          banId: "BAN00000001",
+          status: "SKIPPED",
+          code: "ZERO_TOTAL_NOT_INVOICED",
+        }),
+      }),
+    );
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -814,6 +828,18 @@ describe("postAccount — posting copies the run stamps (bm67-spec §Design, D23
       },
     });
     expect(mockRenderFinalInvoice).not.toHaveBeenCalled();
+    // Review fix §24a — audited in the posting transaction, with the family.
+    expect(mockInsertAuditEvent).toHaveBeenCalledWith(
+      txStub,
+      expect.objectContaining({
+        eventType: "BILL_RUN_ACCOUNT_SKIPPED",
+        afterData: expect.objectContaining({
+          banId: "BAN00000001",
+          code: "TEMPLATE_VERSION_NOT_FOUND",
+          familyId: "BTF00000099",
+        }),
+      }),
+    );
   });
 
   it("an account with no captured stamps (pre-bm65) fails loud — parked POSTING_FAILED, never resolved live", async () => {

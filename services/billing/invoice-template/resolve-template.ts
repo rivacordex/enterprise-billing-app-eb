@@ -1,4 +1,5 @@
 import type { Database } from "@/db/client";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-profile";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
@@ -88,12 +89,47 @@ async function versionById(
   return row;
 }
 
-// bm65-spec §3 (Inv #51, #53) — the versions a BAN in `familyId` is captured
-// with at run start: the only live resolution on a run path, run at capture.
-// `generated` is the family's non-default ACTIVE, else the family's default,
-// else `null` — no throw (D55, Inv #58: a family with no ACTIVE version is
-// stamped NULL and acted on by render/posting). CSV and profile are global:
-// the non-default ACTIVE ?? the default, and the ACTIVE profile ?? null (G15 A).
+// bm65-spec §3 (Inv #51, #53) — the live resolutions, used only by run-start
+// capture and the Invoice Settings `preview-family` mode (guardrail 57).
+//
+// `resolveGeneratedForFamily`: the family's non-default ACTIVE generated
+// version, else the family's default, else `null` — no throw (D55, Inv #58: a
+// family with no ACTIVE version is stamped NULL and acted on by approval,
+// render and posting). Review fix (known-issues §24d, D44) — a family that is
+// retired, or does not exist, is not usable, so it also yields `null`.
+export async function resolveGeneratedForFamily(
+  db: Database,
+  familyId: string,
+): Promise<BillTemplateVersion | null> {
+  const family = await billTemplateFamilyRepository.findById(db, familyId);
+  if (!family || family.retiredDatetime !== null) return null;
+  return (
+    (await billTemplateVersionRepository.findActive(db, {
+      kind: "generated",
+      familyId,
+    })) ??
+    (await billTemplateVersionRepository.findDefault(db, {
+      kind: "generated",
+      familyId,
+    }))
+  );
+}
+
+// The global current versions every family shares: the CSV (non-default
+// ACTIVE ?? default) and the ACTIVE profile ?? null (G15 A). Capture reads them
+// once per run, not once per family (review fix, §24i).
+export async function resolveSharedCurrentVersions(db: Database): Promise<{
+  csv: BillTemplateVersion;
+  profileVersion: number | null;
+}> {
+  const [csv, profileVersion] = await Promise.all([
+    currentVersion(db, "csv"),
+    invoiceProfileRepository.findActiveVersion(db),
+  ]);
+  return { csv, profileVersion };
+}
+
+// Both of the above for one family — the `preview-family` mode.
 export async function resolveCurrentVersionsForFamily(
   db: Database,
   familyId: string,
@@ -102,24 +138,23 @@ export async function resolveCurrentVersionsForFamily(
   csv: BillTemplateVersion;
   profileVersion: number | null;
 }> {
-  const [active, csv, profileVersion] = await Promise.all([
-    billTemplateVersionRepository.findActiveInFamily(db, { familyId }),
-    currentVersion(db, "csv"),
-    invoiceProfileRepository.findActiveVersion(db),
+  const [generated, shared] = await Promise.all([
+    resolveGeneratedForFamily(db, familyId),
+    resolveSharedCurrentVersions(db),
   ]);
-  const generated =
-    active ??
-    (await billTemplateVersionRepository.findDefaultInFamily(db, { familyId }));
-  return { generated, csv, profileVersion };
+  return { generated, ...shared };
 }
 
 // bm66-spec §2 (D55) — a family with no ACTIVE (or default) generated
 // version: the run's stamp is NULL, or the preview family has nothing to show.
-function familyNotActive(familyId: string | null): InvoiceRenderError {
+function familyNotActive(
+  familyId: string | null,
+  banId: string | null,
+): InvoiceRenderError {
   return new InvoiceRenderError(
     "TEMPLATE_VERSION_NOT_FOUND",
     `template family ${familyId ?? "(none)"} has no active generated version`,
-    { reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId },
+    { reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId, banId },
   );
 }
 
@@ -135,7 +170,7 @@ export async function resolveTemplate(
     case "run": {
       const { stamps } = mode;
       if (stamps.refBillTemplateVersionId === null) {
-        throw familyNotActive(stamps.refBillTemplateFamilyId);
+        throw familyNotActive(stamps.refBillTemplateFamilyId, mode.banId);
       }
       if (stamps.refCsvTemplateVersionId === null) {
         throw notFound("the run stamp has no CSV template version", {
@@ -152,7 +187,9 @@ export async function resolveTemplate(
     }
     case "preview-family": {
       const current = await resolveCurrentVersionsForFamily(db, mode.familyId);
-      if (current.generated === null) throw familyNotActive(mode.familyId);
+      if (current.generated === null) {
+        throw familyNotActive(mode.familyId, null);
+      }
       generated = current.generated;
       csv = current.csv;
       profileVersion = current.profileVersion;

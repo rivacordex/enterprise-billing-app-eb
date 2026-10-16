@@ -256,9 +256,9 @@ describe("VersionHistoryTable: in-use captions (bm58 D5)", () => {
         timezone="Asia/Kuala_Lumpur"
       />,
     );
-    expect(screen.getByText("In use for new invoices")).toBeInTheDocument();
+    expect(screen.getByText("In use for new runs")).toBeInTheDocument();
     expect(screen.getByText("Fallback")).toBeInTheDocument();
-    expect(screen.getAllByText("In use for new invoices")).toHaveLength(1);
+    expect(screen.getAllByText("In use for new runs")).toHaveLength(1);
   });
 
   it("does not call the default a fallback when it is the version in use", () => {
@@ -271,7 +271,7 @@ describe("VersionHistoryTable: in-use captions (bm58 D5)", () => {
       />,
     );
     expect(screen.queryByText("Fallback")).toBeNull();
-    expect(screen.queryByText("In use for new invoices")).toBeNull();
+    expect(screen.queryByText("In use for new runs")).toBeNull();
   });
 });
 

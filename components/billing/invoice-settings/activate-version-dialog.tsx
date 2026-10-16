@@ -96,8 +96,9 @@ export function ActivateVersionDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Activating changes every future invoice. Invoices already issued
-            keep the version they were posted under.
+            Activating changes the invoices of bill runs started from now on.
+            Runs already started keep the versions they captured, and invoices
+            already issued keep the version they were posted under.
           </DialogDescription>
         </DialogHeader>
 

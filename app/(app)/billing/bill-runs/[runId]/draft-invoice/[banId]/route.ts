@@ -18,7 +18,7 @@ import {
   findActiveUserById,
   resolveEffectivePermissions,
 } from "@/auth/resolver";
-import { describeInvoiceRenderCode } from "@/lib/invoice-render-messages";
+import { toInvoiceRenderResponse } from "@/lib/http";
 import { logger } from "@/lib/logger";
 import { isRateLimited } from "@/lib/rate-limit";
 import {
@@ -104,15 +104,7 @@ export async function GET(
         code: error.code,
         detail: error.detail,
       });
-      return Response.json(
-        {
-          error: {
-            code: error.code,
-            message: describeInvoiceRenderCode(error.code),
-          },
-        },
-        { status: 422 },
-      );
+      return toInvoiceRenderResponse(error);
     }
     return Response.json(
       { error: "Could not render the draft invoice." },

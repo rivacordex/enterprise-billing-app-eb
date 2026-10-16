@@ -8,10 +8,27 @@ import { INVOICE_ERROR_CODES } from "@/types/billing";
 const GENERIC = "Could not render the draft invoice. Please try again.";
 
 describe("describeInvoiceRenderCode", () => {
-  it("gives TEMPLATE_VERSION_NOT_FOUND the §10d no-active-version copy", () => {
-    expect(describeInvoiceRenderCode("TEMPLATE_VERSION_NOT_FOUND")).toBe(
+  it("gives TEMPLATE_VERSION_NOT_FOUND the §10d no-active-version copy only for the D55 reason", () => {
+    expect(
+      describeInvoiceRenderCode(
+        "TEMPLATE_VERSION_NOT_FOUND",
+        "FAMILY_HAS_NO_ACTIVE_VERSION",
+      ),
+    ).toBe(
       "This account's invoice template has no active version. Activate one in Invoice Settings, then rerun this account.",
     );
+  });
+
+  it("review fix — any other TEMPLATE_VERSION_NOT_FOUND cause (missing blob, uncaptured row) keeps the generic text", () => {
+    expect(describeInvoiceRenderCode("TEMPLATE_VERSION_NOT_FOUND")).toBe(
+      GENERIC,
+    );
+    expect(
+      describeInvoiceRenderCode(
+        "TEMPLATE_VERSION_NOT_FOUND",
+        "TEMPLATE_NOT_CAPTURED",
+      ),
+    ).toBe(GENERIC);
   });
 
   it("gives the reconciliation and usage-limit codes their own copy", () => {
@@ -25,7 +42,6 @@ describe("describeInvoiceRenderCode", () => {
 
   it("returns a non-empty message for every code, the generic text for the rest", () => {
     const specific = new Set([
-      "TEMPLATE_VERSION_NOT_FOUND",
       "INVOICE_RECONCILIATION_FAILED",
       "INVOICE_USAGE_OVER_LIMIT",
     ]);

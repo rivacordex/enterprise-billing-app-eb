@@ -255,6 +255,31 @@ async function checkNoRejectedPending(
   return { check: "no_rejected_pending", pass: true, remediation: null };
 }
 
+// bm65–bm67 review fix (2026-10-16, owner decision; amends D58) — BLOCKING.
+// A PROCESSED account whose captured generated template version is NULL (its
+// family had no ACTIVE version at run start, D55, or the row was never
+// captured) would be skipped at posting with no invoice — after approval, when
+// rerun is refused, so the month would be lost. Blocking here keeps the D55
+// recovery ("activate, then rerun") possible; posting's D58 skip stays as the
+// backstop.
+async function checkTemplateVersionsCaptured(
+  dbOrTx: Database,
+  run: BillRun,
+): Promise<PreApprovalCheck> {
+  const missing = await billRunAccountRepository.countMissingTemplateVersion(
+    dbOrTx,
+    run.billRunId,
+  );
+  if (missing > 0) {
+    return {
+      check: "template_versions_captured",
+      pass: false,
+      remediation: `${missing} account${missing === 1 ? " has" : "s have"} no invoice template version: the template family had no active version when the run started. Activate a version in Invoice Settings, then rerun ${missing === 1 ? "that account" : "those accounts"}.`,
+    };
+  }
+  return { check: "template_versions_captured", pass: true, remediation: null };
+}
+
 // bm32-spec §Design/§Implementation §3 — the orphaned-usage-record count.
 // INFORMATIONAL, never blocking (D32/Inv #25): it always `pass`es (so it never
 // contributes to `approveRun`'s `CHECKS_FAILED` gate) and carries an Info-line
@@ -298,6 +323,7 @@ export async function runPreApprovalChecks(
     fourEyes,
     accountsTerminal,
     noRejectedPending,
+    templateVersionsCaptured,
     orphanCount,
     zeroTotalBills,
   ] = await Promise.all([
@@ -307,6 +333,7 @@ export async function runPreApprovalChecks(
     checkFourEyes(dbOrTx, run, approverId),
     checkAccountsTerminal(dbOrTx, run),
     checkNoRejectedPending(dbOrTx, run),
+    checkTemplateVersionsCaptured(dbOrTx, run),
     checkOrphanCount(dbOrTx, run),
     checkZeroTotalBills(dbOrTx, run),
   ]);
@@ -318,6 +345,7 @@ export async function runPreApprovalChecks(
     fourEyes,
     accountsTerminal,
     noRejectedPending,
+    templateVersionsCaptured,
     orphanCount,
     zeroTotalBills,
   ];

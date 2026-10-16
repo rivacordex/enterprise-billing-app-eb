@@ -5,6 +5,7 @@ import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-acc
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
+import { firstOfMonth } from "@/services/billing/derive-periods";
 import { computeRunCounters } from "@/services/billing/compute-run-status";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
@@ -123,7 +124,12 @@ export async function rerunRun(
 
       // 0. Re-capture the template stamps for exactly the rerun BANs (bm65,
       // Inv #52), before the audit that lists them and the engine re-trigger.
-      const stamps = await captureTemplateStamps(tx, run.billRunId, banIds);
+      const stamps = await captureTemplateStamps(
+        tx,
+        run.billRunId,
+        banIds,
+        firstOfMonth(run.periodStart),
+      );
 
       // 1. AUDIT FIRST — committed before the engine is re-triggered.
       await insertAuditEvent(tx, {

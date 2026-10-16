@@ -1,6 +1,9 @@
 import type { Database } from "@/db/client";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
-import { resolveCurrentVersionsForFamily } from "@/services/billing/invoice-template/resolve-template";
+import {
+  resolveGeneratedForFamily,
+  resolveSharedCurrentVersions,
+} from "@/services/billing/invoice-template/resolve-template";
 import type { CapturedTemplateStamp } from "@/types/billing";
 
 // bm65-spec §5 (Inv #51, #52, #54, #58) — record on each given BAN's
@@ -9,15 +12,21 @@ import type { CapturedTemplateStamp } from "@/types/billing";
 // triggered, so the flow never starts on an uncaptured account and an engine
 // failure rolls the stamps back with everything else.
 //
-// Set-based: one read of every BAN's family, one resolution per DISTINCT
-// family, one UPDATE (chunked) — no per-BAN statement. A family with no ACTIVE
-// or default generated version is stamped with a NULL version (D55): no throw,
-// no EXCLUDED; render and posting act on the NULL (bm66, bm67). EXCLUDED rows
-// are never stamped. Returns the stamps for the audit `afterData`.
+// Set-based: one read of every BAN's family, the shared CSV/profile once, one
+// generated-version resolution per DISTINCT family, one UPDATE (chunked, pruned
+// to the run's partition) — no per-BAN statement. Capture never fails the
+// trigger (General rule 3): a family with no usable version (none ACTIVE, or
+// retired, D55/D44), and a BAN whose family cannot be resolved (a corrupted
+// catalog, or a reference to a non-generated version), are stamped with a NULL
+// version — and a NULL family in the second case. The blocking
+// `template_versions_captured` approval check then stops the run (D58a), and
+// render and posting act on the NULL (bm66, bm67). EXCLUDED rows are never
+// stamped. Returns the stamps for the audit `afterData`.
 export async function captureTemplateStamps(
   tx: Database,
   billRunId: string,
   banIds: string[],
+  periodPartition: string,
 ): Promise<CapturedTemplateStamp[]> {
   if (banIds.length === 0) return [];
 
@@ -25,36 +34,34 @@ export async function captureTemplateStamps(
     tx,
     banIds,
   );
-  const familyIds = [...new Set(banFamilies.map((b) => b.familyId))];
+  const familyIds = [
+    ...new Set(
+      banFamilies
+        .map((b) => b.familyId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
 
   // Sequential on purpose: one transaction connection serves every query.
+  const { csv, profileVersion } = await resolveSharedCurrentVersions(tx);
   const versionByFamily = new Map<string, string | null>();
-  let shared: { profileVersion: number | null; csvVersionId: string } | null =
-    null;
   for (const familyId of familyIds) {
-    const current = await resolveCurrentVersionsForFamily(tx, familyId);
-    versionByFamily.set(
-      familyId,
-      current.generated?.billTemplateVersionId ?? null,
-    );
-    // CSV and profile are global: taken from the first resolution.
-    shared ??= {
-      profileVersion: current.profileVersion,
-      csvVersionId: current.csv.billTemplateVersionId,
-    };
+    const generated = await resolveGeneratedForFamily(tx, familyId);
+    versionByFamily.set(familyId, generated?.billTemplateVersionId ?? null);
   }
-  if (!shared) return [];
 
   const stamps: CapturedTemplateStamp[] = banFamilies.map((b) => ({
     banId: b.banId,
     familyId: b.familyId,
-    versionId: versionByFamily.get(b.familyId) ?? null,
+    versionId:
+      b.familyId === null ? null : (versionByFamily.get(b.familyId) ?? null),
   }));
   await billRunAccountRepository.captureTemplateStamps(
     tx,
     billRunId,
+    periodPartition,
     stamps,
-    shared,
+    { profileVersion, csvVersionId: csv.billTemplateVersionId },
   );
   return stamps;
 }

@@ -15,7 +15,11 @@ import { billingAccount } from "@/db/schema/billing/accounts";
 import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { billRunInvoices } from "@/db/schema/billing/bill-run-invoices";
 import { customerBill } from "@/db/schema/billing/customer-bill";
-import type { PostedBillStamps, RunTemplateStamps } from "@/types/billing";
+import type {
+  PostedBillStamps,
+  PostingTemplateStamps,
+  RunTemplateStamps,
+} from "@/types/billing";
 
 // bm05-spec §Design/§Implementation §4-5, trimmed bm16-spec §Design "Fork B".
 // `listForRun` backs the Customers & Bills tab read. The trial-bill write
@@ -324,26 +328,22 @@ export const customerBillRepository = {
     billRunId: string,
     billingAccountId: string,
     periodPartition: string,
-  ): Promise<
-    | ({
-        customerBillId: string;
-        periodPartition: string;
-        subtotal: string;
-        taxTotal: string;
-        totalAmount: string;
-        refInvDocumentId: string | null;
-        attemptCount: number;
-        refFinancialAccountId: string;
-        currency: string;
-        // bm54 — the bill's version stamps (NULL until posted / pre-bm54).
-        refBillFormatId: string | null;
-        // bm67-spec §Design (D23, Inv #51) — the BAN's five run-start template
-        // stamps from the `bill_run_account` row this read already joins (no
-        // second query, no extra lock). Posting copies them onto the bill.
-        runStamps: RunTemplateStamps & { templateCapturedAt: Date | null };
-      } & PostedBillStamps)
-    | null
-  > {
+  ): Promise<{
+    customerBillId: string;
+    periodPartition: string;
+    subtotal: string;
+    taxTotal: string;
+    totalAmount: string;
+    refInvDocumentId: string | null;
+    attemptCount: number;
+    refFinancialAccountId: string;
+    currency: string;
+    // bm67-spec §Design (D23, Inv #51) — the BAN's five run-start template
+    // stamps from the `bill_run_account` row this read already joins (no
+    // second query, no extra lock). Posting copies them onto the bill.
+    // (The bill's own stamps are not read: they are NULL until posted.)
+    runStamps: RunTemplateStamps & { templateCapturedAt: Date | null };
+  } | null> {
     // Postgres requires `FOR UPDATE OF <unqualified name>`, but drizzle
     // schema-qualifies base tables (`"billing"."customer_bill"`), which
     // Postgres rejects. Aliasing the locked table emits the bare alias in the
@@ -364,11 +364,6 @@ export const customerBillRepository = {
         attemptCount: billRunAccount.attemptCount,
         refFinancialAccountId: billingAccount.refFinancialAccountId,
         currency: billingAccount.currency,
-        refBillFormatId: cb.refBillFormatId,
-        refBillTemplateFamilyId: cb.refBillTemplateFamilyId,
-        refBillTemplateVersionId: cb.refBillTemplateVersionId,
-        refInvoiceProfileVersion: cb.refInvoiceProfileVersion,
-        refCsvTemplateVersionId: cb.refCsvTemplateVersionId,
         runStamps: {
           refBillTemplateFamilyId: billRunAccount.refBillTemplateFamilyId,
           refBillTemplateVersionId: billRunAccount.refBillTemplateVersionId,
@@ -444,12 +439,7 @@ export const customerBillRepository = {
       refInvDocumentId: string;
       postedAttempt: number;
       chargeChecksum: string;
-      refBillFormatId: "INVOICE";
-      refBillTemplateFamilyId: string;
-      refBillTemplateVersionId: string;
-      refInvoiceProfileVersion: number | null;
-      refCsvTemplateVersionId: string;
-    },
+    } & PostingTemplateStamps,
   ): Promise<boolean> {
     const stamped = await tx
       .update(customerBill)

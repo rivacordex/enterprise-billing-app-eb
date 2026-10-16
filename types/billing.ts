@@ -454,14 +454,25 @@ export interface ErrorRow {
 // accounts carrying no `errorCode` are `pending`; `INVOICED` accounts are
 // `invoiced`; a parked `PROCESSED` account (a tolerated per-account posting
 // failure, Design "PERIOD_CLOSED handling") is `PERIOD_CLOSED` or `failed`
-// depending on its `errorCode`.
+// depending on its `errorCode`. Review fix (2026-10-16) — an account that
+// posting itself skipped (no INV issued) is `skipped`, shown with its reason.
 export const POSTING_ACCOUNT_STATUSES = [
   "pending",
   "invoiced",
   "PERIOD_CLOSED",
   "failed",
+  "skipped",
 ] as const;
 export type PostingAccountStatus = (typeof POSTING_ACCOUNT_STATUSES)[number];
+
+// The `error_code`s `postAccount` writes when it skips an account without an
+// invoice: the zero-total suppression and the D58 NULL-template skip. An
+// account SKIPPED at approval (it was PROCESSING_FAILED/EXCLUDED, never
+// postable) carries neither and stays off the posting view.
+export const POSTING_SKIP_CODES = [
+  "ZERO_TOTAL_NOT_INVOICED",
+  "TEMPLATE_VERSION_NOT_FOUND",
+] as const;
 
 // bm19-spec §Implementation §5 — `true` once the account's final invoice PDF
 // is rendered and stored (`bill_run_invoices` row exists); `false` for an
@@ -481,7 +492,9 @@ export interface PostingProgress {
   runStatus: RunStatus;
   rows: PostingProgressRow[];
   postedCount: number;
+  // Postable accounts, excluding the ones posting skipped.
   totalCount: number;
+  skippedCount: number;
 }
 
 // bm10-spec §Design/§Visual. The public Approve & Post view contracts. They
@@ -496,6 +509,11 @@ export const PRE_APPROVAL_CHECKS = [
   "four_eyes",
   "accounts_terminal",
   "no_rejected_pending",
+  // bm65–bm67 review fix (2026-10-16, owner decision; amends D58) — BLOCKING:
+  // every PROCESSED account must carry a captured generated template version.
+  // A NULL or missing capture (D55) would otherwise be skipped at posting,
+  // after approval, when the account can no longer be rerun.
+  "template_versions_captured",
   // bm32-spec §Design/§Implementation §3 — the orphaned-usage-record count.
   // INFORMATIONAL, never blocking (D32/Inv #25): it always `pass`es and is
   // excluded from `approveRun`'s blocking gate.
@@ -957,11 +975,28 @@ export type RunTemplateStamps = Pick<
   | "refCsvTemplateVersionId"
 >;
 
+// bm67-spec §2 — the template stamps `stampPosted` writes, derived from the
+// run stamps (code-standards Phase 3 TS rule 2: one stamp shape, never
+// hand-written). Posting skips a NULL captured version first (D58), so the
+// family, generated and CSV ids are non-null here; the profile may be null
+// (G15 A).
+export type PostingTemplateStamps = {
+  refBillFormatId: "INVOICE";
+  refInvoiceProfileVersion: RunTemplateStamps["refInvoiceProfileVersion"];
+} & {
+  [K in
+    | "refBillTemplateFamilyId"
+    | "refBillTemplateVersionId"
+    | "refCsvTemplateVersionId"]: NonNullable<RunTemplateStamps[K]>;
+};
+
 // bm65-spec §Design — one captured BAN, as listed in the BILL_RUN_TRIGGERED /
-// BILL_RUN_RERUN audit `afterData.templateStamps`. `versionId` may be null (D55).
+// BILL_RUN_RERUN audit `afterData.templateStamps`. `versionId` may be null (D55);
+// `familyId` is null only when the BAN's family cannot be resolved (a corrupted
+// catalog, or a reference to a non-generated version — review fix §24e).
 export type CapturedTemplateStamp = {
   banId: string;
-  familyId: string;
+  familyId: string | null;
   versionId: string | null;
 };
 
@@ -973,7 +1008,9 @@ export type CapturedTemplateStamp = {
 //   preview-family  → the Invoice Settings preview: the family's live, current
 //                     versions — the only live render mode.
 export type RenderMode =
-  | { kind: "run"; stamps: RunTemplateStamps }
+  // `banId` rides along for the error detail (code-standards Phase 3 TS
+  // rule 8: `{ reason, familyId, banId }`).
+  | { kind: "run"; stamps: RunTemplateStamps; banId: string }
   | { kind: "final"; bill: PostedBillStamps }
   | { kind: "preview-posted"; bill: PostedBillStamps }
   | { kind: "preview-family"; familyId: string };

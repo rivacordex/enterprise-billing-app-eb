@@ -204,6 +204,8 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
       txStub,
       "BRN00000001",
       ["BAN00000001"],
+      // Review fix §24b — pruned to the run's partition (period 2026-07).
+      "2026-07-01",
     );
     const capturedAt = mockCaptureTemplateStamps.mock.invocationCallOrder[0]!;
     expect(mockInsertSnapshot.mock.invocationCallOrder[0]!).toBeLessThan(

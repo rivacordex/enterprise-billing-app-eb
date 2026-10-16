@@ -81,30 +81,47 @@ export async function getInvoiceTemplatePageData(
   versionId: string | undefined,
   { canEdit }: { canEdit: boolean },
 ): Promise<InvoiceTemplatePageData> {
-  const [
-    active,
-    fallback,
-    selected,
-    generatedRows,
-    layoutRows,
-    draftRow,
-    standardFamily,
-  ] = await Promise.all([
-    billTemplateVersionRepository.findActive(db, { kind: "generated" }),
-    billTemplateVersionRepository.findDefault(db, { kind: "generated" }),
-    versionId === undefined
-      ? Promise.resolve(null)
-      : billTemplateVersionRepository.findById(db, versionId),
-    billTemplateVersionRepository.listForKind(db, { kind: "generated" }),
-    billTemplateVersionRepository.listForKind(db, {
-      kind: "layout",
-      withUsage: false,
-    }),
-    canEdit
-      ? billTemplateVersionRepository.findDraft(db, { kind: "generated" })
-      : Promise.resolve(null),
-    billTemplateFamilyRepository.findDefault(db),
-  ]);
+  // Review fix (known-issues §24c) — the page shows the Standard (default)
+  // family (D45), so its current version, draft and history are scoped to it.
+  const standardFamily = await billTemplateFamilyRepository.findDefault(db);
+  if (!standardFamily) {
+    // The seeded default family is trigger-protected (bm64), like the default
+    // rows below.
+    throw new InvoiceRenderError(
+      "TEMPLATE_VERSION_NOT_FOUND",
+      "no default template family",
+      { reason: "FAMILY_NOT_FOUND" },
+    );
+  }
+  const familyId = standardFamily.billTemplateFamilyId;
+  const [active, fallback, selected, generatedRows, layoutRows, draftRow] =
+    await Promise.all([
+      billTemplateVersionRepository.findActive(db, {
+        kind: "generated",
+        familyId,
+      }),
+      billTemplateVersionRepository.findDefault(db, {
+        kind: "generated",
+        familyId,
+      }),
+      versionId === undefined
+        ? Promise.resolve(null)
+        : billTemplateVersionRepository.findById(db, versionId),
+      billTemplateVersionRepository.listForKind(db, {
+        kind: "generated",
+        familyId,
+      }),
+      billTemplateVersionRepository.listForKind(db, {
+        kind: "layout",
+        withUsage: false,
+      }),
+      canEdit
+        ? billTemplateVersionRepository.findDraft(db, {
+            kind: "generated",
+            familyId,
+          })
+        : Promise.resolve(null),
+    ]);
 
   const current = active ?? fallback;
   if (!current) {
@@ -114,16 +131,6 @@ export async function getInvoiceTemplatePageData(
       "TEMPLATE_VERSION_NOT_FOUND",
       "no ACTIVE or default generated template version",
       { kind: "generated" },
-    );
-  }
-
-  if (!standardFamily) {
-    // The seeded default family is trigger-protected (bm64), like the default
-    // rows above.
-    throw new InvoiceRenderError(
-      "TEMPLATE_VERSION_NOT_FOUND",
-      "no default template family",
-      { reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId: null },
     );
   }
 

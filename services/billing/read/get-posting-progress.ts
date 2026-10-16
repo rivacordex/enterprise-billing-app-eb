@@ -20,6 +20,7 @@ function deriveStatus(row: {
   errorCode: string | null;
 }): PostingAccountStatus {
   if (row.status === "INVOICED") return "invoiced";
+  if (row.status === "SKIPPED") return "skipped";
   if (row.errorCode === "PERIOD_CLOSED") return "PERIOD_CLOSED";
   if (row.errorCode) return "failed";
   return "pending";
@@ -49,6 +50,7 @@ export async function getPostingProgress(
     runStatus: detail.status as RunStatus,
     rows: mapped,
     postedCount: mapped.filter((r) => r.status === "invoiced").length,
-    totalCount: mapped.length,
+    totalCount: mapped.filter((r) => r.status !== "skipped").length,
+    skippedCount: mapped.filter((r) => r.status === "skipped").length,
   };
 }
