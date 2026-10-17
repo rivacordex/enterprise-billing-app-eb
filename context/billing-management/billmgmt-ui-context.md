@@ -259,6 +259,14 @@ One badge serves both template and company-profile versions (code-standards › 
 | **Phase 3:** footnote in READ view                        | The lines render as plain text in a list, with no inputs |
 | **Phase 3:** Activate dialog summary                      | Lists `+ Payment information shown` / `− Payment information hidden` and `Footnote: "old" → "new"` per changed line (mono quotes), or "No change in structure." |
 
+**Phase 3 rows confirmed as built (bm72).**
+- **Heading.** "Invoice template — Standard (default)": the family name comes from the page data, and "(default)" is in `--text-muted`. The version number (`v{n}`, mono) and the status badge follow it.
+- **Toggles.** Payment information is the only checkbox, and the locked mandatory rows are unchanged.
+- **Footnote field.** A `<fieldset>` with the legend "Footnote" and the hint. Each line has a `<Label>` "Line N", an `Input` (`rounded-sm`) and an `n/200` counter that turns Danger `-fg` (`--color-danger-700`) past 200. The ghost `X` button (`aria-label="Remove line N"`) is hidden at one line, and the outline **Add line** (`Plus`) is hidden at five. The schema's messages show under the line (`role="alert"`, Danger `-fg`), and the input carries `aria-invalid`.
+- **READ view.** A `<ul aria-label="Footnote lines">`.
+- **Activate dialog.** Each footnote change reads `Footnote line N: "old" → "new"`, `Footnote line N added: "…"` or `Footnote line N removed`, with the values in mono quotes (`StructureChangeSummary`, `activate-version-dialog.tsx`). This is the row's per-line wording, with the line number.
+- **Preview.** It does not refresh while a line is invalid; the last good preview stays.
+
 **Confirmed as built (bm55).** The preview service appends one
 `<style data-preview="true">` to the rendered document. It is never part of a
 stored file. On "Show placeholders" it adds
@@ -412,6 +420,8 @@ Print CSS in the rewritten v1 `shell.hbs` and partials. It uses the §10c `--inv
 **As built (bm70), page 1:** the title, supplier block (D102), recipient line, type-of-service blocks, "Other charges", Total charges · Adjustments · Tax @ x% and the Grand Total rows above are confirmed in the rewritten v1 (`.svc-block`, `.svc-heading`, `.svc-row`, `.svc-total`, `.other-charges`, `.totals-row`, `.grand-total-panel`). The panel's left rule is 3px `--inv-accent`. The identification block also prints the due date (D60 table row 2). The detail-page, Total Amount, footnote and right-aligned footer rows are bm71/bm72.
 
 **As built (bm71), detail pages:** `chargeDetails` holds one `<section class="detail-type" style="break-before: page">` per type of service (`.detail-heading`, `.access-seeker`), then one `table.detail-group` per State-District group whose `thead` carries the `tr.group-label` row and the `tr.col-head` row, and a `tr.subtotal` Sub Total row. `tr { break-inside: avoid }`, `.detail-group { break-inside: auto }`, `thead { display: table-header-group }`; Polygon Name uses `.mono`. A type with no claimed row prints its heading and "No utilised capacity this period." (`.no-usage`, `--inv-muted`). The rate column uses `money` (2 decimals, read at 2 decimals in SQL), so it prints as "RM 100.00" like the amount column. The footer's "Page X of Y" span is `text-align: right` (it already sat last in the footer's flex row). The Total Amount page and footnote rows are bm72.
+
+**As built (bm72), last page:** `chargeDetails` ends with `<section class="total-amount-page" style="break-before: page">`. It holds the `.detail-heading` "Summary of Utilised Capacity Charges", then `.total-amount` ("Total Amount" and `{{money totals.totalAmount}}` in a right-aligned tabular-nums `.num`): 12pt/16pt 600 `--inv-ink` with a 1px `--inv-line` top rule, outside `.grand-total-panel` and with no `--inv-soft`/`--inv-accent`. Last comes `.footnote`, one `<p>` per line at 8pt/11pt 400 `--inv-muted`, omitted when there are no lines. There is no per-type breakdown (D60), and the page prints "RM 0.00" when the bill has no capacity line. The "Notes & terms" section is gone.
 
 No colour signals sign or status on the invoice. Unutilised is a normal amount, not a warning. A negative Utilised can never print (Inv #55). The draft watermark (§6c, `--inv-watermark`) is unchanged.
 

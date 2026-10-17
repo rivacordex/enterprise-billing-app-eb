@@ -15,12 +15,12 @@ Every optional key is present with `null`, never `undefined` (Handlebars
 
 ## A. Placeholder roots
 
-**As of bm71 (Invoice Template Phase 3, 2026-10-16).** These thirteen roots are
+**As of bm72 (Invoice Template Phase 3, 2026-10-16).** These fourteen roots are
 exactly the keys of `InvoiceRenderInput`: `template`, `company`, `payment`,
 `invoice`, `customer`, `totals`, `taxes`, `taxRateLabel`, `serviceTypes`,
-`otherCharges`, `isDraft`, `locale`, `timezone`. bm70 replaced `chargeSummary` with
+`otherCharges`, `footnote`, `isDraft`, `locale`, `timezone`. bm70 replaced `chargeSummary` with
 `serviceTypes`/`otherCharges`/`taxRateLabel`; bm71 removed `lineGroups` (the old line
-table) and `usage` (the usage annex). The CSV column map (bm62) may address
+table) and `usage` (the usage annex); bm72 added `footnote`. The CSV column map (bm62) may address
 `template`, `company`, `payment`, `invoice`, `customer`, `totals`, `taxes`,
 `isDraft`, `locale`, `timezone` plus `line` (the current `customer_bill_line`, built
 by `invoice-csv.ts` from the bill's lines), and `csvColumnMapSchema`
@@ -35,11 +35,12 @@ this file and the type together.
 | `payment.*` | `InvoicePayment \| null` | `null` when no profile resolves (G15 A). Fields: `bankName`, `accountName`, `accountNo`, `swift`, `jomPayBillerCode` (`null` when blank), `remittanceEmail`. |
 | `invoice.*` | — | `number` (`null` on draft → "— pending posting —"), `isDraft`, `date` (posting date, `null` on draft), `periodStart`/`periodEnd`, `dueDate`, `paymentTermsDays` (bm53 — the profile's `payment_terms_days`, `null` without a profile; no billing-account override column exists yet), `currency`, `billRunId`, `cycleName`, `billRef` (= `customer_bill_id`), `poRef`/`contractRef` (always `null` — G9 interim). |
 | `customer.*` | — | `billingAccountId`, `name`, `tradingName`, `registrationNo`, `tin`, `sstRegNo` (always `null` — G9), `address`, `email`, `phone`. |
-| `totals.*` | — | `grossTotal`, `discountTotal`, `subtotalExclTax`, `taxTotal`, `totalAmount`, `amountDue` (= `totalAmount` — Inv #50, current charges only, no balance brought forward), and (bm70) `totalCharges` (= subtotal), `adjustments`, `otherChargesSubTotal`. All SQL strings. |
+| `totals.*` | — | `grossTotal`, `discountTotal`, `subtotalExclTax`, `taxTotal`, `amountDue` (= the bill's `total_amount` — Inv #50, current charges only, no balance brought forward), and (bm70) `totalCharges` (= subtotal), `adjustments`, `otherChargesSubTotal`. **bm72 (D22, P10):** `totalAmount` is the last page's **Total Amount** = Σ per-type Utilised (a SQL `SUM` in the capacity summary read, `0.00` with no capacity line), **not** the bill total and never the amount due. All SQL strings. |
 | `taxes[]` | `{ category, rate, amount }[]` | Bill-level only (Inv #50) — no per-line tax. |
 | `taxRateLabel` | `string` | bm70 (D15): `taxes[0]?.rate ?? "0"`, printed as "Tax @ {{taxRateLabel}}%". |
 | `serviceTypes[]` | `InvoiceServiceType[]` | bm70: one per capacity type of service (capacity line offering), sorted by label: `offeringId`, `label`, `utilised`, `unutilised`, `total` (SQL strings, Inv #55). bm71: `regions[]`, the detail pages — each `{ label, rows[], subTotal }`, `label` = `STATE - DISTRICT`, the one part present, or "Unassigned region" (last); each row `{ polygonStartDate, polygonName, capacityMbps, ratePerMbps, amount }`. `regions` is `[]` for a type with no claimed row. **Source (bm71, Inv #56):** the live `udr_rated` query (`listCapacityDetailForInvoice`): polygon from the `polygon_id=` segment of `udr_key`, State/District/start date from `udr_resource`; reconciled per type to Σ `rated_amount`. |
 | `otherCharges[]` | `{ description, amount }[]` | bm70 (D47): one row per non-capacity charge line, in `line_no` order; the block is absent when empty. |
+| `footnote[]` | `string[]` | bm72 (D19, D20, Inv #46 amended): the footnote of the structure in use (the editor's unsaved one in a preview, else the resolved generated version's `structure.footnote`), 1–5 plain-text lines of at most 200 characters, printed after Total Amount with `{{#each footnote}}<p>{{this}}</p>{{/each}}` (auto-escaped; no helper). Not a CSV path root. |
 | `isDraft` / `locale` / `timezone` | — | Also mirrored inside `invoice.isDraft`; kept at the root too since helpers read `locale`/`currency` from `options.data.root` directly. |
 
 **Removed, never reintroduce without a spec change:**
@@ -80,14 +81,14 @@ output contains no `[[` and no `]]` (Inv #46). (bm55-spec cites this section as
 | Directive | Resolution (as built, bm55) |
 | --- | --- |
 | `[[body]]` | Exactly once, in `shell.hbs` only (anywhere else, or a count ≠ 1, fails). Replaced by the visible partials in **manifest `sections` key order** (`header` first), each inserted as authored, indented to the `[[body]]` column and separated by one blank line. Each partial carries its own `<section class="sec sec--{key} sec--half\|full">` wrapper; the generator adds none. A half-width section widens to `sec--full` only when its **layout pair partner** (the adjacent half section in the all-shown order) is hidden; a half section authored without a partner keeps `sec--half`. |
-| `[[if sections.<key>]] … [[/if]]` | Keeps the body when the flag is `true`, otherwise drops it **entirely** (Styling rule 5). The key must be an optional section (`InvoiceOptionalSectionKey`: `payment`, `notes` as of bm71). **No `[[else]]` and no nesting**: an `[[if]]` inside an open `[[if]]` fails, as does an unclosed `[[if]]` or a stray `[[/if]]`. |
+| `[[if sections.<key>]] … [[/if]]` | Keeps the body when the flag is `true`, otherwise drops it **entirely** (Styling rule 5). The key must be an optional section (`InvoiceOptionalSectionKey`: `payment` only since bm72; bm71 had `payment`, `notes`). **No `[[else]]` and no nesting**: an `[[if]]` inside an open `[[if]]` fails, as does an unclosed `[[if]]` or a stray `[[/if]]`. |
 
 **Retired by bm71 (D56):** `[[if columns.<key>]]` and the `[[num colCount|subtotalSpan|totalSpan]]` colspan formulas served only the old line table; both are now unknown directives.
 
 Any unknown directive, unknown key, or a violation of the rules above throws
 `TEMPLATE_GENERATION_FAILED` with `detail: { directive, file }`. Since bm71 the
-`structure` stores only the optional sections (`{ sections: { payment, notes },
-columns: {} }`, strict): a mandatory section is always generated, and a structure
+`structure` stores only the optional sections and, since bm72, the footnote
+(`{ sections: { payment }, columns: {}, footnote: string[] }`, strict): a mandatory section is always generated, and a structure
 naming one is refused by the Zod schema. The manifest is parsed with
 `validation/billing/layout-manifest.schema.ts` (D38). Output uses LF line endings, and
 directives are removed in place with no reflow.

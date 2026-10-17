@@ -922,7 +922,7 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - Validator: `validation/billing/template-family-id.schema.ts`, matching `^BTF\d+$` (general §6.18: shape, not a fixed digit count; `BTF` is not on the always-8-digit list).
 4. **Structure unions shrink (D56).** In `types/billing.ts`:
    - `InvoiceSectionKey` = `'billTo' | 'identification' | 'amountDue' | 'chargeSummary' | 'taxSummary' | 'payment' | 'chargeDetails'`. `usageAnnex` and `notes` are removed.
-   - `InvoiceOptionalSectionKey` = `'payment'`. _(bm71, built: `usageAnnex` is gone and the union is `'payment' | 'notes'` until bm72 removes `notes`; the structure stores only these optional keys, so a mandatory section key is now refused as `VALIDATION_ERROR` by the strict schema.)_
+   - `InvoiceOptionalSectionKey` = `'payment'`. _(bm71, built: `usageAnnex` is gone; the structure stores only the optional keys, so a mandatory section key is refused as `VALIDATION_ERROR` by the strict schema. Built (bm72): `notes`, `partials/notes.hbs` and the "Notes & terms" editor row are removed, so both unions are final.)_
    - `InvoiceColumnKey` is deleted; the new layout has no admin column toggles. _(Built (bm71).)_
    - The "Other charges" block and the Total charges / Adjustments / Tax / Grand Total rows render inside `chargeSummary`.
    - The per-type detail pages and the Total Amount page render inside `chargeDetails`.
@@ -936,6 +936,7 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    ```
    - The footnote is stored as **lines** (1–5 lines, each ≤ 200 characters, plain text). It renders with the built-in `{{#each}}`, so no new helper is needed.
    - The seeded default is `["Calculations are done in Mbps", "This invoice is billed exclusive of Universal Service Provision (USP)"]`.
+   - _Built (bm72):_ the schema exports `footnoteLineSchema` with the editor's messages ("Enter text or remove the line", "200 characters at most", "Keep at least one line", "5 lines at most") and `FOOTNOTE_MAX_LINES` / `FOOTNOTE_LINE_MAX_LENGTH`. The seeded `structure.json` and `0046`'s `BTV00000002` literal carry the default.
 6. **The layout manifest is Zod-validated** (D38) by a new `validation/billing/layout-manifest.schema.ts`:
    - `usageGrouping` is the literal tuple `["serviceType", "state", "district"]`;
    - `sections` keys equal `InvoiceSectionKey`;
@@ -975,6 +976,8 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - `InvoiceStructureForm` shows one checkbox, Payment information, plus a **Footnote** field with 1–5 single-line inputs and add/remove buttons, built with React Hook Form `useFieldArray` and the shared `invoice-template-structure.schema.ts` resolver (general §4.12); each input has a `<label>` (general §4.9).
    - Below EDIT, both render read-only.
    - The page heading names the family ("Standard (default)").
+
+   _(Corrected 2026-10-16 by bm72: this rule assumed `InvoiceStructureForm` already used React Hook Form. It did not (it kept its checkboxes in component state), so bm72 moved it onto RHF as part of adding the field array. Built (bm72): `useFieldArray` needs objects, so a line is `{ text }` in the form and a string in the structure. The resolver wraps `zodResolver(invoiceTemplateStructureSchema)` and maps line errors to `footnote.N.text` (the company-profile form's wrapped-resolver precedent). The heading reads the family name from the page data.)_
 3. **The preview action takes a family.** _(Built (bm66).)_ `previewInvoiceTemplateAction` adds a required `familyId`, validated by the BTF schema; this phase only Standard exists. A `{ billId }` source keeps its `billrun_view` check and renders with that bill's stamps (`preview-posted`).
 4. **The draft PRO-FORMA route renders in run mode.** _(Built (bm66).)_ `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` builds `{ kind: "run", … }` from the `bill_run_account` row. If the row is missing or `EXCLUDED`, it returns 404 without rendering.
 5. **Manage Customer is not touched.** The "Billing account" panel (`components/customers/billing-account-panel.tsx`) and its "Reset to follow active template" button stay as built (D46).
@@ -1160,7 +1163,11 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
     - the footnote lines come after Total Amount;
     - the Other charges block is absent when empty and present with a recurring line;
     - dates are `DD/MM/YYYY` and Mbps is whole or 2 decimals.
-65. **v1 checksum pin (Inv #57).** A test holds the SHA-256 of every file under the two v1 seed directories and fails on any change. A footnote activation creates a new version that reuses v1's `ref_layout_version_id`.
+
+    **Built (bm72), final:** `invoice-golden.test.ts` ("layout v1 Total Amount page") checks that the last page starts with `break-before: page` after every detail section and that Total Amount is not inside the Grand Total panel (`.grand-total-panel`, the amount-due panel; no `--inv-soft`/`--inv-accent`). It also checks that the footnote lines follow Total Amount, that a `<script>` line renders as text, and that the 2,000 Mbps fixture prints `150,000.00` against `200,000.00` of detail Sub Totals. The SQL half is in `invoice-capacity-detail.integration.test.ts` (anchor case) and `invoice-capacity-summary.integration.test.ts`.
+65. **v1 checksum pin (Inv #57).** A test holds the SHA-256 of every file under the two v1 seed directories and fails on any change. A footnote activation creates a new version that reuses v1's `ref_layout_version_id`. **Built (bm72):**
+    - `tests/guardrails/invoice-template-v1-pin.test.ts` pins the SHA-256 of both `checksums.json` files. It checks each index against its directory's files and against `0046`'s seed literals, and it is mutation-checked: a changed v1 byte or literal fails it.
+    - `tests/db/activate-template.integration.test.ts` covers the second half: a footnote edit becomes v2 on `BTV00000001`, the default v1 stays ACTIVE, there is one `INVOICE_TEMPLATE_ACTIVATED` row, and the `INVOICE_TEMPLATE_DRAFT_SAVED` row carries the footnote.
 66. **Boundaries (D46, D31).** Built (bm68): `tests/guardrails/phase3-boundaries.test.ts` (DB-free, static source; mutation-checked).
     - No file under `services/billing/**` or `actions/billing/**` imports `services/accounts/**` or writes `billing_account`. One pinned exemption: `services/billing/post-run.ts` imports `services/accounts/post-document` and `services/accounts/money` (the Accounts document engine that posting reuses, architecture §Stack "Ledger posting", Inv #6; bm09/bm11). It predates Phase 3 and is not Customer Management. The test pins the exemption exactly and fails if it grows or goes stale. _(Added 2026-10-16 by bm68: the rule as first written had no exemption, so it would fail on the existing posting path.)_ The `billing_account` write search also covers `db/repositories/billing/**`.
     - `invoice-render-input.ts` has no `rating.` reference.
@@ -1170,6 +1177,8 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
     - Its optional section keys equal `InvoiceOptionalSectionKey` (`payment` only) and its `columns` is `{}`.
     - The generator compiles both `payment` cases under `knownHelpersOnly`.
     - A structure with `usageAnnex`, `notes`, any column key, 0 or 6 footnote lines, or a 201-character line is rejected.
+
+    **Built (bm72):** `tests/services/billing/invoice-template/generate.test.ts` (both payment cases, the manifest's optional keys = `['payment']`, the rejections above plus a whitespace-only line); the seeded row and `structure.json` parse in `tests/db/invoice-template-catalog.integration.test.ts`.
 
 ### Rules superseded by this update
 
@@ -1187,9 +1196,9 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
 | Part 2 Data rule 4 | `post-run.ts` resolves the versions inside the posting transaction (`resolveVersionsForPosting`). | `stampPosted` copies the BAN's run stamps plus the family (Data rule 4). |
 | Part 2 permission row "Draft PRO-FORMA preview" | Renders with the current ACTIVE versions. | Renders with the run stamps (Next.js rule 4). |
 | Guardrail 46 | "A new draft preview uses v3 + profile v2" after activation. | A draft in an **already-started** run keeps its captured version; only a new run or a rerun picks up v3 (items 58, 59). |
-| Guardrail 48 | 128 generator cases (3 sections × 4 columns). | 2 cases (item 67). bm71 (built) shrank it to 4 (payment × notes) in `generate.test.ts`; bm72 takes it to 2. |
+| Guardrail 48 | 128 generator cases (3 sections × 4 columns). | 2 cases (item 67). bm71 (built) shrank it to 4 (payment × notes) in `generate.test.ts`; bm72 (built) took it to 2. |
 | Guardrail 49 | Manifest ↔ the old unions. | Item 67. bm71 (built): the manifest parses with `layout-manifest.schema.ts` (`generate.test.ts`, "the layout manifest schema"); a `usageAnnex` section or a column key is rejected. |
-| Guardrail 53 | Activation makes n+1 ACTIVE and n RETIRED. | n is RETIRED only if it is non-default; the default version stays ACTIVE (architecture P7). |
+| Guardrail 53 | Activation makes n+1 ACTIVE and n RETIRED. | n is RETIRED only if it is non-default; the default version stays ACTIVE (architecture P7). Built (bm72): `activate-template.integration.test.ts` asserts the default v1 stays ACTIVE across a footnote activation (guardrail 65) and a second activation (`[1, ACTIVE, default]`, `[2, RETIRED]`, `[3, ACTIVE]`); the admin e2e checks the same in Version history. |
 | Guardrail 54 | "Keeps each line group on one page." | Item 64. The detail half is built (bm71): State-District groups may split, rows never do, the group `thead` repeats (`invoice-golden.test.ts`). |
 | Part 2 General rule 11 | "No new money compute. The binder groups and labels stored line amounts." | New derived figures are allowed **in SQL only**, under design decisions D22/D28/D30/D47 (General rule 6). |
 | Part 1 Data rule (appendix snapshot) and guardrail 41 | The appendix is snapshotted at `aggregation` and rendered. | Not written (Data rule 8); the detail comes from the live query (Data rule 6). |
