@@ -77,9 +77,9 @@ function orphanConditions() {
 // when the segment is absent or empty; `resourceOk` is false when
 // `udr_resource` is NULL or not the rm25 `state|district|YYYY-MM-DD` shape. The
 // binder fails `INVOICE_POLYGON_DATA_MISSING` on either (D29), so no other
-// field of such a row is ever printed. `label` is the capacity line's
-// description (the type of service); `regionLabel` the D21 State-District
-// label.
+// field of such a row is ever printed. `label` is the type of service's label
+// (the offering's capacity-line description, as `readCapacitySummary` prints
+// it — one value per offering); `regionLabel` the D21 State-District label.
 export interface CapacityDetailRowRaw {
   udrId: string;
   offeringId: string;
@@ -151,13 +151,22 @@ function capacityDetailSource(p: CapacityDetailScope): SQL {
 // The rate is read at 2 decimals: the layout prints it with `money`, which
 // keeps a string's own scale, and D21 prints MYR with 2 decimals (spec Open
 // question 2; `price` prints 4 below RM1).
+//
+// `polygon_id` is matched as a whole key name — at the start of the key or
+// right after a `|` — so a key column whose name merely ends in `polygon_id`
+// (rm26 sorts key names, so e.g. `cell_polygon_id=` would come first) is
+// never read as the polygon. The type `label` is taken per offering (a window
+// over the offering's rows, `readCapacitySummary`'s `COALESCE(min(description),
+// offering_id)`), not per line: an offering with two capacity lines whose
+// descriptions differ must still sort as one contiguous block, or the binder
+// (which groups adjacent rows) would split one State-District group in two.
 function capacityDetailCte(p: CapacityDetailScope): SQL {
   return sql`
     WITH d AS (
       SELECT ${udrRated.udrId} AS udr_id,
              ${customerBillLine.refProductOfferingId} AS offering_id,
-             COALESCE(${customerBillLine.description}, ${customerBillLine.refProductOfferingId}) AS label,
-             nullif(substring(${udrRated.udrKey} FROM 'polygon_id=([^|]*)'), '') AS polygon_id,
+             ${customerBillLine.description} AS line_description,
+             nullif(substring(${udrRated.udrKey} FROM '(?:^|\\|)polygon_id=([^|]*)'), '') AS polygon_id,
              COALESCE(${udrRated.udrResource} ~ '^[^|]*\\|[^|]*\\|\\d{4}-\\d{2}-\\d{2}$', false) AS resource_ok,
              nullif(btrim(split_part(${udrRated.udrResource}, '|', 1)), '') AS state,
              nullif(btrim(split_part(${udrRated.udrResource}, '|', 2)), '') AS district,
@@ -169,6 +178,7 @@ function capacityDetailCte(p: CapacityDetailScope): SQL {
     ),
     r AS (
       SELECT d.*,
+             COALESCE(min(line_description) OVER (PARTITION BY offering_id), offering_id) AS label,
              CASE WHEN state IS NOT NULL AND district IS NOT NULL THEN state || ' - ' || district
                   WHEN state IS NOT NULL THEN state
                   WHEN district IS NOT NULL THEN district

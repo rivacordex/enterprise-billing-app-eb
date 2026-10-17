@@ -542,5 +542,24 @@ describe.skipIf(!databaseUrl)(
       },
       120_000,
     );
+
+    it("1 — a key column whose name only ends in polygon_id is never read as the polygon", async () => {
+      const { runId, ban } = await capacityBill("ANCHOR", {
+        "Iota Capacity": [
+          {
+            polygonId: "PCU-K1",
+            udrResource: resource("Selangor", "Petaling"),
+            ea: 1,
+          },
+        ],
+      });
+      // rm26 sorts key names, so a `cell_polygon_id=` column precedes
+      // `polygon_id=` in the raw key.
+      await sql`
+        UPDATE rating.udr_rated SET udr_key = 'cell_polygon_id=DECOY|' || udr_key
+        WHERE billrun_ref_id = ${runId} AND billrun_ban_id = ${ban}`;
+      const bound = bindDraft(await read(runId, ban));
+      expect(flat(bound, 0)).toEqual([["Selangor - Petaling", "PCU-K1"]]);
+    }, 120_000);
   },
 );
