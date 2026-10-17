@@ -139,7 +139,7 @@ describe("layout v1 page 1 (bm70)", () => {
   const sectionOrder = (html: string) =>
     [...html.matchAll(/class="sec sec--([A-Za-z]+) /g)].map((m) => m[1]);
 
-  it("orders the sections header → identification → billTo → chargeSummary → taxSummary → amountDue → payment → chargeDetails → notes", () => {
+  it("orders the sections header → identification → billTo → chargeSummary → taxSummary → amountDue → payment → chargeDetails", () => {
     expect(sectionOrder(render(sample))).toEqual([
       "header",
       "identification",
@@ -149,7 +149,6 @@ describe("layout v1 page 1 (bm70)", () => {
       "amountDue",
       "payment",
       "chargeDetails",
-      "notes",
     ]);
   });
 
@@ -287,7 +286,8 @@ describe("layout v1 detail pages (bm71, guardrail 64 detail half)", () => {
       /<section class="detail-type" style="break-before: page">/g,
     );
     expect(sections).toHaveLength(3);
-    expect(detail.match(/<h2 class="detail-heading">/g)).toHaveLength(3);
+    // Three type headings, plus the Total Amount page's (bm72).
+    expect(detail.match(/<h2 class="detail-heading">/g)).toHaveLength(4);
     expect(detail.match(/Access Seeker: Probe Customer Sdn Bhd/g)).toHaveLength(
       3,
     );
@@ -363,5 +363,137 @@ describe("layout v1 detail pages (bm71, guardrail 64 detail half)", () => {
     expect(footer).toContain(
       '<span style="text-align: right;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>',
     );
+  });
+});
+
+// bm72-spec §5 — guardrail 64 (final): the last page. Total Amount = Σ
+// per-type Utilised (`totals.totalAmount`, summed in SQL) on its own page
+// after the detail pages, never styled as the amount due (P10), followed by
+// the footnote lines. On the `ci` 2,000 Mbps anchor it reads 150,000.00 while
+// the detail Sub Totals sum to 200,000.00, and that difference is asserted
+// (D30, D43).
+describe("layout v1 Total Amount page (bm72, guardrail 64 final)", () => {
+  const SEEDED_INVOICE = compileInvoiceTemplate(
+    readFileSync(join(SEEDS, "generated/INVOICE/v1/invoice.hbs"), "utf8"),
+  );
+  const render = (input: InvoiceRenderInput) =>
+    executeInvoiceTemplate(SEEDED_INVOICE, input);
+  // `Intl` separates the currency code with a no-break space.
+  const rm = (amount: string) => `RM ${amount}`;
+
+  // The 2,000 Mbps anchor: gross 200,000 (2,000 Mbps × RM100) − 50,000
+  // motivation discount = Utilised 150,000; the detail rows price the raw
+  // 2,000 Mbps at the base rate (two polygons, 1,200 + 800 Mbps).
+  const base = PROBE_RENDER_INPUT;
+  const ANCHOR: InvoiceRenderInput = {
+    ...base,
+    totals: { ...base.totals, totalAmount: "150000.00" },
+    serviceTypes: [
+      {
+        offeringId: "POF00000001",
+        label: "RAN Target Capacity",
+        utilised: "150000.00",
+        unutilised: "0.00",
+        total: "150000.00",
+        regions: [
+          {
+            label: "SELANGOR - PETALING",
+            subTotal: "200000.00",
+            rows: [
+              {
+                polygonStartDate: "2025-03-07",
+                polygonName: "PCU-0001",
+                capacityMbps: "1200.000000",
+                ratePerMbps: "100.00",
+                amount: "120000.00",
+              },
+              {
+                polygonStartDate: "2025-03-07",
+                polygonName: "PCU-0002",
+                capacityMbps: "800.000000",
+                ratePerMbps: "100.00",
+                amount: "80000.00",
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    footnote: [
+      "Calculations are done in Mbps",
+      "This invoice is billed exclusive of Universal Service Provision (USP)",
+    ],
+  };
+  const html = render(ANCHOR);
+  const pageStart = html.indexOf('<section class="total-amount-page"');
+  const lastPage = html.slice(pageStart, html.indexOf("</section>", pageStart));
+
+  it("starts the last page with break-before: page, after every detail section", () => {
+    expect(html).toContain(
+      '<section class="total-amount-page" style="break-before: page">',
+    );
+    expect(pageStart).toBeGreaterThan(
+      html.lastIndexOf('<section class="detail-type"'),
+    );
+    expect(lastPage).toContain(
+      '<h2 class="detail-heading">Summary of Utilised Capacity Charges</h2>',
+    );
+  });
+
+  it("prints Total Amount = Σ Utilised (150,000.00), not the 200,000.00 detail Sub Totals", () => {
+    expect(lastPage).toContain(
+      `<div class="total-amount"><span>Total Amount</span><span class="num">${rm("150,000.00")}</span></div>`,
+    );
+    const subTotals = [
+      ...html.matchAll(
+        /<tr class="subtotal"><td colspan="4">Sub Total<\/td><td class="num">([^<]+)<\/td>/g,
+      ),
+    ].map((m) => m[1]);
+    expect(subTotals).toEqual([rm("200,000.00")]);
+    expect(lastPage).not.toContain("200,000.00");
+  });
+
+  it("is never the amount-due panel (P10): no Grand Total panel, soft fill or accent rule", () => {
+    expect(lastPage).not.toContain("grand-total");
+    expect(lastPage).not.toContain("amount-due");
+    const css = /\.total-amount \{([^}]*)\}/.exec(html)?.[1] ?? "";
+    expect(css).toContain("border-top: 1px solid var(--inv-line)");
+    expect(css).toContain("color: var(--inv-ink)");
+    expect(css).not.toContain("--inv-soft");
+    expect(css).not.toContain("--inv-accent");
+  });
+
+  it("prints the footnote lines after Total Amount, one paragraph per line", () => {
+    const total = lastPage.indexOf("Total Amount</span>");
+    const footnote = lastPage.indexOf('<div class="footnote">');
+    expect(footnote).toBeGreaterThan(total);
+    expect(lastPage).toContain(
+      '<div class="footnote"><p>Calculations are done in Mbps</p><p>This invoice is billed exclusive of Universal Service Provision (USP)</p></div>',
+    );
+    expect(html).toMatch(/\.footnote p \{[^}]*color: var\(--inv-muted\)/);
+  });
+
+  it("escapes a footnote line: a <script> line renders as text (guardrail 50)", () => {
+    const out = render({
+      ...ANCHOR,
+      footnote: ['<script>alert("x")</script>'],
+    });
+    expect(out).not.toContain('<script>alert("x")</script>');
+    expect(out).toContain(
+      "<p>&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;</p>",
+    );
+  });
+
+  it("prints 0.00 with no capacity line, and no footnote block when there are no lines", () => {
+    const out = render({
+      ...ANCHOR,
+      serviceTypes: [],
+      totals: { ...ANCHOR.totals, totalAmount: "0.00" },
+      footnote: [],
+    });
+    expect(out).toContain(
+      `<span>Total Amount</span><span class="num">${rm("0.00")}</span>`,
+    );
+    expect(out).not.toContain('class="footnote"');
   });
 });

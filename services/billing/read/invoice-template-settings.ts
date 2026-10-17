@@ -41,6 +41,8 @@ export interface InvoiceTemplatePageData {
   history: TemplateVersionHistoryRow[];
   // bm66-spec §4 — the Standard (default) family the live preview renders.
   standardFamilyId: string;
+  // bm72 (D45, ui-context §10b) — the family named in the page heading.
+  standardFamilyName: string;
 }
 
 function toHistoryRow(
@@ -164,6 +166,7 @@ export async function getInvoiceTemplatePageData(
     shownStructure: shown.structure!,
     history: generatedRows.map((r) => toHistoryRow(r, layoutLabels)),
     standardFamilyId: standardFamily.billTemplateFamilyId,
+    standardFamilyName: standardFamily.name,
   };
 }
 

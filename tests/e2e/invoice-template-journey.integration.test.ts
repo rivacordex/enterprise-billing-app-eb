@@ -138,8 +138,15 @@ function pdfPageCount(pdf: Buffer): number {
     .length;
 }
 
-function structure(notes: boolean) {
-  return { sections: { payment: true, notes }, columns: {} };
+// bm72 — versions differ by their footnote (Notes & terms is gone).
+const FOOTNOTE_V2 = "Journey footnote v2";
+const FOOTNOTE_V3 = "Journey footnote v3";
+function structure(footnoteLine: string) {
+  return {
+    sections: { payment: true },
+    columns: {},
+    footnote: [footnoteLine],
+  };
 }
 
 function profileFields(companyName: string): Record<string, string> {
@@ -255,9 +262,9 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       return row!;
     }
 
-    async function activateTemplate(notes: boolean, note: string) {
+    async function activateTemplate(footnoteLine: string, note: string) {
       const saved = await svc.saveTemplateDraftAction({
-        structure: structure(notes),
+        structure: structure(footnoteLine),
         expectedDraftToken: null,
       });
       if (!saved.ok) throw new Error(`save draft: ${saved.code}`);
@@ -560,7 +567,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
     }, 600_000);
 
     it("step 3 — template v2 + profile v1 through the actions; the next run is stamped v2 / profile 1", async () => {
-      ({ versionId: v2Id } = await activateTemplate(true, "journey v2"));
+      ({ versionId: v2Id } = await activateTemplate(FOOTNOTE_V2, "journey v2"));
       const profile1 = await activateProfile(
         profileFields(COMPANY_V1),
         LOGO_V1,
@@ -599,7 +606,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       const before = await stamps(RUN_V2, banA);
       const storedBefore = await svc.getStoredInvoice(RUN_V2, banA);
 
-      ({ versionId: v3Id } = await activateTemplate(false, "journey v3"));
+      ({ versionId: v3Id } = await activateTemplate(FOOTNOTE_V3, "journey v3"));
       const profile2 = await activateProfile(
         { ...profileFields(COMPANY_V2), bank_account_no: ACCOUNT_V2 },
         LOGO_V2,
@@ -634,7 +641,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         ),
       ).toBe(before.charge_checksum);
 
-      // A new draft preview uses v3 (notes hidden) and profile v2.
+      // A new draft preview uses v3 (its footnote) and profile v2.
       await fx.newRun(RUN_DRAFT);
       const { banId: banDraft } = await fx.draftBill({
         label: "DRAFT",
@@ -646,7 +653,8 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         mode: "draft",
       });
       expect(draft.resolved.generated.billTemplateVersionId).toBe(v3Id);
-      expect(draft.html).not.toContain("sec--notes");
+      expect(draft.html).toContain(FOOTNOTE_V3);
+      expect(draft.html).not.toContain(FOOTNOTE_V2);
       expect(draft.html).toContain(COMPANY_V2);
       expect(draft.html).toContain(ACCOUNT_V2);
       expect(draft.html).not.toContain(COMPANY_V1);

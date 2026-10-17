@@ -47,11 +47,16 @@ import type {
 // bm71 replaced the annex with the detail pages and regenerated all three
 // stored files from the seeded `structure.json` (payment + notes on, no
 // columns): `invoice.hbs`, `footer.hbs` and `structure.json` are each
-// byte-identical to the generator output.
+// byte-identical to the generator output. bm72 regenerated them again from
+// the final structure (payment on, the two seeded footnote lines).
 
 const SEEDED_STRUCTURE: InvoiceTemplateStructure = {
-  sections: { payment: true, notes: true },
+  sections: { payment: true },
   columns: {},
+  footnote: [
+    "Calculations are done in Mbps",
+    "This invoice is billed exclusive of Universal Service Provision (USP)",
+  ],
 };
 
 let generatedHtml: (input: InvoiceRenderInput) => string;

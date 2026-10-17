@@ -36,11 +36,11 @@ import {
 import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-template-structure.schema";
 import { layoutManifestSchema } from "@/validation/billing/layout-manifest.schema";
 
-// bm55-spec §Tests — guardrail 48, shrunk by bm71-spec §6 (D56): the
-// generator over every combination of the 2 optional sections (payment ×
-// notes = 4 cases; the column toggles are gone), against the seeded layout
-// v1. bm71 also pins the structure schema and the layout manifest schema
-// (D38).
+// bm55-spec §Tests — guardrail 48, shrunk by bm71-spec §6 and bm72-spec §5
+// (guardrail item 67, D56): the generator over both cases of the one optional
+// section (payment on/off; the column toggles and Notes & terms are gone),
+// against the seeded layout v1. bm71 also pins the structure schema and the
+// layout manifest schema (D38); bm72 adds the footnote lines to the schema.
 
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const MANIFEST_PATH = path.join(
@@ -54,20 +54,24 @@ beforeAll(async () => {
   layout = layoutFilesFromVerified(await loadLayout(SEEDED_LAYOUT_ROW));
 });
 
+const FOOTNOTE = [
+  "Calculations are done in Mbps",
+  "This invoice is billed exclusive of Universal Service Provision (USP)",
+];
+
 function structureFor(mask: number): InvoiceTemplateStructure {
-  const bit = (i: number): boolean => (mask & (1 << i)) !== 0;
   return {
-    sections: { payment: bit(0), notes: bit(1) },
+    sections: { payment: (mask & 1) !== 0 },
     columns: {},
+    footnote: [...FOOTNOTE],
   };
 }
 
-const ALL_ON = structureFor(3);
+const ALL_ON = structureFor(1);
 
 // Each optional section's distinctive markup in the generated file.
 const SECTION_MARKERS = {
   payment: "sec--payment",
-  notes: "sec--notes",
 } as const;
 
 // The mandatory sections the layout always generates.
@@ -102,8 +106,8 @@ function withPartial(
   return { ...layout, partials: { ...layout.partials, [key]: source } };
 }
 
-describe("generate — guardrail 48 (all 4 structure combinations)", () => {
-  const masks = Array.from({ length: 4 }, (_, mask) => mask);
+describe("generate — guardrail 67 (both payment cases)", () => {
+  const masks = [0, 1];
 
   it.each(masks)(
     "combination %i compiles, has no directive, and drops hidden markup",
@@ -138,6 +142,9 @@ describe("generate — guardrail 48 (all 4 structure combinations)", () => {
       // The detail pages carry no admin column toggle (D56).
       expect(invoiceHbs).toContain('<table class="detail-group">');
       expect(invoiceHbs).not.toContain("annex");
+      // Notes & terms is gone; the footnote is bound data (bm72).
+      expect(invoiceHbs).not.toContain("sec--notes");
+      expect(invoiceHbs).toContain("{{#each footnote}}");
     },
   );
 });
@@ -155,50 +162,56 @@ describe("generate — layout pairing", () => {
   });
 
   it("widens a half section to full when its layout partner is hidden", () => {
-    // Synthetic layout: make Notes a half section directly after payment, so
-    // payment and notes form a pair. v1 orders chargeDetails between them, so
-    // the synthetic manifest moves chargeDetails ahead of payment.
-    const notesHalf = withPartial(
-      "notes",
-      '<section class="sec sec--notes sec--half">\n  <p>Notes</p>\n</section>\n',
+    // Synthetic layout: make Amount due a half section; v1 orders it directly
+    // before payment, so amountDue and payment form a pair. Payment is the
+    // only optional section (bm72), so it is the partner that hides.
+    const paired = withPartial(
+      "amountDue",
+      '<section class="sec sec--amountDue sec--half">\n  <p>Due</p>\n</section>\n',
     );
-    const { chargeDetails, ...rest } = notesHalf.manifest.sections;
-    const sections: typeof rest = {};
-    for (const [key, value] of Object.entries(rest)) {
-      if (key === "payment") sections.chargeDetails = chargeDetails!;
-      sections[key] = value;
-    }
-    const paired: LayoutFiles = {
-      ...notesHalf,
-      manifest: { ...notesHalf.manifest, sections },
-    };
 
     const both = generate(paired, ALL_ON).invoiceHbs;
+    expect(both).toContain('class="sec sec--amountDue sec--half"');
     expect(both).toContain('class="sec sec--payment sec--half"');
-    expect(both).toContain('class="sec sec--notes sec--half"');
 
-    const noNotes = generate(paired, structureFor(1)).invoiceHbs;
-    expect(noNotes).toContain('class="sec sec--payment sec--full"');
-    expect(noNotes).not.toContain("sec--notes");
-
-    const noPayment = generate(paired, structureFor(2)).invoiceHbs;
-    expect(noPayment).toContain('class="sec sec--notes sec--full"');
+    const noPayment = generate(paired, structureFor(0)).invoiceHbs;
+    expect(noPayment).toContain('class="sec sec--amountDue sec--full"');
     expect(noPayment).not.toContain("sec--payment");
   });
 });
 
-describe("generate — the structure schema (bm71, D56)", () => {
-  it("accepts the optional sections with an empty columns map", () => {
-    for (const mask of [0, 1, 2, 3]) {
+describe("generate — the structure schema (bm71/bm72, D56, guardrail 67)", () => {
+  it("accepts both payment cases with an empty columns map and 1–5 footnote lines", () => {
+    for (const mask of [0, 1]) {
       expect(
         invoiceTemplateStructureSchema.safeParse(structureFor(mask)).success,
       ).toBe(true);
     }
+    for (const footnote of [
+      ["x"],
+      ["a", "b", "c", "d", "e"],
+      ["y".repeat(200)],
+    ]) {
+      expect(
+        invoiceTemplateStructureSchema.safeParse({ ...ALL_ON, footnote })
+          .success,
+      ).toBe(true);
+    }
   });
 
-  it("rejects a usageAnnex section, a mandatory section key and any column key", () => {
+  it("trims each footnote line", () => {
+    expect(
+      invoiceTemplateStructureSchema.parse({
+        ...ALL_ON,
+        footnote: ["  Calculations are done in Mbps  "],
+      }).footnote,
+    ).toEqual(["Calculations are done in Mbps"]);
+  });
+
+  it("rejects usageAnnex, notes, a mandatory section key and any column key", () => {
     const rejected = [
       { ...ALL_ON, sections: { ...ALL_ON.sections, usageAnnex: true } },
+      { ...ALL_ON, sections: { ...ALL_ON.sections, notes: true } },
       { ...ALL_ON, sections: { ...ALL_ON.sections, chargeDetails: true } },
       { ...ALL_ON, columns: { showUdrCount: true } },
       { ...ALL_ON, columns: { showServicePeriod: false } },
@@ -207,6 +220,24 @@ describe("generate — the structure schema (bm71, D56)", () => {
       expect(invoiceTemplateStructureSchema.safeParse(structure).success).toBe(
         false,
       );
+    }
+  });
+
+  it.each([
+    ["no footnote", undefined, "Required"],
+    ["0 footnote lines", [], "Keep at least one line"],
+    ["6 footnote lines", ["1", "2", "3", "4", "5", "6"], "5 lines at most"],
+    ["a 201-character line", ["z".repeat(201)], "200 characters at most"],
+    ["a whitespace-only line", ["ok", "   "], "Enter text or remove the line"],
+    ["an empty line", [""], "Enter text or remove the line"],
+  ])("rejects %s", (_label, footnote, message) => {
+    const result = invoiceTemplateStructureSchema.safeParse({
+      ...ALL_ON,
+      footnote,
+    });
+    expect(result.success).toBe(false);
+    if (message !== "Required") {
+      expect(result.error?.issues.map((i) => i.message)).toContain(message);
     }
   });
 
@@ -240,9 +271,15 @@ describe("generate — the layout manifest schema (bm71, D38)", () => {
       "amountDue",
       "payment",
       "chargeDetails",
-      "notes",
     ]);
     expect(manifest.columns).toEqual({});
+    // Guardrail 67 — the optional section keys are exactly `payment`.
+    expect(
+      Object.entries(manifest.sections)
+        .filter(([, s]) => !s.mandatory)
+        .map(([key]) => key),
+    ).toEqual([...INVOICE_OPTIONAL_SECTION_KEYS]);
+    expect(INVOICE_OPTIONAL_SECTION_KEYS).toEqual(["payment"]);
     expect(manifest.usageGrouping).toEqual([
       "serviceType",
       "state",
@@ -258,18 +295,19 @@ describe("generate — the layout manifest schema (bm71, D38)", () => {
   });
 
   it("is what layoutFilesFromVerified parses (the seeded layout loads)", () => {
-    expect(Object.keys(layout.manifest.sections)).toHaveLength(9);
+    expect(Object.keys(layout.manifest.sections)).toHaveLength(8);
   });
 
-  it("rejects a usageAnnex section, a column key, a missing section or another grouping", () => {
+  it("rejects a usageAnnex or notes section, a column key, a missing section or another grouping", () => {
     const sections = seeded.sections as Record<string, unknown>;
-    const { notes: _notes, ...withoutNotes } = sections;
+    const { payment: _payment, ...withoutPayment } = sections;
     const rejected = [
       {
         ...seeded,
         sections: { ...sections, usageAnnex: { mandatory: false } },
       },
-      { ...seeded, sections: withoutNotes },
+      { ...seeded, sections: { ...sections, notes: { mandatory: false } } },
+      { ...seeded, sections: withoutPayment },
       { ...seeded, columns: { showUdrCount: { mandatory: false } } },
       { ...seeded, usageGrouping: ["state", "district"] },
       { ...seeded, fixedColumns: ["#", "Description"] },
@@ -286,19 +324,19 @@ describe("generate — TEMPLATE_GENERATION_FAILED", () => {
       () =>
         generate(
           withPartial(
-            "notes",
-            "[[if sections.notes]]a[[if sections.payment]]b[[/if]][[/if]]",
+            "payment",
+            "[[if sections.payment]]a[[if sections.payment]]b[[/if]][[/if]]",
           ),
           ALL_ON,
         ),
-      "partials/notes.hbs",
+      "partials/payment.hbs",
     );
   });
 
   it("rejects an unknown directive", () => {
     expectGenerationFailed(
-      () => generate(withPartial("notes", "[[else]]"), ALL_ON),
-      "partials/notes.hbs",
+      () => generate(withPartial("payment", "[[else]]"), ALL_ON),
+      "partials/payment.hbs",
     );
   });
 
@@ -306,26 +344,28 @@ describe("generate — TEMPLATE_GENERATION_FAILED", () => {
     for (const source of [
       "[[if sections.accountSummary]]x[[/if]]",
       "[[if sections.usageAnnex]]x[[/if]]",
+      "[[if sections.notes]]x[[/if]]",
       "[[if sections.billTo]]x[[/if]]",
       "[[if columns.showUdrCount]]x[[/if]]",
       "[[num colCount]]",
       "[[num rowCount]]",
     ]) {
       expectGenerationFailed(
-        () => generate(withPartial("notes", source), ALL_ON),
-        "partials/notes.hbs",
+        () => generate(withPartial("payment", source), ALL_ON),
+        "partials/payment.hbs",
       );
     }
   });
 
   it("rejects an unbalanced [[if]]", () => {
     expectGenerationFailed(
-      () => generate(withPartial("notes", "[[if sections.notes]]x"), ALL_ON),
-      "partials/notes.hbs",
+      () =>
+        generate(withPartial("payment", "[[if sections.payment]]x"), ALL_ON),
+      "partials/payment.hbs",
     );
     expectGenerationFailed(
-      () => generate(withPartial("notes", "x[[/if]]"), ALL_ON),
-      "partials/notes.hbs",
+      () => generate(withPartial("payment", "x[[/if]]"), ALL_ON),
+      "partials/payment.hbs",
     );
   });
 
@@ -343,8 +383,8 @@ describe("generate — TEMPLATE_GENERATION_FAILED", () => {
       "shell.hbs",
     );
     expectGenerationFailed(
-      () => generate(withPartial("notes", "[[body]]"), ALL_ON),
-      "partials/notes.hbs",
+      () => generate(withPartial("payment", "[[body]]"), ALL_ON),
+      "partials/payment.hbs",
     );
   });
 
@@ -356,10 +396,10 @@ describe("generate — TEMPLATE_GENERATION_FAILED", () => {
             ...layout,
             shell: layout.shell.replace(
               "[[body]]",
-              "[[if sections.notes]][[body]][[/if]]",
+              "[[if sections.payment]][[body]][[/if]]",
             ),
           },
-          structureFor(1),
+          structureFor(0),
         ),
       "shell.hbs",
     );
@@ -367,14 +407,14 @@ describe("generate — TEMPLATE_GENERATION_FAILED", () => {
 
   it("rejects a [[num]] name that is only an Object.prototype key", () => {
     expectGenerationFailed(
-      () => generate(withPartial("notes", "[[num constructor]]"), ALL_ON),
-      "partials/notes.hbs",
+      () => generate(withPartial("payment", "[[num constructor]]"), ALL_ON),
+      "partials/payment.hbs",
     );
   });
 
   it("rejects output that still carries a directive bracket", () => {
     expectGenerationFailed(
-      () => generate(withPartial("notes", "<p>[[ unterminated</p>"), ALL_ON),
+      () => generate(withPartial("payment", "<p>[[ unterminated</p>"), ALL_ON),
       "invoice.hbs",
     );
   });
@@ -436,23 +476,15 @@ describe("generate — determinism and structure.json", () => {
     expect(structureJson.endsWith("}\n")).toBe(true);
     const parsed = JSON.parse(structureJson) as InvoiceTemplateStructure;
     expect(parsed).toEqual(ALL_ON);
-    expect(Object.keys(parsed)).toEqual(["columns", "sections"]);
-    expect(Object.keys(parsed.sections)).toEqual(
-      [...Object.keys(ALL_ON.sections)].sort(),
-    );
+    expect(Object.keys(parsed)).toEqual(["columns", "footnote", "sections"]);
+    // Footnote lines keep their order (an array is never sorted).
+    expect(parsed.footnote).toEqual(FOOTNOTE);
     expect(structureJson).toBe(
       `${JSON.stringify(
         {
-          columns: Object.fromEntries(
-            Object.entries(ALL_ON.columns).sort(([a], [b]) =>
-              a.localeCompare(b),
-            ),
-          ),
-          sections: Object.fromEntries(
-            Object.entries(ALL_ON.sections).sort(([a], [b]) =>
-              a.localeCompare(b),
-            ),
-          ),
+          columns: {},
+          footnote: FOOTNOTE,
+          sections: { payment: true },
         },
         null,
         2,

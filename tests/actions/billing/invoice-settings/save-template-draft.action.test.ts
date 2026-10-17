@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // posted directly is VALIDATION_ERROR (bm71, D56: the structure stores only the
 // optional sections), as is an unknown key; success revalidates the
 // Invoice Settings layout; a conflict and an unexpected throw are mapped.
+// bm72: the footnote limits (1–5 lines, ≤ 200 characters, no blank line) are
+// refused server-side, and `notes` is a retired key.
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/invoice-template/save-template-draft", () => ({
@@ -24,8 +26,9 @@ const mockService = vi.mocked(saveTemplateDraft);
 const mockRevalidate = vi.mocked(revalidatePath);
 
 const STRUCTURE = {
-  sections: { payment: true, notes: false },
+  sections: { payment: true },
   columns: {},
+  footnote: ["Calculations are done in Mbps"],
 };
 const TOKEN = "2026-10-10T01:02:03.123456Z";
 
@@ -97,8 +100,31 @@ describe("saveTemplateDraftAction", () => {
     expect(mockRevalidate).not.toHaveBeenCalled();
   });
 
+  // bm72 — the footnote limits hold on the server, whatever the browser sent.
+  it.each([
+    ["0 footnote lines", [], "structure.footnote"],
+    ["6 footnote lines", ["1", "2", "3", "4", "5", "6"], "structure.footnote"],
+    ["a 201-character line", ["ok", "x".repeat(201)], "structure.footnote.1"],
+    ["a whitespace-only line", ["   "], "structure.footnote.0"],
+    ["a non-string line", [42], "structure.footnote.0"],
+  ])(
+    "rejects %s with VALIDATION_ERROR on its path (bm72)",
+    async (_label, footnote, path) => {
+      const result = await saveTemplateDraftAction({
+        structure: { ...STRUCTURE, footnote },
+        expectedDraftToken: null,
+      });
+      expect(result).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
+      expect(
+        Object.keys((result as { fieldErrors: object }).fieldErrors),
+      ).toContain(path);
+      expect(mockService).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["the retired usageAnnex section", { usageAnnex: true }],
+    ["the retired notes section", { notes: true }],
     ["a column key", null],
   ])("rejects %s with VALIDATION_ERROR (bm71)", async (_label, sections) => {
     const result = await saveTemplateDraftAction({

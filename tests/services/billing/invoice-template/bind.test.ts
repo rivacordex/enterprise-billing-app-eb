@@ -8,6 +8,7 @@ import type {
 } from "@/db/repositories/billing/rated-lines.repository";
 import { FinalInvoiceNotFoundError, InvoiceRenderError } from "@/types/billing";
 import { rawInvoiceRenderInputFixture } from "@/tests/helpers/invoice-render-input-fixtures";
+import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 
 // bm47-spec §Design D2/D3/D4/D5 + bm70-spec §6 + bm71-spec §6, test plan
 // rows. Pure, DB-free — `bind()` takes no DB/Handlebars/next
@@ -23,6 +24,7 @@ const CTX = {
   timezone: "UTC",
   template: TEMPLATE,
   profile: null,
+  footnote: [...SEEDED_FOOTNOTE],
 };
 
 describe("bind — reconciliation (D2)", () => {
@@ -83,6 +85,7 @@ describe("bind — reconciliation (D2)", () => {
         timezone: "UTC",
         template: TEMPLATE,
         profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
         invoiceNo: "INV00000002",
       });
     } catch (err) {
@@ -103,6 +106,7 @@ describe("bind — reconciliation (D2)", () => {
         timezone: "UTC",
         template: TEMPLATE,
         profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
       }),
     ).toThrow(FinalInvoiceNotFoundError);
   });
@@ -122,6 +126,7 @@ describe("bind — invoice date", () => {
       locale: "en-MY",
       template: TEMPLATE,
       profile: null,
+      footnote: [...SEEDED_FOOTNOTE],
       invoiceNo: "INV00000001",
     };
     expect(
@@ -638,5 +643,32 @@ describe("bind — capacity detail pages (bm71)", () => {
         rowCount: 10001,
       });
     }
+  });
+});
+
+// bm72-spec §Design "The last page" (D22, D30, P10) and "The bind reads the
+// footnote from the structure in use" (D19).
+describe("bind — Total Amount and footnote (bm72)", () => {
+  it("binds Total Amount from the SQL Σ Utilised, never the bill total; the amount due stays the bill total", () => {
+    const raw = rawInput({
+      bill: {
+        ...rawInput().bill,
+        totalAmount: "150.00",
+        utilisedTotal: "120.50",
+      },
+    });
+    const bound = bind(raw, CTX);
+    expect(bound.totals.totalAmount).toBe("120.50");
+    expect(bound.totals.amountDue).toBe("150.00");
+  });
+
+  it("binds 0.00 when the bill has no capacity line", () => {
+    expect(bind(rawInput(), CTX).totals.totalAmount).toBe("0.00");
+  });
+
+  it("binds the footnote it is given, line for line, as plain strings", () => {
+    const footnote = ["Line one", "<script>x</script>"];
+    expect(bind(rawInput(), { ...CTX, footnote }).footnote).toEqual(footnote);
+    expect(bind(rawInput(), CTX).footnote).toEqual([...SEEDED_FOOTNOTE]);
   });
 });

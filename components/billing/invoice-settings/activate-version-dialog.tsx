@@ -26,7 +26,69 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
+import type { StructureChange } from "@/components/billing/invoice-settings/structure-labels";
 import { CHANGE_NOTE_MAX_LENGTH } from "@/validation/billing/activate-version.schema";
+
+// bm72-spec §Design (ui-context §10b Phase 3 row) — the template's "what
+// changes" summary: `+`/`−` section rows, then one row per footnote change
+// with the values in monospace quotes, or "No change in structure.".
+function Quoted({ value }: { value: string }): React.JSX.Element {
+  return <span className="font-mono text-mono">&quot;{value}&quot;</span>;
+}
+
+function describeChange(change: StructureChange): React.ReactNode {
+  switch (change.kind) {
+    case "section":
+      return (
+        <>
+          <span aria-hidden className="font-mono">
+            {change.sign}
+          </span>{" "}
+          {change.text}
+        </>
+      );
+    case "footnote-changed":
+      return (
+        <>
+          Footnote line {change.line}: <Quoted value={change.before} /> →{" "}
+          <Quoted value={change.after} />
+        </>
+      );
+    case "footnote-added":
+      return (
+        <>
+          Footnote line {change.line} added: <Quoted value={change.after} />
+        </>
+      );
+    case "footnote-removed":
+      return <>Footnote line {change.line} removed</>;
+    default: {
+      const unreachable: never = change;
+      return unreachable;
+    }
+  }
+}
+
+function changeKey(change: StructureChange): string {
+  return change.kind === "section"
+    ? `section:${change.text}`
+    : `footnote:${change.line}`;
+}
+
+export function StructureChangeSummary({
+  changes,
+}: {
+  changes: readonly StructureChange[];
+}): React.JSX.Element {
+  if (changes.length === 0) return <p>No change in structure.</p>;
+  return (
+    <ul className="space-y-1">
+      {changes.map((c) => (
+        <li key={changeKey(c)}>{describeChange(c)}</li>
+      ))}
+    </ul>
+  );
+}
 
 export type ActivateConfirmResult =
   | { ok: true }

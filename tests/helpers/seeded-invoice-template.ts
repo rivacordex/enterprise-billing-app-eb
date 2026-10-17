@@ -56,7 +56,7 @@ export const SEEDED_LAYOUT_ROW: BillTemplateVersion = {
     printBackground: true,
   },
   blobRef: "invoice-templates/layouts/INVTPL-STD-A4/v1/",
-  checksum: "5bf21e1238de19ee0a9bd7c16edebad07b61d11f225e2c0ba9c2918bc6f986d9",
+  checksum: "17ec1bd75b543456b91c10b06ed7a2bafed18ba9ced89a22d93aa6eb9e59aa22",
   checksumAlgorithm: "sha256",
   changeNote: null,
   createdBy: null,
@@ -66,6 +66,12 @@ export const SEEDED_LAYOUT_ROW: BillTemplateVersion = {
   retiredDatetime: null,
   lastModifiedDatetime: new Date("2026-10-08T00:00:00Z"),
 };
+
+// bm72 — the seeded Standard v1 footnote (`structure.json`, `0046`).
+export const SEEDED_FOOTNOTE: readonly string[] = [
+  "Calculations are done in Mbps",
+  "This invoice is billed exclusive of Universal Service Provision (USP)",
+];
 
 // The migration's BTV00000002 row (0046), as `resolveTemplate` returns it.
 export const SEEDED_GENERATED_ROW: BillTemplateVersion = {
@@ -79,12 +85,13 @@ export const SEEDED_GENERATED_ROW: BillTemplateVersion = {
   refLayoutVersionId: "BTV00000001",
   refBillTemplateFamilyId: "BTF00000001",
   structure: {
-    sections: { payment: true, notes: true },
+    sections: { payment: true },
     columns: {},
+    footnote: [...SEEDED_FOOTNOTE],
   },
   pageSetup: null,
   blobRef: "invoice-templates/generated/INVOICE/v1/",
-  checksum: "ac13fb426af59bf4a79cfbdcec6f8e46c89ef74fc3a076b7e3f2eb77012eadf0",
+  checksum: "0c875a77fae348b1d5cb7d4a028b0aa2a5ccc87bfb37b1cd0decf8ac571d1c41",
   checksumAlgorithm: "sha256",
   changeNote: null,
   createdBy: null,

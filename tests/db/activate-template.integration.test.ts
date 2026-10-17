@@ -20,7 +20,7 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
+import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 
 // bm58-spec §Tests (+ guardrail 53): activate the working draft on a real
 // database and a real Azurite. Success writes a content-addressed, checksum-
@@ -54,21 +54,24 @@ import { saveTemplateDraft } from "@/services/billing/invoice-template/save-temp
 import type { Database } from "@/db/client";
 
 const ACTOR = "bm58-actor";
-const NOTE = "Hide notes for the pilot MNOs";
+const NOTE = "Reword footnote line 2 for the pilot MNOs";
+// bm72 — a footnote edit: line 2 of the seeded v1 footnote reworded.
+const FOOTNOTE_EDIT = [
+  SEEDED_FOOTNOTE[0]!,
+  "This invoice is billed inclusive of Universal Service Provision (USP)",
+];
 const SEED_LAYOUT_DIR = path.join(
   process.cwd(),
   "db/seeds/invoice-templates/INVTPL-STD-A4/v1",
 );
 
-function structure(overrides: { notes?: boolean; payment?: boolean } = {}) {
+// bm72 — the editable structure: the Payment toggle and the footnote lines
+// (the seeded v1 footnote unless a case edits it).
+function structure(overrides: { payment?: boolean; footnote?: string[] } = {}) {
   return {
-    sections: {
-      ...Object.fromEntries(
-        INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
-      ),
-      ...overrides,
-    },
+    sections: { payment: overrides.payment ?? true },
     columns: {},
+    footnote: overrides.footnote ?? [...SEEDED_FOOTNOTE],
   } as Parameters<typeof saveTemplateDraft>[0]["structure"];
 }
 
@@ -205,7 +208,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }, 60_000);
 
     it("activates the draft: ACTIVE with a content-addressed blob_ref, verified files, one audit row, resolved for the next draft", async () => {
-      const draft = await ensureDraft(structure({ notes: false }));
+      const draft = await ensureDraft(structure({ footnote: FOOTNOTE_EDIT }));
       const result = await activateTemplate(
         {
           draftId: draft.id,
@@ -241,9 +244,11 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       );
       const invoice = stored["invoice.hbs"].toString("utf-8");
       expect(invoice).not.toContain("[[");
+      // bm72 — the footnote is bound data: the stored template iterates it.
+      expect(invoice).toContain("{{#each footnote}}");
       expect(invoice).not.toContain("sec--notes");
       expect(JSON.parse(stored["structure.json"].toString("utf-8"))).toEqual(
-        JSON.parse(JSON.stringify(structure({ notes: false }))),
+        JSON.parse(JSON.stringify(structure({ footnote: FOOTNOTE_EDIT }))),
       );
       expect(stored["footer.hbs"].toString("utf-8")).toContain("totalPages");
 
@@ -277,6 +282,48 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       });
       expect(resolved.generated.billTemplateVersionId).toBe(result.versionId);
     }, 120_000);
+
+    // bm72-spec §5 — guardrail 65, second half (Inv #57, P7): a footnote edit
+    // is a new generated version on v1's layout, never a seed edit.
+    it("[guardrail 65] the footnote edit made v2 on v1's layout, kept the default ACTIVE and audited the footnote", async () => {
+      const [v1, v2] = await sql<
+        {
+          bill_template_version_id: string;
+          ref_layout_version_id: string;
+          status: string;
+          is_default: boolean;
+          structure: { footnote: string[] };
+        }[]
+      >`
+        SELECT bill_template_version_id, ref_layout_version_id, status, is_default, structure
+        FROM billing.bill_template_version
+        WHERE kind = 'generated' AND version_no IN (1, 2) ORDER BY version_no`;
+      expect(v1).toMatchObject({
+        bill_template_version_id: "BTV00000002",
+        status: "ACTIVE",
+        is_default: true,
+      });
+      expect(v1?.structure.footnote).toEqual([...SEEDED_FOOTNOTE]);
+      expect(v2).toMatchObject({ status: "ACTIVE", is_default: false });
+      expect(v2?.ref_layout_version_id).toBe(v1?.ref_layout_version_id);
+      expect(v2?.ref_layout_version_id).toBe("BTV00000001");
+      expect(v2?.structure.footnote).toEqual(FOOTNOTE_EDIT);
+
+      // Exactly one activation audit names v2, and the draft save that made
+      // it carries the edited footnote (no new event type).
+      const activations = (await activatedAudit()).filter(
+        (a) => a.target_id === v2?.bill_template_version_id,
+      );
+      expect(activations).toHaveLength(1);
+      const saves = await sql<{ after_data: { structure: unknown } }[]>`
+        SELECT after_data FROM core.audit_log
+        WHERE event_type = 'INVOICE_TEMPLATE_DRAFT_SAVED'
+          AND target_id = ${v2!.bill_template_version_id}`;
+      expect(saves).toHaveLength(1);
+      expect(saves[0]?.after_data.structure).toMatchObject({
+        footnote: FOOTNOTE_EDIT,
+      });
+    });
 
     it("a second activation retires the previous version, leaves the default alone and audits both ids", async () => {
       const previous = (await nonDefaultActive())[0]!;
@@ -326,7 +373,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       const activeBefore = (await nonDefaultActive())[0]!;
       const auditBefore = (await activatedAudit()).length;
       const draft = await ensureDraft(
-        structure({ notes: false, payment: true }),
+        structure({ payment: true, footnote: ["Guardrail 53 footnote"] }),
       );
 
       vi.spyOn(
@@ -381,11 +428,13 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }, 180_000);
 
     it("a stale token is DRAFT_CONFLICT and writes nothing", async () => {
-      const draft = await ensureDraft(structure({ notes: true }));
+      const draft = await ensureDraft(
+        structure({ footnote: ["Stale token footnote A"] }),
+      );
       const auditBefore = (await activatedAudit()).length;
       const activeBefore = await nonDefaultActive();
       // Someone else edits the draft, moving its token on.
-      await ensureDraft(structure({ notes: false }));
+      await ensureDraft(structure({ footnote: ["Stale token footnote B"] }));
 
       const result = await activateTemplate(
         {
@@ -474,9 +523,9 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     it("a tampered layout blob is TEMPLATE_CHECKSUM_MISMATCH and writes nothing", async () => {
       const draft = await ensureDraft();
       const auditBefore = (await activatedAudit()).length;
-      const target = "layouts/INVTPL-STD-A4/v1/partials/notes.hbs";
+      const target = "layouts/INVTPL-STD-A4/v1/partials/payment.hbs";
       const original = readFileSync(
-        path.join(SEED_LAYOUT_DIR, "partials/notes.hbs"),
+        path.join(SEED_LAYOUT_DIR, "partials/payment.hbs"),
       );
       const blob = templates().getBlockBlobClient(target);
       await blob.uploadData(
@@ -579,7 +628,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     it("a different blob already at the target path is ACTIVATION_BLOB_CONFLICT and activates nothing", async () => {
       const activeBefore = await nonDefaultActive();
       const draft = await ensureDraft(
-        structure({ notes: false, payment: false }),
+        structure({ payment: false, footnote: ["Blob conflict footnote"] }),
       );
       // Create the orphans with a failed activation, then corrupt one of them.
       vi.spyOn(
@@ -622,7 +671,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     it("two concurrent activations of the same draft: one wins, the other is DRAFT_CONFLICT", async () => {
       // Edit the draft so its content (and so its directory) is fresh.
       const draft = await ensureDraft(
-        structure({ notes: true, payment: false }),
+        structure({
+          payment: false,
+          footnote: ["Concurrent activation footnote"],
+        }),
       );
       const run = (note: string) =>
         activateTemplate(

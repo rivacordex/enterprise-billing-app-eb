@@ -149,6 +149,8 @@ async function previewSample(
       isDraft: true,
       paymentTermsDays: profile?.paymentTermsDays ?? null,
     },
+    // bm72 (D19) — the admin's unsaved footnote, not the sample's.
+    footnote: structure.footnote,
     isDraft: true,
     locale,
     timezone: getAppTimezone(),

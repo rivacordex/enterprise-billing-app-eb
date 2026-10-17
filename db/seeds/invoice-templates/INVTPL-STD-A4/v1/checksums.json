@@ -6,17 +6,16 @@
     "fonts/IBMPlexSans-SemiBold.woff2": "fff0ab3a88b0b4aa0b693e4f0201359a15183b08e3fa5696d1918d8f0ade8ad5",
     "fonts/OFL.txt": "ea3437d14918a535b87af4a2ab3ada0d10b577e4e44afb49a9183f2dc589842e",
     "footer.hbs": "c3fa129985bdea694b8d0224f76371b02973ec20f29c715d77a5ca3f916c24a3",
-    "manifest.json": "741ae6512f3c273865358ace50a4250e8ceb9e666ef01e654115b4bd4cc89e36",
+    "manifest.json": "353277b8bdd9c967d1b528b07353730610a729f08656db7d7db7672248089b77",
     "partials/amountDue.hbs": "b3d410c7fc6442a52798ac342a3ba6f4233f232a16e7f8a925a6db3fcfe87b0e",
     "partials/billTo.hbs": "8f6dd6cdb74121b24ead21304f2fa3f0a46d4c38d02d03905ba6c983c5861e1d",
-    "partials/chargeDetails.hbs": "efd6c86d96c842048b03a4113e97bc95b503bcd0707854e3204e72e921f26cb2",
+    "partials/chargeDetails.hbs": "9c24c6d051d02c50cf8ed143d6bbe6cde57bf87a512f5b4c4f5b745c64c8db63",
     "partials/chargeSummary.hbs": "195642c3a7793816e44a9cdb80112f453f952e277afb4167b6689672dd45d5eb",
     "partials/header.hbs": "cecea07ca81cb840ac2b64995e878c524ffb5f07827711c4007e424a3866760e",
     "partials/identification.hbs": "a7a2e1a57062ad9ce83cf72f5dd2a7ac203921a9ad5e2299bdf594b50a9887b6",
-    "partials/notes.hbs": "6a3d12d28893519a75fe7b4f5e94cd34bb2de15331ba1551a25b476073bd3310",
     "partials/payment.hbs": "d24ef37834d041db96750d4c9f079eac58260252dbb62a2c11fdadf7e48450f3",
     "partials/taxSummary.hbs": "b0d0b36203d38964825eb9722c822c8b785503a4fef2335ff9a0766a0abfbf12",
-    "sample-data.json": "b02c06515a4ce68a4d921a079b41c8ffcb223338aa06482260507c86c2e2eaf0",
-    "shell.hbs": "5943f84587c4ac45a18e2a00aceab69e7219edaec67aade4d4dffcfa33675818"
+    "sample-data.json": "d39076b992a8ae48a242390a2669dd291fc659eee8bc4983c169629db18722e7",
+    "shell.hbs": "d778ed21c0effc78ca7cfd48f1576a28374607ad829d5874427e3ec19df063d0"
   }
 }

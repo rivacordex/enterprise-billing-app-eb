@@ -255,7 +255,8 @@ export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
     discountTotal: "0.00",
     subtotalExclTax: "3.00",
     taxTotal: "0.00",
-    totalAmount: "3.00",
+    // bm72 — Σ per-type Utilised (1.50 + 0.00), not the bill total.
+    totalAmount: "1.50",
     amountDue: "3.00",
     totalCharges: "3.00",
     adjustments: "0.00",
@@ -311,6 +312,7 @@ export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
     },
   ],
   otherCharges: [{ description: "Probe recurring line", amount: "1.00" }],
+  footnote: ["Probe footnote line 1", "Probe footnote line 2"],
   isDraft: false,
   locale: "en-MY",
   timezone: "Asia/Kuala_Lumpur",

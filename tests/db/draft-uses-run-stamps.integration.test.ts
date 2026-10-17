@@ -51,6 +51,8 @@ const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
 // A well-formed id: the route validates `^BRN\d{8}$` before any read.
 const RUN = "BRN06600001";
 const STANDARD = "BTF00000001";
+// bm72 — the footnote the mid-run activation introduces.
+const NEW_FOOTNOTE_LINE = "Footnote activated mid-run (bm72)";
 
 function routeCtx(runId: string, banId: string) {
   return { params: Promise.resolve({ runId, banId }) };
@@ -88,15 +90,13 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         runId: RUN,
       }));
 
-      // …then activate a new Standard version that hides Notes & terms.
+      // …then activate a new Standard version with a changed footnote (bm72).
       const structure = {
-        sections: {
-          ...Object.fromEntries(
-            INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
-          ),
-          notes: false,
-        },
+        sections: Object.fromEntries(
+          INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
+        ),
         columns: {},
+        footnote: [NEW_FOOTNOTE_LINE],
       } as Parameters<typeof saveTemplateDraft>[0]["structure"];
       const saved = await saveTemplateDraft(
         { structure, expectedDraftToken: null },
@@ -155,8 +155,9 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       );
       expect(draft.resolved.generated.versionNo).toBe(1);
       expect(draft.resolved.generated.versionNo).not.toBe(newVersionNo);
-      // The captured v1 shows Notes & terms; the new version hides it.
-      expect(draft.html).toContain("sec--notes");
+      // The captured v1 prints its own footnote, not the new version's.
+      expect(draft.html).toContain("Calculations are done in Mbps");
+      expect(draft.html).not.toContain(NEW_FOOTNOTE_LINE);
 
       const live = await resolveTemplate(fx.db, {
         kind: "preview-family",

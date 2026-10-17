@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// bm55-spec §Tests — `previewInvoiceTemplateAction` through the REAL preview
+// bm55-spec Â§Tests â `previewInvoiceTemplateAction` through the REAL preview
 // service, resolver, loaders, generator, binder and locked Handlebars. Mocked
 // at the edges only: the guard, the repositories (DB rows), the DB client (a
 // spy that records any DML) and the blob store (repo bytes + a `putObject`
-// spy). Covers: READ allowed; no permission → FORBIDDEN; `{ billId }` without
-// `billrun_view` → FORBIDDEN before any read; invalid structure →
-// VALIDATION_ERROR; a posted bill → its stamped version, structure ignored;
-// the rate limit; zero `putObject` and zero DML. bm66-spec §6 — the input
+// spy). Covers: READ allowed; no permission â FORBIDDEN; `{ billId }` without
+// `billrun_view` â FORBIDDEN before any read; invalid structure â
+// VALIDATION_ERROR; a posted bill â its stamped version, structure ignored;
+// the rate limit; zero `putObject` and zero DML. bm66-spec Â§6 â the input
 // names the template family (`familyId`, required and validated); unposted
 // previews resolve that family's live versions (`preview-family`).
 
@@ -79,6 +79,7 @@ import { invoiceProfileRepository } from "@/db/repositories/billing/invoice-prof
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import { blobStore } from "@/services/billing/blob-store";
 import {
+  SEEDED_FOOTNOTE,
   SEEDED_GENERATED_ROW,
   SEEDED_LAYOUT_ROW,
 } from "@/tests/helpers/seeded-invoice-template";
@@ -100,15 +101,18 @@ function redirectError(): Error & { digest: string } {
 }
 
 const ALL_ON: InvoiceTemplateStructure = {
-  sections: { payment: true, notes: true },
+  sections: { payment: true },
   columns: {},
+  footnote: [...SEEDED_FOOTNOTE],
 };
 
-// bm71 (D56): the column toggles are gone, so Notes & terms is the visible
-// difference between a submitted structure and the stamped all-on v1.
-const NO_PAYMENT_NO_NOTES: InvoiceTemplateStructure = {
-  sections: { payment: false, notes: false },
+// bm72 (D56 part 2): the footnote is the visible difference between a
+// submitted structure and the stamped v1 (Notes & terms is gone).
+const EDITED_LINE = "Edited footnote line";
+const NO_PAYMENT_EDITED: InvoiceTemplateStructure = {
+  sections: { payment: false },
   columns: {},
+  footnote: [EDITED_LINE],
 };
 
 const CSV_ROW: BillTemplateVersion = {
@@ -120,7 +124,7 @@ const CSV_ROW: BillTemplateVersion = {
   blobRef: "invoice-templates/system/csv/v1/",
 };
 
-// A newer ACTIVE generated version whose blobs do not exist — a posted bill
+// A newer ACTIVE generated version whose blobs do not exist â a posted bill
 // stamped with v1 must never touch it (Inv #42).
 const ACTIVE_V2: BillTemplateVersion = {
   ...SEEDED_GENERATED_ROW,
@@ -173,7 +177,7 @@ function setPermissions(map: Record<string, string>, userId = "user-1"): void {
 
 let userSeq = 0;
 
-// bm66 — the Standard family the page hands the form.
+// bm66 â the Standard family the page hands the form.
 const FAMILY = "BTF00000001";
 
 beforeEach(() => {
@@ -204,7 +208,7 @@ function expectNoWrites(): void {
   for (const fn of Object.values(dml)) expect(fn).not.toHaveBeenCalled();
 }
 
-describe("previewInvoiceTemplateAction — familyId (bm66)", () => {
+describe("previewInvoiceTemplateAction â familyId (bm66)", () => {
   it("requires familyId: a missing id is VALIDATION_ERROR, before any read", async () => {
     const result = await previewInvoiceTemplateAction({
       structure: ALL_ON,
@@ -240,7 +244,7 @@ describe("previewInvoiceTemplateAction — familyId (bm66)", () => {
   });
 });
 
-describe("previewInvoiceTemplateAction — authz and validation", () => {
+describe("previewInvoiceTemplateAction â authz and validation", () => {
   it("guards on invoice_settings : READ", async () => {
     await previewInvoiceTemplateAction({
       familyId: FAMILY,
@@ -324,11 +328,11 @@ describe("previewInvoiceTemplateAction — authz and validation", () => {
   });
 });
 
-describe("previewInvoiceTemplateAction — sample source", () => {
+describe("previewInvoiceTemplateAction â sample source", () => {
   it("renders the sample bill from the submitted structure as a draft, writing nothing", async () => {
     const result = await previewInvoiceTemplateAction({
       familyId: FAMILY,
-      structure: NO_PAYMENT_NO_NOTES,
+      structure: NO_PAYMENT_EDITED,
       source: "sample",
     });
 
@@ -339,7 +343,9 @@ describe("previewInvoiceTemplateAction — sample source", () => {
     expect(result.html).toContain("DRAFT&nbsp;&middot;&nbsp;PRO-FORMA");
     expect(result.html).toContain("Acme Communications Sdn Bhd");
     expect(result.html).not.toContain("sec--payment");
-    expect(result.html).not.toContain("sec--notes");
+    // bm72 — the submitted footnote, not the sample's.
+    expect(result.html).toContain(EDITED_LINE);
+    expect(result.html).not.toContain(SEEDED_FOOTNOTE[0]);
     // No profile ACTIVE (G15 A): no issuer block.
     expect(result.html).not.toContain("Sample Telco Sdn Bhd");
     expectNoWrites();
@@ -367,7 +373,7 @@ describe("previewInvoiceTemplateAction — sample source", () => {
   });
 });
 
-describe("previewInvoiceTemplateAction — bill source", () => {
+describe("previewInvoiceTemplateAction â bill source", () => {
   it("a POSTED bill renders its stamped version as issued; the submitted structure is ignored", async () => {
     repo.findActive.mockResolvedValue(ACTIVE_V2);
     bills.findPreviewTarget.mockResolvedValue({
@@ -388,7 +394,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
 
     const result = await previewInvoiceTemplateAction({
       familyId: FAMILY,
-      structure: NO_PAYMENT_NO_NOTES,
+      structure: NO_PAYMENT_EDITED,
       source: { billId: "CBL00000007" },
       annotate: true,
     });
@@ -397,8 +403,9 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     if (!result.ok) return;
     expect(result.pinnedVersionNo).toBe(1);
     expect(result.templateLabel).toContain("Template v1 (as issued)");
-    // The stamped all-on v1, not the submitted structure.
-    expect(result.html).toContain("sec--notes");
+    // The stamped v1 and its footnote, not the submitted structure.
+    expect(result.html).toContain(SEEDED_FOOTNOTE[0]);
+    expect(result.html).not.toContain(EDITED_LINE);
     expect(result.html).toContain("INV00000077");
     expect(result.html).toContain("<title>Tax invoice INV00000077</title>");
     expect(result.html).not.toContain("PRO-FORMA&nbsp;&middot;");
@@ -432,7 +439,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
 
     const result = await previewInvoiceTemplateAction({
       familyId: FAMILY,
-      structure: NO_PAYMENT_NO_NOTES,
+      structure: NO_PAYMENT_EDITED,
       source: { billId: "CBL00000007" },
     });
 
@@ -441,7 +448,8 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     expect(result.pinnedVersionNo).toBeNull();
     expect(result.html).toContain("Enterprise Fibre 1Gbps");
     expect(result.html).toContain("DRAFT&nbsp;&middot;&nbsp;PRO-FORMA");
-    expect(result.html).not.toContain("sec--notes");
+    expect(result.html).toContain(EDITED_LINE);
+    expect(result.html).not.toContain(SEEDED_FOOTNOTE[0]);
     expectNoWrites();
   });
 

@@ -17,6 +17,7 @@ import { bind } from "@/services/billing/invoice-template/bind";
 import { executeInvoiceTemplate } from "@/services/billing/invoice-template/compile";
 import { loadGenerated } from "@/services/billing/invoice-template/load";
 import {
+  SEEDED_FOOTNOTE,
   SEEDED_GENERATED_ROW,
   SEEDED_TEMPLATE_STAMP,
 } from "@/tests/helpers/seeded-invoice-template";
@@ -110,6 +111,8 @@ function rawInput(
       otherChargesSubTotal: "0.00",
       adjustments: "0.00",
       summaryBlocksSum: "150000.00",
+      // bm72 — Total Amount = Σ Utilised.
+      utilisedTotal: "150000.00",
     },
     run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
     lines: [],
@@ -253,6 +256,7 @@ describe.skipIf(!run)(
         timezone: TZ,
         template: SEEDED_TEMPLATE_STAMP,
         profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
       });
       const html = render(big);
       const footer = renderFooter(big);
@@ -301,6 +305,7 @@ describe.skipIf(!run)(
         timezone: TZ,
         template: SEEDED_TEMPLATE_STAMP,
         profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
         invoiceNo: "INV00000042",
       });
       const smallHtml = render(small);
@@ -322,6 +327,7 @@ describe.skipIf(!run)(
         timezone: TZ,
         template: SEEDED_TEMPLATE_STAMP,
         profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
       });
       const bigPdf = await renderPdf(
         browser,
@@ -351,6 +357,7 @@ describe.skipIf(!run)(
         timezone: TZ,
         template: SEEDED_TEMPLATE_STAMP,
         profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
         invoiceNo: "INV00000070",
       });
       const html = render(bound);

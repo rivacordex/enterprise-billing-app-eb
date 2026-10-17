@@ -147,6 +147,19 @@
   .detail-group tr.col-head th { font-size: 8pt; line-height: 11pt; font-weight: 600; color: var(--inv-muted); }
   .detail-group tr.subtotal td { font-weight: 600; border-top: 1px solid var(--inv-line); border-bottom: none; }
   .no-usage { color: var(--inv-muted); }
+
+  /* Total Amount page (§10d, D22/D30): Σ Utilised on its own last page, ink
+     with a hairline top rule. Never the soft/accent amount-due panel (P10).
+     The footnote lines follow it, muted, one paragraph per line. */
+  .total-amount {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--inv-line);
+    font-size: 12pt; line-height: 16pt; font-weight: 600; color: var(--inv-ink);
+    break-inside: avoid;
+  }
+  .total-amount .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 16px; }
+  .footnote { margin-top: 12px; }
+  .footnote p { margin: 0 0 2px; font-size: 8pt; line-height: 11pt; font-weight: 400; color: var(--inv-muted); }
 </style>
 </head>
 <body>
@@ -278,18 +291,12 @@
         {{else}}<p class="no-usage">No utilised capacity this period.</p>{{/if}}
       </section>
       {{/each}}
-    </section>
-
-    <section class="sec sec--notes sec--full">
-      <p class="section-heading">Notes &amp; terms</p>
-      <ol>
-        <li>This invoice reflects charges for the billing period stated above.</li>
-        <li>Payment is due by {{date invoice.dueDate}}.</li>
-        <li>
-          Questions about this invoice? Contact your account representative.
-          {{#if company}}{{company.email}}{{/if}}
-        </li>
-      </ol>
+      {{!-- the last page: Σ Utilised, never the amount due (D22, D30, P10) --}}
+      <section class="total-amount-page" style="break-before: page">
+        <h2 class="detail-heading">Summary of Utilised Capacity Charges</h2>
+        <div class="total-amount"><span>Total Amount</span><span class="num">{{money totals.totalAmount}}</span></div>
+        {{#if footnote.length}}<div class="footnote">{{#each footnote}}<p>{{this}}</p>{{/each}}</div>{{/if}}
+      </section>
     </section>
   </div>
 </body>

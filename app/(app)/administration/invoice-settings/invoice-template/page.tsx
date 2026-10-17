@@ -89,10 +89,17 @@ export default async function InvoiceTemplatePage({
     <div className="space-y-4">
       <InvoiceSettingsTabs active="invoice-template" />
       <div className="flex flex-wrap items-center gap-3">
+        {/* bm72 (D45, ui-context §10b) — the page edits the Standard
+            (default) family; there is no family switcher. */}
         <h2 className="text-h2 font-semibold text-foreground">
-          Invoice template{" "}
-          <span className="font-mono text-mono">v{shown.versionNo}</span>
+          Invoice template — {data.standardFamilyName}{" "}
+          <span className="font-normal text-[color:var(--text-muted)]">
+            (default)
+          </span>
         </h2>
+        <span className="font-mono text-mono text-foreground">
+          v{shown.versionNo}
+        </span>
         <TemplateVersionStatusBadge
           status={shown.status as TemplateVersionStatus}
           isDefault={shown.isDefault}

@@ -1,7 +1,10 @@
 {
   "columns": {},
+  "footnote": [
+    "Calculations are done in Mbps",
+    "This invoice is billed exclusive of Universal Service Provision (USP)"
+  ],
   "sections": {
-    "notes": true,
     "payment": true
   }
 }

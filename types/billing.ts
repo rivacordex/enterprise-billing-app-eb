@@ -785,6 +785,8 @@ export interface InvoiceRenderInput {
     discountTotal: string;
     subtotalExclTax: string;
     taxTotal: string;
+    // bm72 (D22, D30) — the last page's "Total Amount": Σ per-type Utilised,
+    // summed in SQL. Never the amount due (P10); that is `amountDue`.
     totalAmount: string;
     amountDue: string;
     // bm70 (D14/D60) — page 1: "Total charges" (= `customer_bill.subtotal`),
@@ -803,6 +805,10 @@ export interface InvoiceRenderInput {
   serviceTypes: InvoiceServiceType[];
   // bm70 (D60) — the non-capacity charge lines; the block is absent when empty.
   otherCharges: { description: string; amount: string }[];
+  // bm72 (D19, D20) — the footnote of the structure in use (the editor's
+  // unsaved one in a preview, else the resolved generated version's): one
+  // plain-text paragraph per line after Total Amount.
+  footnote: string[];
   isDraft: boolean;
   locale: string;
   timezone: string;
@@ -830,7 +836,8 @@ export type BillAssetKind = (typeof BILL_ASSET_KINDS)[number];
 
 // The invoice's section keys (header/pageTwoHeader/footer are fixed layout
 // parts, not section keys; accountSummary dropped, R2; bm71 (D56) retired
-// `usageAnnex` with the old annex).
+// `usageAnnex` with the old annex; bm72 (D56 part 2) retired `notes` — the
+// footnote after Total Amount, inside `chargeDetails`, replaces it).
 export const INVOICE_SECTION_KEYS = [
   "billTo",
   "identification",
@@ -839,13 +846,12 @@ export const INVOICE_SECTION_KEYS = [
   "taxSummary",
   "payment",
   "chargeDetails",
-  "notes",
 ] as const;
 export type InvoiceSectionKey = (typeof INVOICE_SECTION_KEYS)[number];
 
 // The sections an admin may hide; every other section is mandatory-on and is
-// not stored in the structure (bm71, D56). `notes` goes in bm72.
-export const INVOICE_OPTIONAL_SECTION_KEYS = ["payment", "notes"] as const;
+// not stored in the structure (bm71, D56; bm72 removed `notes`).
+export const INVOICE_OPTIONAL_SECTION_KEYS = ["payment"] as const;
 export type InvoiceOptionalSectionKey =
   (typeof INVOICE_OPTIONAL_SECTION_KEYS)[number];
 
@@ -864,10 +870,12 @@ export const MANDATORY_SECTION_KEYS = INVOICE_SECTION_KEYS.filter(
 // schema validates it; typed here so bm50's Drizzle mirror and repositories
 // have a shape before that schema exists). bm71 (D56): only the optional
 // sections are stored, and `columns` is always `{}` (the layout has no admin
-// column toggles).
+// column toggles). bm72 (D20, Inv #46 amended): `footnote` is 1–5 plain-text
+// lines of at most 200 characters, printed after Total Amount.
 export interface InvoiceTemplateStructure {
   sections: Record<InvoiceOptionalSectionKey, boolean>;
   columns: Record<string, never>;
+  footnote: string[];
 }
 
 // bm64-spec §Design — one `bill_template_family` row (general §2.7). The

@@ -180,9 +180,16 @@ export async function buildInvoiceHtml({
 
   // D5 step 4 — blob I/O after the transaction has closed: the verified,
   // compiled template (memoized per version) and the verified logo bytes.
+  // bm72 (D19, Inv #41/#51) — the template carries the structure in use: the
+  // editor's unsaved one for an override, else the resolved generated
+  // version's (`loadGenerated` refuses a row without one). Its footnote binds.
   const [locale, tpl, profile] = await Promise.all([
     getAppLocale(),
-    override ? override.load(resolved) : loadGenerated(resolved.generated),
+    override
+      ? override
+          .load(resolved)
+          .then((t) => ({ ...t, structure: override.structure }))
+      : loadGenerated(resolved.generated),
     profileRead === null ? Promise.resolve(null) : inlineLogo(profileRead),
   ]);
   const pageSetup = parsePageSetup(resolved);
@@ -198,6 +205,7 @@ export async function buildInvoiceHtml({
       layoutVersion: resolved.layout.versionNo,
       version: resolved.generated.versionNo,
     },
+    footnote: tpl.structure.footnote,
     ...(invoiceNo !== undefined ? { invoiceNo } : {}),
   });
 

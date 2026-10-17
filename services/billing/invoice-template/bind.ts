@@ -27,6 +27,11 @@ export interface BindContext {
   // logo inlined, or `null` when none resolves (G15 A: issuer/payment
   // blocks hidden).
   profile: InvoiceProfile | null;
+  // bm72-spec §Design (D19, Inv #41/#51) — the footnote of the structure in
+  // use: the editor's unsaved structure in a preview, else the resolved
+  // generated version's (stamped or family), so a posted bill always prints
+  // the footnote of the version it was posted under.
+  footnote: string[];
 }
 
 export function bind(
@@ -122,7 +127,9 @@ export function bind(
       discountTotal: raw.bill.discountTotal,
       subtotalExclTax: raw.bill.subtotal,
       taxTotal: raw.bill.taxTotal,
-      totalAmount: raw.bill.totalAmount,
+      // bm72 (D22, P10) — the last page's Total Amount = Σ per-type Utilised,
+      // summed in SQL; it is never the amount due.
+      totalAmount: raw.bill.utilisedTotal,
       // Inv #50 — "current charges only"; no balance brought forward (R2).
       amountDue: raw.bill.totalAmount,
       // bm70 (D14) — "Total charges" is the bill's subtotal.
@@ -144,6 +151,7 @@ export function bind(
       regions: regionsByType.get(t.offeringId) ?? [],
     })),
     otherCharges: raw.otherCharges,
+    footnote: ctx.footnote,
     isDraft: ctx.isDraft,
     locale: ctx.locale,
     timezone: ctx.timezone,

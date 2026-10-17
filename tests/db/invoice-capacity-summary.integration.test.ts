@@ -19,19 +19,22 @@ import {
 } from "@/db/repositories/billing/invoice-render-input";
 import { bind } from "@/services/billing/invoice-template/bind";
 import { InvoiceRenderError } from "@/types/billing";
-import { SEEDED_TEMPLATE_STAMP } from "@/tests/helpers/seeded-invoice-template";
+import {
+  SEEDED_FOOTNOTE,
+  SEEDED_TEMPLATE_STAMP,
+} from "@/tests/helpers/seeded-invoice-template";
 
-// bm70-spec §6 — guardrail item 62: the page-1 capacity summary, computed in
+// bm70-spec Â§6 â guardrail item 62: the page-1 capacity summary, computed in
 // SQL by `invoiceRenderInputRepository.read`, on bills built by the extracted
 // `bill_run_processing` aggregation SQL (the bm42 `ci` capacity fixtures: base
 // RM100/Mbps, target 1,000, step above 1,000 at RM50). It asserts:
-//   * Utilised + Unutilised = Σ net_amount per type (summed in SQL, not JS);
-//   * Σ Utilised + Σ Unutilised + Other charges + Adjustments = subtotal;
-//   * the four anchors, including 2,000 Mbps → Utilised 150000.00;
+//   * Utilised + Unutilised = Î£ net_amount per type (summed in SQL, not JS);
+//   * Î£ Utilised + Î£ Unutilised + Other charges + Adjustments = subtotal;
+//   * the four anchors, including 2,000 Mbps â Utilised 150000.00;
 //   * a capacity line with discount_amount > rated_amount (only reachable with
 //     `capacity_rate_matching` OFF), inserted by SQL, trips
 //     INVOICE_NEGATIVE_UTILISED at bind;
-//   * the recipient name read (blank → null).
+//   * the recipient name read (blank â null).
 //
 // Superuser DATABASE_URL connection (the bm42 flow-double precedent): this
 // exercises the read logic, not the runtime grants.
@@ -49,6 +52,7 @@ const BIND_CTX = {
   timezone: TZ,
   template: SEEDED_TEMPLATE_STAMP,
   profile: null,
+  footnote: [...SEEDED_FOOTNOTE],
 };
 
 describe.skipIf(!databaseUrl)(
@@ -255,6 +259,10 @@ describe.skipIf(!databaseUrl)(
           });
           expect(bound.totals.totalCharges).toBe(a.total);
           expect(bound.totals.amountDue).toBe(a.total);
+          // bm72 (D22) — the last page's Total Amount is the SQL Σ Utilised
+          // (2,000 Mbps → 150000.00), never the bill total.
+          expect(raw.bill.utilisedTotal).toBe(a.utilised);
+          expect(bound.totals.totalAmount).toBe(a.utilised);
         }
       },
       240_000,
@@ -293,21 +301,23 @@ describe.skipIf(!databaseUrl)(
         expect(raw.bill.otherChargesSubTotal).toBe("10000.00");
         await assertIdentities(raw);
         expect(bind(raw, BIND_CTX).totals.totalCharges).toBe("160000.00");
+        // bm72 (D22) — Total Amount excludes the Other charges row.
+        expect(raw.bill.utilisedTotal).toBe("150000.00");
       },
       120_000,
     );
 
     it(
       "[CRITICAL] discount_amount > rated_amount (rate matching OFF) makes " +
-        "Utilised negative → INVOICE_NEGATIVE_UTILISED, never printed",
+        "Utilised negative â INVOICE_NEGATIVE_UTILISED, never printed",
       async () => {
         const fx = fixtures();
         const ban = await fx.newAccount("Negative");
         const runId = "BRN-BM70-NEGATIVE";
         await fx.newRun(runId);
         await markProcessed(runId, ban);
-        // gross 100,000, rated 10,000, discount 20,000 → net 80,000;
-        // Unutilised = 90,000, Utilised = 80,000 − 90,000 = −10,000.
+        // gross 100,000, rated 10,000, discount 20,000 â net 80,000;
+        // Unutilised = 90,000, Utilised = 80,000 â 90,000 = â10,000.
         const [bill] = await sql<{ id: string }[]>`
           INSERT INTO billing.customer_bill
             (ref_bill_run_id, ref_billing_account_id, period_partition, category,

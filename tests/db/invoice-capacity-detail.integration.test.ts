@@ -25,7 +25,10 @@ import {
 } from "@/types/billing";
 import { buildRawUdrKey } from "@/validation/rating/udr-key";
 import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
-import { SEEDED_TEMPLATE_STAMP } from "@/tests/helpers/seeded-invoice-template";
+import {
+  SEEDED_FOOTNOTE,
+  SEEDED_TEMPLATE_STAMP,
+} from "@/tests/helpers/seeded-invoice-template";
 
 // bm71-spec §6 — guardrail item 63 [CRITICAL] (Inv #56): the per-polygon,
 // per-type capacity detail read (`ratedLinesRepository
@@ -61,6 +64,7 @@ const DRAFT_CTX = {
   timezone: TZ,
   template: SEEDED_TEMPLATE_STAMP,
   profile: null,
+  footnote: [...SEEDED_FOOTNOTE],
 };
 
 function resource(
@@ -328,6 +332,31 @@ describe.skipIf(!databaseUrl)(
         ],
       });
       expect(bound.serviceTypes[1]!.regions[0]!.subTotal).toBe("500.00");
+    }, 120_000);
+
+    // bm72 — guardrail 62's remaining half (D30, D43): on the 2,000 Mbps
+    // anchor the last page's Total Amount (Σ Utilised, after the motivation
+    // discount) is 150000.00 while the detail Sub Totals (raw Mbps × base
+    // rate) sum to 200000.00. The difference is asserted, not reconciled.
+    it("1 — the 2,000 Mbps anchor: Total Amount 150000.00, detail Sub Totals 200000.00", async () => {
+      const r = resource("Selangor", "Petaling");
+      const { runId, ban } = await capacityBill("TOTAL2000", {
+        "Anchor Capacity": [
+          { polygonId: "PCU-A01", udrResource: r, ea: 1200 },
+          { polygonId: "PCU-A02", udrResource: r, ea: 800 },
+        ],
+      });
+      const raw = await read(runId, ban);
+      const bound = bindDraft(raw);
+
+      expect(raw.bill.utilisedTotal).toBe("150000.00");
+      expect(bound.totals.totalAmount).toBe("150000.00");
+      expect(bound.serviceTypes[0]!.regions.map((g) => g.subTotal)).toEqual([
+        "200000.00",
+      ]);
+      expect(bound.totals.totalAmount).not.toBe(
+        bound.serviceTypes[0]!.regions[0]!.subTotal,
+      );
     }, 120_000);
 
     it("2 — D21 order and labels: STATE - DISTRICT, one part, Unassigned region last; polygons by id", async () => {

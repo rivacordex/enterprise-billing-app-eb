@@ -14,7 +14,7 @@ import type postgresjs from "postgres";
 
 import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
+import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 
 // bm57-spec §Tests: save-draft on a real database. The first save inserts the
 // working DRAFT as v2 (the next after the default v1) with a structure and no
@@ -43,15 +43,14 @@ import type { Database } from "@/db/client";
 
 const ACTOR = "bm57-actor";
 
-function structure(overrides: { payment?: boolean; notes?: boolean } = {}) {
+// bm72 — the editable structure: the Payment toggle and the footnote lines
+// (the seeded v1 footnote unless a case edits it).
+const EDITED_FOOTNOTE = ["Calculations are done in Mbps", "Edited line 2"];
+function structure(overrides: { payment?: boolean; footnote?: string[] } = {}) {
   return {
-    sections: {
-      ...Object.fromEntries(
-        INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
-      ),
-      ...overrides,
-    },
+    sections: { payment: overrides.payment ?? true },
     columns: {},
+    footnote: overrides.footnote ?? [...SEEDED_FOOTNOTE],
   } as Parameters<typeof saveTemplateDraft>[0]["structure"];
 }
 
@@ -133,7 +132,10 @@ describe.skipIf(!databaseUrl)(
 
     it("the first save inserts the DRAFT as the next version, with a structure and no files", async () => {
       const result = await saveTemplateDraft(
-        { structure: structure({ notes: false }), expectedDraftToken: null },
+        {
+          structure: structure({ footnote: EDITED_FOOTNOTE }),
+          expectedDraftToken: null,
+        },
         ACTOR,
       );
       expect(result.ok).toBe(true);
@@ -156,7 +158,7 @@ describe.skipIf(!databaseUrl)(
         checksum: null,
         created_by: ACTOR,
       });
-      expect(row?.structure.sections.notes).toBe(false);
+      expect(row?.structure.footnote).toEqual(EDITED_FOOTNOTE);
     });
 
     it("writes exactly one audit row per success, with null before on the insert", async () => {
@@ -222,7 +224,7 @@ describe.skipIf(!databaseUrl)(
       // Someone else saves, moving the token on.
       const other = await saveTemplateDraft(
         {
-          structure: structure({ notes: false }),
+          structure: structure({ footnote: EDITED_FOOTNOTE }),
           expectedDraftToken: first.draftToken,
         },
         ACTOR,
@@ -241,7 +243,7 @@ describe.skipIf(!databaseUrl)(
       const [row] = await sql`
         SELECT structure FROM billing.bill_template_version WHERE status = 'DRAFT'`;
       expect(row?.structure.sections.payment).toBe(true);
-      expect(row?.structure.sections.notes).toBe(false);
+      expect(row?.structure.footnote).toEqual(EDITED_FOOTNOTE);
       expect(await auditRows()).toHaveLength(2);
     });
 
