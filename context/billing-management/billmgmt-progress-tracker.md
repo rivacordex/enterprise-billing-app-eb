@@ -2,6 +2,10 @@
 
 Update this file after every meaningful implementation change.
 
+- 2026-10-17: Invoice capacity detail extracts `polygon_id` only at the start
+  of `udr_key` or after `|`, preserving the raw value up to the next delimiter
+  and the existing NULL result for missing or empty values.
+
 _Compacted 2026-10-12 (earlier passes 2026-10-07, 2026-10-04, 2026-09-16) — the Invoice
 Template update's per-unit narrative (bm47–bm63) and the bm42a follow-up trimmed to durable
 facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full history:
