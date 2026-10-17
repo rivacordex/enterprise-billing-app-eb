@@ -9,8 +9,8 @@
     <table class="detail-group">
       {{!-- repeats on every page the group spans (D48) --}}
       <thead>
-        <tr class="group-label"><th colspan="5">{{label}}</th></tr>
-        <tr class="col-head"><th>Polygon Start Date</th><th>Polygon Name</th><th class="num">Capacity (Mbps)</th><th class="num">Rate/Mbps (MYR)</th><th class="num">Utilised Capacity Charges (MYR)</th></tr>
+        <tr class="group-label"><th scope="colgroup" colspan="5">{{label}}</th></tr>
+        <tr class="col-head"><th scope="col">Polygon Start Date</th><th scope="col">Polygon Name</th><th scope="col" class="num">Capacity (Mbps)</th><th scope="col" class="num">Rate/Mbps (MYR)</th><th scope="col" class="num">Utilised Capacity Charges (MYR)</th></tr>
       </thead>
       <tbody>
         {{#each rows}}<tr><td>{{date polygonStartDate}}</td><td class="mono">{{polygonName}}</td><td class="num">{{qty capacityMbps}}</td><td class="num">{{money ratePerMbps}}</td><td class="num">{{money amount}}</td></tr>{{/each}}

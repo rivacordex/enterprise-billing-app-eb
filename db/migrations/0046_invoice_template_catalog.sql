@@ -296,7 +296,7 @@ VALUES
    'INVTPL-STD-A4',
    '{"format":"A4","orientation":"portrait","margin":{"top":"13mm","bottom":"16mm","left":"14mm","right":"14mm"},"displayHeaderFooter":true,"printBackground":true}'::jsonb,
    'invoice-templates/layouts/INVTPL-STD-A4/v1/',
-   '616391ff97cec7d85d0c906d167d4f774349f9ee65b3bc0753d6268760453a36', 'sha256',
+   '5bf21e1238de19ee0a9bd7c16edebad07b61d11f225e2c0ba9c2918bc6f986d9', 'sha256',
    'Seeded default layout INVTPL-STD-A4 v1 (bm50).', now());
 --> statement-breakpoint
 INSERT INTO "billing"."bill_template_version"
@@ -307,7 +307,7 @@ VALUES
    'BTV00000001', 'BTF00000001',
    '{"sections":{"payment":true,"notes":true},"columns":{}}'::jsonb,
    'invoice-templates/generated/INVOICE/v1/',
-   '47cad043819936206002dd3731b06df0ab6b8628a62163a37e4bb24a0b22a068', 'sha256',
+   'ac13fb426af59bf4a79cfbdcec6f8e46c89ef74fc3a076b7e3f2eb77012eadf0', 'sha256',
    'Seeded default generated template v1 (bm50).', now());
 --> statement-breakpoint
 INSERT INTO "billing"."bill_template_version"

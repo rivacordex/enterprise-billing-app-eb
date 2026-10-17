@@ -301,10 +301,10 @@ describe("layout v1 detail pages (bm71, guardrail 64 detail half)", () => {
     for (const table of tables) {
       const thead = /<thead>([\s\S]*?)<\/thead>/.exec(table)![1]!;
       expect(thead).toMatch(
-        /<tr class="group-label"><th colspan="5">[^<]+<\/th><\/tr>/,
+        /<tr class="group-label"><th scope="colgroup" colspan="5">[^<]+<\/th><\/tr>/,
       );
       expect(thead).toContain(
-        '<tr class="col-head"><th>Polygon Start Date</th><th>Polygon Name</th><th class="num">Capacity (Mbps)</th><th class="num">Rate/Mbps (MYR)</th><th class="num">Utilised Capacity Charges (MYR)</th></tr>',
+        '<tr class="col-head"><th scope="col">Polygon Start Date</th><th scope="col">Polygon Name</th><th scope="col" class="num">Capacity (Mbps)</th><th scope="col" class="num">Rate/Mbps (MYR)</th><th scope="col" class="num">Utilised Capacity Charges (MYR)</th></tr>',
       );
       expect(table).toMatch(
         /<tr class="subtotal"><td colspan="4">Sub Total<\/td>/,
@@ -317,7 +317,9 @@ describe("layout v1 detail pages (bm71, guardrail 64 detail half)", () => {
 
   it("orders Unassigned region last and prints no (continued) text", () => {
     const labels = [
-      ...detail.matchAll(/<tr class="group-label"><th colspan="5">([^<]+)</g),
+      ...detail.matchAll(
+        /<tr class="group-label"><th scope="colgroup" colspan="5">([^<]+)</g,
+      ),
     ].map((m) => m[1]);
     expect(labels.slice(0, 6).at(-1)).toBe("Unassigned region");
     expect(html.toLowerCase()).not.toContain("continued");
