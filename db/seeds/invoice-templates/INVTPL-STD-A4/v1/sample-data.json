@@ -84,16 +84,52 @@
     {
       "offeringId": "POF00000021",
       "label": "5G RAN Target Capacity",
-      "utilised": "80000.00",
-      "unutilised": "20000.00",
-      "total": "100000.00"
+      "utilised": "0.00",
+      "unutilised": "100000.00",
+      "total": "100000.00",
+      "regions": []
     },
     {
       "offeringId": "POF00000020",
       "label": "RAN Usage — Target Capacity",
       "utilised": "150000.00",
       "unutilised": "0.00",
-      "total": "150000.00"
+      "total": "150000.00",
+      "regions": [
+        {
+          "label": "State-01 - District-01",
+          "rows": [
+            {
+              "polygonStartDate": "2025-03-01",
+              "polygonName": "POLY-001",
+              "capacityMbps": "700.000000",
+              "ratePerMbps": "100.00",
+              "amount": "70000.00"
+            },
+            {
+              "polygonStartDate": "2025-04-15",
+              "polygonName": "POLY-002",
+              "capacityMbps": "599.500000",
+              "ratePerMbps": "100.00",
+              "amount": "59950.00"
+            }
+          ],
+          "subTotal": "129950.00"
+        },
+        {
+          "label": "Unassigned region",
+          "rows": [
+            {
+              "polygonStartDate": "2025-05-01",
+              "polygonName": "POLY-003",
+              "capacityMbps": "700.500000",
+              "ratePerMbps": "100.00",
+              "amount": "70050.00"
+            }
+          ],
+          "subTotal": "70050.00"
+        }
+      ]
     }
   ],
   "otherCharges": [
@@ -102,205 +138,6 @@
       "amount": "10000.00"
     }
   ],
-  "lineGroups": [
-    {
-      "name": "Recurring charges",
-      "source": "RECURRING",
-      "grossTotal": "10000.00",
-      "discountTotal": "0.00",
-      "subtotal": "10000.00",
-      "lines": [
-        {
-          "lineNo": 1,
-          "source": "RECURRING",
-          "description": "Enterprise Fibre 1Gbps",
-          "productOfferingId": "POF00000010",
-          "udrType": null,
-          "udrCount": null,
-          "periodStart": "2026-08-01",
-          "periodEnd": "2026-08-31",
-          "quantity": "1.000000",
-          "unit": "EA",
-          "unitPrice": "10000.00",
-          "grossAmount": "10000.00",
-          "discountAmount": "0.00",
-          "netAmount": "10000.00",
-          "discountNote": null
-        }
-      ]
-    },
-    {
-      "name": "Usage charges",
-      "source": "USAGE",
-      "grossTotal": "300000.00",
-      "discountTotal": "50000.00",
-      "subtotal": "250000.00",
-      "lines": [
-        {
-          "lineNo": 2,
-          "source": "USAGE",
-          "description": "5G RAN Target Capacity",
-          "productOfferingId": "POF00000021",
-          "udrType": "RAN_USAGE",
-          "udrCount": 1,
-          "periodStart": "2026-08-01",
-          "periodEnd": "2026-08-31",
-          "quantity": "800.000000",
-          "unit": "EA",
-          "unitPrice": null,
-          "grossAmount": "100000.00",
-          "discountAmount": "0.00",
-          "netAmount": "100000.00",
-          "discountNote": null
-        },
-        {
-          "lineNo": 3,
-          "source": "USAGE",
-          "description": "RAN Usage — Target Capacity",
-          "productOfferingId": "POF00000020",
-          "udrType": "RAN_USAGE",
-          "udrCount": 4,
-          "periodStart": "2026-08-01",
-          "periodEnd": "2026-08-31",
-          "quantity": "2000.000000",
-          "unit": "EA",
-          "unitPrice": null,
-          "grossAmount": "200000.00",
-          "discountAmount": "50000.00",
-          "netAmount": "150000.00",
-          "discountNote": "Discount 25.000000%"
-        }
-      ]
-    }
-  ],
-  "usage": {
-    "rowCount": 5,
-    "totalAmount": "150000.00",
-    "totalQuantity": "1500.000000",
-    "unit": "EA",
-    "states": [
-      {
-        "state": "State-02",
-        "label": "State-02",
-        "rowCount": 2,
-        "amount": "50000.00",
-        "quantity": "500.000000",
-        "unit": "EA",
-        "districts": [
-          {
-            "district": "District-03",
-            "label": "District-03",
-            "rowCount": 1,
-            "amount": "30000.00",
-            "quantity": "300.000000",
-            "unit": "EA",
-            "rows": [
-              {
-                "startDate": "2026-08-03",
-                "cell": "POLY-001",
-                "udrType": "RAN_USAGE",
-                "quantity": "300.000000",
-                "unit": "EA",
-                "amount": "30000.00"
-              }
-            ]
-          },
-          {
-            "district": "District-02",
-            "label": "District-02",
-            "rowCount": 1,
-            "amount": "20000.00",
-            "quantity": "200.000000",
-            "unit": "EA",
-            "rows": [
-              {
-                "startDate": "2026-08-05",
-                "cell": "POLY-002",
-                "udrType": "RAN_USAGE",
-                "quantity": "200.000000",
-                "unit": "EA",
-                "amount": "20000.00"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "state": "State-01",
-        "label": "State-01",
-        "rowCount": 2,
-        "amount": "95000.00",
-        "quantity": "950.000000",
-        "unit": "EA",
-        "districts": [
-          {
-            "district": "District-01",
-            "label": "District-01",
-            "rowCount": 1,
-            "amount": "70000.00",
-            "quantity": "700.000000",
-            "unit": "EA",
-            "rows": [
-              {
-                "startDate": "2026-08-07",
-                "cell": "POLY-003",
-                "udrType": "RAN_USAGE",
-                "quantity": "700.000000",
-                "unit": "EA",
-                "amount": "70000.00"
-              }
-            ]
-          },
-          {
-            "district": "District-09",
-            "label": "District-09",
-            "rowCount": 1,
-            "amount": "25000.00",
-            "quantity": "250.000000",
-            "unit": "EA",
-            "rows": [
-              {
-                "startDate": "2026-08-09",
-                "cell": "POLY-004",
-                "udrType": "RAN_USAGE",
-                "quantity": "250.000000",
-                "unit": "EA",
-                "amount": "25000.00"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "state": null,
-        "label": "Unassigned region",
-        "rowCount": 1,
-        "amount": "5000.00",
-        "quantity": "50.000000",
-        "unit": "EA",
-        "districts": [
-          {
-            "district": null,
-            "label": "—",
-            "rowCount": 1,
-            "amount": "5000.00",
-            "quantity": "50.000000",
-            "unit": "EA",
-            "rows": [
-              {
-                "startDate": "2026-08-11",
-                "cell": "POLY-UNMAPPED",
-                "udrType": "RAN_USAGE",
-                "quantity": "50.000000",
-                "unit": "EA",
-                "amount": "5000.00"
-              }
-            ]
-          }
-        ]
-      }
-    ]
-  },
   "isDraft": false,
   "locale": "en-MY",
   "timezone": "Asia/Kuala_Lumpur"

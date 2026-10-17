@@ -16,6 +16,7 @@ import {
 import {
   generate,
   layoutFilesFromVerified,
+  type GeneratedTemplateFiles,
 } from "@/services/billing/invoice-template/generate";
 import {
   PROBE_RENDER_INPUT,
@@ -26,7 +27,11 @@ import {
   SEEDED_GENERATED_ROW,
   SEEDED_LAYOUT_ROW,
 } from "@/tests/helpers/seeded-invoice-template";
-import type { InvoiceRenderInput } from "@/types/billing";
+import type {
+  InvoiceRenderInput,
+  InvoiceServiceType,
+  InvoiceTemplateStructure,
+} from "@/types/billing";
 
 // bm55-spec §Design D1 "Parity with the bm47 hand-written default" — the stored
 // generated v1 `invoice.hbs` is seeded immutably per round (bm50). Semantic
@@ -38,33 +43,32 @@ import type { InvoiceRenderInput } from "@/types/billing";
 // generator (`scripts/invoice-templates/regenerate-generated.ts`). The
 // rewritten `shell.hbs` carries the bm49 usage-annex CSS, so the former
 // `<head>` gap (known-issues §20) is closed: the whole document is identical.
+//
+// bm71 replaced the annex with the detail pages and regenerated all three
+// stored files from the seeded `structure.json` (payment + notes on, no
+// columns): `invoice.hbs`, `footer.hbs` and `structure.json` are each
+// byte-identical to the generator output.
+
+const SEEDED_STRUCTURE: InvoiceTemplateStructure = {
+  sections: { payment: true, notes: true },
+  columns: {},
+};
 
 let generatedHtml: (input: InvoiceRenderInput) => string;
+let generatedFiles: GeneratedTemplateFiles;
+let storedFiles: Awaited<ReturnType<typeof loadGeneratedFiles>>;
 let storedHtml: (input: InvoiceRenderInput) => string;
 let sampleData: InvoiceRenderInput;
 
 beforeAll(async () => {
   const layoutFiles = await loadLayout(SEEDED_LAYOUT_ROW);
-  const generated = generate(layoutFilesFromVerified(layoutFiles), {
-    sections: {
-      billTo: true,
-      identification: true,
-      amountDue: true,
-      chargeSummary: true,
-      taxSummary: true,
-      payment: true,
-      chargeDetails: true,
-      usageAnnex: true,
-      notes: true,
-    },
-    columns: {
-      showServicePeriod: true,
-      showDiscountColumn: true,
-      showProductId: true,
-      showUdrCount: true,
-    },
-  });
+  const generated = generate(
+    layoutFilesFromVerified(layoutFiles),
+    SEEDED_STRUCTURE,
+  );
   const stored = await loadGeneratedFiles(SEEDED_GENERATED_ROW);
+  generatedFiles = generated;
+  storedFiles = stored;
 
   const generatedTpl = compileInvoiceTemplate(generated.invoiceHbs);
   const storedTpl = compileInvoiceTemplate(
@@ -78,38 +82,29 @@ beforeAll(async () => {
   ) as InvoiceRenderInput;
 });
 
-// 3 groups × 40 lines plus a 3 × 4 × 50-row usage annex — several A4 pages
-// (the guardrail-54 shape: repeated thead, line groups, a long annex).
+// 2 types × 3 State-District groups × 150 polygons — many A4 pages (the
+// guardrail-64 shape: a type per page break, repeated group thead, groups
+// spanning pages), plus a type with no claimed row.
 function multiPageInput(): InvoiceRenderInput {
   const base = PROBE_RENDER_INPUT;
-  const lineGroups = base.lineGroups.map((group, g) => ({
-    ...group,
-    lines: Array.from({ length: 40 }, (_, i) => ({
-      ...group.lines[0]!,
-      lineNo: g * 40 + i + 1,
-      description: `${group.name} line ${i + 1} <b>&</b>`,
-    })),
-  }));
-  const state = base.usage!.states[0]!;
-  const district = state.districts[0]!;
-  const states = Array.from({ length: 3 }, (_, s) => ({
-    ...state,
-    state: `State-${s + 1}`,
-    label: `State ${s + 1}`,
-    districts: Array.from({ length: 4 }, (_, d) => ({
-      ...district,
-      district: `District-${s + 1}-${d + 1}`,
-      label: `District ${s + 1}.${d + 1}`,
-      rows: Array.from({ length: 50 }, (_, r) => ({
-        ...district.rows[0]!,
-        cell: `CELL-${s + 1}-${d + 1}-${r + 1}`,
+  const template = base.serviceTypes[0]!;
+  const row = template.regions[0]!.rows[0]!;
+  const types: InvoiceServiceType[] = Array.from({ length: 2 }, (_, t) => ({
+    ...template,
+    offeringId: `POF0000010${t}`,
+    label: `Capacity type ${t + 1} <b>&</b>`,
+    regions: Array.from({ length: 3 }, (_, r) => ({
+      label: `STATE-${r + 1} - DISTRICT-${r + 1}`,
+      subTotal: "150.00",
+      rows: Array.from({ length: 150 }, (_, i) => ({
+        ...row,
+        polygonName: `POLY-${t + 1}-${r + 1}-${i + 1}`,
       })),
     })),
   }));
   return {
     ...base,
-    lineGroups,
-    usage: { ...base.usage!, states },
+    serviceTypes: [...types, base.serviceTypes[1]!],
     isDraft: true,
     invoice: { ...base.invoice, isDraft: true, number: null },
   };
@@ -142,13 +137,25 @@ describe("generate ↔ stored v1 semantic parity (bm55 D1)", () => {
     expect(bodyOf(stored)).toContain("sec--chargeDetails");
   });
 
-  it("the multi-page fixture is long (many line rows and annex rows)", () => {
+  it("the multi-page fixture is long (many detail rows)", () => {
     const html = storedHtml(multiPageInput());
     expect(html.match(/<tr>/g)!.length).toBeGreaterThan(600);
   });
 
-  it("renders a byte-identical whole document, stylesheet included (bm70 closed the annex-CSS gap)", () => {
+  it("renders a byte-identical whole document, stylesheet included", () => {
     expect(generatedHtml(sampleData)).toBe(storedHtml(sampleData));
-    expect(storedHtml(sampleData)).toContain(".annex {");
+    expect(storedHtml(sampleData)).toContain(".detail-group {");
+  });
+
+  it("stores exactly the generator output for footer.hbs and structure.json (bm71)", () => {
+    expect(storedFiles["footer.hbs"].toString("utf-8")).toBe(
+      generatedFiles.footerHbs,
+    );
+    expect(storedFiles["structure.json"].toString("utf-8")).toBe(
+      generatedFiles.structureJson,
+    );
+    expect(storedFiles["invoice.hbs"].toString("utf-8")).toBe(
+      generatedFiles.invoiceHbs,
+    );
   });
 });

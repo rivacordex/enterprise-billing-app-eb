@@ -175,37 +175,15 @@ async function verifyVersionFiles(
 // D2 step 6 — Handlebars compiles lazily, so a delegate is executed once
 // against this fixture at load: a parse error, an unknown helper or a strict-
 // mode missing path surfaces here as `TEMPLATE_COMPILE_FAILED`, never halfway
-// through a run. Every key present; company/payment/usage populated; one line
-// per group. Frozen — Handlebars only reads its context.
+// through a run. Every key present; company/payment populated; the detail
+// pages both with regions and empty (bm71). Frozen — Handlebars only reads its
+// context.
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === "object") {
     for (const child of Object.values(value)) deepFreeze(child);
     Object.freeze(value);
   }
   return value;
-}
-
-function probeLine(
-  lineNo: number,
-  source: "RECURRING" | "USAGE" | "OCC",
-): InvoiceRenderInput["lineGroups"][number]["lines"][number] {
-  return {
-    lineNo,
-    source,
-    description: `Probe ${source.toLowerCase()} line`,
-    productOfferingId: "POF00000001",
-    udrType: source === "USAGE" ? "RAN_USAGE" : null,
-    udrCount: source === "USAGE" ? 1 : null,
-    periodStart: "2026-01-01",
-    periodEnd: "2026-01-31",
-    quantity: "1.000000",
-    unit: source === "USAGE" ? "GB" : "EA",
-    unitPrice: source === "USAGE" ? null : "1.00",
-    grossAmount: "1.00",
-    discountAmount: "0.00",
-    netAmount: "1.00",
-    discountNote: null,
-  };
 }
 
 export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
@@ -285,6 +263,8 @@ export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
   },
   taxes: [{ category: "SST", rate: "0.00", amount: "0.00" }],
   taxRateLabel: "0.00",
+  // bm71 (spec §3) — two types: one with two regions, one of them the
+  // blank-label "Unassigned region"; one with no claimed row (`regions: []`).
   serviceTypes: [
     {
       offeringId: "POF00000001",
@@ -292,53 +272,45 @@ export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
       utilised: "1.50",
       unutilised: "0.50",
       total: "2.00",
+      regions: [
+        {
+          label: "Selangor - Petaling",
+          rows: [
+            {
+              polygonStartDate: "2025-06-01",
+              polygonName: "PLG-0001",
+              capacityMbps: "1.000000",
+              ratePerMbps: "1.00",
+              amount: "1.00",
+            },
+          ],
+          subTotal: "1.00",
+        },
+        {
+          label: "Unassigned region",
+          rows: [
+            {
+              polygonStartDate: "2025-06-01",
+              polygonName: "PLG-0002",
+              capacityMbps: "0.500000",
+              ratePerMbps: "1.00",
+              amount: "0.50",
+            },
+          ],
+          subTotal: "0.50",
+        },
+      ],
+    },
+    {
+      offeringId: "POF00000002",
+      label: "Probe idle capacity service",
+      utilised: "0.00",
+      unutilised: "1.00",
+      total: "1.00",
+      regions: [],
     },
   ],
   otherCharges: [{ description: "Probe recurring line", amount: "1.00" }],
-  lineGroups: (["RECURRING", "USAGE", "OCC"] as const).map((source, i) => ({
-    name: `${source} group`,
-    source,
-    grossTotal: "1.00",
-    discountTotal: "0.00",
-    subtotal: "1.00",
-    lines: [probeLine(i + 1, source)],
-  })),
-  usage: {
-    rowCount: 1,
-    totalAmount: "1.00",
-    totalQuantity: "1.000000",
-    unit: "GB",
-    states: [
-      {
-        state: "Selangor",
-        label: "Selangor",
-        rowCount: 1,
-        amount: "1.00",
-        quantity: "1.000000",
-        unit: "GB",
-        districts: [
-          {
-            district: "Petaling",
-            label: "Petaling",
-            rowCount: 1,
-            amount: "1.00",
-            quantity: "1.000000",
-            unit: "GB",
-            rows: [
-              {
-                startDate: "2026-01-15",
-                cell: "PLG-0001",
-                udrType: "RAN_USAGE",
-                quantity: "1.000000",
-                unit: "GB",
-                amount: "1.00",
-              },
-            ],
-          },
-        ],
-      },
-    ],
-  },
   isDraft: false,
   locale: "en-MY",
   timezone: "Asia/Kuala_Lumpur",
@@ -444,8 +416,6 @@ export const CSV_PATH_ROOTS = [
   "customer",
   "totals",
   "taxes",
-  "lineGroups",
-  "usage",
   "isDraft",
   "locale",
   "timezone",

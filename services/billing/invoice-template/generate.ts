@@ -1,14 +1,14 @@
-import { z } from "zod";
-
 import {
-  INVOICE_COLUMN_KEYS,
-  INVOICE_SECTION_KEYS,
+  INVOICE_OPTIONAL_SECTION_KEYS,
   InvoiceRenderError,
-  MANDATORY_SECTION_KEYS,
-  type InvoiceColumnKey,
-  type InvoiceSectionKey,
+  type InvoiceOptionalSectionKey,
   type InvoiceTemplateStructure,
 } from "@/types/billing";
+import {
+  LAYOUT_PART_KEYS,
+  layoutManifestSchema,
+  type LayoutManifest,
+} from "@/validation/billing/layout-manifest.schema";
 
 // bm55-spec §Design D1 (Inv #46) — the generator. It resolves the developer
 // layout's generation-time directives ONCE against an admin `structure`, so
@@ -26,25 +26,14 @@ import {
 //     partner (the adjacent half section in the full order) is hidden — a half
 //     section authored without a partner keeps `sec--half`, as the stored v1
 //     does ("the gap closes, the partner widens");
-//   - `colCount` counts all four optional columns (the stored v1 renders
-//     `colspan="10"`), see `numbers` below.
-// With all flags on, the `<body>` this produces is byte-identical to the
-// hand-written seeded v1 `invoice.hbs` (generate-parity.test.ts).
+//   - a mandatory section is always shown; only the optional sections
+//     (`payment`, `notes`) are read from the structure (bm71, D56).
+// The generated v1 `invoice.hbs` is this output for the seeded structure
+// (generate-parity.test.ts). bm71 retired the `[[if columns.*]]` and
+// `[[num …]]` directives with the old line table; the manifest is parsed with
+// `layout-manifest.schema.ts` (D38).
 
-export const LAYOUT_PART_KEYS = ["header", ...INVOICE_SECTION_KEYS] as const;
 export type LayoutPartKey = (typeof LAYOUT_PART_KEYS)[number];
-
-// The manifest fields the generator reads; the rest (`pageSetup`,
-// `fixedColumns`, `usageGrouping`) pass through unvalidated here — `pageSetup`
-// is validated from the DB row by `layoutPageSetupSchema` at render.
-const layoutManifestSchema = z.object({
-  layoutCode: z.string().min(1),
-  layoutVersion: z.number().int().positive(),
-  sections: z.record(z.string(), z.object({ mandatory: z.boolean() })),
-  columns: z.record(z.string(), z.object({ mandatory: z.boolean() })),
-});
-
-export type LayoutManifest = z.infer<typeof layoutManifestSchema>;
 
 export interface LayoutFiles {
   manifest: LayoutManifest;
@@ -118,37 +107,10 @@ export function layoutFilesFromVerified(
 
 // --- directive resolution ---------------------------------------------------
 
-type NumberDirective = "colCount" | "subtotalSpan" | "totalSpan";
-
-// placeholder-catalog §A. Fixed columns: #, Description, Quantity, Unit price,
-// Gross, Net amount (6). `subtotalSpan` spans everything left of the Gross
-// (and Discount, when shown) cells; `totalSpan` is the spec's formula over the
-// corrected `colCount` (v1 does not use it).
-function numbers(
-  columns: Record<InvoiceColumnKey, boolean>,
-): Record<NumberDirective, number> {
-  const n = (flag: boolean): number => (flag ? 1 : 0);
-  const colCount =
-    6 +
-    n(columns.showServicePeriod) +
-    n(columns.showDiscountColumn) +
-    n(columns.showProductId) +
-    n(columns.showUdrCount);
-  return {
-    colCount,
-    subtotalSpan: colCount - 2 - n(columns.showDiscountColumn),
-    totalSpan: colCount - 3 - n(columns.showDiscountColumn),
-  };
-}
-
 const BODY_MARKER = "\u0000BODY\u0000";
 
-function isSectionKey(key: string): key is InvoiceSectionKey {
-  return (INVOICE_SECTION_KEYS as readonly string[]).includes(key);
-}
-
-function isColumnKey(key: string): key is InvoiceColumnKey {
-  return (INVOICE_COLUMN_KEYS as readonly string[]).includes(key);
+function isOptionalSectionKey(key: string): key is InvoiceOptionalSectionKey {
+  return (INVOICE_OPTIONAL_SECTION_KEYS as readonly string[]).includes(key);
 }
 
 // Every `[[…]]` whose inner text contains no `]` — the same matches as
@@ -183,18 +145,17 @@ function stripTrailingNewlines(source: string): string {
   return source.slice(0, end);
 }
 
-// One pass over a file: `[[if sections.<key>]]…[[/if]]` and
-// `[[if columns.<key>]]…[[/if]]` keep or drop their body ENTIRELY (no
-// `[[else]]`, no nesting), `[[num …]]` becomes its number, and `[[body]]`
-// (shell only) becomes a marker the caller splices. Directives are removed in
-// place — no reflow.
+// One pass over a file: `[[if sections.<key>]]…[[/if]]` (an optional
+// section key) keeps or drops its body ENTIRELY (no `[[else]]`, no nesting),
+// and `[[body]]` (shell only) becomes a marker the caller splices. Directives
+// are removed in place — no reflow. Anything else, a `columns.*` condition or
+// a `[[num …]]` included, is an unknown directive.
 function resolveDirectives(
   source: string,
   file: string,
   structure: InvoiceTemplateStructure,
   allowBody: boolean,
 ): string {
-  const nums = numbers(structure.columns);
   let out = "";
   let cursor = 0;
   let open: { keep: boolean; directive: string } | null = null;
@@ -221,7 +182,7 @@ function resolveDirectives(
       continue;
     }
 
-    const ifMatch = /^if (sections|columns)\.([A-Za-z]+)$/.exec(body);
+    const ifMatch = /^if sections\.([A-Za-z]+)$/.exec(body);
     if (ifMatch) {
       if (open !== null) {
         throw generationFailed(
@@ -230,16 +191,11 @@ function resolveDirectives(
           `nested ${raw} inside ${open.directive}`,
         );
       }
-      const [, group, key] = ifMatch;
-      let keep: boolean;
-      if (group === "sections" && isSectionKey(key!)) {
-        keep = structure.sections[key];
-      } else if (group === "columns" && isColumnKey(key!)) {
-        keep = structure.columns[key];
-      } else {
+      const key = ifMatch[1]!;
+      if (!isOptionalSectionKey(key)) {
         throw generationFailed(raw, file, `unknown key in ${raw}`);
       }
-      open = { keep, directive: raw };
+      open = { keep: structure.sections[key], directive: raw };
       continue;
     }
 
@@ -248,12 +204,6 @@ function resolveDirectives(
         throw generationFailed(raw, file, "[[/if]] without an open [[if]]");
       }
       open = null;
-      continue;
-    }
-
-    const numMatch = /^num ([A-Za-z]+)$/.exec(body);
-    if (numMatch && Object.hasOwn(nums, numMatch[1]!)) {
-      emit(String(nums[numMatch[1] as NumberDirective]));
       continue;
     }
 
@@ -457,18 +407,6 @@ export function generate(
   structure: InvoiceTemplateStructure,
   opts: GenerateOptions = {},
 ): GeneratedTemplateFiles {
-  // D1 — the Zod schema (D2) rejects a hidden mandatory section before this
-  // runs; re-asserted here so no caller can bypass it.
-  for (const key of MANDATORY_SECTION_KEYS) {
-    if (!structure.sections[key]) {
-      throw new InvoiceRenderError(
-        "MANDATORY_SECTION_HIDDEN",
-        `section ${key} is mandatory and cannot be hidden`,
-        { section: key },
-      );
-    }
-  }
-
   const shellSource = toLf(layout.shell);
   let bodyCount = 0;
   for (const m of directiveMatches(shellSource)) {
@@ -487,8 +425,10 @@ export function generate(
     LAYOUT_PART_KEYS.map((k) => [k, toLf(layout.partials[k])]),
   ) as Record<LayoutPartKey, string>;
   const partners = layoutPartners(order, partials);
+  // bm71 (D56) — a mandatory section is always shown; only an optional one
+  // reads the structure.
   const visible = (key: LayoutPartKey): boolean =>
-    key === "header" || structure.sections[key];
+    !isOptionalSectionKey(key) || structure.sections[key];
 
   const sections: string[] = [];
   for (const key of order) {

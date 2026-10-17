@@ -17,15 +17,9 @@
     "amountDue": { "mandatory": true },
     "payment": { "mandatory": false },
     "chargeDetails": { "mandatory": true },
-    "usageAnnex": { "mandatory": false },
     "notes": { "mandatory": false }
   },
-  "fixedColumns": ["#", "Description", "Quantity", "Unit price", "Gross", "Net amount"],
-  "columns": {
-    "showServicePeriod": { "mandatory": false },
-    "showDiscountColumn": { "mandatory": false },
-    "showProductId": { "mandatory": false },
-    "showUdrCount": { "mandatory": false }
-  },
-  "usageGrouping": ["state", "district"]
+  "fixedColumns": ["Polygon Start Date", "Polygon Name", "Capacity (Mbps)", "Rate/Mbps (MYR)", "Utilised Capacity Charges (MYR)"],
+  "columns": {},
+  "usageGrouping": ["serviceType", "state", "district"]
 }

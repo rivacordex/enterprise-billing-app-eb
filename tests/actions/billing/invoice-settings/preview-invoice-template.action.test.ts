@@ -100,28 +100,15 @@ function redirectError(): Error & { digest: string } {
 }
 
 const ALL_ON: InvoiceTemplateStructure = {
-  sections: {
-    billTo: true,
-    identification: true,
-    amountDue: true,
-    chargeSummary: true,
-    taxSummary: true,
-    payment: true,
-    chargeDetails: true,
-    usageAnnex: true,
-    notes: true,
-  },
-  columns: {
-    showServicePeriod: true,
-    showDiscountColumn: true,
-    showProductId: true,
-    showUdrCount: true,
-  },
+  sections: { payment: true, notes: true },
+  columns: {},
 };
 
-const NO_PAYMENT_NO_DISCOUNT: InvoiceTemplateStructure = {
-  sections: { ...ALL_ON.sections, payment: false },
-  columns: { ...ALL_ON.columns, showDiscountColumn: false },
+// bm71 (D56): the column toggles are gone, so Notes & terms is the visible
+// difference between a submitted structure and the stamped all-on v1.
+const NO_PAYMENT_NO_NOTES: InvoiceTemplateStructure = {
+  sections: { payment: false, notes: false },
+  columns: {},
 };
 
 const CSV_ROW: BillTemplateVersion = {
@@ -293,11 +280,15 @@ describe("previewInvoiceTemplateAction — authz and validation", () => {
 
   it.each([
     [
-      "a hidden mandatory section",
+      "a mandatory section key",
       { ...ALL_ON, sections: { ...ALL_ON.sections, billTo: false } },
     ],
+    [
+      "the retired usageAnnex section",
+      { ...ALL_ON, sections: { ...ALL_ON.sections, usageAnnex: true } },
+    ],
     ["an unknown key", { ...ALL_ON, extra: true }],
-    ["a missing column", { ...ALL_ON, columns: { showDiscountColumn: true } }],
+    ["a column key", { ...ALL_ON, columns: { showDiscountColumn: true } }],
   ])("returns VALIDATION_ERROR for %s", async (_label, structure) => {
     const result = await previewInvoiceTemplateAction({
       familyId: FAMILY,
@@ -337,7 +328,7 @@ describe("previewInvoiceTemplateAction — sample source", () => {
   it("renders the sample bill from the submitted structure as a draft, writing nothing", async () => {
     const result = await previewInvoiceTemplateAction({
       familyId: FAMILY,
-      structure: NO_PAYMENT_NO_DISCOUNT,
+      structure: NO_PAYMENT_NO_NOTES,
       source: "sample",
     });
 
@@ -348,7 +339,7 @@ describe("previewInvoiceTemplateAction — sample source", () => {
     expect(result.html).toContain("DRAFT&nbsp;&middot;&nbsp;PRO-FORMA");
     expect(result.html).toContain("Acme Communications Sdn Bhd");
     expect(result.html).not.toContain("sec--payment");
-    expect(result.html).not.toContain(">Discount</th>");
+    expect(result.html).not.toContain("sec--notes");
     // No profile ACTIVE (G15 A): no issuer block.
     expect(result.html).not.toContain("Sample Telco Sdn Bhd");
     expectNoWrites();
@@ -397,7 +388,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
 
     const result = await previewInvoiceTemplateAction({
       familyId: FAMILY,
-      structure: NO_PAYMENT_NO_DISCOUNT,
+      structure: NO_PAYMENT_NO_NOTES,
       source: { billId: "CBL00000007" },
       annotate: true,
     });
@@ -407,7 +398,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     expect(result.pinnedVersionNo).toBe(1);
     expect(result.templateLabel).toContain("Template v1 (as issued)");
     // The stamped all-on v1, not the submitted structure.
-    expect(result.html).toContain('<th class="num">Discount</th>');
+    expect(result.html).toContain("sec--notes");
     expect(result.html).toContain("INV00000077");
     expect(result.html).toContain("<title>Tax invoice INV00000077</title>");
     expect(result.html).not.toContain("PRO-FORMA&nbsp;&middot;");
@@ -441,7 +432,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
 
     const result = await previewInvoiceTemplateAction({
       familyId: FAMILY,
-      structure: NO_PAYMENT_NO_DISCOUNT,
+      structure: NO_PAYMENT_NO_NOTES,
       source: { billId: "CBL00000007" },
     });
 
@@ -450,7 +441,7 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     expect(result.pinnedVersionNo).toBeNull();
     expect(result.html).toContain("Enterprise Fibre 1Gbps");
     expect(result.html).toContain("DRAFT&nbsp;&middot;&nbsp;PRO-FORMA");
-    expect(result.html).not.toContain(">Discount</th>");
+    expect(result.html).not.toContain("sec--notes");
     expectNoWrites();
   });
 

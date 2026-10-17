@@ -84,8 +84,6 @@ function rawInput(
         grossAmount: "100.00",
         discountAmount: "0.00",
         discountRate: null,
-        groupGrossTotal: "100.00",
-        groupDiscountTotal: "0.00",
       },
     ],
     customer: { ...BARE_RAW_CUSTOMER },
@@ -102,7 +100,6 @@ async function renderDraft(
     isDraft: true,
     locale: "en-MY",
     timezone: "UTC",
-    includeUsage: true,
     template: TEMPLATE,
     profile,
   });
@@ -125,7 +122,6 @@ async function renderFinal(
     isDraft: false,
     locale: "en-MY",
     timezone: "UTC",
-    includeUsage: true,
     invoiceNo: "INV00000042",
     template: TEMPLATE,
     profile,
@@ -141,7 +137,6 @@ async function renderFooter(profile: InvoiceProfile | null) {
       isDraft: true,
       locale: "en-MY",
       timezone: "UTC",
-      includeUsage: true,
       template: TEMPLATE,
       profile,
     }),
@@ -180,61 +175,68 @@ describe("the default generated template — draft", () => {
     );
   });
 
-  it("renders the usage annex on the draft too (bm49: billed udr_rated rows, state → district)", async () => {
+  it("renders the capacity detail pages on the draft too (bm71: type → State-District)", async () => {
     const html = await renderDraft({
-      bill: { ...rawInput().bill, usageRatedTotal: "30000.00" },
-      usage: {
+      bill: {
+        ...rawInput().bill,
+        subtotal: "30150.00",
+        totalAmount: "30150.00",
+        linesNetSum: "30150.00",
+        summaryBlocksSum: "30150.00",
+      },
+      serviceTypes: [
+        {
+          offeringId: "POF00000021",
+          label: "RAN Target Capacity",
+          utilised: "30000.00",
+          unutilised: "0.00",
+          total: "30000.00",
+          ratedTotal: "30000.00",
+          missingRated: false,
+          negativeUtilised: false,
+        },
+      ],
+      capacityDetail: {
         overLimit: false,
         rows: [
           {
-            startDate: "2026-08-03",
-            cell: "POLY-001",
-            udrType: "RAN_USAGE",
-            quantity: "300.000000",
-            unit: "EA",
+            udrId: "UDR00000001",
+            offeringId: "POF00000021",
+            label: "RAN Target Capacity",
+            regionLabel: "STATE-02 - DISTRICT-03",
+            polygonStartDate: "2026-03-01",
+            polygonId: "POLY-001",
+            resourceOk: true,
+            capacityMbps: "300.000000",
+            ratePerMbps: "100.00",
             amount: "30000.00",
-            state: "State-02",
-            district: "District-03",
           },
         ],
         groups: [
           {
-            state: "State-02",
-            district: "District-03",
-            gState: 0,
-            gDistrict: 0,
-            rowCount: 1,
+            offeringId: "POF00000021",
+            regionLabel: "STATE-02 - DISTRICT-03",
+            gRegion: 0,
             amount: "30000.00",
-            quantity: "300.000000",
-            unit: "EA",
           },
           {
-            state: "State-02",
-            district: null,
-            gState: 0,
-            gDistrict: 1,
-            rowCount: 1,
+            offeringId: "POF00000021",
+            regionLabel: null,
+            gRegion: 1,
             amount: "30000.00",
-            quantity: "300.000000",
-            unit: "EA",
-          },
-          {
-            state: null,
-            district: null,
-            gState: 1,
-            gDistrict: 1,
-            rowCount: 1,
-            amount: "30000.00",
-            quantity: "300.000000",
-            unit: "EA",
           },
         ],
       },
     });
-    expect(html).toContain("Usage annex — billed usage by region");
+    expect(html).toContain(
+      '<h2 class="detail-heading">RAN Target Capacity</h2>',
+    );
+    expect(html).toContain("Access Seeker: Acme Communications Sdn Bhd");
+    expect(html).toContain("STATE-02 - DISTRICT-03");
     expect(html).toContain("POLY-001");
-    expect(html).toContain("State-02");
-    expect(html).toContain("Total rated usage");
+    expect(html).toContain("01/03/2026");
+    expect(html).toContain("Sub Total");
+    expect(html).not.toContain("Usage annex");
   });
 
   it("escapes free-text account names", async () => {

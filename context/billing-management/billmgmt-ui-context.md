@@ -143,7 +143,9 @@ empty frame.
 
 **Invoice Template update (2026-10-07).** The watermark **stays `position:fixed`** (R5; the plan body's "move it to the page mechanism" is superseded). The new Chromium `footerTemplate` (`footer.hbs`: "Page X of Y", inline Arial 7.5px, muted `#6A7283`) must sit in the bottom margin **without clipping** the watermark. A **parked** final render (checksum mismatch, compile failure, `Σ net ≠ subtotal`) reuses the existing `RenderPendingRow`: warning-700 status text, with the error reason in the destructive text color. There is no new badge, status or color for parking.
 
-## 6d. Invoice usage appendix — per-polygon by state/district (Target Capacity, 2026-10-04)
+## 6d. Invoice usage appendix — per-polygon by state/district (Target Capacity, 2026-10-04) — SUPERSEDED (bm71)
+
+> **Superseded by bm71 (built 2026-10-16).** The Usage annex, its partial and its CSS are deleted from v1; the per-polygon detail pages in §10d replace them. The rest of this section is the historical record.
 
 A capacity offering's posted invoice PDF (rendered from the layout `shell.hbs` + generated template — print CSS, **not** an app screen) carries a per-polygon usage appendix below the charge lines. It introduces **no new token** and follows the module's existing table conventions (§6b/§8/§9):
 
@@ -161,7 +163,7 @@ No new color, typography, radius, or shadow token — the appendix is print CSS 
 
 **bm49 — the annex is now itemised billed records, state → district (X1/X2 closed, R9).** bm49 replaces the per-polygon snapshot design above with the delivered shape: the Usage annex lists **every billed `udr_rated` row** for the account (one row per record: Date, Cell, UDR type, Quantity, Unit, Rated amount) grouped **state → district**, with per-district and per-state subtotal rows and a grand total ("Total rated usage") that equals the bill's rated usage. Geo (`state`/`district`) is read **off `udr_rated`** (bm48, R9), never from a ratecard query; a row without geo is shown under an **"Unassigned region"** state group (district label "—"), never dropped. The 8pt/11pt table, tabular-nums on the numeric columns, overline state/district headers, and the semibold `#E0E4EB`-ruled subtotal rows are unchanged from above (as built, that annex CSS exists only in the seeded `generated/INVOICE/v1/invoice.hbs`; see the gap note below); `thead` repeats, a state's `tbody` may span pages (no `break-inside: avoid`), and only the subtotal row pairs use `break-before: avoid`. Bounded to **10,000 rows/account** (bm45's load-tested cap); over the bound the render fails `INVOICE_USAGE_OVER_LIMIT` and the account parks. No new token.
 
-**Superseded by Invoice Template Phase 3 (planned, 2026-10-15).** The rewritten v1 removes the Usage annex. Per-polygon detail moves into `chargeDetails`, grouped type of service → State-District, with rows built from `udr_key`/`udr_resource` (§10d). Everything in this §6d describes the delivered bm49 annex until bm71 ships.
+**Superseded by Invoice Template Phase 3 (built, bm71).** The rewritten v1 removes the Usage annex. Per-polygon detail moves into `chargeDetails`, grouped type of service → State-District, with rows built from `udr_key`/`udr_resource` (§10d). Everything in this §6d describes the bm49 annex that bm71 retired.
 
 ⚠ Code gap (2026-10-12): the layout `shell.hbs` has no `.annex` / `table.usage` rules and the generator does not inject them, so any template **generated on Activate** renders the Usage annex unstyled (9pt body, no subtotal/header styling). Only the seeded `generated/INVOICE/v1` carries the styling. Tracked in billmgmt-known-issues.md §20 (fix in layout v2).
 
@@ -409,13 +411,15 @@ Print CSS in the rewritten v1 `shell.hbs` and partials. It uses the §10c `--inv
 
 **As built (bm70), page 1:** the title, supplier block (D102), recipient line, type-of-service blocks, "Other charges", Total charges · Adjustments · Tax @ x% and the Grand Total rows above are confirmed in the rewritten v1 (`.svc-block`, `.svc-heading`, `.svc-row`, `.svc-total`, `.other-charges`, `.totals-row`, `.grand-total-panel`). The panel's left rule is 3px `--inv-accent`. The identification block also prints the due date (D60 table row 2). The detail-page, Total Amount, footnote and right-aligned footer rows are bm71/bm72.
 
+**As built (bm71), detail pages:** `chargeDetails` holds one `<section class="detail-type" style="break-before: page">` per type of service (`.detail-heading`, `.access-seeker`), then one `table.detail-group` per State-District group whose `thead` carries the `tr.group-label` row and the `tr.col-head` row, and a `tr.subtotal` Sub Total row. `tr { break-inside: avoid }`, `.detail-group { break-inside: auto }`, `thead { display: table-header-group }`; Polygon Name uses `.mono`. A type with no claimed row prints its heading and "No utilised capacity this period." (`.no-usage`, `--inv-muted`). The rate column uses `money` (2 decimals, read at 2 decimals in SQL), so it prints as "RM 100.00" like the amount column. The footer's "Page X of Y" span is `text-align: right` (it already sat last in the footer's flex row). The Total Amount page and footnote rows are bm72.
+
 No colour signals sign or status on the invoice. Unutilised is a normal amount, not a warning. A negative Utilised can never print (Inv #55). The draft watermark (§6c, `--inv-watermark`) is unchanged.
 
 **Park and skip reasons in the app** reuse existing surfaces and families, with no new token or component:
 
 | Code | Where it shows | Family and copy |
 | --- | --- | --- |
-| `INVOICE_POLYGON_DATA_MISSING` | Draft preview error (§6c); `RenderPendingRow` | Danger `-fg`: "Polygon data is missing for a billed record (no polygon ID or region). Fix the rated data and rerun this account." |
+| `INVOICE_POLYGON_DATA_MISSING` | Draft preview error (§6c); `RenderPendingRow` | Danger `-fg`: "Polygon data is missing for a billed record (no polygon ID or region). Fix the rated data and rerun this account." **Confirmed (bm71)** in `describeInvoiceRenderCode`. |
 | `INVOICE_NEGATIVE_UTILISED` | Same | Danger `-fg`: "Utilised capacity charges came out negative. Check the rate-matching setting and rerun this account." **Confirmed (bm70)** in `describeInvoiceRenderCode`. |
 | `INVOICE_RECONCILIATION_FAILED` | Same (existing code) | Draft preview (bm66): Danger `-fg`: "The invoice lines do not add up to the bill total. Rerun this account; if it repeats, report it." `RenderPendingRow` keeps its own retry text. |
 | `INVOICE_USAGE_OVER_LIMIT` | Same (existing code) | Draft preview (bm66): Danger `-fg`: "This account has more than 10,000 billed usage records, over the invoice limit." `RenderPendingRow` keeps its own retry text. |

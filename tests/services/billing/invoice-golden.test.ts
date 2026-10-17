@@ -173,9 +173,11 @@ describe("layout v1 page 1 (bm70)", () => {
 
   it("omits the Other charges block when there are none", () => {
     const html = render({ ...sample, otherCharges: [] });
-    expect(html).not.toContain('class="svc-block other-charges"');
-    expect(html).not.toContain("Sub Total");
-    expect(html).toContain("Total charges");
+    // Page 1 only: since bm71 the detail pages print their own Sub Totals.
+    const page1 = html.slice(0, html.indexOf("sec--chargeDetails"));
+    expect(page1).not.toContain('class="svc-block other-charges"');
+    expect(page1).not.toContain("Sub Total");
+    expect(page1).toContain("Total charges");
   });
 
   it("prints the Grand Total panel and the current-charges-only line; a draft reads indicative", () => {
@@ -235,5 +237,131 @@ describe("layout v1 page 1 (bm70)", () => {
       company: { ...PROBE_RENDER_INPUT.company!, sstRegNo: null },
     };
     expect(render(noSst)).not.toContain("SST No.");
+  });
+});
+
+// bm71-spec §6 — guardrail 64, the detail half: a structural golden on a
+// ~900-polygon fixture (2 types × 6 State-District groups × 75 polygons, plus
+// a type with no claimed row). Pagination itself is Chromium's (D48): the
+// structure that drives it is pinned here.
+describe("layout v1 detail pages (bm71, guardrail 64 detail half)", () => {
+  const tpl = (file: string) =>
+    compileInvoiceTemplate(
+      readFileSync(join(SEEDS, "generated/INVOICE/v1", file), "utf8"),
+    );
+  const SEEDED_INVOICE = tpl("invoice.hbs");
+  const SEEDED_FOOTER = tpl("footer.hbs");
+
+  const base = PROBE_RENDER_INPUT;
+  const LARGE: InvoiceRenderInput = {
+    ...base,
+    serviceTypes: [
+      ...Array.from({ length: 2 }, (_, t) => ({
+        ...base.serviceTypes[0]!,
+        offeringId: `POF0000020${t}`,
+        label: `Wholesale Capacity ${t + 1}`,
+        regions: Array.from({ length: 6 }, (_, r) => ({
+          label: r === 5 ? "Unassigned region" : `STATE-${r} - DISTRICT-${r}`,
+          subTotal: "7500000.00",
+          rows: Array.from({ length: 75 }, (_, i) => ({
+            polygonStartDate: "2025-03-07",
+            polygonName: `PCU-${t}${r}-${String(i).padStart(3, "0")}`,
+            capacityMbps: i % 2 === 0 ? "1000.000000" : "999.500000",
+            ratePerMbps: "100.00",
+            amount: i % 2 === 0 ? "100000.00" : "99950.00",
+          })),
+        })),
+      })),
+      base.serviceTypes[1]!,
+    ],
+  };
+  const html = executeInvoiceTemplate(SEEDED_INVOICE, LARGE);
+  const detail = html.slice(html.indexOf("sec--chargeDetails"));
+
+  it("renders all ~900 polygon rows", () => {
+    expect(detail.match(/<td class="mono">PCU-/g)).toHaveLength(900);
+  });
+
+  it("starts each type of service on a new page, headed by its name and the Access Seeker", () => {
+    const sections = detail.match(
+      /<section class="detail-type" style="break-before: page">/g,
+    );
+    expect(sections).toHaveLength(3);
+    expect(detail.match(/<h2 class="detail-heading">/g)).toHaveLength(3);
+    expect(detail.match(/Access Seeker: Probe Customer Sdn Bhd/g)).toHaveLength(
+      3,
+    );
+  });
+
+  it("puts the group label and the column header in each group table's thead", () => {
+    const tables = [
+      ...detail.matchAll(/<table class="detail-group">([\s\S]*?)<\/table>/g),
+    ].map((m) => m[1]!);
+    expect(tables).toHaveLength(12);
+    for (const table of tables) {
+      const thead = /<thead>([\s\S]*?)<\/thead>/.exec(table)![1]!;
+      expect(thead).toMatch(
+        /<tr class="group-label"><th scope="colgroup" colspan="5">[^<]+<\/th><\/tr>/,
+      );
+      expect(thead).toContain(
+        '<tr class="col-head"><th scope="col">Polygon Start Date</th><th scope="col">Polygon Name</th><th scope="col" class="num">Capacity (Mbps)</th><th scope="col" class="num">Rate/Mbps (MYR)</th><th scope="col" class="num">Utilised Capacity Charges (MYR)</th></tr>',
+      );
+      expect(table).toMatch(
+        /<tr class="subtotal"><td colspan="4">Sub Total<\/td>/,
+      );
+    }
+    expect(html).toContain("thead { display: table-header-group; }");
+    expect(html).toContain("tr { break-inside: avoid; }");
+    expect(html).toMatch(/\.detail-group \{\s*break-inside: auto;/);
+  });
+
+  it("orders Unassigned region last and prints no (continued) text", () => {
+    const labels = [
+      ...detail.matchAll(
+        /<tr class="group-label"><th scope="colgroup" colspan="5">([^<]+)</g,
+      ),
+    ].map((m) => m[1]);
+    expect(labels.slice(0, 6).at(-1)).toBe("Unassigned region");
+    expect(html.toLowerCase()).not.toContain("continued");
+  });
+
+  it("prints a type with no claimed row as its heading and the no-usage line", () => {
+    const last = detail.slice(
+      detail.lastIndexOf('<section class="detail-type"'),
+    );
+    expect(last).toContain("Probe idle capacity service");
+    expect(last).toContain(
+      '<p class="no-usage">No utilised capacity this period.</p>',
+    );
+    expect(last).not.toContain("detail-group");
+  });
+
+  it("prints dates DD/MM/YYYY and Mbps as a whole number or 2 decimals", () => {
+    const firstRows = [
+      ...detail.matchAll(
+        /<tr><td>([^<]*)<\/td><td class="mono">[^<]*<\/td><td class="num">([^<]*)<\/td>/g,
+      ),
+    ].slice(0, 2);
+    expect(firstRows.map((m) => [m[1], m[2]])).toEqual([
+      ["07/03/2025", "1,000"],
+      ["07/03/2025", "999.50"],
+    ]);
+  });
+
+  it("prints the rate and the amounts as MYR with 2 decimals", () => {
+    // `Intl` separates the currency code with a no-break space.
+    const rm = (amount: string) => `<td class="num">RM ${amount}</td>`;
+    expect(detail).toContain(rm("100.00"));
+    expect(detail).toContain(rm("99,950.00"));
+    expect(detail).toContain(
+      `<tr class="subtotal"><td colspan="4">Sub Total</td>${rm("7,500,000.00")}`,
+    );
+  });
+
+  it("right-aligns the footer's Page X of Y", () => {
+    const footer = executeInvoiceTemplate(SEEDED_FOOTER, LARGE);
+    expect(footer).toContain(
+      '<span style="text-align: right;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>',
+    );
   });
 });

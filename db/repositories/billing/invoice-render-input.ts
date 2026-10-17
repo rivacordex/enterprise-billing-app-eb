@@ -12,7 +12,7 @@ import { contactMedium, organization, partyRole } from "@/db/schema/customer";
 import { customerBillTaxItemRepository } from "@/db/repositories/billing/customer-bill-tax-item.repository";
 import {
   ratedLinesRepository,
-  type BilledUsageResult,
+  type CapacityDetailResult,
 } from "@/db/repositories/billing/rated-lines.repository";
 import { INVOICE_USAGE_ROW_LIMIT } from "@/types/billing";
 import type {
@@ -24,17 +24,17 @@ import type {
 
 // bm47-spec §Implementation §3 — the binder's only repository (D1). Every
 // amount is selected `::text` (code-standards §2.3); no JS arithmetic on
-// money anywhere in this file — group/bill-level subtotals are SQL `SUM`s
-// (D2/D3). No rating-schema reference: the bm49 usage read is delegated to
-// `ratedLinesRepository.listBilledUsageForInvoice` (the R9 home of the read),
+// money anywhere in this file — bill-level sums are SQL `SUM`s (D2/D3). No
+// rating-schema reference: the bm71 capacity detail read is delegated to
+// `ratedLinesRepository.listCapacityDetailForInvoice` (the home of the read),
 // so this file still never touches the rating schema (file-org rule 2 boundary
 // test).
 
-// bm49-spec §Design D5 — the usage read result the binder reconciles and
-// shapes: the over-limit marker (D3) or the billed rows + GROUPING SETS
-// subtotals. `null` on `RawInvoiceRenderInput.usage` when the annex section is
-// hidden (`includeUsage: false`, D4) and the read is skipped.
-export type RawInvoiceUsage = BilledUsageResult;
+// bm71-spec §Design "The detail query" — the detail read result the binder
+// guards, reconciles and shapes: the over-limit marker (D37) or the per-polygon
+// rows + GROUPING SETS Sub Totals and per-type totals. Always read: the
+// `chargeDetails` section that prints it is mandatory.
+export type RawCapacityDetail = CapacityDetailResult;
 
 export interface RawInvoiceLine {
   lineNo: number;
@@ -52,24 +52,22 @@ export interface RawInvoiceLine {
   discountAmount: string;
   netAmount: string;
   discountRate: string | null;
-  // SQL window sums `OVER (PARTITION BY source)` — the group's own totals,
-  // identical on every line of that group (D3).
-  groupGrossTotal: string;
-  groupDiscountTotal: string;
-  groupNetTotal: string;
 }
 
 // bm70-spec §Design "Data" (D28/D30/D47) — one capacity type of service: the
 // capacity lines (`line_type = 'charge'`, `grouping_key LIKE '%:CAPACITY:%'`)
 // of one offering. Every figure is a SQL `numeric(18,2)::text`;
 // `missingRated`/`negativeUtilised` are SQL flags the binder's guards read
-// (code-standards Phase 3 General rule 6 — no TypeScript arithmetic).
+// (code-standards Phase 3 General rule 6 — no TypeScript arithmetic). bm71:
+// `ratedTotal` = Σ `rated_amount` of the type's capacity lines, the rated side
+// of the per-type detail reconciliation (D37).
 export interface RawInvoiceServiceType {
   offeringId: string;
   label: string;
   utilised: string;
   unutilised: string;
   total: string;
+  ratedTotal: string;
   missingRated: boolean;
   negativeUtilised: boolean;
 }
@@ -90,11 +88,6 @@ export interface RawInvoiceRenderInput {
     linesNetSum: string;
     grossTotal: string;
     discountTotal: string;
-    // bm49-spec §Implementation §2 / §Design D6 — `SUM(rated_amount) FILTER
-    // (WHERE source = 'USAGE')`; the usage annex's grand total must equal it
-    // (bm44: `rated_amount` is anchored on the same `udr_rated` rows the annex
-    // itemises). Compared as a string in `bind()` (no new error code).
-    usageRatedTotal: string;
     // bm70 — the page-1 summary sums (SQL `FILTER` aggregates):
     // `otherChargesSubTotal` over non-capacity charge lines, `adjustments`
     // over `line_type = 'adjustment'` (`0.00` when none), and
@@ -111,6 +104,8 @@ export interface RawInvoiceRenderInput {
   // bm70 — non-capacity charge lines in `line_no` order.
   otherCharges: { description: string; amount: string }[];
   taxItems: { category: string; rate: string; amount: string }[];
+  // bm71 — the per-polygon capacity detail (or the over-limit marker).
+  capacityDetail: RawCapacityDetail;
   // final only; `null` on a draft (no `billing.document` row yet).
   document: { documentId: string; postingDate: Date | null } | null;
   customer: {
@@ -124,10 +119,6 @@ export interface RawInvoiceRenderInput {
     phone: string | null;
     address: InvoiceAddress | null;
   };
-  // bm49 (D4) — `null` when the annex section is hidden (`includeUsage:
-  // false`); otherwise the usage read result (which itself may be the
-  // over-limit marker, D3).
-  usage: RawInvoiceUsage | null;
 }
 
 // bm70 — the bm42 capacity line identity (`<offering>:CAPACITY:<unit>`); every
@@ -155,7 +146,7 @@ async function readBillHeader(
   cycleName: string;
   // bm49-spec §Implementation §2 — `bill_run_account.attempt_count`, the
   // same value `post-run.ts` stamps as `posted_attempt`; it scopes the
-  // usage read to the attempt the bill was built on (D2).
+  // capacity detail read to the attempt the bill was built on (bm71).
   attempt: number;
 } | null> {
   const [row] = await tx
@@ -212,7 +203,6 @@ async function readLines(
   linesNetSum: string;
   grossTotal: string;
   discountTotal: string;
-  usageRatedTotal: string;
   otherChargesSubTotal: string;
   adjustments: string;
   summaryBlocksSum: string;
@@ -239,9 +229,6 @@ async function readLines(
       discountAmount: customerBillLine.discountAmount,
       netAmount: customerBillLine.netAmount,
       discountRate: customerBillLine.discountRate,
-      groupGrossTotal: sql<string>`COALESCE(SUM(${customerBillLine.grossAmount}) OVER (PARTITION BY ${customerBillLine.source}), 0)::numeric(18,2)::text`,
-      groupDiscountTotal: sql<string>`COALESCE(SUM(${customerBillLine.discountAmount}) OVER (PARTITION BY ${customerBillLine.source}), 0)::numeric(18,2)::text`,
-      groupNetTotal: sql<string>`COALESCE(SUM(${customerBillLine.netAmount}) OVER (PARTITION BY ${customerBillLine.source}), 0)::numeric(18,2)::text`,
     })
     .from(customerBillLine)
     .where(scope)
@@ -252,8 +239,6 @@ async function readLines(
       linesNetSum: sql<string>`COALESCE(SUM(${customerBillLine.netAmount}), 0)::numeric(18,2)::text`,
       grossTotal: sql<string>`COALESCE(SUM(${customerBillLine.grossAmount}), 0)::numeric(18,2)::text`,
       discountTotal: sql<string>`COALESCE(SUM(${customerBillLine.discountAmount}), 0)::numeric(18,2)::text`,
-      // bm49 §Design D6 — the rated side of the usage reconciliation.
-      usageRatedTotal: sql<string>`COALESCE(SUM(${customerBillLine.ratedAmount}) FILTER (WHERE ${customerBillLine.source} = 'USAGE'), 0)::numeric(18,2)::text`,
       // bm70 §Design "Data" — the page-1 summary sums.
       otherChargesSubTotal: sql<string>`COALESCE(SUM(${customerBillLine.netAmount}) FILTER (WHERE ${OTHER_CHARGE}), 0)::numeric(18,2)::text`,
       adjustments: sql<string>`COALESCE(SUM(${customerBillLine.netAmount}) FILTER (WHERE ${customerBillLine.lineType} = 'adjustment'), 0)::numeric(18,2)::text`,
@@ -273,7 +258,6 @@ async function readLines(
     linesNetSum: sums?.linesNetSum ?? "0.00",
     grossTotal: sums?.grossTotal ?? "0.00",
     discountTotal: sums?.discountTotal ?? "0.00",
-    usageRatedTotal: sums?.usageRatedTotal ?? "0.00",
     otherChargesSubTotal: sums?.otherChargesSubTotal ?? "0.00",
     adjustments: sums?.adjustments ?? "0.00",
     summaryBlocksSum: sums?.summaryBlocksSum ?? "0.00",
@@ -303,6 +287,7 @@ async function readCapacitySummary(
       utilised: sql<string>`${utilised}::numeric(18,2)::text`,
       unutilised: sql<string>`${unutilised}::numeric(18,2)::text`,
       total: sql<string>`SUM(${l.netAmount})::numeric(18,2)::text`,
+      ratedTotal: sql<string>`COALESCE(SUM(${l.ratedAmount}), 0)::numeric(18,2)::text`,
       missingRated: sql<boolean>`bool_or(${l.ratedAmount} IS NULL)`,
       negativeUtilised: sql<boolean>`COALESCE(${utilised} < 0, false)`,
     })
@@ -466,8 +451,7 @@ async function readCustomer(
 export const invoiceRenderInputRepository = {
   // bm53-spec §Design D5 step 1 — the bill's three version stamps (all `null`
   // until bm54 stamps them at posting), read in the binder's own repeatable-
-  // read transaction BEFORE `read()`: resolution needs them, and the resolved
-  // structure decides whether `read()` includes the usage section. `null` when
+  // read transaction BEFORE `read()`: resolution needs them. `null` when
   // no bill exists for the run/account. bm62 D1 — `refInvDocumentId` tells the
   // CSV download whether the bill is posted (unposted → 404).
   async readBillStamps(
@@ -493,26 +477,14 @@ export const invoiceRenderInputRepository = {
     return row ?? null;
   },
 
-  // bm49-spec §Implementation §2 — `includeUsage` (D4) and `timezone` thread
-  // through to the usage read. When `includeUsage` is false the annex section
-  // is hidden, so the usage read AND the over-limit/reconcile checks are
-  // skipped and `usage` is `null` (a hidden annex must not park an account for
-  // a section it doesn't print). The usage read is delegated to
-  // `ratedLinesRepository` (its R9 home) so this file keeps no rating-schema
-  // reference; it runs under the same transaction the binder opened.
+  // bm71-spec §Implementation §2 — the capacity detail is always read (the
+  // `chargeDetails` section is mandatory; bm49's `includeUsage` flag is
+  // gone). The read is delegated to `ratedLinesRepository` so this file keeps
+  // no rating-schema reference; it runs under the same transaction the binder
+  // opened.
   async read(
     tx: Database,
-    {
-      runId,
-      banId,
-      timezone,
-      includeUsage,
-    }: {
-      runId: string;
-      banId: string;
-      timezone: string;
-      includeUsage: boolean;
-    },
+    { runId, banId }: { runId: string; banId: string },
   ): Promise<RawInvoiceRenderInput | null> {
     const header = await readBillHeader(tx, runId, banId);
     if (!header) return null;
@@ -524,7 +496,7 @@ export const invoiceRenderInputRepository = {
       taxItems,
       doc,
       customer,
-      usage,
+      capacityDetail,
     ] = await Promise.all([
       readLines(tx, header.customerBillId, header.periodPartition),
       readCapacitySummary(tx, header.customerBillId, header.periodPartition),
@@ -536,15 +508,14 @@ export const invoiceRenderInputRepository = {
       ),
       readDocument(tx, header.customerBillId, header.periodPartition),
       readCustomer(tx, header.refPartyRoleId),
-      includeUsage
-        ? ratedLinesRepository.listBilledUsageForInvoice(tx, {
-            runId,
-            banId,
-            attempt: header.attempt,
-            timezone,
-            limit: INVOICE_USAGE_ROW_LIMIT,
-          })
-        : Promise.resolve(null),
+      ratedLinesRepository.listCapacityDetailForInvoice(tx, {
+        runId,
+        banId,
+        attempt: header.attempt,
+        customerBillId: header.customerBillId,
+        periodPartition: header.periodPartition,
+        limit: INVOICE_USAGE_ROW_LIMIT,
+      }),
     ]);
 
     return {
@@ -562,7 +533,6 @@ export const invoiceRenderInputRepository = {
         linesNetSum: lineData.linesNetSum,
         grossTotal: lineData.grossTotal,
         discountTotal: lineData.discountTotal,
-        usageRatedTotal: lineData.usageRatedTotal,
         otherChargesSubTotal: lineData.otherChargesSubTotal,
         adjustments: lineData.adjustments,
         summaryBlocksSum: lineData.summaryBlocksSum,
@@ -572,9 +542,9 @@ export const invoiceRenderInputRepository = {
       serviceTypes,
       otherCharges,
       taxItems,
+      capacityDetail,
       document: doc,
       customer,
-      usage,
     };
   },
 };

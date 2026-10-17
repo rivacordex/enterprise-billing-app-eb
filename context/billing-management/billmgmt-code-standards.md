@@ -922,8 +922,8 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - Validator: `validation/billing/template-family-id.schema.ts`, matching `^BTF\d+$` (general §6.18: shape, not a fixed digit count; `BTF` is not on the always-8-digit list).
 4. **Structure unions shrink (D56).** In `types/billing.ts`:
    - `InvoiceSectionKey` = `'billTo' | 'identification' | 'amountDue' | 'chargeSummary' | 'taxSummary' | 'payment' | 'chargeDetails'`. `usageAnnex` and `notes` are removed.
-   - `InvoiceOptionalSectionKey` = `'payment'`.
-   - `InvoiceColumnKey` is deleted; the new layout has no admin column toggles.
+   - `InvoiceOptionalSectionKey` = `'payment'`. _(bm71, built: `usageAnnex` is gone and the union is `'payment' | 'notes'` until bm72 removes `notes`; the structure stores only these optional keys, so a mandatory section key is now refused as `VALIDATION_ERROR` by the strict schema.)_
+   - `InvoiceColumnKey` is deleted; the new layout has no admin column toggles. _(Built (bm71).)_
    - The "Other charges" block and the Total charges / Adjustments / Tax / Grand Total rows render inside `chargeSummary`.
    - The per-type detail pages and the Total Amount page render inside `chargeDetails`.
 5. **The `structure` schema changes with them** (`validation/billing/invoice-template-structure.schema.ts`, `.strict()`):
@@ -942,7 +942,7 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - `columns` is `{}`;
    - `fixedColumns` is `["Polygon Start Date", "Polygon Name", "Capacity (Mbps)", "Rate/Mbps (MYR)", "Utilised Capacity Charges (MYR)"]`.
 
-   `generate.ts` parses the manifest with this schema instead of passing `usageGrouping` through.
+   `generate.ts` parses the manifest with this schema instead of passing `usageGrouping` through. _(Built (bm71): `sections` is a string-keyed record checked for the exact key set, so the parsed keys keep the manifest's page order; `pageSetup` reuses `layoutPageSetupSchema`.)_
 7. **The bind input gains a typed capacity shape and drops `usage`.** In `InvoiceRenderInput`, `usage` (`InvoiceUsageSection`) is replaced by:
    ```ts
    serviceTypes: Array<{
@@ -1060,6 +1060,8 @@ Rules below name their unit (bm64–bm73) where it matters. **Numbering:** "item
    - reads with `LIMIT 10001` to detect the over-limit case.
 
    Missing-field detection returns a flag column; the binder throws (General rule 7).
+
+   **Built (bm71):** `listCapacityDetailForInvoice`. The polygon expression is `nullif(substring(udr_key FROM 'polygon_id=([^|]*)'), '')` (rm26: `name=value` joined by `|`, value untouched; an empty value counts as missing), `resource_ok` is the rm25 shape regex, and the D21 region label is a SQL `CASE`. It counts first (`count(*)` over the same scope and joins, D37) instead of reading `LIMIT 10001`. Sub Totals and per-type totals come from `GROUPING SETS ((offering_id, region_label), (offering_id))`. The rate is read as `udr_usage_rate::numeric(18,2)::text`: the layout prints it with `money` (spec Open question 2: `price` prints 4 decimals below RM1), and `money` keeps a string's own scale. Proven by `tests/db/invoice-capacity-detail.integration.test.ts`.
 7. **Amounts come from `invoice-render-input.ts` in SQL.** Per capacity type: `SUM(gross_amount - rated_amount)` (Unutilised) and `SUM(net_amount) - SUM(gross_amount - rated_amount)` (Utilised). The per-type reconciliation compares Σ detail `udr_rated_price` to Σ `rated_amount` as `numeric`, never as floats.
 8. **The flow edit (bm68). Built (bm68):**
    - remove the SQL from `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml`, the only copy with executable SQL (the flow bm38 promoted);
@@ -1143,14 +1145,14 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
     - The family-scoped indexes refuse a second non-default ACTIVE or DRAFT in one family.
     - Exactly one default family exists.
 62. **[CRITICAL] Amounts (Inv #55).** At the anchors 800 / 1,000 / 2,000 / 0 Mbps, Utilised + Unutilised = `net_amount` per type, and Σ per-polygon = `rated_amount`. At 2,000, Total Amount = `150000.00` while the detail Sub Totals sum to `200000.00` (asserted). A `capacity_rate_matching` OFF fixture forcing Utilised < 0 parks with `INVOICE_NEGATIVE_UTILISED`. **Built (bm70) for page 1:** `tests/db/invoice-capacity-summary.integration.test.ts` runs the four anchors through the extracted aggregation SQL and `invoiceRenderInputRepository.read` (Utilised + Unutilised = `net_amount` per type; Σ blocks + Other charges + Adjustments = `subtotal`; 2,000 → Utilised `150000.00`), a mixed bill with an Other charges row, and a SQL-inserted `discount_amount > rated_amount` line → `INVOICE_NEGATIVE_UTILISED`. The per-polygon assertions (Σ per-polygon = `rated_amount`, Total Amount vs detail Sub Totals) come with bm71/bm72.
-63. **[CRITICAL] Detail query (Inv #56).**
+63. **[CRITICAL] Detail query (Inv #56).** Built (bm71): `tests/db/invoice-capacity-detail.integration.test.ts` (all six groups of cases, on the extracted aggregation SQL with rating-shaped rows), with the binder half in `tests/services/billing/invoice-template/bind.test.ts`.
     - One row per polygon per type, and the same polygon under two types.
     - Ordering follows D21, and the label rule gives `STATE - DISTRICT`, one part, or "Unassigned region".
     - `BILL_NOTUSED` rows are excluded.
     - At 10,001 rows the account fails `INVOICE_USAGE_OVER_LIMIT`.
     - A per-type mismatch fails `INVOICE_RECONCILIATION_FAILED`.
     - A missing `polygon_id=` segment or a NULL `udr_resource` fails `INVOICE_POLYGON_DATA_MISSING` on both draft and final.
-64. **Layout structure (v1).** A structural golden on a ~900-polygon fixture checks:
+64. **Layout structure (v1).** Detail half built (bm71): `tests/services/billing/invoice-golden.test.ts` ("layout v1 detail pages"), plus the ~900-polygon `RUN_CHROMIUM_E2E` render with no network request. A structural golden on a ~900-polygon fixture checks:
     - each type starts a new page;
     - each group table's `<thead>` holds the label and the column header;
     - no "(continued)" text;
@@ -1185,10 +1187,10 @@ The authz matrix (`tests/guardrails/invoice-settings-authz-matrix.test.ts`) gain
 | Part 2 Data rule 4 | `post-run.ts` resolves the versions inside the posting transaction (`resolveVersionsForPosting`). | `stampPosted` copies the BAN's run stamps plus the family (Data rule 4). |
 | Part 2 permission row "Draft PRO-FORMA preview" | Renders with the current ACTIVE versions. | Renders with the run stamps (Next.js rule 4). |
 | Guardrail 46 | "A new draft preview uses v3 + profile v2" after activation. | A draft in an **already-started** run keeps its captured version; only a new run or a rerun picks up v3 (items 58, 59). |
-| Guardrail 48 | 128 generator cases (3 sections × 4 columns). | 2 cases (item 67). |
-| Guardrail 49 | Manifest ↔ the old unions. | Item 67. |
+| Guardrail 48 | 128 generator cases (3 sections × 4 columns). | 2 cases (item 67). bm71 (built) shrank it to 4 (payment × notes) in `generate.test.ts`; bm72 takes it to 2. |
+| Guardrail 49 | Manifest ↔ the old unions. | Item 67. bm71 (built): the manifest parses with `layout-manifest.schema.ts` (`generate.test.ts`, "the layout manifest schema"); a `usageAnnex` section or a column key is rejected. |
 | Guardrail 53 | Activation makes n+1 ACTIVE and n RETIRED. | n is RETIRED only if it is non-default; the default version stays ACTIVE (architecture P7). |
-| Guardrail 54 | "Keeps each line group on one page." | Item 64. |
+| Guardrail 54 | "Keeps each line group on one page." | Item 64. The detail half is built (bm71): State-District groups may split, rows never do, the group `thead` repeats (`invoice-golden.test.ts`). |
 | Part 2 General rule 11 | "No new money compute. The binder groups and labels stored line amounts." | New derived figures are allowed **in SQL only**, under design decisions D22/D28/D30/D47 (General rule 6). |
 | Part 1 Data rule (appendix snapshot) and guardrail 41 | The appendix is snapshotted at `aggregation` and rendered. | Not written (Data rule 8); the detail comes from the live query (Data rule 6). |
 

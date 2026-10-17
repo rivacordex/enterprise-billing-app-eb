@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // bm47-spec §Implementation §5, D1 / bm53-spec §Design D5 — `buildInvoiceHtml`'s
 // own orchestration: one repeatable-read, read-only transaction for every DB
 // read (stamps → resolve → raw input → profile rows), blob I/O only after it
-// closes, the mode-appropriate not-found error, and `includeUsage` derived
-// from the resolved structure. bm66-spec §3 — a draft renders the BAN's
+// closes, and the mode-appropriate not-found error. bm71 — the capacity detail
+// is always read (no `includeUsage` flag). bm66-spec §3 — a draft renders the BAN's
 // captured run stamps (`run` mode); a missing or EXCLUDED run row is not
 // found; an override renders the named family's live versions.
 
@@ -115,20 +115,6 @@ function resolved(overrides: Partial<ResolvedTemplate> = {}): ResolvedTemplate {
     ...overrides,
   };
 }
-
-const HIDDEN_USAGE_GENERATED = {
-  ...SEEDED_GENERATED_ROW,
-  billTemplateVersionId: "BTV00000009",
-  versionNo: 2,
-  isDefault: false,
-  structure: {
-    ...SEEDED_GENERATED_ROW.structure!,
-    sections: {
-      ...SEEDED_GENERATED_ROW.structure!.sections,
-      usageAnnex: false,
-    },
-  },
-};
 
 const RAW = { bill: {} } as unknown as RawInvoiceRenderInput;
 const PROFILE = { configVersion: 3 } as unknown as InvoiceProfile;
@@ -399,26 +385,16 @@ describe("buildInvoiceHtml — G15 A and the binder context (D5)", () => {
     expect(result.resolved.generated.billTemplateVersionId).toBe("BTV00000002");
   });
 
-  it("the default (all-on) structure includes the usage read", async () => {
+  it("bm71 — always reads the capacity detail: no includeUsage flag on the read or the bind", async () => {
     await buildInvoiceHtml({
       runId: "BRN00000042",
       banId: "BAN00000001",
       mode: "draft",
     });
-    expect(mockRead.mock.calls[0]![1]).toMatchObject({ includeUsage: true });
-    expect(mockBind.mock.calls[0]![1]).toMatchObject({ includeUsage: true });
-  });
-
-  it("a hidden-usage structure fixture skips the usage read (bm49 D4)", async () => {
-    mockResolve.mockResolvedValue(
-      resolved({ generated: HIDDEN_USAGE_GENERATED }),
-    );
-    await buildInvoiceHtml({
+    expect(mockRead.mock.calls[0]![1]).toEqual({
       runId: "BRN00000042",
       banId: "BAN00000001",
-      mode: "draft",
     });
-    expect(mockRead.mock.calls[0]![1]).toMatchObject({ includeUsage: false });
-    expect(mockBind.mock.calls[0]![1]).toMatchObject({ includeUsage: false });
+    expect(mockBind.mock.calls[0]![1]).not.toHaveProperty("includeUsage");
   });
 });

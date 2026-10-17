@@ -1,7 +1,8 @@
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billingAccount } from "@/db/schema/billing/accounts";
+import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productInventory } from "@/db/schema/inventory";
 import { udrRated } from "@/db/schema/rating/udr-rated";
 import type { ExceptionKind } from "@/types/billing";
@@ -62,145 +63,206 @@ function orphanConditions() {
 // onto `customer_bill_line` content (the bill's own charge record, Inv #3) and
 // now lives in `customer-bill-line.repository.ts`'s `computeChargeChecksum`.
 //
-// bm49-spec §Implementation §1 — the R9 home of the invoice usage-annex read
-// (workflow rules §6.1: this file stays READ-ONLY; the usage-row read lands
-// here as a read). `listBilledUsageForInvoice` reads geo straight off the
-// claimed `udr_rated` rows (`state`/`district`, bm48) with no ratecard query.
-// It is built with the Drizzle query builder + schema-object `sql` fragments
-// (never a literal schema-qualified table reference), so the
+// bm71-spec §Design "The detail query" (D5/D8/D21/D37, Inv #56) — the home of
+// the invoice's per-polygon capacity detail read (workflow rules §6.10: this
+// file stays READ-ONLY; the read lands here as a read, replacing bm49's
+// usage-annex read). It is built from `sql` fragments over the Drizzle schema
+// objects (never a literal schema-qualified table reference), so the
 // `billing-rating-write-boundary` guardrail's write-surface scan stays clean —
-// every statement here is a plain `SELECT`.
+// every statement here is a plain `SELECT`. `app_runtime` holds SELECT on
+// `inventory.product_inventory` and `billing.customer_bill_line`.
 
-// bm49-spec §Design D5 — one billed usage row (all `::text`). `cell` is the RAN
-// polygon (`polygon_id=` from `udr_key`) or the raw key; `startDate` is the
-// row's calendar day in the app timezone. `state`/`district` drive grouping.
-export interface BilledUsageRowRaw {
-  startDate: string;
-  cell: string;
-  udrType: string;
-  quantity: string;
-  unit: string;
+// One detail row (all `::text`). `polygonId` is the raw `polygon_id=` value of
+// `udr_key` (rm26: `name=value` joined by `|`, the value untouched), `null`
+// when the segment is absent or empty; `resourceOk` is false when
+// `udr_resource` is NULL or not the rm25 `state|district|YYYY-MM-DD` shape. The
+// binder fails `INVOICE_POLYGON_DATA_MISSING` on either (D29), so no other
+// field of such a row is ever printed. `label` is the type of service's label
+// (the offering's capacity-line description, as `readCapacitySummary` prints
+// it — one value per offering); `regionLabel` the D21 State-District label.
+export interface CapacityDetailRowRaw {
+  udrId: string;
+  offeringId: string;
+  label: string;
+  regionLabel: string;
+  polygonStartDate: string;
+  polygonId: string | null;
+  resourceOk: boolean;
+  capacityMbps: string;
+  ratePerMbps: string;
   amount: string;
-  state: string | null;
-  district: string | null;
 }
 
-// bm49-spec §Design D5 — one GROUPING SETS row: a district subtotal
-// (`gState=0,gDistrict=0`), a state subtotal (`gState=0,gDistrict=1`) or the
-// grand total (`gState=1`). `GROUPING()` disambiguates a real `state IS NULL`
-// ("Unassigned region") row from a rolled-up grouping-set row. `quantity`/
-// `unit` are set only when the group has a single unit (volume is never summed
-// across units). `amount` is `null` only for the grand total over zero rows.
-export interface BilledUsageGroupRaw {
-  state: string | null;
-  district: string | null;
-  gState: number;
-  gDistrict: number;
-  rowCount: number;
-  amount: string | null;
-  quantity: string | null;
-  unit: string | null;
+// One GROUPING SETS row: a State-District Sub Total (`gRegion = 0`) or a
+// type's detail total (`gRegion = 1`, `regionLabel` null), each the SQL Σ of
+// the group's `numeric(18,2)` row amounts.
+export interface CapacityDetailGroupRaw {
+  offeringId: string;
+  regionLabel: string | null;
+  gRegion: number;
+  amount: string;
 }
 
-export type BilledUsageResult =
+export type CapacityDetailResult =
   | { overLimit: true; rowCount: number }
   | {
       overLimit: false;
-      rows: BilledUsageRowRaw[];
-      groups: BilledUsageGroupRaw[];
+      rows: CapacityDetailRowRaw[];
+      groups: CapacityDetailGroupRaw[];
     };
 
-export const ratedLinesRepository = {
-  // bm49-spec §Implementation §1 / §Design D2/D3/D5 — count, then rows, then the
-  // GROUPING SETS aggregate, all under the bm47 repeatable-read read-only
-  // transaction the binder opens (so rows and lines share one snapshot). D3:
-  // `count(*)` first; over `limit` it returns `{ overLimit: true }` and selects
-  // nothing (no truncation, no partial annex — the bind fails loud and the
-  // account parks). D2 scope: every billed `udr_rated` row for the account on
-  // the attempt the bill was built on (`billrun_attempt` makes a rerun's
-  // released-and-reclaimed rows unambiguous, Inv #19), both `BILL_DRAFT`
-  // (draft) and `BILL_APPROVED` (approved); `BILL_NOTUSED` is excluded (Inv #22,
-  // not billed). Covers rows feeding capacity lines AND ordinary USAGE lines.
-  async listBilledUsageForInvoice(
-    db: Database,
-    {
-      runId,
-      banId,
-      attempt,
-      timezone,
-      limit,
-    }: {
-      runId: string;
-      banId: string;
-      attempt: number;
-      timezone: string;
-      limit: number;
-    },
-  ): Promise<BilledUsageResult> {
-    const scope = and(
-      eq(udrRated.billrunRefId, runId),
-      eq(udrRated.billrunBanId, banId),
-      eq(udrRated.billrunAttempt, attempt),
-      inArray(udrRated.status, ["BILL_DRAFT", "BILL_APPROVED"]),
-    );
+export interface CapacityDetailScope {
+  runId: string;
+  banId: string;
+  attempt: number;
+  customerBillId: string;
+  periodPartition: string;
+}
 
-    // D3 — bound first.
-    const [countRow] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(udrRated)
-      .where(scope);
-    const rowCount = countRow?.count ?? 0;
+// The bm49 scope — the attempt the bill was built on (Inv #19), `BILL_DRAFT`
+// and `BILL_APPROVED` only (`BILL_NOTUSED` is never billed, Inv #22) — plus
+// the type attachment (D5, OI-10): the row's subscription → its product
+// offering → the bill's capacity line with that offering, unit and `udr_type`.
+// A claimed row with no matching capacity line belongs to an ordinary USAGE
+// line (an "Other charges" item, bm70) and is not itemised.
+function capacityDetailSource(p: CapacityDetailScope): SQL {
+  return sql`
+    FROM ${udrRated}
+    JOIN ${productInventory}
+      ON ${productInventory.productInventoryId} = ${udrRated.udrSubscriptionRefId}
+    JOIN ${customerBillLine}
+      ON  ${customerBillLine.refCustomerBillId} = ${p.customerBillId}
+      AND ${customerBillLine.periodPartition} = ${p.periodPartition}
+      AND ${customerBillLine.lineType} = 'charge'
+      AND ${customerBillLine.groupingKey} LIKE '%:CAPACITY:%'
+      AND ${customerBillLine.refProductOfferingId} = ${productInventory.productOfferingId}
+      AND ${customerBillLine.unit} = ${udrRated.udrUsageUnit}
+      AND ${customerBillLine.udrType} = ${udrRated.udrType}
+    WHERE ${udrRated.billrunRefId} = ${p.runId}
+      AND ${udrRated.billrunBanId} = ${p.banId}
+      AND ${udrRated.billrunAttempt} = ${p.attempt}
+      AND ${udrRated.status} IN ('BILL_DRAFT', 'BILL_APPROVED')`;
+}
+
+// The polygon fields, computed once per row in a CTE (Performance note), then
+// the D21 region label. `udr_usage_rate` is never NULL on a billed capacity
+// row: the flow's `CAPACITY_RATE_MISMATCH` guard counts a NULL rate as a
+// mismatch and fails the account before it is processed (bm42 G2, Inv #30).
+// The rate is read at 2 decimals: the layout prints it with `money`, which
+// keeps a string's own scale, and D21 prints MYR with 2 decimals (spec Open
+// question 2; `price` prints 4 below RM1).
+//
+// `polygon_id` is matched as a whole key name — at the start of the key or
+// right after a `|` — so a key column whose name merely ends in `polygon_id`
+// (rm26 sorts key names, so e.g. `cell_polygon_id=` would come first) is
+// never read as the polygon. The type `label` is taken per offering (a window
+// over the offering's rows, `readCapacitySummary`'s `COALESCE(min(description),
+// offering_id)`), not per line: an offering with two capacity lines whose
+// descriptions differ must still sort as one contiguous block, or the binder
+// (which groups adjacent rows) would split one State-District group in two.
+function capacityDetailCte(p: CapacityDetailScope): SQL {
+  return sql`
+    WITH d AS (
+      SELECT ${udrRated.udrId} AS udr_id,
+             ${customerBillLine.refProductOfferingId} AS offering_id,
+             ${customerBillLine.description} AS line_description,
+             nullif(substring(${udrRated.udrKey} FROM '(?:^|\\|)polygon_id=([^|]*)'), '') AS polygon_id,
+             COALESCE(${udrRated.udrResource} ~ '^[^|]*\\|[^|]*\\|\\d{4}-\\d{2}-\\d{2}$', false) AS resource_ok,
+             nullif(btrim(split_part(${udrRated.udrResource}, '|', 1)), '') AS state,
+             nullif(btrim(split_part(${udrRated.udrResource}, '|', 2)), '') AS district,
+             split_part(${udrRated.udrResource}, '|', 3) AS polygon_start_date,
+             ${udrRated.udrUsageQuantity}::text AS capacity_mbps,
+             ${udrRated.udrUsageRate}::numeric(18,2)::text AS rate_per_mbps,
+             ${udrRated.udrRatedPrice}::numeric(18,2) AS amount
+      ${capacityDetailSource(p)}
+    ),
+    r AS (
+      SELECT d.*,
+             COALESCE(min(line_description) OVER (PARTITION BY offering_id), offering_id) AS label,
+             CASE WHEN state IS NOT NULL AND district IS NOT NULL THEN state || ' - ' || district
+                  WHEN state IS NOT NULL THEN state
+                  WHEN district IS NOT NULL THEN district
+                  ELSE 'Unassigned region'
+             END AS region_label,
+             (state IS NULL AND district IS NULL) AS unassigned
+      FROM d
+    )`;
+}
+
+export const ratedLinesRepository = {
+  // bm71-spec §Implementation §1 — count, then rows, then the GROUPING SETS
+  // aggregate, all under the repeatable-read read-only transaction the binder
+  // opens (so rows and lines share one snapshot). D37 (the bm49 pattern):
+  // `count(*)` first over the same scope and joins; over `limit` it returns
+  // `{ overLimit: true }` and selects nothing (no truncation, no partial
+  // detail — the bind fails loud and the account parks). Rows are ordered by
+  // type label, then region label with "Unassigned region" last, then polygon
+  // id, with `udr_id` as the tiebreak (D21). Sub Totals and per-type totals are
+  // summed in SQL, never in JS (General rule 6).
+  async listCapacityDetailForInvoice(
+    db: Database,
+    { limit, ...scope }: CapacityDetailScope & { limit: number },
+  ): Promise<CapacityDetailResult> {
+    const [countRow] = await db.execute<{ row_count: number }>(sql`
+      SELECT count(*)::int AS row_count ${capacityDetailSource(scope)}`);
+    const rowCount = countRow?.row_count ?? 0;
     if (rowCount > limit) {
       return { overLimit: true, rowCount };
     }
 
-    // D5 — rows (deterministic order: state/district NULLS LAST, then the
-    // record's start and `udr_id` PK tiebreak).
-    const rows = await db
-      .select({
-        startDate: sql<string>`(${udrRated.startDatetime} AT TIME ZONE ${timezone})::date::text`,
-        cell: sql<string>`COALESCE(substring(${udrRated.udrKey} FROM 'polygon_id=([^|]*)'), ${udrRated.udrKey})`,
-        udrType: udrRated.udrType,
-        quantity: sql<string>`${udrRated.udrUsageQuantity}::text`,
-        unit: udrRated.udrUsageUnit,
-        amount: sql<string>`${udrRated.udrRatedPrice}::text`,
-        state: udrRated.state,
-        district: udrRated.district,
-      })
-      .from(udrRated)
-      .where(scope)
-      .orderBy(
-        sql`${udrRated.state} ASC NULLS LAST`,
-        sql`${udrRated.district} ASC NULLS LAST`,
-        udrRated.startDatetime,
-        udrRated.udrId,
-      );
+    const rows = await db.execute<{
+      udr_id: string;
+      offering_id: string;
+      label: string;
+      region_label: string;
+      polygon_start_date: string;
+      polygon_id: string | null;
+      resource_ok: boolean;
+      capacity_mbps: string;
+      rate_per_mbps: string;
+      amount: string;
+    }>(sql`
+      ${capacityDetailCte(scope)}
+      SELECT udr_id, offering_id, label, region_label, polygon_start_date,
+             polygon_id, resource_ok, capacity_mbps, rate_per_mbps,
+             amount::text AS amount
+      FROM r
+      ORDER BY label, offering_id, unassigned, region_label, polygon_id, udr_id`);
 
-    // D5 — subtotals computed IN SQL (never JS): per-district, per-state and
-    // grand total in one GROUPING SETS statement. A quantity subtotal prints
-    // only when the group has a single unit.
-    const groups = await db
-      .select({
-        state: udrRated.state,
-        district: udrRated.district,
-        gState: sql<number>`grouping(${udrRated.state})::int`,
-        gDistrict: sql<number>`grouping(${udrRated.district})::int`,
-        rowCount: sql<number>`count(*)::int`,
-        amount: sql<string | null>`sum(${udrRated.udrRatedPrice})::text`,
-        quantity: sql<
-          string | null
-        >`CASE WHEN count(DISTINCT ${udrRated.udrUsageUnit}) = 1 THEN sum(${udrRated.udrUsageQuantity})::text END`,
-        unit: sql<
-          string | null
-        >`CASE WHEN count(DISTINCT ${udrRated.udrUsageUnit}) = 1 THEN min(${udrRated.udrUsageUnit}) END`,
-      })
-      .from(udrRated)
-      .where(scope)
-      .groupBy(
-        sql`GROUPING SETS ((${udrRated.state}, ${udrRated.district}), (${udrRated.state}), ())`,
-      );
+    const groups = await db.execute<{
+      offering_id: string;
+      region_label: string | null;
+      g_region: number;
+      amount: string;
+    }>(sql`
+      ${capacityDetailCte(scope)}
+      SELECT offering_id, region_label,
+             grouping(region_label)::int AS g_region,
+             sum(amount)::numeric(18,2)::text AS amount
+      FROM r
+      GROUP BY GROUPING SETS ((offering_id, region_label), (offering_id))`);
 
-    return { overLimit: false, rows, groups };
+    return {
+      overLimit: false,
+      rows: rows.map((r) => ({
+        udrId: r.udr_id,
+        offeringId: r.offering_id,
+        label: r.label,
+        regionLabel: r.region_label,
+        polygonStartDate: r.polygon_start_date,
+        polygonId: r.polygon_id,
+        resourceOk: r.resource_ok,
+        capacityMbps: r.capacity_mbps,
+        ratePerMbps: r.rate_per_mbps,
+        amount: r.amount,
+      })),
+      groups: groups.map((g) => ({
+        offeringId: g.offering_id,
+        regionLabel: g.region_label,
+        gRegion: g.g_region,
+        amount: g.amount,
+      })),
+    };
   },
 
   async listClaimedForAccount(

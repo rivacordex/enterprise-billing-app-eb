@@ -12,6 +12,7 @@ import {
   getAppLocale,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
+import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 import {
   FinalInvoiceNotFoundError,
   InvoiceRenderError,
@@ -148,8 +149,8 @@ export async function getPostedInvoiceCsv({
   const timezone = getAppTimezone();
 
   // One repeatable-read, read-only snapshot, as `buildInvoiceHtml` does; no
-  // blob I/O inside it. The CSV carries charge lines only, so the usage annex
-  // is never read (`includeUsage: false`), and the logo is never inlined.
+  // blob I/O inside it. The CSV carries charge lines only, and the logo is
+  // never inlined.
   const read = await db.transaction(
     async (tx) => {
       const stamps = await invoiceRenderInputRepository.readBillStamps(tx, {
@@ -166,8 +167,6 @@ export async function getPostedInvoiceCsv({
       const raw = await invoiceRenderInputRepository.read(tx, {
         runId,
         banId,
-        timezone,
-        includeUsage: false,
       });
       if (!raw) return null;
 
@@ -193,7 +192,6 @@ export async function getPostedInvoiceCsv({
     isDraft: false,
     locale,
     timezone,
-    includeUsage: false,
     profile,
     template: {
       layoutCode: resolved.layout.layoutCode ?? "",
@@ -202,22 +200,39 @@ export async function getPostedInvoiceCsv({
     },
   });
 
-  // Inv #21 — `line_no` order across the source groups.
-  const rows = input.lineGroups
-    .flatMap((g) => g.lines)
-    .sort((a, b) => a.lineNo - b.lineNo);
-  // One row per `customer_bill_line` (guardrail 55): the bound groups must
-  // carry every line the bill has. A line the binder did not group (e.g. a
-  // charge source missing from its group order) is a code defect → 500.
-  if (rows.length !== raw.lines.length) {
-    throw new Error(
-      `customer_bill ${raw.bill.customerBillId}: ${raw.lines.length} lines but ${rows.length} bound for the CSV`,
-    );
-  }
+  // One row per `customer_bill_line` (guardrail 55), in `line_no` order
+  // (Inv #21; the read orders by it). bm71 retired the PDF line table the CSV
+  // used to read its rows from; the rows are built here, unchanged.
+  const rows = raw.lines.map((line) => toCsvLine(line, raw.bill));
 
   return {
     // A posted bind always carries its `billing.document` number.
     invoiceNumber: input.invoice.number!,
     csv: buildInvoiceCsv(map, input, rows),
+  };
+}
+
+// One bill line as a CSV row: the description falls back to the offering id,
+// the quantity to the RECURRING snapshot, the period is the bill's.
+function toCsvLine(
+  line: RawInvoiceRenderInput["lines"][number],
+  bill: RawInvoiceRenderInput["bill"],
+): InvoiceLine {
+  return {
+    lineNo: line.lineNo,
+    source: line.source,
+    description: line.description ?? line.refProductOfferingId,
+    productOfferingId: line.refProductOfferingId,
+    udrType: line.udrType,
+    udrCount: line.udrCount,
+    periodStart: bill.billingPeriodStart,
+    periodEnd: bill.billingPeriodEnd,
+    quantity: line.quantity ?? line.snapshotQuantity,
+    unit: line.unit,
+    unitPrice: line.snapshotUnitPrice,
+    grossAmount: line.grossAmount,
+    discountAmount: line.discountAmount,
+    netAmount: line.netAmount,
+    discountNote: line.discountRate ? `Discount ${line.discountRate}%` : null,
   };
 }

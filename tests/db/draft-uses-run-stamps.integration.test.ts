@@ -43,7 +43,7 @@ import {
 } from "@/tests/db/helpers/invoice-render-fixtures";
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
+import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
 
 const databaseUrl = process.env.DATABASE_URL;
 const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
@@ -91,10 +91,12 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       // …then activate a new Standard version that hides Notes & terms.
       const structure = {
         sections: {
-          ...Object.fromEntries(INVOICE_SECTION_KEYS.map((k) => [k, true])),
+          ...Object.fromEntries(
+            INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
+          ),
           notes: false,
         },
-        columns: Object.fromEntries(INVOICE_COLUMN_KEYS.map((k) => [k, true])),
+        columns: {},
       } as Parameters<typeof saveTemplateDraft>[0]["structure"];
       const saved = await saveTemplateDraft(
         { structure, expectedDraftToken: null },

@@ -1,6 +1,8 @@
 import type postgresjs from "postgres";
 
 import { persistablePricingComponentSchema } from "@/validation/product/pricing-component.schema";
+import { buildRawUdrKey } from "@/validation/rating/udr-key";
+import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 
 // Shared capacity-pricing fixture scaffolding (usage_rate/capacity_commitment/
 // capacity_motivation product_offering_price rows + the matching
@@ -274,6 +276,10 @@ export function createCapacityPricingFixtures(
   // FROM, never slip past three-valued SQL logic). `udrKey` defaults to a
   // per-call sequence key; a multi-polygon case (bm68's trace suite) passes a
   // caller-supplied polygon key instead, so it's an override, not a fixed shape.
+  // bm71 — rows are rating-shaped (rating Phase H): the default key is the
+  // rm26 raw key with a per-call `polygon_id=`, and `udr_resource` is the rm25
+  // `state|district|date` label (override either; `null` resource for the
+  // D29 missing-data cases). The aggregation SQL reads neither.
   async function insertCapacityVolumeRow(args: {
     subRef: string;
     runId: string;
@@ -285,11 +291,29 @@ export function createCapacityPricingFixtures(
     unit?: string;
     udrType?: string;
     udrKey?: string;
+    udrResource?: string | null;
   }): Promise<void> {
     seq += 1;
     const unit = args.unit ?? "EA";
     const udrType = args.udrType ?? "RAN_USAGE";
-    const udrKey = args.udrKey ?? `_${lower}-key-${seq}`;
+    const udrKey =
+      args.udrKey ??
+      buildRawUdrKey(
+        {
+          commercial_unit: `CU-${labelPrefix}`,
+          mno_public_id: `MNO-${labelPrefix}`,
+          polygon_id: `PCU-${labelPrefix}-${seq}`,
+        },
+        ["commercial_unit", "mno_public_id", "polygon_id"],
+      );
+    const udrResource =
+      args.udrResource === undefined
+        ? formatUdrResource({
+            state: "Selangor",
+            district: "Petaling",
+            polygonStartDate: "2025-01-01",
+          })
+        : args.udrResource;
     const rateType = args.rate !== null ? "PER_UNIT" : "FLAT";
     const ratedPrice =
       args.rate !== null
@@ -304,7 +328,7 @@ export function createCapacityPricingFixtures(
          udr_rated_price_raw, udr_rounding_mode, udr_currency, udr_ref_batch_id,
          udr_source_file, rating_engine_version, rating_flow_revision,
          billrun_ref_id, billrun_ban_id, billrun_attempt, billrun_checksum,
-         upsert_datetime)
+         upsert_datetime, udr_resource)
       VALUES
         (rating.period_of(${claimAt}::timestamptz), ${udrType},
          ${claimAt}::timestamptz, ${claimAt}::timestamptz, 'BILL_DRAFT',
@@ -312,7 +336,8 @@ export function createCapacityPricingFixtures(
          ${unit}, ${rateType}, ${args.rate}, ${args.priceRef}, ${ratedPrice},
          ${ratedPrice}, 'HALF_UP', 'MYR', ${`_${labelPrefix}_BATCH`},
          ${`_${labelPrefix}`}, ${`_${labelPrefix}`}, 0,
-         ${args.runId}, ${args.ban}, ${args.attempt}, ${`${lower}-claim`}, now())
+         ${args.runId}, ${args.ban}, ${args.attempt}, ${`${lower}-claim`}, now(),
+         ${udrResource})
     `;
   }
 

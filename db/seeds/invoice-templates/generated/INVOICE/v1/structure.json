@@ -1,13 +1,7 @@
 {
+  "columns": {},
   "sections": {
-    "payment": true,
-    "usageAnnex": true,
-    "notes": true
-  },
-  "columns": {
-    "showServicePeriod": true,
-    "showDiscountColumn": true,
-    "showProductId": true,
-    "showUdrCount": true
+    "notes": true,
+    "payment": true
   }
 }

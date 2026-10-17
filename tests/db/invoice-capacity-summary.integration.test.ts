@@ -47,7 +47,6 @@ const BIND_CTX = {
   isDraft: true,
   locale: "en-MY",
   timezone: TZ,
-  includeUsage: false,
   template: SEEDED_TEMPLATE_STAMP,
   profile: null,
 };
@@ -142,8 +141,6 @@ describe.skipIf(!databaseUrl)(
       const raw = await invoiceRenderInputRepository.read(db, {
         runId,
         banId: ban,
-        timezone: TZ,
-        includeUsage: false,
       });
       expect(raw).not.toBeNull();
       return raw!;

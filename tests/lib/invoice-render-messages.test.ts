@@ -46,11 +46,18 @@ describe("describeInvoiceRenderCode", () => {
     );
   });
 
+  it("bm71 — INVOICE_POLYGON_DATA_MISSING has the UI context §10d copy", () => {
+    expect(describeInvoiceRenderCode("INVOICE_POLYGON_DATA_MISSING")).toBe(
+      "Polygon data is missing for a billed record (no polygon ID or region). Fix the rated data and rerun this account.",
+    );
+  });
+
   it("returns a non-empty message for every code, the generic text for the rest", () => {
     const specific = new Set([
       "INVOICE_RECONCILIATION_FAILED",
       "INVOICE_USAGE_OVER_LIMIT",
       "INVOICE_NEGATIVE_UTILISED",
+      "INVOICE_POLYGON_DATA_MISSING",
     ]);
     for (const code of INVOICE_ERROR_CODES) {
       const message = describeInvoiceRenderCode(code);

@@ -115,37 +115,30 @@ padding: 8px 12px; break-inside: avoid;
 }
 .grand-total { font-size: 14pt; line-height: 18pt; font-weight: 600; color: var(--inv-ink); }
 .amount-due-note { margin: 4px 0 0; font-size: 8pt; line-height: 11pt; color: var(--inv-muted); }
+/* Detail pages (§10d, D17/D48): each type of service starts a new page
+(break-before on .detail-type) under its name and "Access Seeker". One
+table per State-District group; its thead (group label + column header)
+repeats on every page the group spans. Rows never split; groups may. No
+continuation label, no pre-pagination (D48). */
 table { width: 100%; border-collapse: collapse; }
 thead { display: table-header-group; }
-th { text-align: left; font-weight: 600; border-bottom: 1px solid var(--inv-line); padding: 4px 4px; }
-td { padding: 4px 4px; border-bottom: 1px solid var(--inv-line); }
+tr { break-inside: avoid; }
+th { text-align: left; font-weight: 600; border-bottom: 1px solid var(--inv-line); padding: 3px 4px; }
+td { padding: 3px 4px; border-bottom: 1px solid var(--inv-line); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.line-group { break-inside: avoid; }
-tr.subtotal td { font-weight: 600; border-top: 1px solid var(--inv-line); }
-/* bm49 §Design D7 / ui-context §10c — the Usage annex: 8pt/11pt table,
-tabular-nums on numeric columns, state/district headers as overline
-labels, subtotal rows semibold with a top rule. `thead` repeats (global
-rule); `tbody.state` is deliberately NOT `break-inside: avoid` (a state
-can span pages); only the subtotal row pairs use `break-before: avoid`. */
-.annex { margin-bottom: 16px; }
-.annex h3 {
+.detail-heading { font-size: 12pt; line-height: 16pt; font-weight: 600; color: var(--inv-brand); margin: 0 0 2px; }
+.access-seeker { margin: 0 0 10px; color: var(--inv-body); }
+.detail-group {
+break-inside: auto; margin-bottom: 12px;
+font-size: 8pt; line-height: 11pt; font-variant-numeric: tabular-nums;
+}
+.detail-group tr.group-label th {
 font-size: 9pt; line-height: 12pt; font-weight: 600; text-transform: uppercase;
-letter-spacing: 0.06em; color: var(--inv-muted); margin: 0 0 6px;
+letter-spacing: 0.06em; color: var(--inv-ink); background: var(--inv-soft);
 }
-table.usage { font-size: 8pt; line-height: 11pt; }
-table.usage th, table.usage td { padding: 3px 4px; border-bottom: 1px solid var(--inv-line); }
-table.usage td.n, table.usage th.n { text-align: right; font-variant-numeric: tabular-nums; }
-table.usage tr.state-h td {
-font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
-color: var(--inv-muted); border-bottom: none; padding-top: 8px;
-}
-table.usage tr.district-h td {
-font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em;
-color: var(--inv-muted); border-bottom: none;
-}
-table.usage tr.subtotal td { font-weight: 600; border-top: 1px solid var(--inv-line); border-bottom: none; break-before: avoid; }
-table.usage tfoot td { font-weight: 600; border-top: 1px solid var(--inv-line); }
-.annex .sub { margin-top: 8px; font-size: 8pt; color: var(--inv-muted); }
+.detail-group tr.col-head th { font-size: 8pt; line-height: 11pt; font-weight: 600; color: var(--inv-muted); }
+.detail-group tr.subtotal td { font-weight: 600; border-top: 1px solid var(--inv-line); border-bottom: none; }
+.no-usage { color: var(--inv-muted); }
 </style>
 </head>
 <body>
@@ -194,8 +187,8 @@ Country-01
 <section class="sec sec--chargeSummary sec--full">
 <div class="svc-block">
 <p class="svc-heading">5G RAN Target Capacity</p>
-<div class="svc-row"><span>Utilised capacity charges</span><span class="amt">RM 80,000.00</span></div>
-<div class="svc-row"><span>Unutilised capacity charges</span><span class="amt">RM 20,000.00</span></div>
+<div class="svc-row"><span>Utilised capacity charges</span><span class="amt">RM 0.00</span></div>
+<div class="svc-row"><span>Unutilised capacity charges</span><span class="amt">RM 100,000.00</span></div>
 <div class="svc-row svc-total"><span>Total</span><span class="amt">RM 100,000.00</span></div>
 </div>
 <div class="svc-block">
@@ -231,112 +224,35 @@ Country-01
 <div>remittance@sampletelco.example</div>
 </section>
 <section class="sec sec--chargeDetails sec--full">
-<p class="section-heading">Charge details</p>
-<table>
+<section class="detail-type" style="break-before: page">
+<h2 class="detail-heading">5G RAN Target Capacity</h2>
+<p class="access-seeker">Access Seeker: Acme Communications Sdn Bhd</p>
+<p class="no-usage">No utilised capacity this period.</p>
+</section>
+<section class="detail-type" style="break-before: page">
+<h2 class="detail-heading">RAN Usage — Target Capacity</h2>
+<p class="access-seeker">Access Seeker: Acme Communications Sdn Bhd</p>
+<table class="detail-group">
 <thead>
-<tr>
-<th>#</th>
-<th>Description</th>
-<th>Offering ID</th>
-<th>UDR type / count</th>
-<th>Service period</th>
-<th class="num">Quantity</th>
-<th class="num">Unit price</th>
-<th class="num">Gross</th>
-<th class="num">Discount</th>
-<th class="num">Net amount</th>
-</tr>
+<tr class="group-label"><th scope="colgroup" colspan="5">State-01 - District-01</th></tr>
+<tr class="col-head"><th scope="col">Polygon Start Date</th><th scope="col">Polygon Name</th><th scope="col" class="num">Capacity (Mbps)</th><th scope="col" class="num">Rate/Mbps (MYR)</th><th scope="col" class="num">Utilised Capacity Charges (MYR)</th></tr>
 </thead>
-<tbody class="line-group">
-<tr><td colspan="10"><strong>Recurring charges</strong></td></tr>
-<tr>
-<td class="mono">1</td>
-<td>Enterprise Fibre 1Gbps</td>
-<td class="mono">POF00000010</td>
-<td>—</td>
-<td>01/08/2026 – 31/08/2026</td>
-<td class="num">1 EA</td>
-<td class="num">10,000.00</td>
-<td class="num">RM 10,000.00</td>
-<td class="num">–</td>
-<td class="num">RM 10,000.00</td>
-</tr>
-<tr class="subtotal">
-<td colspan="7">Subtotal — Recurring charges</td>
-<td class="num">RM 10,000.00</td>
-<td class="num">–</td>
-<td class="num">RM 10,000.00</td>
-</tr>
+<tbody>
+<tr><td>01/03/2025</td><td class="mono">POLY-001</td><td class="num">700</td><td class="num">RM 100.00</td><td class="num">RM 70,000.00</td></tr><tr><td>15/04/2025</td><td class="mono">POLY-002</td><td class="num">599.50</td><td class="num">RM 100.00</td><td class="num">RM 59,950.00</td></tr>
+<tr class="subtotal"><td colspan="4">Sub Total</td><td class="num">RM 129,950.00</td></tr>
 </tbody>
-<tbody class="line-group">
-<tr><td colspan="10"><strong>Usage charges</strong></td></tr>
-<tr>
-<td class="mono">2</td>
-<td>5G RAN Target Capacity</td>
-<td class="mono">POF00000021</td>
-<td>RAN_USAGE × 1</td>
-<td>01/08/2026 – 31/08/2026</td>
-<td class="num">800 EA</td>
-<td class="num">—</td>
-<td class="num">RM 100,000.00</td>
-<td class="num">–</td>
-<td class="num">RM 100,000.00</td>
-</tr>
-<tr>
-<td class="mono">3</td>
-<td>RAN Usage — Target Capacity — Discount 25.000000%</td>
-<td class="mono">POF00000020</td>
-<td>RAN_USAGE × 4</td>
-<td>01/08/2026 – 31/08/2026</td>
-<td class="num">2,000 EA</td>
-<td class="num">—</td>
-<td class="num">RM 200,000.00</td>
-<td class="num">RM 50,000.00</td>
-<td class="num">RM 150,000.00</td>
-</tr>
-<tr class="subtotal">
-<td colspan="7">Subtotal — Usage charges</td>
-<td class="num">RM 300,000.00</td>
-<td class="num">RM 50,000.00</td>
-<td class="num">RM 250,000.00</td>
-</tr>
+</table>
+<table class="detail-group">
+<thead>
+<tr class="group-label"><th scope="colgroup" colspan="5">Unassigned region</th></tr>
+<tr class="col-head"><th scope="col">Polygon Start Date</th><th scope="col">Polygon Name</th><th scope="col" class="num">Capacity (Mbps)</th><th scope="col" class="num">Rate/Mbps (MYR)</th><th scope="col" class="num">Utilised Capacity Charges (MYR)</th></tr>
+</thead>
+<tbody>
+<tr><td>01/05/2025</td><td class="mono">POLY-003</td><td class="num">700.50</td><td class="num">RM 100.00</td><td class="num">RM 70,050.00</td></tr>
+<tr class="subtotal"><td colspan="4">Sub Total</td><td class="num">RM 70,050.00</td></tr>
 </tbody>
 </table>
 </section>
-<section class="annex">
-<h3>Usage annex — billed usage by region</h3>
-<table class="usage">
-<thead><tr><th>Date</th><th>Cell</th><th>UDR type</th><th class="n">Quantity</th><th>Unit</th><th class="n">Rated amount</th></tr></thead>
-<tbody class="state">
-<tr class="state-h"><td colspan="6">State-02</td></tr>
-<tr class="district-h"><td colspan="6">District-03</td></tr>
-<tr><td>03/08/2026</td><td class="mono">POLY-001</td><td>RAN_USAGE</td><td class="n">300</td><td>EA</td><td class="n">RM 30,000.00</td></tr>
-<tr class="subtotal"><td colspan="3">Subtotal — District-03 · 1 records</td><td class="n">300</td><td>EA</td><td class="n">RM 30,000.00</td></tr>
-<tr class="district-h"><td colspan="6">District-02</td></tr>
-<tr><td>05/08/2026</td><td class="mono">POLY-002</td><td>RAN_USAGE</td><td class="n">200</td><td>EA</td><td class="n">RM 20,000.00</td></tr>
-<tr class="subtotal"><td colspan="3">Subtotal — District-02 · 1 records</td><td class="n">200</td><td>EA</td><td class="n">RM 20,000.00</td></tr>
-<tr class="subtotal state-total"><td colspan="3">Total — State-02 · 2 records</td><td class="n">500</td><td>EA</td><td class="n">RM 50,000.00</td></tr>
-</tbody>
-<tbody class="state">
-<tr class="state-h"><td colspan="6">State-01</td></tr>
-<tr class="district-h"><td colspan="6">District-01</td></tr>
-<tr><td>07/08/2026</td><td class="mono">POLY-003</td><td>RAN_USAGE</td><td class="n">700</td><td>EA</td><td class="n">RM 70,000.00</td></tr>
-<tr class="subtotal"><td colspan="3">Subtotal — District-01 · 1 records</td><td class="n">700</td><td>EA</td><td class="n">RM 70,000.00</td></tr>
-<tr class="district-h"><td colspan="6">District-09</td></tr>
-<tr><td>09/08/2026</td><td class="mono">POLY-004</td><td>RAN_USAGE</td><td class="n">250</td><td>EA</td><td class="n">RM 25,000.00</td></tr>
-<tr class="subtotal"><td colspan="3">Subtotal — District-09 · 1 records</td><td class="n">250</td><td>EA</td><td class="n">RM 25,000.00</td></tr>
-<tr class="subtotal state-total"><td colspan="3">Total — State-01 · 2 records</td><td class="n">950</td><td>EA</td><td class="n">RM 95,000.00</td></tr>
-</tbody>
-<tbody class="state">
-<tr class="state-h"><td colspan="6">Unassigned region</td></tr>
-<tr class="district-h"><td colspan="6">—</td></tr>
-<tr><td>11/08/2026</td><td class="mono">POLY-UNMAPPED</td><td>RAN_USAGE</td><td class="n">50</td><td>EA</td><td class="n">RM 5,000.00</td></tr>
-<tr class="subtotal"><td colspan="3">Subtotal — — · 1 records</td><td class="n">50</td><td>EA</td><td class="n">RM 5,000.00</td></tr>
-<tr class="subtotal state-total"><td colspan="3">Total — Unassigned region · 1 records</td><td class="n">50</td><td>EA</td><td class="n">RM 5,000.00</td></tr>
-</tbody>
-<tfoot><tr><td colspan="5">Total rated usage · 5 records</td><td class="n">RM 150,000.00</td></tr></tfoot>
-</table>
-<p class="sub">Usage is billed on the charge lines above; this annex itemises the rated records and carries no separate charge.</p>
 </section>
 <section class="sec sec--notes sec--full">
 <p class="section-heading">Notes &amp; terms</p>

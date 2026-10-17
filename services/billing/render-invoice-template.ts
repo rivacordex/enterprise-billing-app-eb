@@ -153,19 +153,11 @@ export async function buildInvoiceHtml({
       }
       const resolved = await resolveTemplate(tx, renderMode);
 
-      // bm49 D4 — a hidden Usage annex skips the usage read (and its
-      // over-limit/reconcile checks). The resolved row's `structure` is the
-      // same value `loadGenerated` returns as `tpl.structure` (D2 step 7);
-      // it is read here because the usage read happens in this snapshot.
-      const includeUsage =
-        (override?.structure ?? resolved.generated.structure)?.sections
-          .usageAnnex !== false;
-
+      // bm71 — the capacity detail is always read (`chargeDetails` is
+      // mandatory), in this snapshot.
       const raw = await invoiceRenderInputRepository.read(tx, {
         runId,
         banId,
-        timezone,
-        includeUsage,
       });
       if (!raw) return null;
 
@@ -175,7 +167,7 @@ export async function buildInvoiceHtml({
           ? null
           : await readInvoiceProfile(tx, resolved.profileVersion);
 
-      return { resolved, includeUsage, raw, profileRead };
+      return { resolved, raw, profileRead };
     },
     { isolationLevel: "repeatable read", accessMode: "read only" },
   );
@@ -184,7 +176,7 @@ export async function buildInvoiceHtml({
       ? new FinalInvoiceNotFoundError(runId, banId)
       : new DraftInvoiceNotFoundError(runId, banId);
   }
-  const { resolved, includeUsage, raw, profileRead } = read;
+  const { resolved, raw, profileRead } = read;
 
   // D5 step 4 — blob I/O after the transaction has closed: the verified,
   // compiled template (memoized per version) and the verified logo bytes.
@@ -200,7 +192,6 @@ export async function buildInvoiceHtml({
     isDraft,
     locale,
     timezone,
-    includeUsage,
     profile,
     template: {
       layoutCode: resolved.layout.layoutCode ?? "",

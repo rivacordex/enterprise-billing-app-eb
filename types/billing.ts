@@ -656,9 +656,11 @@ export interface InvoicePayment {
   remittanceEmail: string;
 }
 
-// D3 — one bound charge-detail row. `periodStart`/`periodEnd` come from the
-// bill header (lines carry no own period in v1); `unitPrice` is the RECURRING
-// price snapshot (NULL for USAGE, rendered "—" by the `price` helper).
+// bm62 D2 — one CSV row (one `customer_bill_line`), the `line.*` scope of the
+// CSV column map. `periodStart`/`periodEnd` come from the bill header (lines
+// carry no own period); `unitPrice` is the RECURRING price snapshot (NULL for
+// USAGE). bm71 retired the PDF line table that first used this shape; the CSV
+// builds it straight from the bill's lines.
 export interface InvoiceLine {
   lineNo: number;
   source: ChargeSource;
@@ -677,81 +679,12 @@ export interface InvoiceLine {
   discountNote: string | null;
 }
 
-// D3 — one charge-source group, in the fixed order RECURRING → USAGE → OCC. A
-// group with no lines is omitted. `grossTotal`/`discountTotal`/`subtotal` are
-// SQL `SUM`s per source, never a JS reduce (code-standards General rule 11).
-export interface InvoiceLineGroup {
-  name: string;
-  source: ChargeSource;
-  grossTotal: string;
-  discountTotal: string;
-  subtotal: string;
-  lines: InvoiceLine[];
-}
-
-// bm49-spec §Design D5 — one billed `udr_rated` row in the usage annex. Every
-// field is `::text` from the repository (code-standards §2.3); `cell` is the
-// RAN polygon for a RAN cell, else the raw `udr_key`; `startDate` is the
-// row's `start_datetime` as a calendar date in the app timezone. `state`/
-// `district` live on the group, not the row. (Was bm45's per-polygon
-// `{polygon, volume, unit, amount}` snapshot row — replaced by the itemised
-// record, R9.)
-export interface InvoiceUsageRow {
-  startDate: string;
-  cell: string;
-  udrType: string;
-  quantity: string;
-  unit: string;
-  amount: string;
-}
-
-// bm49-spec §Design D5 — a district group carries its own SQL-summed subtotal
-// (`amount`), record count, and a single-unit quantity subtotal
-// (`quantity`/`unit` are `null` when the group mixes units — volume is never
-// summed across units, the bm45 rule kept). `label` is `district ?? '—'`.
-export interface InvoiceUsageDistrictGroup {
-  district: string | null;
-  label: string;
-  rowCount: number;
-  amount: string;
-  quantity: string | null;
-  unit: string | null;
-  rows: InvoiceUsageRow[];
-}
-
-// bm49-spec §Design D5 — a state group with its per-state SQL subtotal and its
-// districts. `label` is `state ?? 'Unassigned region'`; the Unassigned group
-// (rows rated before bm48, or whose card row had no labels) sorts last.
-export interface InvoiceUsageStateGroup {
-  state: string | null;
-  label: string;
-  rowCount: number;
-  amount: string;
-  quantity: string | null;
-  unit: string | null;
-  districts: InvoiceUsageDistrictGroup[];
-}
-
-// bm49-spec §Design D5 — the usage annex: every billed `udr_rated` row for the
-// account grouped state → district, with per-district/per-state subtotals (all
-// summed in SQL) and a grand total (`totalAmount`) that equals the bill's rated
-// usage. `totalQuantity`/`unit` are the single-unit grand totals (`null` when
-// units are mixed). `null` on the bound input when the bill has no billed usage
-// rows, or when the annex section is hidden (`includeUsage: false`, D4).
-// (Replaces bm47's snapshot-shaped section.)
-export interface InvoiceUsageSection {
-  rowCount: number;
-  totalAmount: string;
-  totalQuantity: string | null;
-  unit: string | null;
-  states: InvoiceUsageStateGroup[];
-}
-
 // bm49-spec §Design D3 — the billed-usage-row bound, a named constant equal to
 // bm45's former appendix bound (the load-tested bound; that flow guard was
-// removed by bm68, so this is now the only per-account row bound). Over this, the
-// bind fails `INVOICE_USAGE_OVER_LIMIT` and the account parks; the repository
-// selects no rows. Changing it is a spec change, not a config value.
+// removed by bm68, so this is now the only per-account row bound). bm71 (D37)
+// applies it to the capacity detail rows. Over this, the bind fails
+// `INVOICE_USAGE_OVER_LIMIT` and the account parks; the repository selects no
+// rows. Changing it is a spec change, not a config value.
 export const INVOICE_USAGE_ROW_LIMIT = 10_000;
 
 // D9 — read from the layout manifest, validated by
@@ -767,13 +700,38 @@ export interface LayoutPageSetup {
 // bm70-spec §Design (D28/D30/D47) — one page-1 type-of-service block. Every
 // figure is a SQL `numeric(18,2)::text`: Unutilised = Σ(gross − rated),
 // Utilised = Σ net − Unutilised, Total = Σ net. Utilised is never negative
-// once bound (`INVOICE_NEGATIVE_UTILISED`, Inv #55).
+// once bound (`INVOICE_NEGATIVE_UTILISED`, Inv #55). bm71 adds `regions`, the
+// type's detail pages (`[]` when no usage row was claimed, e.g. 0 Mbps).
 export interface InvoiceServiceType {
   offeringId: string;
   label: string;
   utilised: string;
   unutilised: string;
   total: string;
+  regions: InvoiceCapacityRegion[];
+}
+
+// bm71-spec §Design "Bind shape" (D21, Inv #56) — one State-District group of
+// a type's detail pages. `label` is `STATE - DISTRICT`, the one part present,
+// or "Unassigned region" (sorted last); `subTotal` is the SQL Σ of the group's
+// row amounts.
+export interface InvoiceCapacityRegion {
+  label: string;
+  rows: InvoiceCapacityDetailRow[];
+  subTotal: string;
+}
+
+// bm71 — one detail row: one polygon of one type of service.
+// `polygonStartDate` is the ISO date from `udr_resource` (printed by `date`);
+// `polygonName` the `polygon_id=` value of `udr_key`; `capacityMbps` the
+// monthly peak; `ratePerMbps` the base rate stamped at rating; `amount` the
+// row's `numeric(18,2)` rated price.
+export interface InvoiceCapacityDetailRow {
+  polygonStartDate: string;
+  polygonName: string;
+  capacityMbps: string;
+  ratePerMbps: string;
+  amount: string;
 }
 
 // D4 — keys mirror the placeholder roots in
@@ -841,12 +799,10 @@ export interface InvoiceRenderInput {
   // layout as `{{taxRateLabel}}%`.
   taxRateLabel: string;
   // bm70 (D28/D60) — one Utilised / Unutilised / Total block per capacity type
-  // of service, sorted by label. bm71 adds `regions` to each element.
+  // of service, sorted by label; bm71 — each with its detail `regions`.
   serviceTypes: InvoiceServiceType[];
   // bm70 (D60) — the non-capacity charge lines; the block is absent when empty.
   otherCharges: { description: string; amount: string }[];
-  lineGroups: InvoiceLineGroup[];
-  usage: InvoiceUsageSection | null;
   isDraft: boolean;
   locale: string;
   timezone: string;
@@ -872,8 +828,9 @@ export type TemplateVersionStatus = ConfigStatus;
 export const BILL_ASSET_KINDS = ["logo"] as const;
 export type BillAssetKind = (typeof BILL_ASSET_KINDS)[number];
 
-// The nine invoice sections an admin's structure toggles (header/pageTwoHeader/
-// footer are fixed layout parts, not section keys; accountSummary dropped, R2).
+// The invoice's section keys (header/pageTwoHeader/footer are fixed layout
+// parts, not section keys; accountSummary dropped, R2; bm71 (D56) retired
+// `usageAnnex` with the old annex).
 export const INVOICE_SECTION_KEYS = [
   "billTo",
   "identification",
@@ -882,17 +839,13 @@ export const INVOICE_SECTION_KEYS = [
   "taxSummary",
   "payment",
   "chargeDetails",
-  "usageAnnex",
   "notes",
 ] as const;
 export type InvoiceSectionKey = (typeof INVOICE_SECTION_KEYS)[number];
 
-// The three sections an admin may hide; every other section is mandatory-on.
-export const INVOICE_OPTIONAL_SECTION_KEYS = [
-  "payment",
-  "usageAnnex",
-  "notes",
-] as const;
+// The sections an admin may hide; every other section is mandatory-on and is
+// not stored in the structure (bm71, D56). `notes` goes in bm72.
+export const INVOICE_OPTIONAL_SECTION_KEYS = ["payment", "notes"] as const;
 export type InvoiceOptionalSectionKey =
   (typeof INVOICE_OPTIONAL_SECTION_KEYS)[number];
 
@@ -907,21 +860,14 @@ export const MANDATORY_SECTION_KEYS = INVOICE_SECTION_KEYS.filter(
     !(INVOICE_OPTIONAL_SECTION_KEYS as readonly string[]).includes(key),
 );
 
-// The four hideable charge-detail columns (no Tax column, R6).
-export const INVOICE_COLUMN_KEYS = [
-  "showServicePeriod",
-  "showDiscountColumn",
-  "showProductId",
-  "showUdrCount",
-] as const;
-export type InvoiceColumnKey = (typeof INVOICE_COLUMN_KEYS)[number];
-
 // The admin structure stored in `bill_template_version.structure` (the bm55 Zod
 // schema validates it; typed here so bm50's Drizzle mirror and repositories
-// have a shape before that schema exists).
+// have a shape before that schema exists). bm71 (D56): only the optional
+// sections are stored, and `columns` is always `{}` (the layout has no admin
+// column toggles).
 export interface InvoiceTemplateStructure {
-  sections: Record<InvoiceSectionKey, boolean>;
-  columns: Record<InvoiceColumnKey, boolean>;
+  sections: Record<InvoiceOptionalSectionKey, boolean>;
+  columns: Record<string, never>;
 }
 
 // bm64-spec §Design — one `bill_template_family` row (general §2.7). The
@@ -1072,6 +1018,11 @@ export const INVOICE_ERROR_CODES = [
   // bind fails loud and the account parks, it never prints;
   // `detail: { banId, offeringId, utilised }`.
   "INVOICE_NEGATIVE_UTILISED",
+  // bm71-spec §Design "Guards" (D29/D54, Inv #56) — a billed capacity row has
+  // no `polygon_id=` segment in `udr_key`, or a NULL or malformed
+  // `udr_resource`; the bind fails loud (nothing is printed blank) and the
+  // account parks; `detail: { banId, udrRatedId, missing }`.
+  "INVOICE_POLYGON_DATA_MISSING",
 ] as const;
 export type InvoiceErrorCode = (typeof INVOICE_ERROR_CODES)[number];
 

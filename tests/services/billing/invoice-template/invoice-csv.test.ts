@@ -345,9 +345,33 @@ describe("getPostedInvoiceCsv (D1)", () => {
     profileVersion: 4,
     csv: CSV_ROW,
   };
+  // The read returns the lines in `line_no` order (Inv #21).
+  function rawLine(
+    lineNo: number,
+    overrides: Partial<RawInvoiceRenderInput["lines"][number]> = {},
+  ): RawInvoiceRenderInput["lines"][number] {
+    return {
+      lineNo,
+      source: "RECURRING",
+      lineType: "charge",
+      description: `Line ${lineNo}`,
+      refProductOfferingId: "PO00000001",
+      udrType: null,
+      udrCount: null,
+      quantity: "1.000000",
+      unit: "MONTH",
+      snapshotQuantity: "1.000000",
+      snapshotUnitPrice: "1234.50",
+      grossAmount: "1234.50",
+      discountAmount: "0.00",
+      netAmount: "1234.50",
+      discountRate: null,
+      ...overrides,
+    };
+  }
   const RAW = {
-    bill: {},
-    lines: [{}, {}, {}],
+    bill: { billingPeriodStart: "2026-09-01", billingPeriodEnd: "2026-09-30" },
+    lines: [rawLine(1), rawLine(2), rawLine(3)],
   } as unknown as RawInvoiceRenderInput;
   const PROFILE = { configVersion: 4 } as unknown as InvoiceProfile;
 
@@ -364,28 +388,7 @@ describe("getPostedInvoiceCsv (D1)", () => {
     mockRead.mockResolvedValue(RAW);
     mockReadProfile.mockResolvedValue({ profile: PROFILE, logo: null });
     mockLoadCsvMap.mockResolvedValue(MINI_MAP);
-    mockBind.mockReturnValue(
-      input({
-        lineGroups: [
-          {
-            name: "Usage charges",
-            source: "USAGE",
-            grossTotal: "0",
-            discountTotal: "0",
-            subtotal: "0",
-            lines: [line(3), line(1)],
-          },
-          {
-            name: "Other charges",
-            source: "OCC",
-            grossTotal: "0",
-            discountTotal: "0",
-            subtotal: "0",
-            lines: [line(2)],
-          },
-        ],
-      }),
-    );
+    mockBind.mockReturnValue(input());
   });
 
   it("404s (FinalInvoiceNotFoundError) an unknown or unposted bill before resolving anything", async () => {
@@ -408,7 +411,7 @@ describe("getPostedInvoiceCsv (D1)", () => {
     expect(mockLoadCsvMap).not.toHaveBeenCalled();
   });
 
-  it("resolves the bill's stamps, loads the stamped CSV map, and binds final without usage", async () => {
+  it("resolves the bill's stamps, loads the stamped CSV map, and binds final", async () => {
     const result = await getPostedInvoiceCsv({
       runId: "BRN00000001",
       banId: "BAN00000001",
@@ -425,19 +428,18 @@ describe("getPostedInvoiceCsv (D1)", () => {
     );
     expect(mockRead).toHaveBeenCalledWith(
       {},
-      expect.objectContaining({ includeUsage: false }),
+      { runId: "BRN00000001", banId: "BAN00000001" },
     );
     expect(mockLoadCsvMap).toHaveBeenCalledWith(CSV_ROW);
     expect(mockBind).toHaveBeenCalledWith(
       RAW,
       expect.objectContaining({
         isDraft: false,
-        includeUsage: false,
         profile: PROFILE,
       }),
     );
     expect(result.invoiceNumber).toBe("INV00000007");
-    // line_no order across the groups (Inv #21).
+    // One row per bill line, in the read's `line_no` order (Inv #21).
     expect(
       records(result.csv)
         .slice(1)
@@ -455,14 +457,39 @@ describe("getPostedInvoiceCsv (D1)", () => {
     );
   });
 
-  it("fails (500, not 409) when the bound groups drop a bill line", async () => {
+  it("builds each row from its bill line as the retired line table did (bm71: no CSV change)", async () => {
+    mockLoadCsvMap.mockResolvedValue(SEEDED_MAP);
     mockRead.mockResolvedValue({
-      bill: { customerBillId: "CBL1" },
-      lines: [{}, {}, {}, {}],
+      ...RAW,
+      lines: [
+        rawLine(1, {
+          source: "USAGE",
+          description: null,
+          udrType: "RAN_USAGE",
+          udrCount: 4,
+          quantity: null,
+          snapshotQuantity: "2.000000",
+          snapshotUnitPrice: null,
+          discountAmount: "10.00",
+          netAmount: "1224.50",
+          discountRate: "0.810049",
+        }),
+      ],
     } as unknown as RawInvoiceRenderInput);
-    await expect(
-      getPostedInvoiceCsv({ runId: "BRN00000001", banId: "BAN00000001" }),
-    ).rejects.toThrow(/4 lines but 3 bound/);
+    const result = await getPostedInvoiceCsv({
+      runId: "BRN00000001",
+      banId: "BAN00000001",
+    });
+    const header = records(result.csv)[0]!.split(",");
+    const row = records(result.csv)[1]!.split(",");
+    const cell = (h: string): string => row[header.indexOf(h)]!;
+    const byPath = new Map(SEEDED_MAP.columns.map((c) => [c.path, c.header]));
+    expect(cell(byPath.get("line.description")!)).toBe("PO00000001");
+    expect(cell(byPath.get("line.quantity")!)).toBe("2.000000");
+    expect(cell(byPath.get("line.unitPrice")!)).toBe("");
+    expect(cell(byPath.get("line.udrCount")!)).toBe("4");
+    expect(cell(byPath.get("line.periodStart")!)).toBe("2026-09-01");
+    expect(cell(byPath.get("line.netAmount")!)).toBe("1224.50");
   });
 
   it("propagates the binder's reconciliation failure (no file)", async () => {

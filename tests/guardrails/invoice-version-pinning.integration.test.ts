@@ -22,7 +22,7 @@ import {
   setupInvoiceRenderFixtures,
   type InvoiceRenderFixtures,
 } from "@/tests/db/helpers/invoice-render-fixtures";
-import { INVOICE_COLUMN_KEYS, INVOICE_SECTION_KEYS } from "@/types/billing";
+import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
 import type { SaveProfileDraftInput } from "@/validation/billing/invoice-profile.schema";
 
 // Guardrail 46 (bm54-spec §Tests; code-standards Part 2 §9 item 46, Inv #41–
@@ -125,10 +125,12 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     ): Promise<{ versionId: string; versionNo: number }> {
       const structure = {
         sections: {
-          ...Object.fromEntries(INVOICE_SECTION_KEYS.map((k) => [k, true])),
+          ...Object.fromEntries(
+            INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
+          ),
           notes: notesShown,
         },
-        columns: Object.fromEntries(INVOICE_COLUMN_KEYS.map((k) => [k, true])),
+        columns: {},
       } as Parameters<typeof saveTemplateDraft>[0]["structure"];
       const saved = await saveTemplateDraft(
         { structure, expectedDraftToken: null },
