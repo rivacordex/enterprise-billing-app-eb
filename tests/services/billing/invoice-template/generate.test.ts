@@ -27,7 +27,10 @@ import {
   PROBE_RENDER_INPUT,
   loadLayout,
 } from "@/services/billing/invoice-template/load";
-import { SEEDED_LAYOUT_ROW } from "@/tests/helpers/seeded-invoice-template";
+import {
+  SEEDED_FOOTNOTE,
+  SEEDED_LAYOUT_ROW,
+} from "@/tests/helpers/seeded-invoice-template";
 import {
   INVOICE_OPTIONAL_SECTION_KEYS,
   InvoiceRenderError,
@@ -54,10 +57,7 @@ beforeAll(async () => {
   layout = layoutFilesFromVerified(await loadLayout(SEEDED_LAYOUT_ROW));
 });
 
-const FOOTNOTE = [
-  "Calculations are done in Mbps",
-  "This invoice is billed exclusive of Universal Service Provision (USP)",
-];
+const FOOTNOTE = [...SEEDED_FOOTNOTE];
 
 function structureFor(mask: number): InvoiceTemplateStructure {
   return {

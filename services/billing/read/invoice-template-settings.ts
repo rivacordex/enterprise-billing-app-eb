@@ -16,6 +16,7 @@ import {
   type TemplateVersionHistoryRow,
   type TemplateVersionStatus,
 } from "@/types/billing";
+import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-template-structure.schema";
 
 // bm55-spec §Design D4/D5 — the Invoice template page's and the file
 // download's reads. Pages and the route handler reach the DB only through
@@ -38,6 +39,8 @@ export interface InvoiceTemplatePageData {
   // never see it on the edit tab; it is still listed in `history`).
   draft: TemplateDraftInfo | null;
   shownStructure: InvoiceTemplateStructure;
+  // `current`'s structure, parsed (the Activate dialog diffs against it).
+  currentStructure: InvoiceTemplateStructure;
   history: TemplateVersionHistoryRow[];
   // bm66-spec §4 — the Standard (default) family the live preview renders.
   standardFamilyId: string;
@@ -64,6 +67,29 @@ function toHistoryRow(
     changeNote: row.changeNote,
     usedByCount: row.usedByCount,
   };
+}
+
+// A generated version's stored structure, parsed with the editor's schema. A
+// row that fails it was written before the schema changed (e.g. a database
+// migrated before bm72 rewrote the `0046` seed in place, so with no
+// `footnote`): a corrupted catalog that needs the bm64 reset, surfaced
+// through error.tsx rather than a TypeError in the form.
+function parseStoredStructure(
+  row: BillTemplateVersion,
+): InvoiceTemplateStructure {
+  const parsed = invoiceTemplateStructureSchema.safeParse(row.structure);
+  if (!parsed.success) {
+    throw new InvoiceRenderError(
+      "TEMPLATE_VERSION_NOT_FOUND",
+      `generated version ${row.billTemplateVersionId} has a structure the current schema refuses; reset the template catalog`,
+      {
+        reason: "STRUCTURE_INVALID",
+        versionId: row.billTemplateVersionId,
+        issues: parsed.error.issues.map((i) => i.path.join(".")),
+      },
+    );
+  }
+  return parsed.data;
 }
 
 // A version the page may show: a stored (non-DRAFT) generated version, or the
@@ -137,7 +163,13 @@ export async function getInvoiceTemplatePageData(
   }
 
   const defaultShown = draftRow ?? current;
-  const shown = isShowable(selected, canEdit) ? selected : defaultShown;
+  // A `?version=` from another family falls back too: the heading names the
+  // Standard family, and the history lists its versions only.
+  const shown =
+    isShowable(selected, canEdit) &&
+    selected.refBillTemplateFamilyId === familyId
+      ? selected
+      : defaultShown;
   const draft: TemplateDraftInfo | null = draftRow
     ? {
         billTemplateVersionId: draftRow.billTemplateVersionId,
@@ -162,8 +194,8 @@ export async function getInvoiceTemplatePageData(
     shown,
     defaultShown,
     draft,
-    // CHECK `btv_generated_has_layout` guarantees a generated row's structure.
-    shownStructure: shown.structure!,
+    shownStructure: parseStoredStructure(shown),
+    currentStructure: parseStoredStructure(current),
     history: generatedRows.map((r) => toHistoryRow(r, layoutLabels)),
     standardFamilyId: standardFamily.billTemplateFamilyId,
     standardFamilyName: standardFamily.name,

@@ -128,7 +128,9 @@ export function bind(
       subtotalExclTax: raw.bill.subtotal,
       taxTotal: raw.bill.taxTotal,
       // bm72 (D22, P10) — the last page's Total Amount = Σ per-type Utilised,
-      // summed in SQL; it is never the amount due.
+      // summed in SQL; it is never the amount due nor the bill total (v1 pins
+      // the name). A CSV column or layout wanting the invoice total reads
+      // `amountDue`.
       totalAmount: raw.bill.utilisedTotal,
       // Inv #50 — "current charges only"; no balance brought forward (R2).
       amountDue: raw.bill.totalAmount,

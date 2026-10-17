@@ -163,11 +163,12 @@ export default async function InvoiceTemplatePage({
 
       {tab === "edit" ? (
         <InvoiceStructureForm
-          // A fresh form (and preview) per shown version AND per draft token:
-          // after a save, or after "Reload" on a DRAFT_CONFLICT, the page
-          // re-renders with the newer token and the form must reload from it
-          // instead of keeping its stale local state.
-          key={`${shown.billTemplateVersionId}:${draft?.token ?? "none"}`}
+          // A fresh form (and preview) per version opened from the history.
+          // The working copy keeps one form across saves, activations and
+          // Reloads: it adopts a newer server draft itself, so the refresh
+          // after its own save never remounts it (which would close an
+          // Activate dialog opened meanwhile).
+          key={viewingOther ? shown.billTemplateVersionId : "working"}
           initialStructure={data.shownStructure}
           // While a working draft exists it is the only editable version, so
           // a save can never silently replace it with another version's
@@ -181,7 +182,7 @@ export default async function InvoiceTemplatePage({
           expectedDraftToken={draft?.token ?? null}
           draftVersionId={draft?.billTemplateVersionId ?? null}
           draftVersionNo={draft?.versionNo ?? null}
-          activeStructure={current.structure}
+          activeStructure={data.currentStructure}
           familyId={data.standardFamilyId}
           canPreviewBills={canPreviewBills}
           recentBills={canPreviewBills ? await listRecentPostedBills() : []}

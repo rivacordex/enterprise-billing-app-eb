@@ -39,6 +39,7 @@ import {
   MANDATORY_SECTION_KEYS,
   type InvoiceTemplateStructure,
 } from "@/types/billing";
+import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 
 const mockPreview = vi.mocked(previewInvoiceTemplateAction);
 const mockSave = vi.mocked(saveTemplateDraftAction);
@@ -48,10 +49,7 @@ const TOKEN = "2026-10-10T01:02:03.123456Z";
 const ALL_ON: InvoiceTemplateStructure = {
   sections: { payment: true },
   columns: {},
-  footnote: [
-    "Calculations are done in Mbps",
-    "This invoice is billed exclusive of Universal Service Provision (USP)",
-  ],
+  footnote: [...SEEDED_FOOTNOTE],
 };
 
 const BILLS = [
@@ -192,6 +190,40 @@ describe("InvoiceStructureForm — EDIT user", () => {
     await flushDebounce();
     expect(mockPreview).not.toHaveBeenCalled();
   });
+
+  it("a toggle or source change while a line is invalid previews the last valid structure, never sticking in loading", async () => {
+    renderForm();
+    await flushDebounce();
+    mockPreview.mockClear();
+    await typeLine(1, "   ");
+    fireEvent.click(screen.getByRole("switch", { name: "Outline" }));
+    expect(screen.getByTitle("Invoice preview").parentElement).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    await flushDebounce();
+    expect(mockPreview).toHaveBeenCalledTimes(1);
+    expect(mockPreview.mock.lastCall?.[0]).toMatchObject({
+      structure: ALL_ON,
+      outline: true,
+    });
+    expect(screen.getByTitle("Invoice preview").parentElement).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+  });
+
+  it("marks the preview busy as soon as a footnote line changes, and hides a stale error", async () => {
+    mockPreview.mockResolvedValueOnce({ ok: false, code: "PREVIEW_FAILED" });
+    renderForm();
+    await flushDebounce();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    await typeLine(2, "Billed inclusive of USP");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Rendering draft invoice…")).toBeInTheDocument();
+    await flushDebounce();
+    expect(screen.queryByText("Rendering draft invoice…")).toBeNull();
+  });
 });
 
 async function typeLine(line: number, value: string): Promise<void> {
@@ -249,6 +281,13 @@ describe("InvoiceStructureForm — Footnote (bm72)", () => {
     await typeLine(1, "x".repeat(201));
     const counter = screen.getByText("201/200");
     expect(counter.className).toContain("--color-danger-700");
+  });
+
+  it("counts a line as the schema does, without its surrounding spaces", async () => {
+    renderForm();
+    await typeLine(1, ` ${"x".repeat(200)}  `);
+    const counter = screen.getByText("200/200");
+    expect(counter.className).not.toContain("--color-danger-700");
   });
 
   it("shows the schema's message under the offending line", async () => {
@@ -343,6 +382,68 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
     );
   }
 
+  function formWith(
+    props: Partial<React.ComponentProps<typeof InvoiceStructureForm>>,
+  ): React.JSX.Element {
+    return (
+      <InvoiceStructureForm
+        initialStructure={ALL_ON}
+        editable
+        recentBills={BILLS}
+        canPreviewBills
+        familyId="BTF00000001"
+        {...DRAFT_PROPS}
+        {...props}
+      />
+    );
+  }
+
+  it("keeps an open dialog and its note when the page refreshes with the draft the form already holds", () => {
+    const { rerender } = render(formWith({}));
+    fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
+    fireEvent.change(screen.getByLabelText(/Change note/), {
+      target: { value: "typed before the refresh" },
+    });
+    rerender(formWith({ initialStructure: { ...ALL_ON } }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Change note/)).toHaveValue(
+      "typed before the refresh",
+    );
+  });
+
+  it("adopts a newer server draft (a Reload after DRAFT_CONFLICT): its structure, token and version", async () => {
+    const { rerender } = render(formWith({}));
+    await act(async () => {
+      rerender(
+        formWith({
+          expectedDraftToken: "2026-10-11T00:00:00.000000Z",
+          draftVersionNo: 3,
+          draftVersionId: "BTV00000005",
+          initialStructure: {
+            ...ALL_ON,
+            footnote: [ALL_ON.footnote[0]!, "Another admin's line"],
+          },
+        }),
+      );
+    });
+    expect(screen.getByLabelText("Line 2")).toHaveValue("Another admin's line");
+    expect(screen.getByRole("button", { name: "Activate v3" })).toBeEnabled();
+  });
+
+  it("drops the activated draft when the refreshed page has none", async () => {
+    const { rerender } = render(formWith({}));
+    await act(async () => {
+      rerender(
+        formWith({
+          expectedDraftToken: null,
+          draftVersionId: null,
+          draftVersionNo: null,
+        }),
+      );
+    });
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+  });
+
   it("is disabled with no saved draft and the form pristine", () => {
     renderForm();
     expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
@@ -429,7 +530,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       changeNote: "Show the usage annex",
     });
     expect(toast.success).toHaveBeenCalledWith("Template v2 activated");
-    // The action revalidates the layout and the form remounts on the new token.
+    // The action revalidates the layout; the form adopts the refreshed page.
     expect(refresh).not.toHaveBeenCalled();
   });
 

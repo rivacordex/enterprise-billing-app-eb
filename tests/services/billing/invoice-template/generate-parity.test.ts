@@ -24,6 +24,7 @@ import {
   loadLayout,
 } from "@/services/billing/invoice-template/load";
 import {
+  SEEDED_FOOTNOTE,
   SEEDED_GENERATED_ROW,
   SEEDED_LAYOUT_ROW,
 } from "@/tests/helpers/seeded-invoice-template";
@@ -53,10 +54,7 @@ import type {
 const SEEDED_STRUCTURE: InvoiceTemplateStructure = {
   sections: { payment: true },
   columns: {},
-  footnote: [
-    "Calculations are done in Mbps",
-    "This invoice is billed exclusive of Universal Service Provision (USP)",
-  ],
+  footnote: [...SEEDED_FOOTNOTE],
 };
 
 let generatedHtml: (input: InvoiceRenderInput) => string;

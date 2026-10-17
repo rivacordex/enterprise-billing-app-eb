@@ -31,17 +31,12 @@
 // mapped back onto the lines.
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import {
-  useFieldArray,
-  useForm,
-  useWatch,
-  type FieldErrors,
-  type Resolver,
-} from "react-hook-form";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useFieldArray, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Info, Lock, Plus, X } from "lucide-react";
 import { toast } from "sonner";
+import type { FieldErrors, Resolver } from "react-hook-form";
 
 import {
   activateTemplateAction,
@@ -92,7 +87,12 @@ const DEBOUNCE_MS = 400;
 // ui-context §6c — past a normal render window the caption reads "Queued".
 const QUEUED_HINT_DELAY_MS = 2_500;
 
+// The last settled preview. `key` is the request it answered and `queuedKey`
+// the request the "Queued" hint applies to; while the current request is
+// neither settled nor queued, the preview reads as loading.
 interface PreviewState {
+  key: string | null;
+  queuedKey: string | null;
   status: PreviewStatus;
   html: string | null;
   templateLabel: string | null;
@@ -291,10 +291,18 @@ export function InvoiceStructureForm({
     name: "footnote",
   });
   const values = useWatch({ control }) as StructureFormValues;
-  const structure = parsedStructure(values);
+  // Parsed once per change of the values, not on every preview state update.
+  const structure = useMemo(() => parsedStructure(values), [values]);
   // The valid structure's JSON: the preview effect's dependency, so it re-runs
   // on a real change only.
   const structureKey = structure === null ? null : JSON.stringify(structure);
+  // The structure the preview renders: the latest valid one. An invalid
+  // structure (a blank or over-long line) keeps the last valid one, so the
+  // source, toggles and Retry still produce a preview.
+  const [previewKey, setPreviewKey] = useState(structureKey);
+  if (structureKey !== null && structureKey !== previewKey) {
+    setPreviewKey(structureKey);
+  }
 
   // bm57: the last-saved structure (pristine = unchanged since load or save),
   // the live token and the draft the Activate button targets.
@@ -303,6 +311,39 @@ export function InvoiceStructureForm({
   const [draftId, setDraftId] = useState(draftVersionId);
   const [draftNo, setDraftNo] = useState(draftVersionNo);
   const [activateOpen, setActivateOpen] = useState(false);
+
+  // The page re-renders after every save, activation and Reload, without
+  // remounting this form. A server state this form already holds (its own
+  // save) changes nothing, so an Activate dialog opened before the refresh
+  // lands stays open with its note. A different one (a Reload after
+  // DRAFT_CONFLICT, an activation) is adopted: the form, its saved baseline
+  // and the draft it targets reload from the server.
+  const serverState = JSON.stringify([
+    expectedDraftToken,
+    draftVersionId,
+    canonical(initialStructure),
+  ]);
+  const [seenServerState, setSeenServerState] = useState(serverState);
+  const [adopted, setAdopted] = useState<InvoiceTemplateStructure | null>(null);
+  if (serverState !== seenServerState) {
+    setSeenServerState(serverState);
+    const held =
+      expectedDraftToken === draftToken &&
+      draftVersionId === draftId &&
+      JSON.stringify(canonical(initialStructure)) === JSON.stringify(saved);
+    if (!held) {
+      setSaved(canonical(initialStructure));
+      setDraftToken(expectedDraftToken);
+      setDraftId(draftVersionId);
+      setDraftNo(draftVersionNo);
+      setActivateOpen(false);
+      setAdopted(canonical(initialStructure));
+    }
+  }
+  useEffect(() => {
+    if (adopted !== null) reset(toFormValues(adopted));
+  }, [adopted, reset]);
+
   const pristine = structureKey === JSON.stringify(saved);
   // bm58 D1: activate only what the history already shows, i.e. a saved draft
   // with no unsaved edits.
@@ -320,7 +361,9 @@ export function InvoiceStructureForm({
   const [outline, setOutline] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
   const [preview, setPreview] = useState<PreviewState>({
-    status: "loading",
+    key: null,
+    queuedKey: null,
+    status: "ready",
     html: null,
     templateLabel: null,
     pinnedVersionNo: null,
@@ -330,25 +373,37 @@ export function InvoiceStructureForm({
   // stale and never overwrites newer state.
   const requestRef = useRef(0);
 
-  // Called from event handlers only (react-hooks/set-state-in-effect).
-  function markLoading(): void {
-    setPreview((p) => ({ ...p, status: "loading", error: null }));
-  }
+  // Every input of the current request; any change (an edit, the source, a
+  // toggle, Retry) makes the shown preview stale until its request settles.
+  const requestKey =
+    previewKey === null
+      ? null
+      : JSON.stringify([
+          previewKey,
+          source,
+          annotate,
+          outline,
+          retryToken,
+          familyId,
+        ]);
+  const pending = requestKey !== null && preview.key !== requestKey;
+  const previewStatus: PreviewStatus = pending
+    ? preview.queuedKey === requestKey
+      ? "queued"
+      : "loading"
+    : preview.status;
 
   useEffect(() => {
-    // An invalid structure (a blank or over-long line) keeps the last preview.
-    if (structureKey === null) return;
+    if (previewKey === null || requestKey === null) return;
     const id = ++requestRef.current;
     const debounce = setTimeout(() => {
       const queued = setTimeout(() => {
         if (requestRef.current !== id) return;
-        setPreview((p) =>
-          p.status === "loading" ? { ...p, status: "queued" } : p,
-        );
+        setPreview((p) => ({ ...p, queuedKey: requestKey }));
       }, QUEUED_HINT_DELAY_MS);
 
       previewInvoiceTemplateAction({
-        structure: JSON.parse(structureKey) as InvoiceTemplateStructure,
+        structure: JSON.parse(previewKey) as InvoiceTemplateStructure,
         source: source === SAMPLE ? "sample" : { billId: source },
         annotate,
         outline,
@@ -358,6 +413,8 @@ export function InvoiceStructureForm({
           if (requestRef.current !== id) return;
           if (result.ok) {
             setPreview({
+              key: requestKey,
+              queuedKey: null,
               status: "ready",
               html: result.html,
               templateLabel: result.templateLabel,
@@ -367,6 +424,7 @@ export function InvoiceStructureForm({
           } else {
             setPreview((p) => ({
               ...p,
+              key: requestKey,
               status: "error",
               error: { code: result.code, detail: result.detail },
             }));
@@ -376,6 +434,7 @@ export function InvoiceStructureForm({
           if (requestRef.current !== id) return;
           setPreview((p) => ({
             ...p,
+            key: requestKey,
             status: "error",
             error: { code: "PREVIEW_FAILED" },
           }));
@@ -383,7 +442,7 @@ export function InvoiceStructureForm({
         .finally(() => clearTimeout(queued));
     }, DEBOUNCE_MS);
     return () => clearTimeout(debounce);
-  }, [structureKey, source, annotate, outline, retryToken, familyId]);
+  }, [previewKey, requestKey, source, annotate, outline, familyId]);
 
   // The server's refusal of a line (`structure.footnote.N`) shows under it;
   // false when nothing could be placed on a line.
@@ -447,15 +506,15 @@ export function InvoiceStructureForm({
     });
     if (result.ok) {
       // No `router.refresh()`: the action revalidates the Invoice Settings layout
-      // and its response carries the fresh page, which remounts this form (its
-      // key includes the draft token), exactly as the save flow relies on.
+      // and its response carries the fresh page (no draft), which this form
+      // adopts as a server state it does not hold.
       toast.success(`Template v${result.versionNo} activated`);
       return { ok: true };
     }
     if (result.code === "DRAFT_CONFLICT") {
       // The held token is stale, so every retry would conflict again. Offer the
       // same Reload as a failed save; the refresh re-renders the page with the
-      // newer token, which remounts the form from the server's draft.
+      // newer token, and the form adopts the server's draft.
       toast.warning(ACTIVATE_MESSAGES.DRAFT_CONFLICT, {
         action: { label: "Reload", onClick: () => router.refresh() },
       });
@@ -491,8 +550,6 @@ export function InvoiceStructureForm({
                       disabled={!optional}
                       onCheckedChange={(v) => {
                         if (!optional) return;
-                        // An invalid footnote holds the preview back.
-                        if (structure !== null) markLoading();
                         setValue(`sections.${key}`, v === true, {
                           shouldDirty: true,
                         });
@@ -539,7 +596,8 @@ export function InvoiceStructureForm({
             <>
               {fields.map((field, index) => {
                 const id = `footnote-line-${index + 1}`;
-                const length = values.footnote[index]?.text.length ?? 0;
+                // The schema trims before its 200-character limit.
+                const length = values.footnote[index]?.text.trim().length ?? 0;
                 const lineError = errors.footnote?.[index]?.text?.message;
                 const over = length > FOOTNOTE_LINE_MAX_LENGTH;
                 return (
@@ -630,13 +688,7 @@ export function InvoiceStructureForm({
             <Label htmlFor="preview-source" className="text-body-sm">
               Preview with
             </Label>
-            <Select
-              value={source}
-              onValueChange={(value) => {
-                markLoading();
-                setSource(value);
-              }}
-            >
+            <Select value={source} onValueChange={setSource}>
               <SelectTrigger id="preview-source" className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -665,10 +717,7 @@ export function InvoiceStructureForm({
             <Switch
               id="preview-annotate"
               checked={annotate}
-              onCheckedChange={(v) => {
-                markLoading();
-                setAnnotate(v);
-              }}
+              onCheckedChange={setAnnotate}
             />
           </div>
           <div className="flex items-center justify-between gap-3">
@@ -678,10 +727,7 @@ export function InvoiceStructureForm({
             <Switch
               id="preview-outline"
               checked={outline}
-              onCheckedChange={(v) => {
-                markLoading();
-                setOutline(v);
-              }}
+              onCheckedChange={setOutline}
             />
           </div>
         </fieldset>
@@ -743,12 +789,9 @@ export function InvoiceStructureForm({
         ) : null}
         <InvoicePreviewFrame
           html={preview.html}
-          status={preview.status}
-          error={preview.error}
-          onRetry={() => {
-            markLoading();
-            setRetryToken((t) => t + 1);
-          }}
+          status={previewStatus}
+          error={pending ? null : preview.error}
+          onRetry={() => setRetryToken((t) => t + 1)}
         />
       </div>
     </div>

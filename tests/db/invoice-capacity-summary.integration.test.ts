@@ -24,17 +24,17 @@ import {
   SEEDED_TEMPLATE_STAMP,
 } from "@/tests/helpers/seeded-invoice-template";
 
-// bm70-spec Â§6 â guardrail item 62: the page-1 capacity summary, computed in
+// bm70-spec §6 — guardrail item 62: the page-1 capacity summary, computed in
 // SQL by `invoiceRenderInputRepository.read`, on bills built by the extracted
 // `bill_run_processing` aggregation SQL (the bm42 `ci` capacity fixtures: base
 // RM100/Mbps, target 1,000, step above 1,000 at RM50). It asserts:
-//   * Utilised + Unutilised = Î£ net_amount per type (summed in SQL, not JS);
-//   * Î£ Utilised + Î£ Unutilised + Other charges + Adjustments = subtotal;
-//   * the four anchors, including 2,000 Mbps â Utilised 150000.00;
+//   * Utilised + Unutilised = Σ net_amount per type (summed in SQL, not JS);
+//   * Σ Utilised + Σ Unutilised + Other charges + Adjustments = subtotal;
+//   * the four anchors, including 2,000 Mbps → Utilised 150000.00;
 //   * a capacity line with discount_amount > rated_amount (only reachable with
 //     `capacity_rate_matching` OFF), inserted by SQL, trips
 //     INVOICE_NEGATIVE_UTILISED at bind;
-//   * the recipient name read (blank â null).
+//   * the recipient name read (blank → null).
 //
 // Superuser DATABASE_URL connection (the bm42 flow-double precedent): this
 // exercises the read logic, not the runtime grants.
@@ -309,15 +309,15 @@ describe.skipIf(!databaseUrl)(
 
     it(
       "[CRITICAL] discount_amount > rated_amount (rate matching OFF) makes " +
-        "Utilised negative â INVOICE_NEGATIVE_UTILISED, never printed",
+        "Utilised negative → INVOICE_NEGATIVE_UTILISED, never printed",
       async () => {
         const fx = fixtures();
         const ban = await fx.newAccount("Negative");
         const runId = "BRN-BM70-NEGATIVE";
         await fx.newRun(runId);
         await markProcessed(runId, ban);
-        // gross 100,000, rated 10,000, discount 20,000 â net 80,000;
-        // Unutilised = 90,000, Utilised = 80,000 â 90,000 = â10,000.
+        // gross 100,000, rated 10,000, discount 20,000 → net 80,000;
+        // Unutilised = 90,000, Utilised = 80,000 − 90,000 = −10,000.
         const [bill] = await sql<{ id: string }[]>`
           INSERT INTO billing.customer_bill
             (ref_bill_run_id, ref_billing_account_id, period_partition, category,

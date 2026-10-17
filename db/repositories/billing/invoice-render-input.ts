@@ -273,7 +273,8 @@ async function readLines(
 // Inv #55). Label = the offering name carried on the line (D27).
 // bm72-spec §Design "The last page" (D22, D30) — `utilisedTotal` is the last
 // page's Total Amount: a SQL `SUM` over the same per-offering Utilised figures
-// (each at its printed `numeric(18,2)` scale), `0.00` with no capacity line.
+// (each at its printed `numeric(18,2)` scale), taken as a window over the
+// per-type rows in the same scan, `0.00` with no capacity line.
 async function readCapacitySummary(
   tx: Database,
   customerBillId: string,
@@ -290,37 +291,26 @@ async function readCapacitySummary(
     eq(l.periodPartition, periodPartition),
     CAPACITY_CHARGE,
   );
-  const perType = tx
+  const rows = await tx
     .select({
-      utilised: sql<string>`${utilised}::numeric(18,2)`.as("utilised"),
+      offeringId: l.refProductOfferingId,
+      label: sql<string>`${label}`,
+      utilised: sql<string>`${utilised}::numeric(18,2)::text`,
+      unutilised: sql<string>`${unutilised}::numeric(18,2)::text`,
+      total: sql<string>`SUM(${l.netAmount})::numeric(18,2)::text`,
+      ratedTotal: sql<string>`COALESCE(SUM(${l.ratedAmount}), 0)::numeric(18,2)::text`,
+      missingRated: sql<boolean>`bool_or(${l.ratedAmount} IS NULL)`,
+      negativeUtilised: sql<boolean>`COALESCE(${utilised} < 0, false)`,
+      utilisedTotal: sql<string>`(SUM(${utilised}::numeric(18,2)) OVER ())::numeric(18,2)::text`,
     })
     .from(l)
     .where(scope)
     .groupBy(l.refProductOfferingId)
-    .as("per_type");
-  const [serviceTypes, [total]] = await Promise.all([
-    tx
-      .select({
-        offeringId: l.refProductOfferingId,
-        label: sql<string>`${label}`,
-        utilised: sql<string>`${utilised}::numeric(18,2)::text`,
-        unutilised: sql<string>`${unutilised}::numeric(18,2)::text`,
-        total: sql<string>`SUM(${l.netAmount})::numeric(18,2)::text`,
-        ratedTotal: sql<string>`COALESCE(SUM(${l.ratedAmount}), 0)::numeric(18,2)::text`,
-        missingRated: sql<boolean>`bool_or(${l.ratedAmount} IS NULL)`,
-        negativeUtilised: sql<boolean>`COALESCE(${utilised} < 0, false)`,
-      })
-      .from(l)
-      .where(scope)
-      .groupBy(l.refProductOfferingId)
-      .orderBy(label, asc(l.refProductOfferingId)),
-    tx
-      .select({
-        utilisedTotal: sql<string>`COALESCE(SUM(${perType.utilised}), 0)::numeric(18,2)::text`,
-      })
-      .from(perType),
-  ]);
-  return { serviceTypes, utilisedTotal: total?.utilisedTotal ?? "0.00" };
+    .orderBy(label, asc(l.refProductOfferingId));
+  return {
+    serviceTypes: rows.map(({ utilisedTotal: _total, ...type }) => type),
+    utilisedTotal: rows[0]?.utilisedTotal ?? "0.00",
+  };
 }
 
 // bm70-spec §Design "Data" — the "Other charges" rows: every non-capacity

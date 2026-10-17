@@ -95,6 +95,13 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
 - **Built on top of the bm71 SonarQube and code-review fixes.** The new anchor case uses the fixture label `TOTAL2000` so it doesn't collide with the code-review case's `ANCHOR`.
 - **Merge artifact removed (owner decision, 2026-10-17).** A local "Merge branch 'dev1'" commit had re-added `partials/usageAnnex.hbs` and `tests/db/invoice-usage-annex.integration.test.ts`, both deleted by bm71. The v1 `checksums.json` did not list the partial. bm72 deletes both files again, so v1 is pinned without the dead annex.
 - **Still to do on each environment:** re-seed on an empty DB and an empty `invoice-templates` container (bm64 runbook). This is the last such reset for v1: v1 is now pinned (Inv #57).
+- **Code review fixes (xhigh, 084944b + the uncommitted test fixes, 2026-10-17).** Owner decisions on items 2, 4, 6 and 8; see known-issues §25.
+  - The live preview no longer sticks in "Rendering…": it renders the latest **valid** structure, so the source, the toggles and Retry still work while a line is invalid. A footnote edit marks the preview busy at once and hides a stale error. The status is derived from the request key, which replaces `markLoading()`.
+  - The counter counts the trimmed line, as the schema does.
+  - A stored structure the schema refuses (a pre-bm72 DB) fails loudly as `TEMPLATE_VERSION_NOT_FOUND` / `STRUCTURE_INVALID` at the page read (no TypeError). The page passes the parsed `currentStructure` to the dialog.
+  - `?version=` naming another family's version falls back to the Standard working copy, so the heading stays true.
+  - The working-copy form is no longer keyed on the draft token. It adopts a server state it does not already hold (a Reload, an activation), so the refresh after its own save no longer closes an open Activate dialog.
+  - `utilisedTotal` is a window `SUM` on the per-type query (one scan, not two). The structure parse is memoized, the type-only imports are grouped, and three tests import `SEEDED_FOOTNOTE`.
 
 **bm71 notes (2026-10-16):**
 

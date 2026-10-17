@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// bm55-spec Â§Tests â `previewInvoiceTemplateAction` through the REAL preview
+// bm55-spec §Tests — `previewInvoiceTemplateAction` through the REAL preview
 // service, resolver, loaders, generator, binder and locked Handlebars. Mocked
 // at the edges only: the guard, the repositories (DB rows), the DB client (a
 // spy that records any DML) and the blob store (repo bytes + a `putObject`
-// spy). Covers: READ allowed; no permission â FORBIDDEN; `{ billId }` without
-// `billrun_view` â FORBIDDEN before any read; invalid structure â
-// VALIDATION_ERROR; a posted bill â its stamped version, structure ignored;
-// the rate limit; zero `putObject` and zero DML. bm66-spec Â§6 â the input
+// spy). Covers: READ allowed; no permission → FORBIDDEN; `{ billId }` without
+// `billrun_view` → FORBIDDEN before any read; invalid structure →
+// VALIDATION_ERROR; a posted bill → its stamped version, structure ignored;
+// the rate limit; zero `putObject` and zero DML. bm66-spec §6 — the input
 // names the template family (`familyId`, required and validated); unposted
 // previews resolve that family's live versions (`preview-family`).
 
@@ -124,7 +124,7 @@ const CSV_ROW: BillTemplateVersion = {
   blobRef: "invoice-templates/system/csv/v1/",
 };
 
-// A newer ACTIVE generated version whose blobs do not exist â a posted bill
+// A newer ACTIVE generated version whose blobs do not exist — a posted bill
 // stamped with v1 must never touch it (Inv #42).
 const ACTIVE_V2: BillTemplateVersion = {
   ...SEEDED_GENERATED_ROW,
@@ -177,7 +177,7 @@ function setPermissions(map: Record<string, string>, userId = "user-1"): void {
 
 let userSeq = 0;
 
-// bm66 â the Standard family the page hands the form.
+// bm66 — the Standard family the page hands the form.
 const FAMILY = "BTF00000001";
 
 beforeEach(() => {
@@ -208,7 +208,7 @@ function expectNoWrites(): void {
   for (const fn of Object.values(dml)) expect(fn).not.toHaveBeenCalled();
 }
 
-describe("previewInvoiceTemplateAction â familyId (bm66)", () => {
+describe("previewInvoiceTemplateAction — familyId (bm66)", () => {
   it("requires familyId: a missing id is VALIDATION_ERROR, before any read", async () => {
     const result = await previewInvoiceTemplateAction({
       structure: ALL_ON,
@@ -244,7 +244,7 @@ describe("previewInvoiceTemplateAction â familyId (bm66)", () => {
   });
 });
 
-describe("previewInvoiceTemplateAction â authz and validation", () => {
+describe("previewInvoiceTemplateAction — authz and validation", () => {
   it("guards on invoice_settings : READ", async () => {
     await previewInvoiceTemplateAction({
       familyId: FAMILY,
@@ -328,7 +328,7 @@ describe("previewInvoiceTemplateAction â authz and validation", () => {
   });
 });
 
-describe("previewInvoiceTemplateAction â sample source", () => {
+describe("previewInvoiceTemplateAction — sample source", () => {
   it("renders the sample bill from the submitted structure as a draft, writing nothing", async () => {
     const result = await previewInvoiceTemplateAction({
       familyId: FAMILY,
@@ -373,7 +373,7 @@ describe("previewInvoiceTemplateAction â sample source", () => {
   });
 });
 
-describe("previewInvoiceTemplateAction â bill source", () => {
+describe("previewInvoiceTemplateAction — bill source", () => {
   it("a POSTED bill renders its stamped version as issued; the submitted structure is ignored", async () => {
     repo.findActive.mockResolvedValue(ACTIVE_V2);
     bills.findPreviewTarget.mockResolvedValue({

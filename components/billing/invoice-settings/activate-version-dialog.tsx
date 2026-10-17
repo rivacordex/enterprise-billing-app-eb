@@ -26,8 +26,8 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
-import type { StructureChange } from "@/components/billing/invoice-settings/structure-labels";
 import { CHANGE_NOTE_MAX_LENGTH } from "@/validation/billing/activate-version.schema";
+import type { StructureChange } from "@/components/billing/invoice-settings/structure-labels";
 
 // bm72-spec §Design (ui-context §10b Phase 3 row) — the template's "what
 // changes" summary: `+`/`−` section rows, then one row per footnote change

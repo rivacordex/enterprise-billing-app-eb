@@ -419,9 +419,8 @@ describe.skipIf(
     // v2: footnote line 2 edited.
     await page.getByRole("button", { name: "Save draft", exact: true }).click();
     await page.getByText("Draft v2 saved — not used on invoices").waitFor();
-    // The save revalidates the page, which remounts the form on the new draft
-    // token (closing any dialog opened before it lands): wait for the draft
-    // banner the re-rendered page shows before opening Activate.
+    // The save revalidates the page; wait for the draft banner the
+    // re-rendered page shows, so Activate targets the saved draft.
     await page.getByText(/^Editing draft v2/).waitFor();
     await page
       .getByRole("button", { name: "Activate v2", exact: true })
@@ -465,7 +464,7 @@ describe.skipIf(
     await page.goto(`${SETTINGS}/invoice-template?tab=history`);
     // The version cell reads "v{n}" followed by the version id.
     const row = (n: number) =>
-      page.locator("tbody tr").filter({ hasText: new RegExp(`^\s*v${n}BTV`) });
+      page.locator("tbody tr").filter({ hasText: new RegExp(`^\\s*v${n}BTV`) });
     await row(3).locator('[data-status="ACTIVE"]').waitFor();
     await row(2).locator('[data-status="RETIRED"]').waitFor();
     await row(1).locator('[data-status="ACTIVE"]').waitFor();
