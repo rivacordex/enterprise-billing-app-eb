@@ -157,7 +157,7 @@ function capacityDetailCte(p: CapacityDetailScope): SQL {
       SELECT ${udrRated.udrId} AS udr_id,
              ${customerBillLine.refProductOfferingId} AS offering_id,
              COALESCE(${customerBillLine.description}, ${customerBillLine.refProductOfferingId}) AS label,
-             nullif(substring(${udrRated.udrKey} FROM 'polygon_id=([^|]*)'), '') AS polygon_id,
+             nullif(substring(${udrRated.udrKey} FROM '(?:^|[|])polygon_id=([^|]*)'), '') AS polygon_id,
              COALESCE(${udrRated.udrResource} ~ '^[^|]*\\|[^|]*\\|\\d{4}-\\d{2}-\\d{2}$', false) AS resource_ok,
              nullif(btrim(split_part(${udrRated.udrResource}, '|', 1)), '') AS state,
              nullif(btrim(split_part(${udrRated.udrResource}, '|', 2)), '') AS district,
