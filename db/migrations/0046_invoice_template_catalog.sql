@@ -296,7 +296,7 @@ VALUES
    'INVTPL-STD-A4',
    '{"format":"A4","orientation":"portrait","margin":{"top":"13mm","bottom":"16mm","left":"14mm","right":"14mm"},"displayHeaderFooter":true,"printBackground":true}'::jsonb,
    'invoice-templates/layouts/INVTPL-STD-A4/v1/',
-   '5bf21e1238de19ee0a9bd7c16edebad07b61d11f225e2c0ba9c2918bc6f986d9', 'sha256',
+   '17ec1bd75b543456b91c10b06ed7a2bafed18ba9ced89a22d93aa6eb9e59aa22', 'sha256',
    'Seeded default layout INVTPL-STD-A4 v1 (bm50).', now());
 --> statement-breakpoint
 INSERT INTO "billing"."bill_template_version"
@@ -305,9 +305,9 @@ INSERT INTO "billing"."bill_template_version"
 VALUES
   ('BTV00000002', 'INVOICE', 'generated', 1, 'ACTIVE', true,
    'BTV00000001', 'BTF00000001',
-   '{"sections":{"payment":true,"notes":true},"columns":{}}'::jsonb,
+   '{"sections":{"payment":true},"columns":{},"footnote":["Calculations are done in Mbps","This invoice is billed exclusive of Universal Service Provision (USP)"]}'::jsonb,
    'invoice-templates/generated/INVOICE/v1/',
-   'ac13fb426af59bf4a79cfbdcec6f8e46c89ef74fc3a076b7e3f2eb77012eadf0', 'sha256',
+   '0c875a77fae348b1d5cb7d4a028b0aa2a5ccc87bfb37b1cd0decf8ac571d1c41', 'sha256',
    'Seeded default generated template v1 (bm50).', now());
 --> statement-breakpoint
 INSERT INTO "billing"."bill_template_version"

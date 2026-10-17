@@ -198,6 +198,9 @@ export async function getPostedInvoiceCsv({
       layoutVersion: resolved.layout.versionNo,
       version: resolved.generated.versionNo,
     },
+    // bm72 — the stamped version's footnote. No CSV path root reads it
+    // (`CSV_PATH_ROOTS`), so the CSV is unchanged.
+    footnote: resolved.generated.structure?.footnote ?? [],
   });
 
   // One row per `customer_bill_line` (guardrail 55), in `line_no` order

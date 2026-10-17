@@ -44,15 +44,14 @@ import { saveTemplateDraft } from "@/services/billing/invoice-template/save-temp
 import { rerunRun } from "@/services/billing/rerun-run";
 import { triggerRun } from "@/services/billing/trigger-run";
 
-function structure(notes: boolean) {
+// bm72 — a new Standard version differs from v1 by its footnote.
+function structure(footnoteLine: string) {
   return {
-    sections: {
-      ...Object.fromEntries(
-        INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
-      ),
-      notes,
-    },
+    sections: Object.fromEntries(
+      INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
+    ),
     columns: {},
+    footnote: [footnoteLine],
   } as Parameters<typeof saveTemplateDraft>[0]["structure"];
 }
 
@@ -151,7 +150,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     // Save a draft and activate it through the real services; returns the id.
     async function activateNewStandardVersion(note: string): Promise<string> {
       const saved = await saveTemplateDraft(
-        { structure: structure(false), expectedDraftToken: null },
+        {
+          structure: structure("bm65 activation footnote"),
+          expectedDraftToken: null,
+        },
         ACTOR,
       );
       if (!saved.ok) throw new Error(`save draft failed: ${saved.code}`);

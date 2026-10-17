@@ -8,16 +8,27 @@ import { templateFamilyIdSchema } from "@/validation/billing/template-family-id.
 // `sections` holds only the optional sections (the mandatory ones are always
 // on and are not stored), and `columns` is always empty — the layout has no
 // admin column toggles. A structure carrying `usageAnnex`, a mandatory
-// section or any column key is rejected.
+// section or any column key is rejected. bm72 (D20, D56 part 2, Inv #46
+// amended): `notes` is gone, and `footnote` holds 1–5 plain-text lines of at
+// most 200 characters each (trimmed; a blank line is refused). The messages
+// are the editor's field errors (ui-context §10b), shared with the server.
+export const FOOTNOTE_MAX_LINES = 5;
+export const FOOTNOTE_LINE_MAX_LENGTH = 200;
+
+export const footnoteLineSchema = z
+  .string()
+  .trim()
+  .min(1, "Enter text or remove the line")
+  .max(FOOTNOTE_LINE_MAX_LENGTH, "200 characters at most");
+
 export const invoiceTemplateStructureSchema = z
   .object({
-    sections: z
-      .object({
-        payment: z.boolean(),
-        notes: z.boolean(),
-      })
-      .strict(),
+    sections: z.object({ payment: z.boolean() }).strict(),
     columns: z.object({}).strict(),
+    footnote: z
+      .array(footnoteLineSchema)
+      .min(1, "Keep at least one line")
+      .max(FOOTNOTE_MAX_LINES, "5 lines at most"),
   })
   .strict();
 

@@ -2,12 +2,16 @@
 // 2026-10-10 owner decision (ui-context §7) the confirm button is the standard
 // primary button and stays disabled until a change note is entered; a server
 // refusal renders inline in Danger; the summary and warning render; a successful
-// confirm sends the TRIMMED note and closes.
+// confirm sends the TRIMMED note and closes. bm72: the template summary lists
+// the Payment toggle and one line per footnote change, values in monospace.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ActivateVersionDialog } from "@/components/billing/invoice-settings/activate-version-dialog";
+import {
+  ActivateVersionDialog,
+  StructureChangeSummary,
+} from "@/components/billing/invoice-settings/activate-version-dialog";
 
 const onConfirm = vi.fn();
 const onOpenChange = vi.fn();
@@ -138,5 +142,60 @@ describe("ActivateVersionDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onConfirm).not.toHaveBeenCalled();
+  });
+});
+
+describe("StructureChangeSummary (bm72)", () => {
+  function renderSummary(
+    changes: React.ComponentProps<typeof StructureChangeSummary>["changes"],
+  ) {
+    return renderDialog({
+      summary: <StructureChangeSummary changes={changes} />,
+    });
+  }
+
+  it("says there is no change when nothing differs", () => {
+    renderSummary([]);
+    expect(screen.getByTestId("activate-summary")).toHaveTextContent(
+      "No change in structure.",
+    );
+  });
+
+  it("lists the Payment toggle and each footnote change", () => {
+    renderSummary([
+      { kind: "section", sign: "−", text: "Payment information hidden" },
+      {
+        kind: "footnote-changed",
+        line: 2,
+        before: "Exclusive of USP",
+        after: "Inclusive of USP",
+      },
+      { kind: "footnote-added", line: 3, after: "Third line" },
+      { kind: "footnote-removed", line: 4 },
+    ]);
+    const items = screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toEqual([
+      "− Payment information hidden",
+      'Footnote line 2: "Exclusive of USP" → "Inclusive of USP"',
+      'Footnote line 3 added: "Third line"',
+      "Footnote line 4 removed",
+    ]);
+  });
+
+  it("sets the footnote values in monospace", () => {
+    renderSummary([
+      { kind: "footnote-changed", line: 1, before: "old", after: "new" },
+    ]);
+    for (const value of ['"old"', '"new"']) {
+      expect(screen.getByText(value).className).toContain("font-mono");
+    }
+  });
+
+  it("renders a footnote value as text, never markup", () => {
+    renderSummary([{ kind: "footnote-added", line: 1, after: "<b>bold</b>" }]);
+    expect(screen.getByText('"<b>bold</b>"')).toBeInTheDocument();
+    expect(
+      screen.getByTestId("activate-summary").querySelector("b"),
+    ).toBeNull();
   });
 });

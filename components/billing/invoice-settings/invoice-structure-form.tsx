@@ -3,7 +3,7 @@
 // bm55-spec §Design D4 (`edit` tab), code-standards Part 2 Next.js rules 5/6,
 // Styling rule 7, ui-context §10b — `InvoiceStructureForm`, the template
 // editor's interaction leaf. It holds the admin's UNSAVED structure and drives
-// the live preview: any change → a 400 ms debounced call to
+// the live preview: any valid change → a 400 ms debounced call to
 // `previewInvoiceTemplateAction` (a READ that saves nothing). bm57 adds **Save
 // draft** (EDIT only): it saves the structure as the single working DRAFT with
 // an optimistic token (`DRAFT_CONFLICT` on a stale one). bm58 adds **Activate**
@@ -15,20 +15,28 @@
 //     `--text-muted`; the label stays `--text-body`, so a locked-on section
 //     never looks switched off;
 //   - read-only (a READ user, or a non-current version opened from history):
-//     sections render as text "Shown"/"Hidden" with no grey wash —
-//     the placeholder/outline toggles and the source select still drive the
-//     preview;
+//     sections render as text "Shown"/"Hidden" and the footnote as a plain
+//     list, with no inputs and no grey wash — the placeholder/outline toggles
+//     and the source select still drive the preview;
 //   - the source select offers the layout's sample bill and, only for a
 //     `billrun_view` holder, the most recent posted bills.
 //
 // bm71 (D56): the Usage annex row and the charge-detail column toggles are
-// gone with the old line table; only Payment information and Notes & terms
-// are toggles, the rest are locked mandatory rows.
+// gone with the old line table. bm72 (D20, D56 part 2; Phase 3 Next.js rule
+// 2, general §4.12): Notes & terms is gone, Payment information is the only
+// toggle, and the **Footnote** field holds 1–5 lines. The form runs on React
+// Hook Form with the shared structure schema as its resolver. `useFieldArray`
+// needs objects, so a line is `{ text }` in the form and a plain string in the
+// structure (`toStructure` / `toFormValues`), and the schema's errors are
+// mapped back onto the lines.
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { Info, Lock } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useFieldArray, useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Info, Lock, Plus, X } from "lucide-react";
 import { toast } from "sonner";
+import type { FieldErrors, Resolver } from "react-hook-form";
 
 import {
   activateTemplateAction,
@@ -38,6 +46,7 @@ import { saveTemplateDraftAction } from "@/actions/billing/invoice-settings/save
 import { previewInvoiceTemplateAction } from "@/actions/billing/invoice-settings/preview-invoice-template.action";
 import {
   ActivateVersionDialog,
+  StructureChangeSummary,
   type ActivateConfirmResult,
 } from "@/components/billing/invoice-settings/activate-version-dialog";
 import {
@@ -53,6 +62,7 @@ import {
 import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/draft-messages";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -63,17 +73,26 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type {
-  InvoiceOptionalSectionKey,
   InvoiceTemplateStructure,
   RecentPostedBill,
 } from "@/types/billing";
+import {
+  FOOTNOTE_LINE_MAX_LENGTH,
+  FOOTNOTE_MAX_LINES,
+  invoiceTemplateStructureSchema,
+} from "@/validation/billing/invoice-template-structure.schema";
 
 const SAMPLE = "sample";
 const DEBOUNCE_MS = 400;
 // ui-context §6c — past a normal render window the caption reads "Queued".
 const QUEUED_HINT_DELAY_MS = 2_500;
 
+// The last settled preview. `key` is the request it answered and `queuedKey`
+// the request the "Queued" hint applies to; while the current request is
+// neither settled nor queued, the preview reads as loading.
 interface PreviewState {
+  key: string | null;
+  queuedKey: string | null;
   status: PreviewStatus;
   html: string | null;
   templateLabel: string | null;
@@ -101,10 +120,110 @@ const ACTIVATE_MESSAGES = {
   SERVER_ERROR: "The version could not be activated. Please try again.",
 } as const;
 
+const SAVE_FAILED_MESSAGE = "The draft could not be saved. Please try again.";
+
 function activateMessage(
   result: Extract<ActivateTemplateActionResult, { ok: false }>,
 ): string {
   return ACTIVATE_MESSAGES[result.code];
+}
+
+// --- form values ↔ structure ------------------------------------------------
+
+interface StructureFormValues {
+  sections: { payment: boolean };
+  footnote: { text: string }[];
+}
+
+// The structure in a fixed key order, so two structures compare equal as JSON
+// whatever key order their source (a jsonb row, the form) produced.
+function canonical(
+  structure: InvoiceTemplateStructure,
+): InvoiceTemplateStructure {
+  return {
+    sections: { payment: structure.sections.payment },
+    columns: {},
+    footnote: [...structure.footnote],
+  };
+}
+
+function toFormValues(
+  structure: InvoiceTemplateStructure,
+): StructureFormValues {
+  return {
+    sections: { payment: structure.sections.payment },
+    footnote: structure.footnote.map((text) => ({ text })),
+  };
+}
+
+function toStructure(values: StructureFormValues): InvoiceTemplateStructure {
+  return {
+    sections: { payment: values.sections.payment },
+    columns: {},
+    footnote: values.footnote.map((line) => line.text),
+  };
+}
+
+// The schema reports a line's error at `footnote.N` and a line-count error at
+// `footnote` (or `footnote.root`); the form shows them at `footnote.N.text`
+// and `footnote.root`.
+function toFormErrors(
+  errors: FieldErrors<InvoiceTemplateStructure>,
+): FieldErrors<StructureFormValues> {
+  const { footnote, ...rest } = errors as Record<string, unknown>;
+  if (footnote === undefined || footnote === null) {
+    return rest as FieldErrors<StructureFormValues>;
+  }
+  const lines: unknown[] = [];
+  let root: unknown;
+  for (const [key, value] of Object.entries(footnote)) {
+    if (/^\d+$/.test(key)) lines[Number(key)] = { text: value };
+    else if (key === "root") root = value;
+  }
+  const { message, type } = footnote as { message?: string; type?: string };
+  if (root === undefined && message !== undefined) root = { message, type };
+  return {
+    ...rest,
+    footnote: Object.assign(lines, root === undefined ? {} : { root }),
+  } as FieldErrors<StructureFormValues>;
+}
+
+// General §4.12 — the shared schema is the form's resolver, so the browser
+// enforces what the save and activate actions enforce (1–5 lines, ≤ 200
+// characters, no blank line). A valid submit receives the parsed (trimmed)
+// structure.
+const structureResolver = zodResolver(invoiceTemplateStructureSchema);
+const resolver: Resolver<StructureFormValues> = async (
+  values,
+  context,
+  options,
+) => {
+  const result = await structureResolver(
+    toStructure(values),
+    context,
+    options as unknown as Parameters<typeof structureResolver>[2],
+  );
+  if (Object.keys(result.errors).length > 0) {
+    return {
+      values: {},
+      errors: toFormErrors(
+        result.errors as FieldErrors<InvoiceTemplateStructure>,
+      ),
+    };
+  }
+  return {
+    values: toFormValues(result.values as InvoiceTemplateStructure),
+    errors: {},
+  };
+};
+
+// The structure a preview or a save would send, or `null` while the form is
+// invalid (no preview request is made for an invalid structure).
+function parsedStructure(
+  values: StructureFormValues,
+): InvoiceTemplateStructure | null {
+  const parsed = invoiceTemplateStructureSchema.safeParse(toStructure(values));
+  return parsed.success ? canonical(parsed.data) : null;
 }
 
 export interface InvoiceStructureFormProps {
@@ -154,22 +273,81 @@ export function InvoiceStructureForm({
   familyId,
 }: InvoiceStructureFormProps): React.JSX.Element {
   const router = useRouter();
-  const [structure, setStructure] = useState(initialStructure);
+  const {
+    control,
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    setValue,
+    formState: { errors, isSubmitting },
+  } = useForm<StructureFormValues>({
+    resolver,
+    mode: "onChange",
+    defaultValues: toFormValues(initialStructure),
+  });
+  const { fields, append, remove } = useFieldArray({
+    control,
+    name: "footnote",
+  });
+  const values = useWatch({ control }) as StructureFormValues;
+  // Parsed once per change of the values, not on every preview state update.
+  const structure = useMemo(() => parsedStructure(values), [values]);
+  // The valid structure's JSON: the preview effect's dependency, so it re-runs
+  // on a real change only.
+  const structureKey = structure === null ? null : JSON.stringify(structure);
+  // The structure the preview renders: the latest valid one. An invalid
+  // structure (a blank or over-long line) keeps the last valid one, so the
+  // source, toggles and Retry still produce a preview.
+  const [previewKey, setPreviewKey] = useState(structureKey);
+  if (structureKey !== null && structureKey !== previewKey) {
+    setPreviewKey(structureKey);
+  }
+
   // bm57: the last-saved structure (pristine = unchanged since load or save),
-  // the live token, the in-flight flag and the server's per-row refusals.
-  const [saved, setSaved] = useState(initialStructure);
+  // the live token and the draft the Activate button targets.
+  const [saved, setSaved] = useState(() => canonical(initialStructure));
   const [draftToken, setDraftToken] = useState(expectedDraftToken);
   const [draftId, setDraftId] = useState(draftVersionId);
   const [draftNo, setDraftNo] = useState(draftVersionNo);
   const [activateOpen, setActivateOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [hiddenErrors, setHiddenErrors] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const pristine = JSON.stringify(structure) === JSON.stringify(saved);
+
+  // The page re-renders after every save, activation and Reload, without
+  // remounting this form. A server state this form already holds (its own
+  // save) changes nothing, so an Activate dialog opened before the refresh
+  // lands stays open with its note. A different one (a Reload after
+  // DRAFT_CONFLICT, an activation) is adopted: the form, its saved baseline
+  // and the draft it targets reload from the server.
+  const serverState = JSON.stringify([
+    expectedDraftToken,
+    draftVersionId,
+    canonical(initialStructure),
+  ]);
+  const [seenServerState, setSeenServerState] = useState(serverState);
+  const [adopted, setAdopted] = useState<InvoiceTemplateStructure | null>(null);
+  if (serverState !== seenServerState) {
+    setSeenServerState(serverState);
+    const held =
+      expectedDraftToken === draftToken &&
+      draftVersionId === draftId &&
+      JSON.stringify(canonical(initialStructure)) === JSON.stringify(saved);
+    if (!held) {
+      setSaved(canonical(initialStructure));
+      setDraftToken(expectedDraftToken);
+      setDraftId(draftVersionId);
+      setDraftNo(draftVersionNo);
+      setActivateOpen(false);
+      setAdopted(canonical(initialStructure));
+    }
+  }
+  useEffect(() => {
+    if (adopted !== null) reset(toFormValues(adopted));
+  }, [adopted, reset]);
+
+  const pristine = structureKey === JSON.stringify(saved);
   // bm58 D1: activate only what the history already shows, i.e. a saved draft
   // with no unsaved edits.
-  const canActivate = pristine && draftId !== null && !saving;
+  const canActivate = pristine && draftId !== null && !isSubmitting;
   const activateLabel = !pristine
     ? "Save draft first"
     : draftNo !== null
@@ -183,7 +361,9 @@ export function InvoiceStructureForm({
   const [outline, setOutline] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
   const [preview, setPreview] = useState<PreviewState>({
-    status: "loading",
+    key: null,
+    queuedKey: null,
+    status: "ready",
     html: null,
     templateLabel: null,
     pinnedVersionNo: null,
@@ -193,23 +373,37 @@ export function InvoiceStructureForm({
   // stale and never overwrites newer state.
   const requestRef = useRef(0);
 
-  // Called from event handlers only (react-hooks/set-state-in-effect).
-  function markLoading(): void {
-    setPreview((p) => ({ ...p, status: "loading", error: null }));
-  }
+  // Every input of the current request; any change (an edit, the source, a
+  // toggle, Retry) makes the shown preview stale until its request settles.
+  const requestKey =
+    previewKey === null
+      ? null
+      : JSON.stringify([
+          previewKey,
+          source,
+          annotate,
+          outline,
+          retryToken,
+          familyId,
+        ]);
+  const pending = requestKey !== null && preview.key !== requestKey;
+  const previewStatus: PreviewStatus = pending
+    ? preview.queuedKey === requestKey
+      ? "queued"
+      : "loading"
+    : preview.status;
 
   useEffect(() => {
+    if (previewKey === null || requestKey === null) return;
     const id = ++requestRef.current;
     const debounce = setTimeout(() => {
       const queued = setTimeout(() => {
         if (requestRef.current !== id) return;
-        setPreview((p) =>
-          p.status === "loading" ? { ...p, status: "queued" } : p,
-        );
+        setPreview((p) => ({ ...p, queuedKey: requestKey }));
       }, QUEUED_HINT_DELAY_MS);
 
       previewInvoiceTemplateAction({
-        structure,
+        structure: JSON.parse(previewKey) as InvoiceTemplateStructure,
         source: source === SAMPLE ? "sample" : { billId: source },
         annotate,
         outline,
@@ -219,6 +413,8 @@ export function InvoiceStructureForm({
           if (requestRef.current !== id) return;
           if (result.ok) {
             setPreview({
+              key: requestKey,
+              queuedKey: null,
               status: "ready",
               html: result.html,
               templateLabel: result.templateLabel,
@@ -228,6 +424,7 @@ export function InvoiceStructureForm({
           } else {
             setPreview((p) => ({
               ...p,
+              key: requestKey,
               status: "error",
               error: { code: result.code, detail: result.detail },
             }));
@@ -237,6 +434,7 @@ export function InvoiceStructureForm({
           if (requestRef.current !== id) return;
           setPreview((p) => ({
             ...p,
+            key: requestKey,
             status: "error",
             error: { code: "PREVIEW_FAILED" },
           }));
@@ -244,18 +442,34 @@ export function InvoiceStructureForm({
         .finally(() => clearTimeout(queued));
     }, DEBOUNCE_MS);
     return () => clearTimeout(debounce);
-  }, [structure, source, annotate, outline, retryToken, familyId]);
+  }, [previewKey, requestKey, source, annotate, outline, familyId]);
 
-  async function saveDraft(): Promise<void> {
-    setSaving(true);
-    setHiddenErrors(new Set());
+  // The server's refusal of a line (`structure.footnote.N`) shows under it;
+  // false when nothing could be placed on a line.
+  function showServerErrors(fieldErrors: Record<string, string[]>): boolean {
+    let placed = false;
+    for (const [path, messages] of Object.entries(fieldErrors)) {
+      const line = /^structure\.footnote\.(\d+)$/.exec(path)?.[1];
+      if (line === undefined) continue;
+      setError(`footnote.${Number(line)}.text`, {
+        type: "server",
+        message: messages[0] ?? "Invalid line",
+      });
+      placed = true;
+    }
+    return placed;
+  }
+
+  async function saveDraft(submitted: StructureFormValues): Promise<void> {
+    const next = canonical(toStructure(submitted));
     try {
       const result = await saveTemplateDraftAction({
-        structure,
+        structure: next,
         expectedDraftToken: draftToken,
       });
       if (result.ok) {
-        setSaved(structure);
+        setSaved(next);
+        reset(toFormValues(next));
         setDraftToken(result.draftToken);
         setDraftId(result.versionId);
         setDraftNo(result.versionNo);
@@ -268,21 +482,16 @@ export function InvoiceStructureForm({
         toast.warning(ACTIVATE_MESSAGES.DRAFT_CONFLICT, {
           action: { label: "Reload", onClick: () => router.refresh() },
         });
-      } else if (result.code === "MANDATORY_SECTION_HIDDEN") {
-        setHiddenErrors(
-          new Set(
-            Object.keys(result.fieldErrors).map((p) => p.split(".").pop()!),
-          ),
-        );
       } else if (result.code === "FORBIDDEN") {
         toast.error("You do not have permission to save the draft.");
-      } else {
-        toast.error("The draft could not be saved. Please try again.");
+      } else if (
+        !("fieldErrors" in result) ||
+        !showServerErrors(result.fieldErrors)
+      ) {
+        toast.error(SAVE_FAILED_MESSAGE);
       }
     } catch {
-      toast.error("The draft could not be saved. Please try again.");
-    } finally {
-      setSaving(false);
+      toast.error(SAVE_FAILED_MESSAGE);
     }
   }
 
@@ -297,15 +506,15 @@ export function InvoiceStructureForm({
     });
     if (result.ok) {
       // No `router.refresh()`: the action revalidates the Invoice Settings layout
-      // and its response carries the fresh page, which remounts this form (its
-      // key includes the draft token), exactly as the save flow relies on.
+      // and its response carries the fresh page (no draft), which this form
+      // adopts as a server state it does not hold.
       toast.success(`Template v${result.versionNo} activated`);
       return { ok: true };
     }
     if (result.code === "DRAFT_CONFLICT") {
       // The held token is stale, so every retry would conflict again. Offer the
       // same Reload as a failed save; the refresh re-renders the page with the
-      // newer token, which remounts the form from the server's draft.
+      // newer token, and the form adopts the server's draft.
       toast.warning(ACTIVATE_MESSAGES.DRAFT_CONFLICT, {
         action: { label: "Reload", onClick: () => router.refresh() },
       });
@@ -313,10 +522,7 @@ export function InvoiceStructureForm({
     return { ok: false, message: activateMessage(result) };
   }
 
-  function toggleSection(key: InvoiceOptionalSectionKey, value: boolean): void {
-    markLoading();
-    setStructure((s) => ({ ...s, sections: { ...s.sections, [key]: value } }));
-  }
+  const footnoteRootError = errors.footnote?.root?.message;
 
   return (
     <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
@@ -328,7 +534,7 @@ export function InvoiceStructureForm({
           {SECTION_ROWS.map(({ key, label }) => {
             const optional = isOptionalSection(key);
             // A mandatory section is always shown and is not stored.
-            const shown = optional ? structure.sections[key] : true;
+            const shown = optional ? values.sections[key] : true;
             const id = `section-${key}`;
             return (
               <div
@@ -343,7 +549,10 @@ export function InvoiceStructureForm({
                       checked={shown}
                       disabled={!optional}
                       onCheckedChange={(v) => {
-                        if (optional) toggleSection(key, v === true);
+                        if (!optional) return;
+                        setValue(`sections.${key}`, v === true, {
+                          shouldDirty: true,
+                        });
                       }}
                     />
                     <Label
@@ -364,17 +573,111 @@ export function InvoiceStructureForm({
                 ) : editable ? null : (
                   <ReadOnlyValue shown={shown} />
                 )}
-                {hiddenErrors.has(key) ? (
-                  <p
-                    role="alert"
-                    className="w-full text-caption text-[color:var(--color-danger-700)]"
-                  >
-                    This section is required and cannot be hidden.
-                  </p>
-                ) : null}
               </div>
             );
           })}
+        </fieldset>
+
+        {/* bm72 (ui-context §10b Phase 3 rows) — the footnote lines. */}
+        <fieldset
+          className="space-y-3 rounded-md border border-border bg-card p-4"
+          aria-describedby="footnote-hint"
+        >
+          <legend className="px-1 text-overline font-semibold tracking-wider text-muted-foreground uppercase">
+            Footnote
+          </legend>
+          <p
+            id="footnote-hint"
+            className="text-caption text-[color:var(--text-muted)]"
+          >
+            Printed after Total Amount on the last page
+          </p>
+          {editable ? (
+            <>
+              {fields.map((field, index) => {
+                const id = `footnote-line-${index + 1}`;
+                // The schema trims before its 200-character limit.
+                const length = values.footnote[index]?.text.trim().length ?? 0;
+                const lineError = errors.footnote?.[index]?.text?.message;
+                const over = length > FOOTNOTE_LINE_MAX_LENGTH;
+                return (
+                  <div key={field.id} className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label htmlFor={id} className="text-body-sm">
+                        Line {index + 1}
+                      </Label>
+                      <span
+                        className={`text-caption tabular-nums ${
+                          over
+                            ? "text-[color:var(--color-danger-700)]"
+                            : "text-[color:var(--text-muted)]"
+                        }`}
+                      >
+                        {length}/{FOOTNOTE_LINE_MAX_LENGTH}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id={id}
+                        className="rounded-sm"
+                        aria-invalid={lineError ? true : undefined}
+                        aria-describedby={lineError ? `${id}-error` : undefined}
+                        {...register(`footnote.${index}.text`)}
+                      />
+                      {fields.length > 1 ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Remove line ${index + 1}`}
+                          onClick={() => remove(index)}
+                        >
+                          <X aria-hidden />
+                        </Button>
+                      ) : null}
+                    </div>
+                    {lineError ? (
+                      <p
+                        id={`${id}-error`}
+                        role="alert"
+                        className="text-caption text-[color:var(--color-danger-700)]"
+                      >
+                        {lineError}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {footnoteRootError ? (
+                <p
+                  role="alert"
+                  className="text-caption text-[color:var(--color-danger-700)]"
+                >
+                  {footnoteRootError}
+                </p>
+              ) : null}
+              {fields.length < FOOTNOTE_MAX_LINES ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => append({ text: "" })}
+                >
+                  <Plus aria-hidden />
+                  Add line
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <ul
+              aria-label="Footnote lines"
+              className="list-disc space-y-1 pl-5 text-body-sm text-foreground"
+            >
+              {values.footnote.map((line, index) => (
+                <li key={index}>{line.text}</li>
+              ))}
+            </ul>
+          )}
         </fieldset>
 
         <fieldset className="space-y-3 rounded-md border border-border bg-card p-4">
@@ -385,13 +688,7 @@ export function InvoiceStructureForm({
             <Label htmlFor="preview-source" className="text-body-sm">
               Preview with
             </Label>
-            <Select
-              value={source}
-              onValueChange={(value) => {
-                markLoading();
-                setSource(value);
-              }}
-            >
+            <Select value={source} onValueChange={setSource}>
               <SelectTrigger id="preview-source" className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -420,10 +717,7 @@ export function InvoiceStructureForm({
             <Switch
               id="preview-annotate"
               checked={annotate}
-              onCheckedChange={(v) => {
-                markLoading();
-                setAnnotate(v);
-              }}
+              onCheckedChange={setAnnotate}
             />
           </div>
           <div className="flex items-center justify-between gap-3">
@@ -433,10 +727,7 @@ export function InvoiceStructureForm({
             <Switch
               id="preview-outline"
               checked={outline}
-              onCheckedChange={(v) => {
-                markLoading();
-                setOutline(v);
-              }}
+              onCheckedChange={setOutline}
             />
           </div>
         </fieldset>
@@ -446,10 +737,10 @@ export function InvoiceStructureForm({
             <Button
               type="button"
               variant="outline"
-              disabled={pristine || saving}
-              onClick={() => void saveDraft()}
+              disabled={pristine || isSubmitting}
+              onClick={() => void handleSubmit(saveDraft)()}
             >
-              {saving ? "Saving…" : "Save draft"}
+              {isSubmitting ? "Saving…" : "Save draft"}
             </Button>
             <button
               type="button"
@@ -476,22 +767,7 @@ export function InvoiceStructureForm({
           onOpenChange={setActivateOpen}
           title={`Activate template v${draftNo ?? ""}`}
           confirmLabel={`Activate v${draftNo ?? ""}`}
-          summary={
-            structureChanges.length === 0 ? (
-              <p>No change in structure.</p>
-            ) : (
-              <ul className="space-y-1">
-                {structureChanges.map((c) => (
-                  <li key={c.text}>
-                    <span aria-hidden className="font-mono">
-                      {c.sign}
-                    </span>{" "}
-                    {c.text}
-                  </li>
-                ))}
-              </ul>
-            )
-          }
+          summary={<StructureChangeSummary changes={structureChanges} />}
           onConfirm={activate}
         />
       ) : null}
@@ -513,12 +789,9 @@ export function InvoiceStructureForm({
         ) : null}
         <InvoicePreviewFrame
           html={preview.html}
-          status={preview.status}
-          error={preview.error}
-          onRetry={() => {
-            markLoading();
-            setRetryToken((t) => t + 1);
-          }}
+          status={previewStatus}
+          error={pending ? null : preview.error}
+          onRetry={() => setRetryToken((t) => t + 1)}
         />
       </div>
     </div>

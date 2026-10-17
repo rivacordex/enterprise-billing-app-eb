@@ -5,6 +5,10 @@
 // a posted bill shows the "as issued" banner. bm57: Save draft is EDIT-only,
 // disabled while pristine or saving, sends the unsaved structure with the
 // concurrency token, and reports success, a conflict and a refused structure.
+// bm72 (D56 part 2, ui-context §10b Phase 3 rows): the form runs on React Hook
+// Form; Payment information is the only toggle, and the Footnote field holds
+// 1–5 labelled lines with a counter, add/remove buttons and inline errors; a
+// READ user sees the lines as a plain list.
 
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,6 +39,7 @@ import {
   MANDATORY_SECTION_KEYS,
   type InvoiceTemplateStructure,
 } from "@/types/billing";
+import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 
 const mockPreview = vi.mocked(previewInvoiceTemplateAction);
 const mockSave = vi.mocked(saveTemplateDraftAction);
@@ -42,8 +47,9 @@ const mockActivate = vi.mocked(activateTemplateAction);
 const TOKEN = "2026-10-10T01:02:03.123456Z";
 
 const ALL_ON: InvoiceTemplateStructure = {
-  sections: { payment: true, notes: false },
+  sections: { payment: true },
   columns: {},
+  footnote: [...SEEDED_FOOTNOTE],
 };
 
 const BILLS = [
@@ -109,7 +115,7 @@ describe("InvoiceStructureForm — EDIT user", () => {
     }
   });
 
-  it("renders the optional sections as enabled checkboxes with their values", () => {
+  it("renders Payment information as the one enabled checkbox with its value", () => {
     renderForm();
     const payment = within(screen.getByTestId("section-payment")).getByRole(
       "checkbox",
@@ -117,21 +123,20 @@ describe("InvoiceStructureForm — EDIT user", () => {
     expect(payment).toBeEnabled();
     expect(payment).toHaveAttribute("data-state", "checked");
     expect(
-      within(screen.getByTestId("section-notes")).getByRole("checkbox"),
-    ).toHaveAttribute("data-state", "unchecked");
-    expect(
       within(screen.getByTestId("section-payment")).queryByText("Required"),
     ).toBeNull();
   });
 
-  it("bm71 — has no Usage annex row and no column toggles", () => {
+  it("bm71/bm72 — has no Usage annex or Notes row and no column toggles", () => {
     renderForm();
     expect(screen.queryByTestId("section-usageAnnex")).toBeNull();
+    expect(screen.queryByTestId("section-notes")).toBeNull();
     expect(screen.queryByText("Usage annex")).toBeNull();
+    expect(screen.queryByText("Notes & terms")).toBeNull();
     expect(screen.queryByText("Charge-detail columns")).toBeNull();
     expect(screen.queryAllByTestId(/^column-/)).toHaveLength(0);
-    // The locked mandatory rows plus Payment information and Notes & terms.
-    expect(screen.getAllByRole("checkbox")).toHaveLength(8);
+    // The locked mandatory rows plus Payment information.
+    expect(screen.getAllByRole("checkbox")).toHaveLength(7);
   });
 
   it("previews the initial structure after the 400 ms debounce, then the toggled one", async () => {
@@ -158,24 +163,205 @@ describe("InvoiceStructureForm — EDIT user", () => {
     });
   });
 
-  it("debounces a burst of toggles into one call", async () => {
+  it("debounces a burst of edits into one call carrying the unsaved footnote", async () => {
     renderForm();
     await flushDebounce();
     mockPreview.mockClear();
     fireEvent.click(
       within(screen.getByTestId("section-payment")).getByRole("checkbox"),
     );
-    fireEvent.click(
-      within(screen.getByTestId("section-notes")).getByRole("checkbox"),
-    );
+    await typeLine(2, "Billed inclusive of USP");
     await flushDebounce();
     expect(mockPreview).toHaveBeenCalledTimes(1);
     expect(mockPreview.mock.lastCall?.[0]).toMatchObject({
       structure: {
-        sections: { payment: false, notes: true },
+        sections: { payment: false },
         columns: {},
+        footnote: [ALL_ON.footnote[0], "Billed inclusive of USP"],
       },
     });
+  });
+
+  it("sends no preview while a footnote line is invalid", async () => {
+    renderForm();
+    await flushDebounce();
+    mockPreview.mockClear();
+    await typeLine(1, "   ");
+    await flushDebounce();
+    expect(mockPreview).not.toHaveBeenCalled();
+  });
+
+  it("a toggle or source change while a line is invalid previews the last valid structure, never sticking in loading", async () => {
+    renderForm();
+    await flushDebounce();
+    mockPreview.mockClear();
+    await typeLine(1, "   ");
+    fireEvent.click(screen.getByRole("switch", { name: "Outline" }));
+    expect(screen.getByTitle("Invoice preview").parentElement).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    await flushDebounce();
+    expect(mockPreview).toHaveBeenCalledTimes(1);
+    expect(mockPreview.mock.lastCall?.[0]).toMatchObject({
+      structure: ALL_ON,
+      outline: true,
+    });
+    expect(screen.getByTitle("Invoice preview").parentElement).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+  });
+
+  it("marks the preview busy as soon as a footnote line changes, and hides a stale error", async () => {
+    mockPreview.mockResolvedValueOnce({ ok: false, code: "PREVIEW_FAILED" });
+    renderForm();
+    await flushDebounce();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    await typeLine(2, "Billed inclusive of USP");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Rendering draft invoice…")).toBeInTheDocument();
+    await flushDebounce();
+    expect(screen.queryByText("Rendering draft invoice…")).toBeNull();
+  });
+});
+
+async function typeLine(line: number, value: string): Promise<void> {
+  await act(async () => {
+    fireEvent.change(screen.getByLabelText(`Line ${line}`), {
+      target: { value },
+    });
+  });
+}
+
+describe("InvoiceStructureForm — Footnote (bm72)", () => {
+  function lineInputs(): HTMLElement[] {
+    return screen.queryAllByLabelText(/^Line \d$/);
+  }
+
+  it("renders a labelled input per line under the Footnote group, with its hint", () => {
+    renderForm();
+    expect(screen.getByRole("group", { name: "Footnote" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Printed after Total Amount on the last page"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Line 1")).toHaveValue(ALL_ON.footnote[0]);
+    expect(screen.getByLabelText("Line 2")).toHaveValue(ALL_ON.footnote[1]);
+    expect(lineInputs()).toHaveLength(2);
+  });
+
+  it("adds lines up to 5, then hides Add line", async () => {
+    renderForm();
+    for (let n = 3; n <= 5; n++) {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Add line" }));
+      });
+      expect(screen.getByLabelText(`Line ${n}`)).toHaveValue("");
+    }
+    expect(lineInputs()).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: "Add line" })).toBeNull();
+  });
+
+  it("removes a line, and hides Remove when one line is left", async () => {
+    renderForm();
+    expect(
+      screen.getByRole("button", { name: "Remove line 2" }),
+    ).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove line 1" }));
+    });
+    expect(lineInputs()).toHaveLength(1);
+    expect(screen.getByLabelText("Line 1")).toHaveValue(ALL_ON.footnote[1]);
+    expect(screen.queryByRole("button", { name: /Remove line/ })).toBeNull();
+  });
+
+  it("counts characters against 200 and turns the counter Danger past it", async () => {
+    renderForm();
+    expect(screen.getByText("29/200")).toBeInTheDocument();
+    await typeLine(1, "x".repeat(201));
+    const counter = screen.getByText("201/200");
+    expect(counter.className).toContain("--color-danger-700");
+  });
+
+  it("counts a line as the schema does, without its surrounding spaces", async () => {
+    renderForm();
+    await typeLine(1, ` ${"x".repeat(200)}  `);
+    const counter = screen.getByText("200/200");
+    expect(counter.className).not.toContain("--color-danger-700");
+  });
+
+  it("shows the schema's message under the offending line", async () => {
+    renderForm();
+    await typeLine(2, "x".repeat(201));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "200 characters at most",
+    );
+    expect(screen.getByLabelText("Line 2")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await typeLine(2, "   ");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Enter text or remove the line",
+    );
+    expect(screen.getByLabelText("Line 1")).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("refuses to save an added blank line and shows the error instead", async () => {
+    renderForm();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add line" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(mockSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Enter text or remove the line",
+    );
+  });
+
+  it("saves the trimmed footnote", async () => {
+    mockSave.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000004",
+      versionNo: 2,
+      draftToken: "2026-10-10T02:00:00.000001Z",
+    });
+    renderForm();
+    await typeLine(2, "  Billed inclusive of USP  ");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(mockSave).toHaveBeenCalledWith({
+      structure: {
+        sections: { payment: true },
+        columns: {},
+        footnote: [ALL_ON.footnote[0], "Billed inclusive of USP"],
+      },
+      expectedDraftToken: null,
+    });
+    expect(screen.getByLabelText("Line 2")).toHaveValue(
+      "Billed inclusive of USP",
+    );
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  });
+
+  it("shows a server refusal of a line under that line", async () => {
+    mockSave.mockResolvedValue({
+      ok: false,
+      code: "VALIDATION_ERROR",
+      fieldErrors: { "structure.footnote.1": ["200 characters at most"] },
+    });
+    renderForm();
+    await typeLine(2, "Changed");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "200 characters at most",
+    );
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
 
@@ -195,6 +381,68 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       within(screen.getByTestId("section-payment")).getByRole("checkbox"),
     );
   }
+
+  function formWith(
+    props: Partial<React.ComponentProps<typeof InvoiceStructureForm>>,
+  ): React.JSX.Element {
+    return (
+      <InvoiceStructureForm
+        initialStructure={ALL_ON}
+        editable
+        recentBills={BILLS}
+        canPreviewBills
+        familyId="BTF00000001"
+        {...DRAFT_PROPS}
+        {...props}
+      />
+    );
+  }
+
+  it("keeps an open dialog and its note when the page refreshes with the draft the form already holds", () => {
+    const { rerender } = render(formWith({}));
+    fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
+    fireEvent.change(screen.getByLabelText(/Change note/), {
+      target: { value: "typed before the refresh" },
+    });
+    rerender(formWith({ initialStructure: { ...ALL_ON } }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Change note/)).toHaveValue(
+      "typed before the refresh",
+    );
+  });
+
+  it("adopts a newer server draft (a Reload after DRAFT_CONFLICT): its structure, token and version", async () => {
+    const { rerender } = render(formWith({}));
+    await act(async () => {
+      rerender(
+        formWith({
+          expectedDraftToken: "2026-10-11T00:00:00.000000Z",
+          draftVersionNo: 3,
+          draftVersionId: "BTV00000005",
+          initialStructure: {
+            ...ALL_ON,
+            footnote: [ALL_ON.footnote[0]!, "Another admin's line"],
+          },
+        }),
+      );
+    });
+    expect(screen.getByLabelText("Line 2")).toHaveValue("Another admin's line");
+    expect(screen.getByRole("button", { name: "Activate v3" })).toBeEnabled();
+  });
+
+  it("drops the activated draft when the refreshed page has none", async () => {
+    const { rerender } = render(formWith({}));
+    await act(async () => {
+      rerender(
+        formWith({
+          expectedDraftToken: null,
+          draftVersionId: null,
+          draftVersionNo: null,
+        }),
+      );
+    });
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+  });
 
   it("is disabled with no saved draft and the form pristine", () => {
     renderForm();
@@ -235,6 +483,20 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
     );
   });
 
+  it("bm72 — lists a changed footnote line with its old and new text", () => {
+    renderForm({
+      ...DRAFT_PROPS,
+      activeStructure: {
+        ...ALL_ON,
+        footnote: [ALL_ON.footnote[0]!, "Exclusive of USP"],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
+    expect(screen.getByTestId("activate-summary")).toHaveTextContent(
+      `Footnote line 2: "Exclusive of USP" → "${ALL_ON.footnote[1]}"`,
+    );
+  });
+
   it("says so when the structure is unchanged", () => {
     renderForm({ ...DRAFT_PROPS, activeStructure: ALL_ON });
     fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
@@ -268,7 +530,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       changeNote: "Show the usage annex",
     });
     expect(toast.success).toHaveBeenCalledWith("Template v2 activated");
-    // The action revalidates the layout and the form remounts on the new token.
+    // The action revalidates the layout; the form adopts the refreshed page.
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -472,7 +734,9 @@ describe("InvoiceStructureForm — Save draft (bm57)", () => {
     expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
   });
 
-  it("shows inline danger text under the offending row on MANDATORY_SECTION_HIDDEN", async () => {
+  // bm72 — the structure stores only `payment` (bm71 Deviation 3), so a
+  // section refusal can no longer name a row; it is reported generically.
+  it("shows an error toast for a refusal that names no footnote line", async () => {
     mockSave.mockResolvedValue({
       ok: false,
       code: "MANDATORY_SECTION_HIDDEN",
@@ -485,12 +749,10 @@ describe("InvoiceStructureForm — Save draft (bm57)", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     });
-    expect(
-      within(screen.getByTestId("section-billTo")).getByRole("alert"),
-    ).toHaveTextContent("required");
-    expect(
-      within(screen.getByTestId("section-payment")).queryByRole("alert"),
-    ).toBeNull();
+    expect(toast.error).toHaveBeenCalledWith(
+      "The draft could not be saved. Please try again.",
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows an error toast when the server refuses with FORBIDDEN", async () => {
@@ -506,17 +768,33 @@ describe("InvoiceStructureForm — Save draft (bm57)", () => {
 
 describe("InvoiceStructureForm — read-only (READ user)", () => {
   it("renders sections as text, not inputs", () => {
-    renderForm({ editable: false });
+    renderForm({
+      editable: false,
+      initialStructure: { ...ALL_ON, sections: { payment: false } },
+    });
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(
-      within(screen.getByTestId("section-notes")).getByText("Hidden"),
+      within(screen.getByTestId("section-payment")).getByText("Hidden"),
     ).toBeInTheDocument();
     expect(
-      within(screen.getByTestId("section-payment")).getByText("Shown"),
+      within(screen.getByTestId("section-billTo")).getByText("Shown"),
     ).toBeInTheDocument();
     expect(
       within(screen.getByTestId("section-billTo")).getByText("Required"),
     ).toBeInTheDocument();
+  });
+
+  it("bm72 — renders the footnote as a plain list with no inputs or buttons", () => {
+    renderForm({ editable: false });
+    const list = screen.getByRole("list", { name: "Footnote lines" });
+    expect(
+      within(list)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(ALL_ON.footnote);
+    expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Add line" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove line/ })).toBeNull();
   });
 
   it("can still drive the preview (placeholders toggle)", async () => {

@@ -54,6 +54,54 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
 | bm71 | Invoice detail pages per service type and State-District (`listCapacityDetailForInvoice`, binder guards incl. `INVOICE_POLYGON_DATA_MISSING`, `chargeDetails` rewrite, `usageAnnex` + column keys retired, layout manifest schema) | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4404/0; integration 1265/0 (110 skipped) on a throwaway Postgres + Azurite with a scrubbed env; Chromium e2e 3/3 (`RUN_CHROMIUM_E2E=1`, 900 polygons, zero network requests); new guardrail 63 suite 9/9 |
 | bm71 SonarQube fixes | Detail-table header cells carry `scope` (`group-label` → `scope="colgroup"`, `col-head` → `scope="col"`; Web:S5256) in layout v1 `chargeDetails.hbs`; generated v1 regenerated, both `checksums.json` + the `0046` / `seeded-invoice-template.ts` checksum literals updated, golden fixture + golden test expectations follow | **Built** (2026-10-17) — ESLint/Prettier clean; billing service + template unit suites 1061/0 (`trigger-run.service` fails to load on missing `.env` keys, unrelated), seed-checksum test green; integration not re-run |
 | bm71 code review fixes | xhigh review, two fixes in `listCapacityDetailForInvoice`: the `polygon_id=` match is anchored to a whole key name (key start or right after a pipe), so a sorted-earlier key column such as `cell_polygon_id=` is never printed as the polygon (new guardrail 63 case); the type `label` the rows sort by is per offering (window `COALESCE(min(description), offering_id)`), so an offering with two capacity lines of different descriptions stays one contiguous block and the binder never splits a State-District group into two with a doubled Sub Total. Noted, not changed: v1 `sample-data.json`'s "RAN Usage — Target Capacity" detail sums to 200,000.00 against Utilised 150,000.00 (checksum literals); the CSV runs the detail read it never prints; the Sub Total row lost the annex's `break-before: avoid` | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; guardrail 63 suite 10/10 on a throwaway Postgres DB |
+| bm72 | Total Amount page and editable footnote (`notes` → `footnote`, `InvoiceStructureForm` on RHF + `useFieldArray`, footnote diff in `ActivateVersionDialog`, v1 pin guardrail) | **Built** (2026-10-17) — tsc/ESLint/Prettier clean; unit 4508/0 (3 skipped); integration 1269/0 (110 skipped) on a throwaway Postgres + Azurite with a scrubbed env; Chromium e2e 3/3 (`RUN_CHROMIUM_E2E=1`); admin browser e2e 5/5 (`RUN_INVOICE_SETTINGS_E2E=1`, fresh `next build`); v1 pin mutation-checked (a changed v1 byte and a changed `0046` literal each fail it, then reverted) |
+
+**bm72 notes (2026-10-17):**
+
+- **Total Amount (D22, D30, P10).** `readCapacitySummary` also returns `utilisedTotal`: a SQL `SUM` over the same per-offering Utilised figures, at `numeric(18,2)`, `0.00` with no capacity line. It reaches the binder as `raw.bill.utilisedTotal`.
+  - **Deviation 1:** `InvoiceRenderInput.totals.totalAmount` existed already (the bill total). Nothing printed it, and no CSV map path used it. Per the spec it now means Σ Utilised. `amountDue` stays the bill total, so the Grand Total is unchanged.
+  - The last page is appended to `partials/chargeDetails.hbs` as the spec's markup. `shell.hbs` gains the `.total-amount`, `.total-amount .num` and `.footnote` CSS.
+- **`notes` → `footnote` (D56 part 2).** The key, `partials/notes.hbs`, the manifest entry and the "Notes & terms" editor row are removed.
+  - `structure` is `{ sections: { payment }, columns: {}, footnote: string[] }`, and `footnoteLineSchema` carries the editor's messages.
+  - The binder takes `footnote` from its context: `render-invoice-template.ts` passes the override structure in a preview, else the loaded generated version's structure. `preview.ts` (sample) passes the submitted footnote, and the CSV path passes the stamped one (it never prints it).
+  - The generator's case matrix is 2.
+- **v1 regenerated for the last time.**
+  - `regenerate-generated.ts` was run, then `write-checksums.ts` for both directories.
+  - `0046` got the `BTV00000002` structure literal and both checksum literals: layout `17ec1bd7…`, generated `0c875a77…`, regenerated on top of the bm71 SonarQube `scope` attributes. `tests/helpers/seeded-invoice-template.ts` has the same literals plus `SEEDED_FOOTNOTE`.
+  - The golden was regenerated: the last page plus its CSS, and Notes & terms removed.
+  - New `tests/guardrails/invoice-template-v1-pin.test.ts` pins both `checksums.json` digests.
+- **Editor.** `InvoiceStructureForm` runs on React Hook Form.
+  - **Deviation 2 — the line shape:** `useFieldArray` needs objects, so a line is `{ text }` in the form. The resolver wraps `zodResolver(invoiceTemplateStructureSchema)` and maps line errors to `footnote.N.text`, following the company-profile form's wrapped-resolver precedent. A valid submit hands over the trimmed structure.
+  - **Deviation 3 — no preview while invalid:** no preview request goes out while the structure is invalid (a blank or over-long line), and the last good preview stays up.
+  - **Deviation 4 — `MANDATORY_SECTION_HIDDEN`:** its inline row errors are retired from the form. They were unreachable since bm71's Deviation 3. The server codes are left in place, and such a refusal now shows the generic save toast. A server refusal at `structure.footnote.N` shows under line N.
+  - **Page heading:** "Invoice template — Standard (default)". The family name comes from the page data (`standardFamilyName` added to `getInvoiceTemplatePageData`), and the `v{n}` and status badge follow the heading.
+  - **Dialog:** `StructureChangeSummary` in `activate-version-dialog.tsx` renders the diff as the spec words it: `Footnote line N: "old" → "new"`, `… added: "…"`, `… removed`. UI context §10b now records that wording.
+- **Deviation 5 — the panel class:** the spec says Total Amount is "not inside `.amount-due-panel`", but v1's amount-due panel class is `.grand-total-panel`. The golden asserts against that class, and against any `--inv-soft`/`--inv-accent` in `.total-amount`.
+- **Tests changed outside the spec's list (each forced):**
+  - fixtures and contexts: the shared render-input fixtures (`utilisedTotal`, `footnote`) and `PROBE_RENDER_INPUT`; bind contexts in `bind`, `render-invoice-template`, the capacity summary and detail suites, and the Chromium e2e;
+  - schema and layout: `generate-parity` (seeded structure), `invoice-layout-lint` (seeded `.hbs` count 13 → 12), `structure-labels`, and the preview and save-draft action tests (the footnote replaces `notes` as the visible difference; server-side footnote limits added);
+  - version markers: `draft-uses-run-stamps`, `run-template-capture`, guardrail 46 `invoice-version-pinning` and the template journey (a footnote line, not the `notes` toggle, marks a version), plus the `save-template-draft` DB suite.
+- **The admin browser e2e had gone stale.** It still clicked bm71's removed `#column-showDiscountColumn`, because the suite is opt-in. Its EDIT case is rewritten for the footnote flow:
+  - edit line 2, preview, save, activate (dialog diff), then hide Payment as v3;
+  - history shows v1 ACTIVE (default), v2 RETIRED and v3 ACTIVE;
+  - a run started afterwards renders the new line.
+
+  It now waits for the "Editing draft vN" banner before opening Activate. The save's revalidation remounts the form, which closed a dialog opened before the refresh landed (seen once, at v3).
+- **Docs:**
+  - architecture Inv #46 and #57 are marked built;
+  - code-standards: TS rules 4/5 and guardrail items 64 (final), 65 and 67 are marked built; the superseded rows for guardrails 48 and 53 are updated; Next.js rule 2 gets the RHF correction (spec Open question 1);
+  - UI context §10b Phase 3 rows are confirmed as built, and §10d has the last page as built;
+  - the placeholder catalog is synced (`footnote` root, `totals.totalAmount` meaning).
+- **Built on top of the bm71 SonarQube and code-review fixes.** The new anchor case uses the fixture label `TOTAL2000` so it doesn't collide with the code-review case's `ANCHOR`.
+- **Merge artifact removed (owner decision, 2026-10-17).** A local "Merge branch 'dev1'" commit had re-added `partials/usageAnnex.hbs` and `tests/db/invoice-usage-annex.integration.test.ts`, both deleted by bm71. The v1 `checksums.json` did not list the partial. bm72 deletes both files again, so v1 is pinned without the dead annex.
+- **Still to do on each environment:** re-seed on an empty DB and an empty `invoice-templates` container (bm64 runbook). This is the last such reset for v1: v1 is now pinned (Inv #57).
+- **Code review fixes (xhigh, 084944b + the uncommitted test fixes, 2026-10-17).** Owner decisions on items 2, 4, 6 and 8; see known-issues §25.
+  - The live preview no longer sticks in "Rendering…": it renders the latest **valid** structure, so the source, the toggles and Retry still work while a line is invalid. A footnote edit marks the preview busy at once and hides a stale error. The status is derived from the request key, which replaces `markLoading()`.
+  - The counter counts the trimmed line, as the schema does.
+  - A stored structure the schema refuses (a pre-bm72 DB) fails loudly as `TEMPLATE_VERSION_NOT_FOUND` / `STRUCTURE_INVALID` at the page read (no TypeError). The page passes the parsed `currentStructure` to the dialog.
+  - `?version=` naming another family's version falls back to the Standard working copy, so the heading stays true.
+  - The working-copy form is no longer keyed on the draft token. It adopts a server state it does not already hold (a Reload, an activation), so the refresh after its own save no longer closes an open Activate dialog.
+  - `utilisedTotal` is a window `SUM` on the per-type query (one scan, not two). The structure parse is memoized, the type-only imports are grouped, and three tests import `SEEDED_FOOTNOTE`.
 
 **bm71 notes (2026-10-16):**
 

@@ -1102,3 +1102,15 @@ recorded as deferred and is now fixed:
 
 Kept as specified: the audit `templateStamps` stays one entry per BAN (D35; the
 review found it negligible at today's run sizes).
+
+## 25. 🟡 bm72 code review (xhigh, 084944b, 2026-10-17): fixed items and what stays open
+
+Fixed (progress tracker, bm72 notes): the stuck preview while a line is invalid, the missing busy state on footnote edits, the untrimmed counter, the loud failure for a stored structure without `footnote`, the family-scoped `?version=`, the post-save remount that closed an open Activate dialog, the second capacity scan, the repeated structure parse, the import grouping and the duplicated footnote literals.
+
+Kept, by owner decision or by an existing rule:
+
+- **25a. 🟡 OPEN: the Activate dialog's footnote diff is by position (spec).** Deleting line 1 of two reads as "line 1: A → B" plus "line 2 removed", not "line 1 removed". The bm72 spec asks for position-based lines. A later unit can match lines (LCS) and print a removed line's text.
+- **25b. 🟢 Kept: `totals.totalAmount` = Σ Utilised (spec, v1 pinned).** It is not the bill total. The placeholder catalog and `bind.ts` now say a CSV column map or a later layout wanting the invoice total reads `totals.amountDue`.
+- **25c. 🟢 Kept: the wrapped resolver in `InvoiceStructureForm`.** Code-standards Part 2 Next.js rule 2 (the bm72 correction) records it, following the company-profile form's precedent.
+- **25d. 🟡 OPEN, outside bm72: the company-profile form has the same remount race.** `company-profile/page.tsx` keys `CompanyProfileEditForm` on `${shown.version}:${draft?.token}`, so the refresh after a save can still close its Activate dialog. The fix is the same: adopt a server state the form does not hold, instead of remounting. Owner: a company-profile (bm61) follow-up.
+- **25e. 🟢 Note: the render path is not changed for a stale structure.** On a DB that predates bm72's `0046` rewrite, `loadGenerated` already refuses the reseeded v1 blobs with `TEMPLATE_CHECKSUM_MISMATCH`, and old blobs never read `footnote`. The page read now fails loudly (`STRUCTURE_INVALID`). The fix for both is the bm64 reset.

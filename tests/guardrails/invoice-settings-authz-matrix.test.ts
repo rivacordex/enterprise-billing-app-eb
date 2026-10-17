@@ -1,8 +1,45 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+// bm72 — the behavioural READ-user case below runs both template mutations
+// under a guard that resolves a READ-only `invoice_settings` map with the real
+// `meetsLevel`, redirecting as `requirePermission` does. The services are
+// mocked so a call that slips past the guard is visible.
+vi.mock("@/auth/guard", async () => {
+  const { meetsLevel } = await import("@/types/permissions");
+  return {
+    requirePermission: vi.fn(async (name: string, level: string) => {
+      const map: Record<string, string> = { invoice_settings: "READ" };
+      if (!meetsLevel(map[name] as never, level as never)) {
+        throw Object.assign(new Error("NEXT_REDIRECT"), {
+          digest: "NEXT_REDIRECT;replace;/no-access;307;",
+        });
+      }
+      return {
+        userId: "reader-1",
+        userEmail: "r@example.com",
+        permissionMap: map,
+      };
+    }),
+  };
+});
+vi.mock("@/services/billing/invoice-template/save-template-draft", () => ({
+  saveTemplateDraft: vi.fn(),
+}));
+vi.mock("@/services/billing/invoice-template/activate-template", () => ({
+  activateTemplate: vi.fn(),
+}));
+vi.mock("@/lib/logger", () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+
+import { activateTemplateAction } from "@/actions/billing/invoice-settings/activate-template.action";
+import { saveTemplateDraftAction } from "@/actions/billing/invoice-settings/save-template-draft.action";
+import { activateTemplate } from "@/services/billing/invoice-template/activate-template";
+import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
 import { PERMISSION_NAMES } from "@/types/rbac";
 
 // bm55-spec §Tests — guardrail 56 (routes), code-standards Part 2 §8/§9 item
@@ -388,5 +425,37 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
       expect(src).not.toContain("PERMISSIONS.BILLRUN_OPERATE");
       expect(src).not.toContain("PERMISSIONS.BILLRUN_APPROVE");
     }
+  });
+});
+
+// bm72-spec §5 (code-standards Phase 3 permission map): the footnote is an
+// `invoice_settings : EDIT` write like the rest of the structure. A READ user
+// who posts a changed footnote, or activates a draft carrying one, is refused
+// server-side before any parse or service call (the hidden inputs and buttons
+// are show/hide only).
+describe("invoice-settings authz matrix — a READ user cannot change the footnote (bm72)", () => {
+  const CHANGED = {
+    sections: { payment: true },
+    columns: {},
+    footnote: ["Calculations are done in Mbps", "A READ user's edit"],
+  };
+
+  it("save draft carrying a changed footnote is FORBIDDEN and saves nothing", async () => {
+    const result = await saveTemplateDraftAction({
+      structure: CHANGED,
+      expectedDraftToken: null,
+    });
+    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
+    expect(vi.mocked(saveTemplateDraft)).not.toHaveBeenCalled();
+  });
+
+  it("activating a draft that carries a changed footnote is FORBIDDEN and activates nothing", async () => {
+    const result = await activateTemplateAction({
+      draftId: "BTV00000004",
+      expectedDraftToken: "2026-10-10T01:02:03.123456Z",
+      changeNote: "Reword the footnote",
+    });
+    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
+    expect(vi.mocked(activateTemplate)).not.toHaveBeenCalled();
   });
 });

@@ -24,6 +24,7 @@ import {
   loadLayout,
 } from "@/services/billing/invoice-template/load";
 import {
+  SEEDED_FOOTNOTE,
   SEEDED_GENERATED_ROW,
   SEEDED_LAYOUT_ROW,
 } from "@/tests/helpers/seeded-invoice-template";
@@ -47,11 +48,13 @@ import type {
 // bm71 replaced the annex with the detail pages and regenerated all three
 // stored files from the seeded `structure.json` (payment + notes on, no
 // columns): `invoice.hbs`, `footer.hbs` and `structure.json` are each
-// byte-identical to the generator output.
+// byte-identical to the generator output. bm72 regenerated them again from
+// the final structure (payment on, the two seeded footnote lines).
 
 const SEEDED_STRUCTURE: InvoiceTemplateStructure = {
-  sections: { payment: true, notes: true },
+  sections: { payment: true },
   columns: {},
+  footnote: [...SEEDED_FOOTNOTE],
 };
 
 let generatedHtml: (input: InvoiceRenderInput) => string;

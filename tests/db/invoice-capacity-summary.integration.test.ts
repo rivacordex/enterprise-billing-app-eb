@@ -19,7 +19,10 @@ import {
 } from "@/db/repositories/billing/invoice-render-input";
 import { bind } from "@/services/billing/invoice-template/bind";
 import { InvoiceRenderError } from "@/types/billing";
-import { SEEDED_TEMPLATE_STAMP } from "@/tests/helpers/seeded-invoice-template";
+import {
+  SEEDED_FOOTNOTE,
+  SEEDED_TEMPLATE_STAMP,
+} from "@/tests/helpers/seeded-invoice-template";
 
 // bm70-spec §6 — guardrail item 62: the page-1 capacity summary, computed in
 // SQL by `invoiceRenderInputRepository.read`, on bills built by the extracted
@@ -49,6 +52,7 @@ const BIND_CTX = {
   timezone: TZ,
   template: SEEDED_TEMPLATE_STAMP,
   profile: null,
+  footnote: [...SEEDED_FOOTNOTE],
 };
 
 describe.skipIf(!databaseUrl)(
@@ -255,6 +259,10 @@ describe.skipIf(!databaseUrl)(
           });
           expect(bound.totals.totalCharges).toBe(a.total);
           expect(bound.totals.amountDue).toBe(a.total);
+          // bm72 (D22) — the last page's Total Amount is the SQL Σ Utilised
+          // (2,000 Mbps → 150000.00), never the bill total.
+          expect(raw.bill.utilisedTotal).toBe(a.utilised);
+          expect(bound.totals.totalAmount).toBe(a.utilised);
         }
       },
       240_000,
@@ -293,6 +301,8 @@ describe.skipIf(!databaseUrl)(
         expect(raw.bill.otherChargesSubTotal).toBe("10000.00");
         await assertIdentities(raw);
         expect(bind(raw, BIND_CTX).totals.totalCharges).toBe("160000.00");
+        // bm72 (D22) — Total Amount excludes the Other charges row.
+        expect(raw.bill.utilisedTotal).toBe("150000.00");
       },
       120_000,
     );

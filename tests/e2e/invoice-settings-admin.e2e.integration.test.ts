@@ -22,6 +22,7 @@ import {
   freshDatabase,
   purgeInvoiceBlobs,
 } from "@/tests/e2e/helpers/fresh-database";
+import type { InvoiceRenderFixtures } from "@/tests/db/helpers/invoice-render-fixtures";
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { decodablePng, png, svg } from "@/tests/helpers/logo-fixtures";
@@ -57,6 +58,10 @@ const optedIn =
 const PASSWORD = "E2e-Invoice-Settings-63!";
 const SCRIPT_NAME = "<script>alert(1)</script>";
 const SETTINGS = "/administration/invoice-settings";
+// bm72 — the seeded v1 footnote's line 2, and the admin's edit of it.
+const SEEDED_LINE_2 =
+  "This invoice is billed exclusive of Universal Service Provision (USP)";
+const EDITED_LINE_2 = "e2e: billed inclusive of USP from this run";
 
 type Persona = "none" | "reader" | "viewer" | "editor";
 const EMAILS: Record<Persona, string> = {
@@ -100,6 +105,8 @@ describe.skipIf(
   !optedIn || !databaseUrl || !blobConnection || !bootstrapUrl || !built,
 )("bm63 D2 — Invoice Settings admin e2e (next start + playwright)", () => {
   let sql: postgresjs.Sql;
+  // bm72 — the render fixtures, reused to start a run after an activation.
+  let fx: InvoiceRenderFixtures;
   let server: ChildProcess | undefined;
   let browser: Browser;
   let base = "";
@@ -275,7 +282,7 @@ describe.skipIf(
     // offered as a preview source to billrun_view holders.
     const { setupInvoiceRenderFixtures } =
       await import("@/tests/db/helpers/invoice-render-fixtures");
-    const fx = await setupInvoiceRenderFixtures(sql, "BM63E2E", {
+    fx = await setupInvoiceRenderFixtures(sql, "BM63E2E", {
       reset: false,
     });
     await fx.newRun("BRN09063101");
@@ -348,7 +355,12 @@ describe.skipIf(
     await navLink(page).waitFor();
 
     await page.goto(`${SETTINGS}/invoice-template`);
-    await page.getByRole("heading", { name: /Invoice template v1/ }).waitFor();
+    await page
+      .getByRole("heading", { name: /Invoice template — Standard/ })
+      .waitFor();
+    // bm72 — the footnote is a plain list, with no inputs.
+    await page.getByRole("list", { name: "Footnote lines" }).waitFor();
+    expect(await page.getByRole("textbox").count()).toBe(0);
     expect(await page.getByRole("checkbox").count()).toBe(0);
     expect(
       await page
@@ -387,24 +399,29 @@ describe.skipIf(
     expect(dialogs).toEqual([]);
   }, 120_000);
 
-  it("an EDIT user: mandatory sections are locked; hiding Discount removes the column; save → activate (note required) → history and Generated .hbs (criterion 4)", async () => {
+  it("an EDIT user: mandatory sections are locked; a footnote edit previews, saves and activates; a run triggered afterwards prints it (criterion 4, bm72)", async () => {
     const page = await signIn("editor");
     await page.goto(`${SETTINGS}/invoice-template`);
+    await page
+      .getByRole("heading", { name: /Invoice template — Standard/ })
+      .waitFor();
     expect(await page.locator("#section-billTo").isDisabled()).toBe(true);
     await page.getByTestId("section-billTo").getByText("Required").waitFor();
+    // bm72 (D56) — Payment information is the only toggle.
+    expect(await page.locator("#section-notes").count()).toBe(0);
 
+    // The live preview follows the unsaved footnote.
     const frame = await previewFrame(page);
-    await frame.locator('th:text-is("Discount")').first().waitFor();
-    await page.locator("#column-showDiscountColumn").click();
-    await expect
-      .poll(() => frame.locator('th:text-is("Discount")').count(), {
-        timeout: 30_000,
-      })
-      .toBe(0);
+    await frame.getByText(SEEDED_LINE_2).first().waitFor();
+    await page.getByLabel("Line 2", { exact: true }).fill(EDITED_LINE_2);
+    await frame.getByText(EDITED_LINE_2).first().waitFor({ timeout: 30_000 });
 
-    // v2: Discount hidden.
+    // v2: footnote line 2 edited.
     await page.getByRole("button", { name: "Save draft", exact: true }).click();
     await page.getByText("Draft v2 saved — not used on invoices").waitFor();
+    // The save revalidates the page; wait for the draft banner the
+    // re-rendered page shows, so Activate targets the saved draft.
+    await page.getByText(/^Editing draft v2/).waitFor();
     await page
       .getByRole("button", { name: "Activate v2", exact: true })
       .click();
@@ -413,6 +430,9 @@ describe.skipIf(
       name: "Activate v2",
       exact: true,
     });
+    await dialog
+      .getByText(`Footnote line 2: "${SEEDED_LINE_2}" → "${EDITED_LINE_2}"`)
+      .waitFor();
     // The UI never sends an empty note: confirm stays disabled for an empty
     // or whitespace-only note (React ignores clicks on a disabled button,
     // so the server's CHANGE_NOTE_REQUIRED is proven at the action layer,
@@ -421,18 +441,24 @@ describe.skipIf(
     expect(await confirm.isDisabled()).toBe(true);
     await dialog.locator("#activate-change-note").fill("   ");
     expect(await confirm.isDisabled()).toBe(true);
-    await confirmWithNote(page, "e2e: hide discount", "Activate v2");
+    await confirmWithNote(page, "e2e: reword footnote", "Activate v2");
     await page.getByText("Template v2 activated").waitFor();
 
-    // v3: Notes & terms hidden too — v2 becomes RETIRED.
+    // v3: Payment information hidden too — v2 becomes RETIRED; the default
+    // v1 stays ACTIVE as the fallback (P7).
     await page.goto(`${SETTINGS}/invoice-template`);
-    await page.locator("#section-notes").click();
+    await page.locator("#section-payment").click();
     await page.getByRole("button", { name: "Save draft", exact: true }).click();
     await page.getByText("Draft v3 saved — not used on invoices").waitFor();
+    await page.getByText(/^Editing draft v3/).waitFor();
     await page
       .getByRole("button", { name: "Activate v3", exact: true })
       .click();
-    await confirmWithNote(page, "e2e: hide notes", "Activate v3");
+    await page
+      .getByRole("dialog")
+      .getByText("Payment information hidden")
+      .waitFor();
+    await confirmWithNote(page, "e2e: hide payment", "Activate v3");
     await page.getByText("Template v3 activated").waitFor();
 
     await page.goto(`${SETTINGS}/invoice-template?tab=history`);
@@ -441,14 +467,37 @@ describe.skipIf(
       page.locator("tbody tr").filter({ hasText: new RegExp(`^\\s*v${n}BTV`) });
     await row(3).locator('[data-status="ACTIVE"]').waitFor();
     await row(2).locator('[data-status="RETIRED"]').waitFor();
-    await row(3).getByText("e2e: hide notes").waitFor();
+    await row(1).locator('[data-status="ACTIVE"]').waitFor();
+    await row(3).getByText("e2e: hide payment").waitFor();
 
     await page.goto(`${SETTINGS}/invoice-template?tab=generated`);
     const hbs = await page.locator('pre[aria-label="invoice.hbs"]').innerText();
     expect(hbs.length).toBeGreaterThan(1000);
     expect(hbs).not.toContain("[[");
     expect(hbs).not.toContain("sec--notes");
-    expect(hbs).not.toMatch(/<th[^>]*>Discount<\/th>/);
+    expect(hbs).not.toContain("sec--payment");
+    expect(hbs).toContain("{{#each footnote}}");
+
+    // A run triggered after the activation captures v3, so its draft prints
+    // the new footnote line after Total Amount.
+    await fx.newRun("BRN09072101");
+    const { banId } = await fx.draftBill({
+      label: "FOOT",
+      runId: "BRN09072101",
+    });
+    const { buildInvoiceHtml } =
+      await import("@/services/billing/render-invoice-template");
+    const draft = await buildInvoiceHtml({
+      runId: "BRN09072101",
+      banId,
+      mode: "draft",
+    });
+    expect(draft.resolved.generated.versionNo).toBe(3);
+    const lastPage = draft.html.slice(
+      draft.html.indexOf('<section class="total-amount-page"'),
+    );
+    expect(lastPage).toContain(`<p>${EDITED_LINE_2}</p>`);
+    expect(lastPage).not.toContain(SEEDED_LINE_2);
   }, 300_000);
 
   it("an EDIT user: invalid profile fields are rejected inline, bad logos are rejected, activation needs a logo, then succeeds with the bank warning (criterion 3)", async () => {

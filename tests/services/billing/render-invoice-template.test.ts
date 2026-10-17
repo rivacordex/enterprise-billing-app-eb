@@ -18,6 +18,7 @@ import { loadGenerated } from "@/services/billing/invoice-template/load";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 import type { InvoiceProfile } from "@/types/billing";
 import {
+  SEEDED_FOOTNOTE,
   SEEDED_GENERATED_ROW as SEEDED_GENERATED,
   SEEDED_TEMPLATE_STAMP as TEMPLATE,
 } from "@/tests/helpers/seeded-invoice-template";
@@ -102,6 +103,7 @@ async function renderDraft(
     timezone: "UTC",
     template: TEMPLATE,
     profile,
+    footnote: [...SEEDED_FOOTNOTE],
   });
   return executeInvoiceTemplate(invoice, input);
 }
@@ -125,6 +127,7 @@ async function renderFinal(
     invoiceNo: "INV00000042",
     template: TEMPLATE,
     profile,
+    footnote: [...SEEDED_FOOTNOTE],
   });
   return executeInvoiceTemplate(invoice, input);
 }
@@ -139,6 +142,7 @@ async function renderFooter(profile: InvoiceProfile | null) {
       timezone: "UTC",
       template: TEMPLATE,
       profile,
+      footnote: [...SEEDED_FOOTNOTE],
     }),
   );
 }

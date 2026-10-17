@@ -89,10 +89,17 @@ export default async function InvoiceTemplatePage({
     <div className="space-y-4">
       <InvoiceSettingsTabs active="invoice-template" />
       <div className="flex flex-wrap items-center gap-3">
+        {/* bm72 (D45, ui-context §10b) — the page edits the Standard
+            (default) family; there is no family switcher. */}
         <h2 className="text-h2 font-semibold text-foreground">
-          Invoice template{" "}
-          <span className="font-mono text-mono">v{shown.versionNo}</span>
+          Invoice template — {data.standardFamilyName}{" "}
+          <span className="font-normal text-[color:var(--text-muted)]">
+            (default)
+          </span>
         </h2>
+        <span className="font-mono text-mono text-foreground">
+          v{shown.versionNo}
+        </span>
         <TemplateVersionStatusBadge
           status={shown.status as TemplateVersionStatus}
           isDefault={shown.isDefault}
@@ -156,11 +163,12 @@ export default async function InvoiceTemplatePage({
 
       {tab === "edit" ? (
         <InvoiceStructureForm
-          // A fresh form (and preview) per shown version AND per draft token:
-          // after a save, or after "Reload" on a DRAFT_CONFLICT, the page
-          // re-renders with the newer token and the form must reload from it
-          // instead of keeping its stale local state.
-          key={`${shown.billTemplateVersionId}:${draft?.token ?? "none"}`}
+          // A fresh form (and preview) per version opened from the history.
+          // The working copy keeps one form across saves, activations and
+          // Reloads: it adopts a newer server draft itself, so the refresh
+          // after its own save never remounts it (which would close an
+          // Activate dialog opened meanwhile).
+          key={viewingOther ? shown.billTemplateVersionId : "working"}
           initialStructure={data.shownStructure}
           // While a working draft exists it is the only editable version, so
           // a save can never silently replace it with another version's
@@ -174,7 +182,7 @@ export default async function InvoiceTemplatePage({
           expectedDraftToken={draft?.token ?? null}
           draftVersionId={draft?.billTemplateVersionId ?? null}
           draftVersionNo={draft?.versionNo ?? null}
-          activeStructure={current.structure}
+          activeStructure={data.currentStructure}
           familyId={data.standardFamilyId}
           canPreviewBills={canPreviewBills}
           recentBills={canPreviewBills ? await listRecentPostedBills() : []}

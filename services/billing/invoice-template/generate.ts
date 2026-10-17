@@ -26,8 +26,9 @@ import {
 //     partner (the adjacent half section in the full order) is hidden — a half
 //     section authored without a partner keeps `sec--half`, as the stored v1
 //     does ("the gap closes, the partner widens");
-//   - a mandatory section is always shown; only the optional sections
-//     (`payment`, `notes`) are read from the structure (bm71, D56).
+//   - a mandatory section is always shown; only the optional section
+//     (`payment`; bm72 removed `notes`) is read from the structure (bm71,
+//     D56). The footnote is bound data (`footnote`), never a directive.
 // The generated v1 `invoice.hbs` is this output for the seeded structure
 // (generate-parity.test.ts). bm71 retired the `[[if columns.*]]` and
 // `[[num …]]` directives with the old line table; the manifest is parsed with
