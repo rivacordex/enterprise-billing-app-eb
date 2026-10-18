@@ -106,7 +106,7 @@ from typing import Any
 import polars as pl
 import psycopg
 
-from . import db, logemit, storage
+from . import db, logemit, prp, storage
 
 # ---------------------------------------------------------------------------
 # The udr_rated COPY column list (D4). `is_live` is GENERATED (omitted); `udr_id`
@@ -198,19 +198,22 @@ class ReconImbalance(Exception):
 
 
 # ---------------------------------------------------------------------------
-# period_of (Inv #15) — the UTC month bucket, mirroring rating.period_of() so the
-# udr_rated_period_matches_check CHECK accepts the row. The literal is UTC, never
-# the business timezone (architecture §7 item 12); the CHECK is the guarantee,
-# this is the value that satisfies it.
+# period_of (Inv #15) — the BILLING month in the config TZ (Asia/Kuala_Lumpur),
+# mirroring rating.period_of() so the udr_rated_period_matches_check CHECK
+# accepts the row. Delegates to prp.period_of, the single source of the config
+# TZ (rm15/rm21 X1). This was a stale UTC bucket from before X1: the first live
+# run (2026-10-18) failed the COPY on an event at 2026-09-01 03:00 +08, which
+# UTC put in August. The CHECK is the guarantee, this is the value that
+# satisfies it.
 # ---------------------------------------------------------------------------
 
 
 def period_of(start_datetime: datetime) -> date:
-    """The physical storage bucket for ``start_datetime`` — ``date_trunc('month',
-    ts AT TIME ZONE 'UTC')::date``, computed in Python. The
-    ``udr_rated_period_matches_check`` CHECK backstops it (Inv #15)."""
-    utc = _as_utc(start_datetime)
-    return date(utc.year, utc.month, 1)
+    """The billing month (first-of-month ``date``) for ``start_datetime`` —
+    ``date_trunc('month', ts AT TIME ZONE 'Asia/Kuala_Lumpur')::date``, computed
+    in Python. The ``udr_rated_period_matches_check`` CHECK backstops it
+    (Inv #15)."""
+    return prp.period_of(_as_utc(start_datetime))
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -233,7 +236,7 @@ def _as_utc(value: datetime) -> datetime:
 
 def build_chunk_rows(frame: pl.DataFrame) -> list[tuple[Any, ...]]:
     """Build one chunk's COPY tuples (in ``COPY_COLUMNS`` order) from RP's rated
-    Parquet frame. ``partition_period`` is computed per row (the UTC month bucket,
+    Parquet frame. ``partition_period`` is computed per row (the billing month,
     Inv #15); ``status`` is the fixed ``RATED`` (Inv #2 — RL's only writable
     status); money/rate parse to ``Decimal`` (never float, §5.9) and fail closed on
     a NULL (a rate is ZERO, never null). The per-row dict is deliberate: the final

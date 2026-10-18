@@ -1038,7 +1038,7 @@ def main(argv: list[str] | None = None) -> int:
             outcome=None,
             prp_manifest=prp_manifest,
         )
-        print(manifest.resolve().as_uri())
+        storage.hand_off(manifest.resolve().as_uri())
         return 0
 
     rated_datetime = datetime.now(timezone.utc)
@@ -1095,7 +1095,7 @@ def main(argv: list[str] | None = None) -> int:
         outcome=outcome,
         prp_manifest=prp_manifest,
     )
-    print(manifest.resolve().as_uri())
+    storage.hand_off(manifest.resolve().as_uri())
     return 0
 
 

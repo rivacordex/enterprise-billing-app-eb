@@ -92,23 +92,28 @@ triggers:
     # the landing mount; `concurrency: limit: 1` (above) keeps one execution per
     # udr_type in flight, and the DB claim (Inv #7) is the real once-only guard.
     #
-    # CAVEAT — TWO things here are UNCONFIRMED against the pinned v1.3.35 engine
-    # and are the TOP D0-spike items (same class as rm04's kestra.yml property
-    # names and rm06's kestra-CLI flags); do NOT read them as verified:
-    #   (1) the plugin id `io.kestra.plugin.fs.local.Trigger` for a mounted
-    #       landing dir, and whether a Schedule-poll + list is needed instead;
-    #   (2) THE FILE BINDING the prp task consumes below — the trigger's output
-    #       variable is NOT confirmed. Candidate expressions to verify at the
-    #       spike: `{{ trigger.uri }}` (used below), `{{ trigger.files[0].path }}`,
-    #       or `{{ trigger.uris[0] }}`. If the trigger emits a LIST of files per
-    #       fire, the flow needs a per-file ForEach rather than a single prp call.
-    # This is now FAIL-SAFE, not fail-crash: if the binding renders empty, prp
-    # exits 1 with a clear "source-file resolved to an empty path" message
-    # (runtime/prp.py main step 0) rather than deriving a blank file_key or
-    # crashing its own error handler. The BINDING contract of rm07 is the prp
-    # task's claim/validate/reject behaviour, not this trigger's literal plugin id.
+    # CONFIRMED at the first live local run (2026-10-18, bm73 manual run) against
+    # the installed plugin-fs 2.11.1 — this closes the rm07 D0-spike caveat:
+    #   (1) `io.kestra.plugin.fs.local.Trigger` is the right plugin, but it only
+    #       reads paths listed under kestra.yml `allowed-paths` for its own type
+    #       (`/data/landing`; without it every poll fails "The 'allowed-paths'
+    #       configuration is required").
+    #   (2) THE FILE BINDING: the trigger emits a LIST, `trigger.files[]`, each a
+    #       flat `{ localPath, uri, name, parent, size, changeType, ... }` —
+    #       there is no `trigger.uri`. `localPath` is `file:///data/landing/<name>`
+    #       (the landing original; `uri` is a kestra:// copy). prp reads
+    #       `trigger.files[0].localPath` below.
+    # `maxFiles: 1` keeps that single prp call correct: one file per execution;
+    # a second file waits for the next poll (a per-file ForEach is the later
+    # fix if several files must land in one poll). `regExp` fires on usage files
+    # only (not README.md/.gitkeep) and `on: CREATE` ignores rewrites of a file
+    # already seen. prp stays FAIL-SAFE: an empty binding exits 1 with
+    # "source-file resolved to an empty path" (runtime/prp.py main step 0).
     type: io.kestra.plugin.fs.local.Trigger
     from: "{{ vars.landing_dir | default('/data/landing') }}"
+    regExp: '(.*/)?rating-input-file-\d{12}(_v\d+)?\.udr'
+    on: CREATE
+    maxFiles: 1
     interval: PT1M
     # NONE — the trigger must never move or delete the file: claiming is a DB
     # constraint, not a filesystem op (Inv #7), and archive-after-commit is
@@ -129,7 +134,7 @@ tasks:
     # an ACTIVE ratecard cell (no match → INPUT_UNMAPPED, whole batch) and
     # stamps that cell's state/district/udr_resource (Inv 28), quarantines invalid
     # rows to error/ against the reject threshold, stamps the counts, and emits a
-    # manifest file URI (outputs.prp.uri) listing the survivor Parquet chunks for
+    # manifest file URI (outputs.prp.vars.uri) listing the survivor Parquet chunks for
     # rp. runtime.db reads SECRET_RATING_RUNTIME_PASSWORD + RATING_DB_* from the
     # container env (rm04's rating-engine-container-app.bicep); RATING_ENGINE_VERSION
     # (D6/Inv #12) is likewise read from the container env by prp.
@@ -143,21 +148,21 @@ tasks:
       # reads it at runtime; the default keeps a fresh namespace working.
       - >
         python3 -m runtime.prp
-        --source-file "{{ trigger.uri }}"
+        --source-file "{{ trigger.files[0].localPath }}"
         --udr-type "{{ vars.udr_type }}"
         --profile '{{ vars.feed_profile }}'
         --file-key-rule '{{ vars.file_key_rule }}'
         --reject-threshold "{{ vars.reject_threshold }}"
-        --chunk-size "{{ kv('rating_ran_usage_chunk_size') ?? 10000 }}"
+        --chunk-size "{{ kv('rating_ran_usage_chunk_size', errorOnMissing=false) ?? 10000 }}"
         --subscription-product-name "{{ vars.subscription_product_name }}"
         --ratecard-coverage-enforcement "{{ vars.ratecard_coverage_enforcement }}"
         --workflow-execution-id "{{ execution.id }}"
         --flow-revision "{{ flow.revision }}"
-    # emits {{ outputs.prp.uri }} (D5) — the manifest URI consumed by rp below.
+    # emits {{ outputs.prp.vars.uri }} (D5) — the manifest URI consumed by rp below.
 
   - id: rp
     # rm08 — the REAL Rating Processor (was rm06/rm07's # STUB:). Consumes PRP's
-    # manifest (outputs.prp.uri), resolves each validated record's price as-of
+    # manifest (outputs.prp.vars.uri), resolves each validated record's price as-of
     # start_datetime through the PINNED product_offering version (one set-based
     # as-of query per chunk, never per record, Inv #10), applies any
     # order_item_price_override, snapshots the resolved inputs onto the row
@@ -165,7 +170,7 @@ tasks:
     # udr_price_override_ref, udr_rounding_mode — D4, mandatory), computes the
     # FLAT charge (raw numeric(18,6) + rounded numeric(18,2), quantity ignored,
     # D5) in Decimal (never float), stamps udr_currency (D9) + the version
-    # columns (D10), and emits a rated Parquet manifest (outputs.rp.uri) for rl.
+    # columns (D10), and emits a rated Parquet manifest (outputs.rp.vars.uri) for rl.
     # RP writes nothing to rating.* — the insert is rl's one transaction (Inv #8).
     # A record that does not resolve → LOOKUP_MISS (MAJOR), not rated (D3). A
     # non-PROCESSING PRP manifest (DISCARDED redelivery / lost claim) is a no-op.
@@ -186,17 +191,17 @@ tasks:
       # ratemgmt-progress-tracker.md (rm21).
       - >
         python3 -m runtime.rp
-        --manifest "{{ outputs.prp.uri }}"
+        --manifest "{{ outputs.prp.vars.uri }}"
         --udr-type "{{ vars.udr_type }}"
         --rounding-mode "{{ vars.rounding_mode }}"
         --subscriber-ref-column product_inventory_id
         --workflow-execution-id "{{ execution.id }}"
         --flow-revision "{{ flow.revision }}"
-    # emits {{ outputs.rp.uri }} (D11) — the rated manifest URI consumed by rl.
+    # emits {{ outputs.rp.vars.uri }} (D11) — the rated manifest URI consumed by rl.
 
   - id: rl
     # rm09 — the REAL Rating Loader (was rm06/rm07/rm08's # STUB:). Consumes RP's
-    # rated manifest (outputs.rp.uri) and, in ONE psycopg transaction (Inv #8):
+    # rated manifest (outputs.rp.vars.uri) and, in ONE psycopg transaction (Inv #8):
     # runs the BILL_APPROVED guard (any live collision → refuse the whole batch,
     # LOAD_BLOCKED_BILLED, REFUSED, zero rows, D2/Inv #6); asserts udr_currency ==
     # billing_account.currency (mismatch → CURRENCY_MISMATCH, REFUSED, D3); runs
@@ -219,7 +224,7 @@ tasks:
     commands:
       - >
         python3 -m runtime.rl
-        --manifest "{{ outputs.rp.uri }}"
+        --manifest "{{ outputs.rp.vars.uri }}"
         --udr-type "{{ vars.udr_type }}"
         --landing-dir "{{ vars.landing_dir | default('/data/landing') }}"
         --workflow-execution-id "{{ execution.id }}"

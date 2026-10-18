@@ -16,7 +16,12 @@ workflow-management/
     workflow-engine/     # THE ONE shared process-runner image (Python toolchain + Postgres client)
   kestra/kestra.yml      # platform config (datasource, storage, default-namespace)
   dev/                   # local docker-compose stack, sample fixtures, .env.example
+  docs/                  # operator runbooks
 ```
+
+**Operations.** Reloading usage files, releasing a stuck rating batch (marking
+it `FAILED`) and reissuing corrected data: see
+[`docs/rating-batch-operations.md`](docs/rating-batch-operations.md).
 
 **One shared engine image.** ACA has no Docker daemon, so Kestra runs as a
 **process runner** on one custom image (`worker/workflow-engine/`, `FROM` a

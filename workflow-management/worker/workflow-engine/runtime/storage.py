@@ -14,6 +14,7 @@ the flow's decision (chunk size is config, §3.3), each chunk being its own file
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -56,6 +57,17 @@ _DEFAULTS = {
     "error": "/data/error",
     "logs": "/data/logs",
 }
+
+
+def hand_off(uri: str) -> None:
+    """Print the next task's input URI twice on stdout: first as a Kestra
+    output line (``::{"outputs":{"uri":...}}::``, which the flow reads as
+    ``outputs.<task>.uri``), then as the plain URI. A bare print is NOT a
+    Kestra output — the first live run (2026-10-18) failed rp with "Unable to
+    find `uri`". The plain line stays LAST because the integration harness
+    reads the last stdout line as the URI (tests/helpers/rating-ran-harness.ts)."""
+    print("::" + json.dumps({"outputs": {"uri": uri}}) + "::")
+    print(uri)
 
 
 def location(name: str) -> Path:

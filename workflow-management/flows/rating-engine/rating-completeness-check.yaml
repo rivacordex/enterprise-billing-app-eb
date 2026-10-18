@@ -48,8 +48,8 @@ tasks:
       # value in this codebase is a plain scalar (rm11's threshold) — kept
       # even though env-passing would now tolerate embedded quotes, since the
       # parser (`parse_config`) still expects the delimiter form.
-      RATING_COMPLETENESS_CONFIG: "{{ kv('rating_completeness_config') ?? '' }}"
-      RATING_COMPLETENESS_LOOKBACK_DAYS: "{{ kv('rating_completeness_lookback_days') ?? 3 }}"
+      RATING_COMPLETENESS_CONFIG: "{{ kv('rating_completeness_config', errorOnMissing=false) ?? '' }}"
+      RATING_COMPLETENESS_LOOKBACK_DAYS: "{{ kv('rating_completeness_lookback_days', errorOnMissing=false) ?? 3 }}"
     commands:
       # Empty default (no udr_type configured) is a safe no-op, not a hang.
       - >

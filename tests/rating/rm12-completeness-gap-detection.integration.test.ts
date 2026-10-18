@@ -163,7 +163,9 @@ describe("completeness and gap detection (rm12-spec D1-D6 — static)", () => {
     expect(flowYaml).toMatch(/limit:\s*1/);
     expect(flowYaml).toMatch(/python3 -m runtime\.completeness_check/);
     expect(flowYaml).toMatch(/--config/);
-    expect(flowYaml).toMatch(/kv\('rating_completeness_config'\)/);
+    expect(flowYaml).toMatch(
+      /kv\('rating_completeness_config', errorOnMissing=false\)/,
+    );
   });
 
   it("both the errors and finally handlers report the terminal outcome (code-standards §3.9)", () => {

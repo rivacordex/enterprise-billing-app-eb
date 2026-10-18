@@ -208,9 +208,9 @@ describe("rp flow wiring (rm08-spec D1/D5/D7/D11 — static)", () => {
 
   it("the rp task invokes the real runtime.rp module and hands prp -> rp -> rl by file URI", () => {
     expect(template).toMatch(/python3 -m runtime\.rp/);
-    expect(template).toMatch(/--manifest "\{\{ outputs\.prp\.uri \}\}"/);
+    expect(template).toMatch(/--manifest "\{\{ outputs\.prp\.vars\.uri \}\}"/);
     // rp emits its own URI, consumed by the rl stub.
-    expect(template).toMatch(/outputs\.rp\.uri/);
+    expect(template).toMatch(/outputs\.rp\.vars\.uri/);
     // The rp section is a module invocation, not inline python, and carries no
     // rate maths / DB insert (that is rl's, Inv #8).
     const rpBlock = template.slice(
@@ -246,7 +246,7 @@ describe("rp flow wiring (rm08-spec D1/D5/D7/D11 — static)", () => {
     // status. Updated again by rm10 (same precedent): the supersede-hook inside
     // its transaction is now real too — the `# STUB: rm10` marker is gone.
     const rlBlock = template.slice(template.indexOf("id: rl"));
-    expect(rlBlock).toMatch(/outputs\.rp\.uri/);
+    expect(rlBlock).toMatch(/outputs\.rp\.vars\.uri/);
     expect(rlBlock).toMatch(/python3 -m runtime\.rl/);
     expect(rlBlock).not.toMatch(/# STUB: rm10/);
     expect(rlBlock).toMatch(/supersede/i);

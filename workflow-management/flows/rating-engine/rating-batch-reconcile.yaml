@@ -68,7 +68,7 @@ tasks:
       # large batch, short enough to recover promptly.
       - >
         python3 -m runtime.stranded_reconcile
-        --threshold-seconds "{{ kv('rating_stranded_batch_threshold_seconds') ?? 3600 }}"
+        --threshold-seconds "{{ kv('rating_stranded_batch_threshold_seconds', errorOnMissing=false) ?? 3600 }}"
         --workflow-execution-id "{{ execution.id }}"
 
 # code-standards §3.9 — both handlers report the terminal outcome via the

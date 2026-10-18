@@ -276,7 +276,7 @@ describe("rl flow wiring + COPY (rm09-spec D1/D4/D8 — static)", () => {
     expect(template).toMatch(/python3 -m runtime\.rl/);
     const rlBlock = template.slice(template.indexOf("id: rl"));
     expect(rlBlock).toMatch(/python3 -m runtime\.rl/);
-    expect(rlBlock).toMatch(/--manifest "\{\{ outputs\.rp\.uri \}\}"/);
+    expect(rlBlock).toMatch(/--manifest "\{\{ outputs\.rp\.vars\.uri \}\}"/);
     expect(rlBlock).toMatch(/--landing-dir/);
     expect(rlBlock).toMatch(
       /--workflow-execution-id "\{\{ execution\.id \}\}"/,

@@ -106,6 +106,15 @@ kestra:
         values:
           allowed-paths:
             - /distribution
+      # The rating flow's landing/ file trigger (rating-engine-ran-usage
+      # `landing-file`) polls the landing mount: /data/landing in local dev and
+      # on the deployed engine (rm04's Azure Files mount). Without this entry
+      # every poll fails "The 'allowed-paths' configuration is required"
+      # (confirmed at the first live local run, 2026-10-18).
+      - type: io.kestra.plugin.fs.local.Trigger
+        values:
+          allowed-paths:
+            - /data/landing
 
   # namespace default for flow deploys (D7). STAYS `rating` — every flow under
   # workflow-management/flows/<function>/ is namespace-qualified (`namespace:` in
