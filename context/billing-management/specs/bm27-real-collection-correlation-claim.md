@@ -49,6 +49,7 @@ SELECT * FROM correlated;
 
 - **Currency:** any correlated row with `udr_currency <> account_currency` → the account's `validation` stage signals `FAILED` with a `HARD` finding (`CURRENCY_MISMATCH`), the `_CURRENCY_SQL` check applied per account.
 - **Window coverage:** correlated rows whose `start_datetime` falls outside `[period_start, period_end]` → `HARD` finding (`WINDOW_COVERAGE`).
+  - **Amended 2026-10-18 (bm73 code review, owner decision): window scope replaces `WINDOW_COVERAGE`.** Validation and Collection consider only the correlated rows whose `start_datetime`, as a date in the flow's `business_timezone`, is inside `[period_start, period_end]`. Rows from other months stay `RATED`, unclaimed and untouched (like an orphan, Inv #25) for the run of their own period, and are only counted in Validation's NOTICE. The HARD check failed an account on every later run once any usage was left `RATED` from another month (e.g. after a partial-period exclusion), and failed every account whose next-month usage was already rated. The currency check applies to the in-window rows.
 - **Zero-claimable:** no correlated rows for the account → `validation` signals `DONE` (a zero-charge exception, not an error); Collection claims nothing; Aggregation writes no usage line.
 - The stage signal is the existing record-only `stage/validation/complete` M2M POST (`{ban_id, attempt, status, error_class?, error_code?, error_detail?}`) — no charge payload.
 

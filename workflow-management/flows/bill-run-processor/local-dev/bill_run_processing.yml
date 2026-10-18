@@ -122,11 +122,12 @@ tasks:
         allowFailure: true
         tasks:
           # bm27 — REAL Validation: assert against the correlated set (the
-          # `_CURRENCY_SQL`-shaped subscriber->account join, Inv #24) and ENFORCE the
-          # two HARD checks: a currency mismatch (udr_currency <> account_currency)
-          # or an out-of-window row RAISEs, which (ON_ERROR_STOP=1 + `set -e`) FAILS
-          # the task so Collection never runs for the account — the local-dev analog
-          # of "signal FAILED, HARD finding".
+          # `_CURRENCY_SQL`-shaped subscriber->account join, Inv #24), scoped to
+          # the period's rows, and ENFORCE the HARD check: a currency mismatch
+          # (udr_currency <> account_currency) RAISEs, which (ON_ERROR_STOP=1 +
+          # `set -e`) FAILS the task so Collection never runs for the account — the
+          # local-dev analog of "signal FAILED, HARD finding". Rows outside the
+          # period are counted, not failed (WINDOW_COVERAGE retired, bm73 review).
           # NOTE: as a deployable placeholder this task runs the correlation
           # INDEPENDENTLY of Collection's claim task (separate psql / transaction) —
           # the "computed once and shared" optimization (Inv #24) is the REAL flow's
@@ -191,8 +192,18 @@ tasks:
                   -- buckets the billing month in (rating X1). A UTC date here
                   -- rejected the 00:00–07:59 +08 records of the 1st as out of
                   -- window (bm73 manual run, 2026-10-18).
+                  -- SCOPED TO THE PERIOD (bm73 review, 2026-10-18; amends bm27's
+                  -- WINDOW_COVERAGE): only in-window rows are claimable, and
+                  -- Collection claims the same set. A RATED row from another
+                  -- month (usage left after a partial-period exclusion, or next
+                  -- month's usage already rated) stays RATED and untouched, like
+                  -- an orphan (Inv #25), and is only counted in the NOTICE. It
+                  -- used to fail the account HARD on every run.
                   WITH correlated AS (
-                    SELECT ur.udr_currency, ur.start_datetime,
+                    SELECT ur.udr_currency,
+                           (ur.start_datetime AT TIME ZONE current_setting('billrun.tz'))::date
+                             BETWEEN current_setting('billrun.period_start')::date
+                                 AND current_setting('billrun.period_end')::date AS in_window,
                            ba.currency AS account_currency
                     FROM   rating.udr_rated ur
                     JOIN   inventory.product_inventory pi
@@ -203,13 +214,9 @@ tasks:
                       AND  ur.udr_type = 'RAN_USAGE'
                       AND  pi.billing_account_id = current_setting('billrun.ban')
                   )
-                  SELECT count(*),
-                         count(*) FILTER (WHERE udr_currency <> account_currency),
-                         count(*) FILTER (
-                           WHERE (start_datetime AT TIME ZONE current_setting('billrun.tz'))::date
-                                   <  current_setting('billrun.period_start')::date
-                              OR (start_datetime AT TIME ZONE current_setting('billrun.tz'))::date
-                                   >  current_setting('billrun.period_end')::date)
+                  SELECT count(*) FILTER (WHERE in_window),
+                         count(*) FILTER (WHERE in_window AND udr_currency <> account_currency),
+                         count(*) FILTER (WHERE NOT in_window)
                   INTO   v_claimable, v_currency_mismatch, v_out_of_window
                   FROM   correlated;
 
@@ -220,10 +227,8 @@ tasks:
                   IF v_currency_mismatch > 0 THEN
                     RAISE EXCEPTION 'CURRENCY_MISMATCH (HARD): % correlated row(s) with udr_currency <> account_currency', v_currency_mismatch;
                   END IF;
-                  IF v_out_of_window > 0 THEN
-                    RAISE EXCEPTION 'WINDOW_COVERAGE (HARD): % correlated row(s) outside [%, %]',
-                      v_out_of_window, current_setting('billrun.period_start'), current_setting('billrun.period_end');
-                  END IF;
+                  -- v_out_of_window > 0 is informational (the NOTICE above):
+                  -- those rows wait, RATED, for the run of their own period.
                   -- v_claimable = 0 falls through: zero-charge DONE, not an error.
                 END $$;
                 SQL
@@ -281,7 +286,10 @@ tasks:
                 psql -v ON_ERROR_STOP=1 \
                   -v ban="{{ parents[0].taskrun.value }}" \
                   -v run="{{ inputs.bill_run_id }}" \
-                  -v attempt="{{ inputs.attempt }}" <<'SQL'
+                  -v attempt="{{ inputs.attempt }}" \
+                  -v period_start="{{ inputs.period_start }}" \
+                  -v period_end="{{ inputs.period_end }}" \
+                  -v tz="{{ inputs.business_timezone }}" <<'SQL'
                 WITH correlated AS (
                   SELECT ur.udr_id, ur.partition_period, pi.billing_account_id
                   FROM   rating.udr_rated ur
@@ -290,6 +298,10 @@ tasks:
                   WHERE  ur.is_live AND ur.status = 'RATED'
                     AND  ur.udr_type = 'RAN_USAGE'
                     AND  pi.billing_account_id = :'ban'   -- in-scope account
+                    -- only this period's usage, dated in the business zone: the
+                    -- set Validation checked; other months stay RATED (bm73 review)
+                    AND  (ur.start_datetime AT TIME ZONE :'tz')::date
+                           BETWEEN :'period_start'::date AND :'period_end'::date
                 )
                 UPDATE rating.udr_rated ur
                 SET    status           = 'BILL_DRAFT',
@@ -501,7 +513,8 @@ tasks:
                         AND  pop.product_offering_id IN (
                                SELECT product_offering_id
                                FROM   inventory.product_inventory
-                               WHERE  billing_account_id = :'ban' AND status = 'ACTIVE')
+                               WHERE  billing_account_id = :'ban' AND status = 'ACTIVE'
+                                 AND start_date <= :'period_end'::date AND (end_date IS NULL OR end_date >= :'period_start'::date))
                     ) w
                     -- the [eff_from, eff_to) window containing period_start (as-of).
                     WHERE  w.effective_date <= :'period_start'::date
@@ -544,6 +557,14 @@ tasks:
                         AND oipo.price_type = 'recurring'
                   WHERE  pi.billing_account_id = :'ban'
                     AND  pi.status = 'ACTIVE'
+                    -- Only subscriptions that overlap the period: one starting after
+                    -- period_end (e.g. ordered ahead) or ended before period_start
+                    -- never touched this period and is not billed for it. Scoping
+                    -- (partial-period.ts) no longer EXCLUDES such an account, so
+                    -- the filter lives here (bm73 review, 2026-10-18). The capacity
+                    -- reads below and verification apply the same overlap.
+                    AND  pi.start_date <= :'period_end'::date
+                    AND  (pi.end_date IS NULL OR pi.end_date >= :'period_start'::date)
                     AND  pi.product_offering_id NOT IN (
                            SELECT ref_product_offering_id FROM _bm29_prior)
                     -- Only subscriptions whose offering INTENDS a recurring charge:
@@ -624,7 +645,8 @@ tasks:
                         AND  pop.product_offering_id IN (
                                SELECT product_offering_id
                                FROM   inventory.product_inventory
-                               WHERE  billing_account_id = :'ban' AND status = 'ACTIVE')
+                               WHERE  billing_account_id = :'ban' AND status = 'ACTIVE'
+                                 AND start_date <= :'period_end'::date AND (end_date IS NULL OR end_date >= :'period_start'::date))
                     ) w
                     WHERE  w.effective_date <= :'period_start'::date
                       AND  (w.next_effective > :'period_start'::date OR w.next_effective IS NULL)
@@ -668,10 +690,14 @@ tasks:
                          :'capacity_max_bands'::int                        AS max_bands,
                          (SELECT count(*) FROM inventory.product_inventory pi2
                           WHERE  pi2.billing_account_id = :'ban' AND pi2.status = 'ACTIVE'
+                            AND  pi2.start_date <= :'period_end'::date
+                            AND  (pi2.end_date IS NULL OR pi2.end_date >= :'period_start'::date)
                             AND  pi2.product_offering_id = co.offering_id)  AS subscription_count,
                          (SELECT pi2.product_inventory_id
                           FROM   inventory.product_inventory pi2
                           WHERE  pi2.billing_account_id = :'ban' AND pi2.status = 'ACTIVE'
+                            AND  pi2.start_date <= :'period_end'::date
+                            AND  (pi2.end_date IS NULL OR pi2.end_date >= :'period_start'::date)
                             AND  pi2.product_offering_id = co.offering_id
                           ORDER  BY pi2.product_inventory_id LIMIT 1)       AS product_inventory_id
                   FROM   capacity_offerings co
@@ -1262,7 +1288,8 @@ tasks:
                 -- period this run processed).
                 CREATE TEMP TABLE _bm43_capacity ON COMMIT DROP AS
                   WITH asof_period AS (
-                    SELECT billing_period_start AS period_start
+                    SELECT billing_period_start AS period_start,
+                           billing_period_end   AS period_end
                     FROM   billing.customer_bill
                     WHERE  ref_bill_run_id = :'run' AND ref_billing_account_id = :'ban'
                   ),
@@ -1287,7 +1314,11 @@ tasks:
                         AND  pop.product_offering_id IN (
                                SELECT product_offering_id
                                FROM   inventory.product_inventory
-                               WHERE  billing_account_id = :'ban' AND status = 'ACTIVE')
+                               WHERE  billing_account_id = :'ban' AND status = 'ACTIVE'
+                                 -- the same period overlap as aggregation
+                                 AND start_date <= (SELECT period_end FROM asof_period)
+                                 AND (end_date IS NULL
+                                      OR end_date >= (SELECT period_start FROM asof_period)))
                     ) w, asof_period ap
                     WHERE  w.effective_date <= ap.period_start
                       AND  (w.next_effective > ap.period_start OR w.next_effective IS NULL)

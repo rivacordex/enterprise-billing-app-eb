@@ -213,6 +213,8 @@ function describeError(code: string): string {
       return "This run can no longer be rerun — it may already be approved or still processing.";
     case "NO_ACCOUNTS_SELECTED":
       return "No eligible accounts to rerun for this selection.";
+    case "BUSINESS_TIMEZONE_MISMATCH":
+      return "The app time zone (APP_TIMEZONE) does not match the rating billing zone (Asia/Kuala_Lumpur). Ask an administrator to correct the configuration.";
     case "ENGINE_UNREACHABLE":
       return "The processing engine could not be reached. The rerun was not started — you can retry.";
     case "FORBIDDEN":

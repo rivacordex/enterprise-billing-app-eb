@@ -319,17 +319,21 @@ describe.skipIf(!databaseUrl)(
       quantity: number;
       orderItemId: string;
       status?: string;
+      startDate?: string;
+      endDate?: string | null;
     }): Promise<void> {
       await sql.begin(async (tx) => {
         await tx`SET LOCAL session_replication_role = replica`;
         await tx`
           INSERT INTO inventory.product_inventory
             (product_inventory_id, product_order_item_id, customer_party_role_id,
-             billing_account_id, product_offering_id, quantity, status, start_date)
+             billing_account_id, product_offering_id, quantity, status, start_date,
+             end_date)
           VALUES
             (${args.piId}, ${args.orderItemId}, ${`_bm29-party-${args.piId}`},
              ${args.ban}, ${args.offeringId}, ${args.quantity},
-             ${args.status ?? "ACTIVE"}, '2026-01-01')
+             ${args.status ?? "ACTIVE"}, ${args.startDate ?? "2026-01-01"},
+             ${args.endDate ?? null})
         `;
       });
     }
@@ -385,6 +389,7 @@ describe.skipIf(!databaseUrl)(
       runId: string,
       ban: string,
       attempt: number,
+      businessTimezone?: string,
     ): Promise<void> {
       await runAggregation(sql, {
         runId,
@@ -393,6 +398,7 @@ describe.skipIf(!databaseUrl)(
         periodStart: PERIOD_START,
         periodEnd: PERIOD_END,
         glEventAt: GL_EVENT_AT,
+        ...(businessTimezone ? { businessTimezone } : {}),
       });
     }
 
@@ -555,6 +561,89 @@ describe.skipIf(!databaseUrl)(
         expect(Number(line!.snapshotUnitPrice)).toBe(20);
         expect(Number(line!.snapshotQuantity)).toBe(3);
         expect(line!.snapshotEffectiveDate).toBe("2026-01-01");
+      },
+      120_000,
+    );
+
+    it(
+      "bills only ACTIVE subscriptions that overlap the period: one starting " +
+        "after period_end or ended before period_start is not billed (bm73 review)",
+      async () => {
+        const ban = await newAccount("Overlap");
+        const off = await newOffering("Overlap Offering");
+        const runId = "BRN-BM29-OV";
+        await newRecurringPrice(off, "20.00", "2026-01-01T00:00:00Z");
+        await newRun(runId);
+
+        // Full-period subscription, quantity 1: billed.
+        await newInventory({
+          piId: "PRDINV-BM29-OV0",
+          ban,
+          offeringId: off,
+          quantity: 1,
+          orderItemId: "_bm29-oi-OV0",
+        });
+        // Ordered ahead: starts 2 July, after the June period. Not billed.
+        await newInventory({
+          piId: "PRDINV-BM29-OV1",
+          ban,
+          offeringId: off,
+          quantity: 2,
+          orderItemId: "_bm29-oi-OV1",
+          startDate: "2026-07-02",
+        });
+        // Ended in May (an ACTIVE row with a past end date). Not billed.
+        await newInventory({
+          piId: "PRDINV-BM29-OV2",
+          ban,
+          offeringId: off,
+          quantity: 4,
+          orderItemId: "_bm29-oi-OV2",
+          endDate: "2026-05-15",
+        });
+
+        await aggregate(runId, ban, 1);
+
+        const bill = await readBill(runId, ban);
+        const lines = await readLines(bill!.customerBillId);
+        expect(lines).toHaveLength(1);
+        expect(Number(lines[0]!.snapshotQuantity)).toBe(1);
+        expect(lines[0]!.netAmount).toBe("20.00");
+      },
+      120_000,
+    );
+
+    it(
+      "dates the recurring price in the business time zone: a price starting " +
+        "00:00 +08 on 2 June (1 June in UTC) is not yet in effect for June",
+      async () => {
+        const ban = await newAccount("PriceTz");
+        const off = await newOffering("PriceTz Offering");
+        const runId = "BRN-BM29-TZ";
+        const junePrice = await newRecurringPrice(
+          off,
+          "20.00",
+          "2026-01-01T00:00:00Z",
+        );
+        // 2026-06-02 00:00 in Kuala Lumpur. UTC dating would make it the
+        // price in effect on period_start (1 June) and bill 30.00.
+        await newRecurringPrice(off, "30.00", "2026-06-01T16:00:00Z");
+        await newRun(runId);
+        await newInventory({
+          piId: "PRDINV-BM29-TZ0",
+          ban,
+          offeringId: off,
+          quantity: 1,
+          orderItemId: "_bm29-oi-TZ0",
+        });
+
+        await aggregate(runId, ban, 1, "Asia/Kuala_Lumpur");
+
+        const bill = await readBill(runId, ban);
+        const lines = await readLines(bill!.customerBillId);
+        expect(lines).toHaveLength(1);
+        expect(lines[0]!.snapshotPriceRef).toBe(junePrice);
+        expect(lines[0]!.netAmount).toBe("20.00");
       },
       120_000,
     );

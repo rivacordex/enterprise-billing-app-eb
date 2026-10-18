@@ -42,7 +42,7 @@ import type {
 // card-driven refusal (#12, rm19), one query per chunk (#13/#14).
 //
 // The static describe (no DATABASE_URL) checks the flow-YAML contract rm08 adds
-// (the real rp task invoking runtime.rp, the outputs.prp.uri -> outputs.rp.uri
+// (the real rp task invoking runtime.rp, the outputs.prp.vars.uri -> outputs.rp.vars.uri
 // handoff, the rounding_mode + subscriber_ref_column flow variables). The
 // DB-gated describe shells out to the REAL `python3 -m runtime.prp` then
 // `python3 -m runtime.rp` exactly as the flow's two tasks invoke them — a
@@ -242,7 +242,7 @@ describe("rp flow wiring (rm08-spec D1/D5/D7/D11 — static)", () => {
 
   it("the rl task consumes rp's URI, invokes runtime.rl, and documents supersession + non-PROCESSING no-op", () => {
     // Updated by rm09 (cross-unit-test precedent): rl is now the REAL loader, not
-    // a stub. It still consumes outputs.rp.uri and no-ops on a non-PROCESSING
+    // a stub. It still consumes outputs.rp.vars.uri and no-ops on a non-PROCESSING
     // status. Updated again by rm10 (same precedent): the supersede-hook inside
     // its transaction is now real too — the `# STUB: rm10` marker is gone.
     const rlBlock = template.slice(template.indexOf("id: rl"));
@@ -649,7 +649,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       RATING_ENGINE_VERSION: ENGINE_VERSION,
     });
 
-    // Runs the real PRP, returning the manifest URI (its outputs.prp.uri).
+    // Runs the real PRP, returning the manifest URI (its outputs.prp.vars.uri).
     function runPrp(sourcePath: string, execId: string): string {
       const out = execFileSync(
         "python3",

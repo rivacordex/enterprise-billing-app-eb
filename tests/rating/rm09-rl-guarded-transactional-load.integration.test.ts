@@ -69,7 +69,7 @@ import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 // the non-PROCESSING no-op forward contract.
 //
 // The static describe (no DATABASE_URL) checks the rl flow-YAML contract (the
-// real rl task invoking runtime.rl, the outputs.rp.uri handoff, and — since
+// real rl task invoking runtime.rl, the outputs.rp.vars.uri handoff, and — since
 // rm10 — that the supersede hook is real, not the rm09 `# STUB: rm10` marker)
 // and that rl.py uses COPY, not per-record INSERT. The
 // DB-gated describe shells out to the REAL `python3 -m runtime.prp` -> runtime.rp
@@ -205,9 +205,18 @@ async function readBatch(db: Database, batchId: string) {
     .where(eq(udrBatch.batchId, batchId));
   return rows[0]!;
 }
+// The billing month of an instant, in rating's config zone (rating.period_of(),
+// Asia/Kuala_Lumpur, X1) — not the UTC month, or a held row at 00:00–07:59
+// +08 on the 1st fails udr_rated_period_matches_check before the guard runs.
 function monthBucket(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+  const [y, m] = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric",
+    month: "2-digit",
+  })
+    .format(new Date(iso))
+    .split("-");
+  return `${y}-${m}-01`;
 }
 // A live udr_rated row a bill run holds, built from a rated Parquet row so
 // udr_key is read back, never reimplemented.
@@ -272,7 +281,7 @@ describe("rl flow wiring + COPY (rm09-spec D1/D4/D8 — static)", () => {
     "utf8",
   );
 
-  it("the rl task invokes the real runtime.rl module, consuming outputs.rp.uri", () => {
+  it("the rl task invokes the real runtime.rl module, consuming outputs.rp.vars.uri", () => {
     expect(template).toMatch(/python3 -m runtime\.rl/);
     const rlBlock = template.slice(template.indexOf("id: rl"));
     expect(rlBlock).toMatch(/python3 -m runtime\.rl/);

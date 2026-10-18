@@ -1134,3 +1134,18 @@ Kept, by owner decision or by an existing rule:
 - Seen on `next dev` (on-demand route compilation, a ~1.1 GB dev-server process, page loads already 30–60 s). Not yet measured on a production build, and not split between building the invoice and the Chromium PDF.
 
 **Options for a later unit:** measure first (bind vs PDF, dev vs `next build`); then any of raising the client limit for large invoices, passing the request's abort signal through to free the permit, or caching the draft PDF per (run, BAN, attempt).
+
+## 27. 🟢 RESOLVED (2026-10-18): approving a run marked a failed account's claimed usage `BILL_APPROVED` without billing it (bm73 code review)
+
+**Seen (code reading, confirmed):** an account can fail HARD **after** Collection claimed its rows (e.g. `CAPACITY_RATE_MISMATCH` at aggregation, `RECONCILIATION_MISMATCH` at verification). It ends `PROCESSING_FAILED` with its rows still `BILL_DRAFT`. Approving the run then:
+
+- marks the account `SKIPPED` (`approve-run.ts` step 4), so it gets no bill and no invoice; and
+- flips **every** `BILL_DRAFT` row of the run to `BILL_APPROVED` (`udrStatusRepository.markApproved`, scoped by run only), including the skipped account's rows.
+
+That usage is now final as "billed" but was never invoiced, and no later run can claim it (Collection claims `RATED` only). A corrected reload is refused `LOAD_BLOCKED_BILLED`.
+
+**No release path before approval:** reject applies only to `PROCESSED` accounts, cancel only to a stalled `PROCESSING` run, and a rerun claims the rows again.
+
+**Against the design:** Inv #19 says a claim is released whenever its attempt is abandoned (reject, cancel, rerun). Skipping an account at approval abandons its attempt but does not release.
+
+**Fixed (owner decision, 2026-10-18):** in the approve transaction, `markSkippedForRun` now returns the skipped accounts and `udrStatusRepository.releaseSkipped` returns their `BILL_DRAFT` rows to `RATED` (claim columns cleared; an empty list is a no-op) **before** `markApproved`. The usage is re-claimable by a later run. Inv #19 now lists "skipped at approval". Tests: `approve-run.service.test.ts` (release before approve, in order), `billing-e2e-happy-path.integration.test.ts` (a failed account's two claimed rows end `RATED`, unclaimed).

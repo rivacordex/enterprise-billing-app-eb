@@ -62,7 +62,7 @@ _DEFAULTS = {
 def hand_off(uri: str) -> None:
     """Print the next task's input URI twice on stdout: first as a Kestra
     output line (``::{"outputs":{"uri":...}}::``, which the flow reads as
-    ``outputs.<task>.uri``), then as the plain URI. A bare print is NOT a
+    ``outputs.<task>.vars.uri``), then as the plain URI. A bare print is NOT a
     Kestra output — the first live run (2026-10-18) failed rp with "Unable to
     find `uri`". The plain line stays LAST because the integration harness
     reads the last stdout line as the URI (tests/helpers/rating-ran-harness.ts)."""

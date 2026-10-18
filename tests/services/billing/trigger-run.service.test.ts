@@ -68,6 +68,7 @@ import { scopeAccounts } from "@/services/billing/scope-accounts";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import { triggerRun } from "@/services/billing/trigger-run";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
 const mockMarkProcessing = vi.mocked(billRunRepository.markProcessing);
@@ -246,6 +247,17 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
     const result = await triggerRun("BRN00000001", "user-1", TODAY);
 
     expect(result).toEqual({ ok: false, code: "NOT_OPERABLE" });
+  });
+
+  it("returns BUSINESS_TIMEZONE_MISMATCH and touches nothing when APP_TIMEZONE is not rating's zone", async () => {
+    vi.mocked(getAppTimezone).mockReturnValueOnce("UTC");
+
+    const result = await triggerRun("BRN00000001", "user-1", TODAY);
+
+    expect(result).toEqual({ ok: false, code: "BUSINESS_TIMEZONE_MISMATCH" });
+    expect(mockFindByIdForUpdate).not.toHaveBeenCalled();
+    expect(mockInsertSnapshot).not.toHaveBeenCalled();
+    expect(mockTrigger).not.toHaveBeenCalled();
   });
 
   it("returns NO_ELIGIBLE_ACCOUNTS and writes no snapshot when nothing is PENDING", async () => {

@@ -99,8 +99,20 @@ same file key. Rows are never deleted or edited by hand.
 4. **Billed or in-flight data cannot be replaced.** If any earlier live row for
    the same natural key is `BILL_DRAFT` or `BILL_APPROVED`, rl **refuses** the
    whole batch:
-   - `LOAD_BLOCKED_INFLIGHT` (`MINOR`, a draft bill run holds the rows): reject
-     or rerun that bill run, or wait for it to finish, then reload.
+   - `LOAD_BLOCKED_INFLIGHT` (`MINOR`, a draft bill run holds the rows):
+     release the claim **before the run is approved**. Reject the affected
+     accounts (a `PROCESSED` run, `PROCESSED` accounts only) or cancel the run
+     (a stalled `PROCESSING` run only); both return the rows to `RATED`.
+     Reload, then rerun or trigger again so the run collects the new rows. A
+     rerun alone releases the rows but claims them again at once, so it
+     leaves no room to reload. Do not wait for the run: once it is approved,
+     the rows are `BILL_APPROVED` and the reload is refused as
+     `LOAD_BLOCKED_BILLED`.
+   - **An account that failed after its rows were claimed**
+     (`PROCESSING_FAILED`, rows still `BILL_DRAFT`): reject and cancel do not
+     apply to it. Approving the run marks it `SKIPPED` and releases its rows
+     to `RATED` (since 2026-10-18, billing known-issues §27); reload after
+     that, and its usage is billed by a later run.
    - `LOAD_BLOCKED_BILLED` (`MAJOR`, already billed): the data is financially
      final. Rating cannot correct it. Correct it in billing (adjustment or credit
      note) instead.
@@ -108,13 +120,16 @@ same file key. Rows are never deleted or edited by hand.
    `SHRINKING_REISSUE` (`MAJOR`). Rows missing from the new file are no longer live.
 6. **The trigger remembers files it has seen.** It keeps state in the KV key
    `rating_rating-engine-ran-usage_landing-file` (namespace `rating`). A file
-   with a name it has already seen is not picked up again.
+   it has already seen is not picked up again. The state may be keyed by the
+   file's identity on disk, not only its name (section 10), so always deliver a
+   reissue as a **new file** (`_vN`), never by renaming one in place.
 7. **Keep `landing/` clean (known limitation).** The trigger is set to
    `maxFiles: 1`, and Kestra trims the folder listing to one file **before** it
    skips files it has seen. A failed file left in `landing/` can therefore hide
    every newer file (log: `Too many files to process (2), limiting to 1`). Move
-   failed or superseded files to `error/` before you deliver the next one. The
-   lasting fix is a per-file `ForEach` in the flow, not yet built.
+   failed or superseded files to `error/` before you deliver the next one.
+   This is the agreed operational process (owner decision, 2026-10-18); a
+   per-file `ForEach` in the flow is not planned.
 8. **Never delete `udr_batch` rows or edit `udr_rated`.** Batches are the audit
    trail of what was delivered; rows change state only through the flow.
 
@@ -286,9 +301,9 @@ need nothing.
    batch should end `COMPLETE` (or `PARTIAL` with the rejects you expect), and
    the file moves to `archive/`.
 6. **Earlier runs:** a `PARTIAL` earlier run that loaded rows has them
-   `SUPERSEDED` by the new run (check `superseded_count` and
-   `superseded_by_batch_id` on the old batch). `FAILED` and `REFUSED` runs
-   loaded nothing.
+   `SUPERSEDED` by the new run: the old batch shows `superseded_by_batch_id`
+   (and `supersede_reason`), and the new batch's `superseded_count` is the
+   number of rows it retired. `FAILED` and `REFUSED` runs loaded nothing.
 
 ---
 
@@ -300,15 +315,15 @@ when upstream resends fixed usage.
 1. **Check that no bill run holds the rows** (rule 4):
 
    ```sql
-   SELECT status, billrun_ref_id, count(*)
+   SELECT r.status, r.billrun_ref_id, count(*)
      FROM rating.udr_rated r JOIN rating.udr_batch b ON b.batch_id = r.udr_ref_batch_id
     WHERE b.file_key = 'rating-input-file-202609010000' AND r.is_live
     GROUP BY 1, 2;
    ```
 
    - All `RATED`: safe to reissue.
-   - Any `BILL_DRAFT`: reject or rerun that bill run first, or the load is
-     refused with `LOAD_BLOCKED_INFLIGHT`.
+   - Any `BILL_DRAFT`: release the claim first (reject the accounts or cancel
+     the run, rule 4), or the load is refused with `LOAD_BLOCKED_INFLIGHT`.
    - Any `BILL_APPROVED`: stop. Rating cannot change billed data. Correct it in
      billing.
 2. **Deliver the corrected file** as `…_vN.udr` (step 4 of section 6).
@@ -364,3 +379,34 @@ Work down this list:
 | `LOAD_BLOCKED_INFLIGHT` / `LOAD_BLOCKED_BILLED` (`REFUSED`) | A bill run holds the earlier rows | Section 7 step 1 |
 | rl `CheckViolation … udr_rated_period_matches_check` (batch stuck `PROCESSING`) | rl computed the billing month in the wrong time zone (fixed 2026-10-18: rl now uses the `Asia/Kuala_Lumpur` month) | Rebuild the engine image if it is older, release the batch, reissue |
 | Task error `Unable to find … used in the expression` | Flow and runtime image out of step (output names) | Redeploy the flows **and** rebuild the engine image from the same commit |
+
+---
+
+## 10. Known limitations (tracked, not fixed)
+
+Found by the bm73 code review (2026-10-18). Each is handled as an operating
+rule for now; the owner chose to track them rather than change the rating flow
+or the Azure engine.
+
+1. **Azure: the landing trigger is not configured.** `kestra.yml` (with the
+   `allowed-paths` entries for `/data/landing` and `/distribution`) is loaded
+   only by the local compose engine. The Azure Container App engine is
+   configured by environment variables and never reads it, so on Azure every
+   landing poll fails "The 'allowed-paths' configuration is required" and no
+   usage is rated. **Before rating on Azure**, the infra work must give the
+   engine this plugin configuration (net-new infra config; see
+   `infra/bicep/modules/workflow-engine-container-app.bicep`).
+2. **A misnamed file is ignored silently.** The trigger's `regExp` repeats
+   `vars.file_key_rule`, so a file that does not match exactly (`.UDR`, `_V2`,
+   a 14-digit stamp) never starts an execution: no batch row, no
+   `FILE_KEY_UNRESOLVED`, no alarm. Upstream must deliver exact names; if
+   usage seems missing, list `landing/` for files the trigger ignored. If
+   `file_key_rule` changes, change `regExp` with it.
+3. **A file seen half-written is not picked up again.** The trigger fires on
+   `CREATE` only. If a poll sees a file while it is still being written, prp
+   reads a torn file (`PARSE_FAILURE`, `REFUSED`), and the later "file
+   finished" change is an update the trigger skips. Always build the file
+   elsewhere and **move** it into `landing/` in one step (section 6 step 4).
+   On some filesystems a new file can also reuse the disk identity of a file
+   rl archived earlier and be treated as seen: if a correctly named, new file
+   is never picked up, deliver it again as the next `_vN`.

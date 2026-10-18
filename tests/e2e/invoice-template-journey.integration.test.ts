@@ -17,6 +17,7 @@ import { decodablePng } from "@/tests/helpers/logo-fixtures";
 import {
   runAggregation,
   runCollection,
+  runValidation,
   runVerification,
 } from "@/tests/db/helpers/extract-flow-sql";
 import type { InvoiceRenderFixtures } from "@/tests/db/helpers/invoice-render-fixtures";
@@ -159,8 +160,25 @@ async function processAccountOnFlowSql(
   attempt: number,
 ): Promise<void> {
   const runId = run.bill_run_id;
+  // The zone the app sends as the flow's `business_timezone` input.
+  const { getAppTimezone } =
+    await import("@/services/system-config/app-config-read.service");
+  const businessTimezone = getAppTimezone();
+  await runValidation(sql, {
+    ban,
+    periodStart: run.period_start,
+    periodEnd: run.period_end,
+    businessTimezone,
+  });
   expect((await signal("validation", ban, attempt)).status).toBe(200);
-  await runCollection(sql, { runId, ban, attempt });
+  await runCollection(sql, {
+    runId,
+    ban,
+    attempt,
+    periodStart: run.period_start,
+    periodEnd: run.period_end,
+    businessTimezone,
+  });
   expect((await signal("collection", ban, attempt)).status).toBe(200);
   await runAggregation(sql, {
     runId,
@@ -169,10 +187,11 @@ async function processAccountOnFlowSql(
     periodStart: run.period_start,
     periodEnd: run.period_end,
     glEventAt: run.scheduled_run_date,
+    businessTimezone,
   });
   expect((await signal("aggregation", ban, attempt)).status).toBe(200);
   expect((await signal("taxation", ban, attempt)).status).toBe(200);
-  await runVerification(sql, { runId, ban, attempt });
+  await runVerification(sql, { runId, ban, attempt, businessTimezone });
   expect((await signal("verification", ban, attempt)).status).toBe(200);
 }
 

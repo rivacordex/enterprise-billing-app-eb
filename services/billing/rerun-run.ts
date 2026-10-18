@@ -9,6 +9,7 @@ import { firstOfMonth } from "@/services/billing/derive-periods";
 import { computeRunCounters } from "@/services/billing/compute-run-status";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
+import { isBusinessTimezoneAligned } from "@/services/billing/rating-timezone";
 import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 import type { AccountStatus } from "@/types/billing";
 import type { RerunStage } from "@/validation/billing/rerun-run.schema";
@@ -56,6 +57,7 @@ export type RerunRunResult =
     }
   | { ok: false; code: "NOT_RERUNNABLE" }
   | { ok: false; code: "NO_ACCOUNTS_SELECTED" }
+  | { ok: false; code: "BUSINESS_TIMEZONE_MISMATCH" }
   | { ok: false; code: "ENGINE_UNREACHABLE" };
 
 export interface RerunRunParams {
@@ -83,6 +85,10 @@ export async function rerunRun(
   params: RerunRunParams,
   actorId: string,
 ): Promise<RerunRunResult> {
+  // Same guard as triggerRun (rating-timezone.ts).
+  if (!isBusinessTimezoneAligned()) {
+    return { ok: false, code: "BUSINESS_TIMEZONE_MISMATCH" };
+  }
   try {
     return await db.transaction(async (tx) => {
       const run = await billRunRepository.findByIdForUpdate(

@@ -1,6 +1,6 @@
 # bm73 — Invoice Template Phase 3 ship gate
 
-**Unit:** bm73 (Invoice Template Phase 3) · **Status:** Planned · **Boundary:** cross-cutting: tests, docs and the tracker. **Nothing new is built** (the bm13/bm21/bm35/bm39/bm46/bm63 discipline) · **Depends on:** bm64–bm72
+**Unit:** bm73 (Invoice Template Phase 3) · **Status:** Delivered (automated gate 2026-10-17; manual run signed off by the owner 2026-10-18, with a recorded gap) · **Boundary:** cross-cutting: tests, docs and the tracker. **Nothing new is built** (the bm13/bm21/bm35/bm39/bm46/bm63 discipline) · **Depends on:** bm64–bm72
 **Authorizes:** the update overview's success criteria 1–15 · Inv #51–#58 and the 2026-10-15 amendments (#36, #40–#42, #44, #46) · guardrail items 57–67 · workflow rules §2.7, §7.8, §8
 
 ## Goal
@@ -97,14 +97,16 @@ Load your sample data per the bm64 runbook and run steps 1–7. Record the run i
 
 ## Verification checklist
 
-- [ ] Success criteria 1–15 are each met, with the evidence in the table recorded in the progress tracker.
-- [ ] Inv #51–#58 and the six amendments are audited, each with code and test.
-- [ ] Guardrail items 57–67 are green, and every earlier guardrail covering touched files is green.
-- [ ] The journey on your sample data reaches `COMPLETED` within ~1 hour, with timings recorded.
-- [ ] No Customer Management production file changed since bm63, and `0050` is unchanged.
-- [ ] The v1 pin is in place; a fresh environment seeds and renders v1.
-- [ ] Every doc in Implementation §4 is updated in the same change set; no "planned" marker remains for Phase 3.
-- [ ] Nothing new is built in this unit: the diff is tests and docs only.
+_Signed off 2026-10-18; evidence in the bm73 entry of `billmgmt-progress-tracker.md`._
+
+- [x] Success criteria 1–15 are each met, with the evidence in the table recorded in the progress tracker. _(Criterion 14 met with a gap the owner accepted: steps 3–5 rest on the automated journey, and step 2's draft review on the posted PDFs, because of known-issues §26.)_
+- [x] Inv #51–#58 and the six amendments are audited, each with code and test. _(One gap found and closed: journey step 8e.)_
+- [x] Guardrail items 57–67 are green, and every earlier guardrail covering touched files is green.
+- [x] The journey on your sample data reaches `COMPLETED` within ~1 hour, with timings recorded. _(`BRN00000001`: processing ~10 s, posting ~12 s, distribution ~39 s.)_
+- [x] No Customer Management production file changed since bm63, and `0050` is unchanged. _(Measured from bm64's parent; the bm63→bm64 changes are cm17–cm21.)_
+- [x] The v1 pin is in place; a fresh environment seeds and renders v1.
+- [x] Every doc in Implementation §4 is updated in the same change set; no "planned" marker remains for Phase 3.
+- [x] Nothing new is built in this unit: the diff is tests and docs only. _(Except the fixes the manual run forced, recorded as findings in the tracker: the bm03 partial-period predicate, the business time zone in the bill-run flow, and the `billrun_runtime` column grant.)_
 
 ## Open questions
 

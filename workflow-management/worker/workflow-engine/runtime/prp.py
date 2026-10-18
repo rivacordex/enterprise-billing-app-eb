@@ -1414,7 +1414,7 @@ def write_manifest(
 ) -> Path:
     """Write the RP handoff manifest (D5/D7): the batch identity, its status and
     the ordered chunk URIs. A single file URI is printed as the task output
-    (``outputs.prp.uri``). RP/RL no-op on a non-``PROCESSING`` status."""
+    (``outputs.prp.vars.uri``). RP/RL no-op on a non-``PROCESSING`` status."""
     manifest = {
         "batch_id": batch_id,
         "udr_type": udr_type,

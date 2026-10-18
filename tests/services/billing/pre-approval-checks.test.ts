@@ -32,6 +32,9 @@ vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
     countZeroTotalPostable: vi.fn(),
   },
 }));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("Asia/Kuala_Lumpur"),
+}));
 vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
   ratedLinesRepository: { countOrphansForWindow: vi.fn() },
 }));
@@ -136,6 +139,11 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 
       informational: true,
       remediation: expect.stringContaining("3 orphaned usage records"),
     });
+    // The window dates usage in the business time zone.
+    expect(mockCountOrphans).toHaveBeenCalledWith(
+      dbStub,
+      expect.objectContaining({ timezone: "Asia/Kuala_Lumpur" }),
+    );
   });
 
   it("[bm32] orphan_count carries a null remediation when there are no orphans", async () => {

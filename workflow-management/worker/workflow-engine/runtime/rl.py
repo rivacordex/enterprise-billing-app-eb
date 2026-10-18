@@ -2,7 +2,7 @@
 
 Replaces the rm06/rm07/rm08 ``rl`` stub in ``flows/rating-engine-ran-usage.yaml``. RL is
 the last of the three flow sections (``prp`` → ``rp`` → ``rl``): it consumes RP's
-rated manifest (``outputs.rp.uri``) and, in **one** psycopg transaction (Inv #8),
+rated manifest (``outputs.rp.vars.uri``) and, in **one** psycopg transaction (Inv #8),
 guards, (rm10) supersedes and bulk-inserts the rated rows at ``RATED`` — then,
 **only after the transaction commits** (Inv #9), archives the raw file across the
 ``landing/`` → ``archive/`` boundary.
@@ -1101,7 +1101,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="RL — guarded transactional load (rm09)"
     )
-    parser.add_argument("--manifest", required=True, help="RP rated manifest URI (outputs.rp.uri)")
+    parser.add_argument("--manifest", required=True, help="RP rated manifest URI (outputs.rp.vars.uri)")
     parser.add_argument("--udr-type", required=True)
     parser.add_argument("--workflow-execution-id", required=True)
     parser.add_argument(
@@ -1125,7 +1125,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.manifest.strip():
         print(
             "RL: --manifest is empty — nothing to load. Check the rp task's "
-            "outputs.rp.uri handoff.",
+            "outputs.rp.vars.uri handoff.",
             file=sys.stderr,
         )
         return 1

@@ -37,7 +37,9 @@ function columnList(text: string): string[] {
 describe("bill-run flow inserts stay inside billrun_runtime's column grant", () => {
   const granted = new Set(
     columnList(
-      /GRANT INSERT \(([\s\S]*?)\) ON TABLE "billing"\."customer_bill_line" TO billrun_runtime/.exec(
+      // `[^;]` keeps the capture inside ONE statement: a lazy `[\s\S]` would
+      // start at customer_bill's earlier GRANT INSERT and count its columns.
+      /GRANT INSERT \(([^;]*?)\) ON TABLE "billing"\."customer_bill_line" TO billrun_runtime/.exec(
         ROLES,
       )?.[1] ?? "",
     ),
@@ -48,7 +50,8 @@ describe("bill-run flow inserts stay inside billrun_runtime's column grant", () 
   ].map((m) => columnList(m[1] ?? ""));
 
   it("finds the grant and at least one flow insert", () => {
-    expect(granted.size).toBeGreaterThan(0);
+    // The capture is customer_bill_line's own list (starts at its PK column).
+    expect([...granted][0]).toBe("customer_bill_line_id");
     expect(inserts.length).toBeGreaterThan(0);
   });
 

@@ -20,8 +20,8 @@ import { udrRated } from "@/db/schema/rating/udr-rated";
 // here and never claims.
 export const udrStatusRepository = {
   // Approve — the run's claimed rows flip BILL_DRAFT → BILL_APPROVED. Scoped
-  // to the run only (every claimed row is postable by the time approval is
-  // reached, bm10's pre-approval checks).
+  // to the run; approve calls `releaseSkipped` first, so by then every
+  // remaining BILL_DRAFT row belongs to a postable account.
   async markApproved(tx: Database, billRunId: string): Promise<void> {
     await tx
       .update(udrRated)
@@ -53,6 +53,37 @@ export const udrStatusRepository = {
   // writes `udr_rated.status = 'REJECTED'` anymore (bm25 narrows the now-
   // vestigial rating CHECK + `billrun_status_guard` allowance).
   async markRejected(
+    tx: Database,
+    billRunId: string,
+    banIds: string[],
+  ): Promise<void> {
+    if (banIds.length === 0) return;
+    await tx
+      .update(udrRated)
+      .set({
+        status: "RATED",
+        billrunRefId: null,
+        billrunBanId: null,
+        billrunAttempt: null,
+        billrunChecksum: null,
+        upsertDatetime: sql`now()`,
+      })
+      .where(
+        and(
+          eq(udrRated.billrunRefId, billRunId),
+          inArray(udrRated.billrunBanId, banIds),
+          eq(udrRated.status, "BILL_DRAFT"),
+        ),
+      );
+  },
+
+  // Release at approval — BILL_DRAFT → RATED for the accounts approval marks
+  // SKIPPED (an account that failed after Collection claimed its rows). They
+  // get no bill, so their claim is abandoned and must be released (Inv #19);
+  // otherwise `markApproved` would make never-invoiced usage BILL_APPROVED
+  // (known-issues §27). An EMPTY list is a no-op, never the whole run (the
+  // `release([])` hazard above), so the caller needs no guard.
+  async releaseSkipped(
     tx: Database,
     billRunId: string,
     banIds: string[],

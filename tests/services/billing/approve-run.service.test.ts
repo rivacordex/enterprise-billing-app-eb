@@ -33,7 +33,7 @@ vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
 vi.mock("@/db/repositories/billing/udr-status.repository", () => ({
-  udrStatusRepository: { markApproved: vi.fn() },
+  udrStatusRepository: { markApproved: vi.fn(), releaseSkipped: vi.fn() },
 }));
 vi.mock("@/services/billing/pre-approval-checks", () => ({
   runPreApprovalChecks: vi.fn(),
@@ -59,6 +59,7 @@ const mockListCurrencies = vi.mocked(
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
 const mockRunChecks = vi.mocked(runPreApprovalChecks);
 const mockMarkApproved = vi.mocked(udrStatusRepository.markApproved);
+const mockReleaseSkipped = vi.mocked(udrStatusRepository.releaseSkipped);
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
@@ -83,7 +84,7 @@ beforeEach(() => {
   mockRunChecks.mockResolvedValue(ALL_PASS as never);
   mockSumPostableTotal.mockResolvedValue("315.00");
   mockListCurrencies.mockResolvedValue(["MYR"]);
-  mockMarkSkipped.mockResolvedValue(1);
+  mockMarkSkipped.mockResolvedValue(["BAN00000003"]);
   mockApprove.mockResolvedValue(true);
 });
 
@@ -110,6 +111,17 @@ describe("approveRun (bm10-spec §Design/§1)", () => {
     await approveRun("BRN00000001", "user-approver");
 
     expect(mockMarkApproved).toHaveBeenCalledWith(txStub, "BRN00000001");
+  });
+
+  it("[CRITICAL] releases the SKIPPED accounts' claimed rows BEFORE flipping the rest BILL_APPROVED (Inv #19, known-issues §27)", async () => {
+    await approveRun("BRN00000001", "user-approver");
+
+    expect(mockReleaseSkipped).toHaveBeenCalledWith(txStub, "BRN00000001", [
+      "BAN00000003",
+    ]);
+    expect(mockReleaseSkipped.mock.invocationCallOrder[0]).toBeLessThan(
+      mockMarkApproved.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("[CRITICAL] writes BILL_RUN_APPROVED with the actor, totals, and skipped count", async () => {

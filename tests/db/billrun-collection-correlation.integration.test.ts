@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -12,22 +14,31 @@ import { billCycle } from "@/db/schema/billing/catalogs";
 import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
 import { udrRated } from "@/db/schema/rating/udr-rated";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+import {
+  runCollection,
+  runValidation,
+} from "@/tests/db/helpers/extract-flow-sql";
 
 // bm27-spec §Implementation §6 (guardrail 2) — the DB-gated correlation & claim
-// regression. This is the app-repo "flow-double" (bm21 pattern): it performs the
-// SAME `billrun_runtime` writes the real bill_run_processing flow's Validation +
-// Collection stages perform (the `_CURRENCY_SQL`-shaped subscriber→account join,
-// then the `RATED → BILL_DRAFT` claim stamping the resolved `billrun_ban_id`),
-// so the correlation/claim is provable without a live Kestra. It asserts the
-// four spec outcomes on a focused fixture:
+// regression. It runs the deployed bill_run_processing flow's OWN Validation
+// and Collection heredocs (extract-flow-sql `runValidation` / `runCollection`),
+// so the correlation, the window scope and the claim cannot drift from the
+// flow, and are provable without a live Kestra. It asserts the spec outcomes
+// on a focused fixture:
 //   * a resolvable, in-window, currency-matching account is claimed to
 //     BILL_DRAFT with its previously-NULL `billrun_ban_id` filled to the RIGHT
 //     account (bm26 left it NULL);
 //   * an unresolvable-subscriber row is left RATED, unclaimed and untouched
 //     (D32/Inv #25) — as is a resolvable but OUT-OF-SCOPE account's row;
 //   * a currency-mismatched account is flagged by Validation (HARD);
+//   * a row outside the period (dated in the business zone) is left RATED and
+//     does not fail the account (bm73 review, 2026-10-18: WINDOW_COVERAGE
+//     retired);
 //   * a zero-claimable account validates DONE (a zero-charge exception) with no
 //     claim.
+// It runs on the superuser DATABASE_URL connection, so the
+// `billrun_status_guard` trigger and grants are proven separately by
+// billrun-db-roles.integration.test.ts.
 //
 // billrun_ref_id/billrun_ban_id are plain-text keys (no cross-schema FK, Inv #2),
 // so the claim needs no `bill_run` row — the correlation target is the set of
@@ -165,80 +176,37 @@ describe.skipIf(!databaseUrl)(
       return row!.udr_id;
     }
 
-    // The flow-double: correlate ONCE (Inv #24) then claim RATED → BILL_DRAFT,
-    // stamping the six columns incl. the resolved billrun_ban_id. Uses the same
-    // correlation join + claim shape as the local-dev flow's collection SQL
-    // (set-based over the in-scope ban_ids). NOTE: it runs on the superuser
-    // DATABASE_URL connection, so it exercises the correlation/claim LOGIC, not
-    // the `billrun_status_guard` trigger or the exact checksum expression —
-    // those are proven separately by billrun-db-roles.integration.test.ts
-    // (the trigger permits exactly RATED → BILL_DRAFT). Returns the claimed ids.
-    async function correlateAndClaim(
+    // The flow's OWN Collection claim for one account, then the ids it
+    // claimed for this run.
+    async function collect(
       runId: string,
-      banIds: string[],
+      banId: string,
       attempt: number,
     ): Promise<string[]> {
+      await runCollection(sql, {
+        runId,
+        ban: banId,
+        attempt,
+        periodStart: PERIOD_START,
+        periodEnd: PERIOD_END,
+        businessTimezone: BUSINESS_TZ,
+      });
       const rows = await sql<{ udr_id: string }[]>`
-        WITH correlated AS (
-          SELECT ur.udr_id, ur.partition_period, pi.billing_account_id
-          FROM   rating.udr_rated ur
-          JOIN   inventory.product_inventory pi
-                 ON pi.product_inventory_id = ur.udr_subscription_ref_id
-          WHERE  ur.is_live AND ur.status = 'RATED'
-            AND  ur.udr_type = 'RAN_USAGE'
-            AND  pi.billing_account_id = ANY(${banIds})
-        )
-        UPDATE rating.udr_rated ur
-        SET    status           = 'BILL_DRAFT',
-               billrun_ref_id   = ${runId},
-               billrun_ban_id   = c.billing_account_id,
-               billrun_attempt  = ${attempt},
-               billrun_checksum = 'bm27-claim-checksum',
-               upsert_datetime  = now()
-        FROM   correlated c
-        WHERE  ur.udr_id = c.udr_id AND ur.partition_period = c.partition_period
-          AND  ur.status = 'RATED'
-        RETURNING ur.udr_id
+        SELECT udr_id FROM rating.udr_rated
+        WHERE  billrun_ref_id = ${runId} AND billrun_ban_id = ${banId}
       `;
       return rows.map((r) => r.udr_id);
     }
 
-    // Validation's assertion counts against the SAME correlated set.
-    async function validate(banId: string): Promise<{
-      claimable: number;
-      currency_mismatch: number;
-      out_of_window: number;
-    }> {
-      const [row] = await sql<
-        {
-          claimable: number;
-          currency_mismatch: number;
-          out_of_window: number;
-        }[]
-      >`
-        WITH correlated AS (
-          SELECT ur.udr_currency, ur.start_datetime,
-                 pi.billing_account_id, ba.currency AS account_currency
-          FROM   rating.udr_rated ur
-          JOIN   inventory.product_inventory pi
-                 ON pi.product_inventory_id = ur.udr_subscription_ref_id
-          JOIN   billing.billing_account ba
-                 ON ba.billing_account_id = pi.billing_account_id
-          WHERE  ur.is_live AND ur.status = 'RATED'
-            AND  ur.udr_type = 'RAN_USAGE'
-            AND  pi.billing_account_id = ${banId}
-        )
-        SELECT count(*)::int AS claimable,
-               count(*) FILTER (WHERE udr_currency <> account_currency)::int
-                 AS currency_mismatch,
-               count(*) FILTER (
-                 WHERE (start_datetime AT TIME ZONE ${BUSINESS_TZ})::date < ${PERIOD_START}::date
-                    OR (start_datetime AT TIME ZONE ${BUSINESS_TZ})::date > ${PERIOD_END}::date)::int
-                 AS out_of_window
-        FROM   correlated
-      `;
-      return row!;
-    }
+    // The flow's OWN Validation heredoc (extract-flow-sql), bound to this
+    // test's account, the June window and the business time zone.
+    const validate = (banId: string) =>
+      runValidation(sql, {
+        ban: banId,
+        periodStart: PERIOD_START,
+        periodEnd: PERIOD_END,
+        businessTimezone: BUSINESS_TZ,
+      });
 
     async function ratedRow(udrId: string) {
       const [row] = await db
@@ -334,7 +302,7 @@ describe.skipIf(!databaseUrl)(
         }
 
         const runId = "BRN-BM27-01";
-        const claimed = await correlateAndClaim(runId, [banA], 3);
+        const claimed = await collect(runId, banA, 3);
 
         // Only A's two rows were claimed.
         expect(claimed.sort()).toEqual([a1, a2].sort());
@@ -345,7 +313,9 @@ describe.skipIf(!databaseUrl)(
           expect(after.billrunRefId).toBe(runId);
           expect(after.billrunBanId).toBe(banA); // the resolved account
           expect(after.billrunAttempt).toBe(3);
-          expect(after.billrunChecksum).toBe("bm27-claim-checksum");
+          expect(after.billrunChecksum).toBe(
+            createHash("md5").update(`${id}|${runId}`).digest("hex"),
+          );
         }
 
         // The orphan and the out-of-scope account are left RATED, unclaimed and
@@ -375,64 +345,66 @@ describe.skipIf(!databaseUrl)(
           start: IN_WINDOW,
         });
 
-        const v = await validate(banB);
-        expect(v.claimable).toBe(1);
-        expect(v.currency_mismatch).toBe(1); // ⇒ HARD CURRENCY_MISMATCH
-        expect(v.out_of_window).toBe(0);
+        await expect(validate(banB)).rejects.toThrow(
+          /CURRENCY_MISMATCH \(HARD\): 1 correlated row/,
+        );
       },
       120_000,
     );
 
     it(
-      "Validation flags an out-of-window row HARD (start_datetime outside " +
-        "[period_start, period_end]) — WINDOW_COVERAGE (bm27-spec §2)",
+      "a row outside [period_start, period_end] is left RATED and does not " +
+        "fail the account; a currency mismatch on it is not checked (bm73 " +
+        "review: Validation and Collection are scoped to the period)",
       async () => {
         const banE = await newAccount("Window", "MYR");
         const piE = "PRDINV-BM27-E";
         await newInventory(piE, banE);
-        await insertRatedRow({
+        const inWindow = await insertRatedRow({
           subRef: piE,
           currency: "MYR",
+          start: IN_WINDOW,
+        });
+        // Last month's leftover, rated in a foreign currency: neither counts.
+        const leftover = await insertRatedRow({
+          subRef: piE,
+          currency: "USD",
           start: OUT_OF_WINDOW,
         });
 
-        const v = await validate(banE);
-        expect(v.claimable).toBe(1);
-        expect(v.currency_mismatch).toBe(0);
-        expect(v.out_of_window).toBe(1); // ⇒ HARD WINDOW_COVERAGE
+        await expect(validate(banE)).resolves.toBeUndefined();
+        expect(await collect("BRN-BM27-E", banE, 1)).toEqual([inWindow]);
+
+        const after = await ratedRow(leftover);
+        expect(after.status).toBe("RATED");
+        expect(after.billrunRefId).toBeNull();
       },
       120_000,
     );
 
     it(
-      "Validation dates usage in the business time zone: 00:30 +08 on the 1st " +
-        "is in window, 00:30 +08 on the next month's 1st is not (rating X1)",
+      "the period is dated in the business time zone: 00:30 +08 on the 1st " +
+        "is claimed, 00:30 +08 on the next month's 1st is left RATED (rating X1)",
       async () => {
         const banK = await newAccount("BusinessTz", "MYR");
         const piK = "PRDINV-BM27-K";
         await newInventory(piK, banK);
-        await insertRatedRow({
+        // UTC dating would put this row in May, outside the June window.
+        const firstOfMonth = await insertRatedRow({
           subRef: piK,
           currency: "MYR",
           start: FIRST_OF_MONTH_EARLY_LOCAL,
         });
-
-        const inWindow = await validate(banK);
-        expect(inWindow.claimable).toBe(1);
-        expect(inWindow.out_of_window).toBe(0); // UTC dating would say 1
-
-        const banL = await newAccount("BusinessTzNext", "MYR");
-        const piL = "PRDINV-BM27-L";
-        await newInventory(piL, banL);
-        await insertRatedRow({
-          subRef: piL,
+        // UTC dating would put this row on 30 June, inside the window.
+        const firstOfNextMonth = await insertRatedRow({
+          subRef: piK,
           currency: "MYR",
           start: FIRST_OF_NEXT_MONTH_EARLY_LOCAL,
         });
 
-        const nextMonth = await validate(banL);
-        expect(nextMonth.claimable).toBe(1);
-        expect(nextMonth.out_of_window).toBe(1); // UTC dating would say 0
+        await expect(validate(banK)).resolves.toBeUndefined();
+        expect(await collect("BRN-BM27-K", banK, 1)).toEqual([firstOfMonth]);
+        expect((await ratedRow(firstOfNextMonth)).status).toBe("RATED");
       },
       120_000,
     );
@@ -445,12 +417,10 @@ describe.skipIf(!databaseUrl)(
         const piC = "PRDINV-BM27-C";
         await newInventory(piC, banC); // has inventory but NO rated usage
 
-        const v = await validate(banC);
-        expect(v.claimable).toBe(0); // ⇒ validation DONE, zero-charge
-        expect(v.currency_mismatch).toBe(0);
-        expect(v.out_of_window).toBe(0);
+        // Zero claimable ⇒ validation DONE, zero-charge.
+        await expect(validate(banC)).resolves.toBeUndefined();
 
-        const claimed = await correlateAndClaim("BRN-BM27-ZC", [banC], 1);
+        const claimed = await collect("BRN-BM27-ZC", banC, 1);
         expect(claimed).toEqual([]);
       },
       120_000,

@@ -559,6 +559,33 @@ describe.skipIf(!databaseUrl)(
             .accountStatus,
         ).toBe("PROCESSING_FAILED");
 
+        // Collection had claimed the failed account's usage before
+        // aggregation failed: two BILL_DRAFT rows stamped to it. Approval
+        // must RELEASE them (Inv #19, known-issues §27), not approve them.
+        const failedClaimIds: string[] = [];
+        for (const n of [1, 2]) {
+          const [row] = await sql!<{ udr_id: string }[]>`
+            INSERT INTO rating.udr_rated
+              (partition_period, udr_type, start_datetime, end_datetime, status,
+               udr_subscription_ref_id, udr_key, udr_usage_quantity,
+               udr_usage_unit, udr_rate_type, udr_rated_price,
+               udr_rated_price_raw, udr_rounding_mode, udr_currency,
+               udr_ref_batch_id, udr_source_file, rating_engine_version,
+               rating_flow_revision, billrun_ref_id, billrun_ban_id,
+               billrun_attempt, billrun_checksum, upsert_datetime)
+            VALUES
+              (rating.period_of('2026-06-10T00:00:00Z'::timestamptz),
+               'RAN_USAGE', '2026-06-10T00:00:00Z'::timestamptz,
+               '2026-06-10T00:00:00Z'::timestamptz, 'BILL_DRAFT',
+               'PRDINV-E2E-FAILED', ${`_e2e-failed-key-${n}`}, '1.000000',
+               'EA', 'FLAT', '10.00', '10.00', 'HALF_UP', 'MYR', '_E2E_BATCH',
+               '_E2E', '_E2E', 0, ${runId}, ${banFailed}, 1, 'e2e-claim',
+               now())
+            RETURNING udr_id
+          `;
+          failedClaimIds.push(row!.udr_id);
+        }
+
         // ---- The run recomputed to PROCESSED: every account is now
         // terminal (PROCESSED / PROCESSING_FAILED / EXCLUDED). -------------
         const [processedRun] = await db
@@ -748,6 +775,20 @@ describe.skipIf(!databaseUrl)(
         expect(approved.ok).toBe(true);
         if (!approved.ok) return;
         expect(approved.value.skippedCount).toBe(2); // FAILED + EXCLUDED
+
+        // The SKIPPED account's claimed usage went back to RATED with the
+        // claim cleared (re-claimable by a later run), never BILL_APPROVED.
+        const failedRows = await sql!<
+          { status: string; billrun_ref_id: string | null }[]
+        >`
+          SELECT status, billrun_ref_id FROM rating.udr_rated
+          WHERE  udr_id = ANY(${failedClaimIds})
+        `;
+        expect(failedRows).toHaveLength(2);
+        for (const row of failedRows) {
+          expect(row.status).toBe("RATED");
+          expect(row.billrun_ref_id).toBeNull();
+        }
 
         const [approvedRun] = await db
           .select()

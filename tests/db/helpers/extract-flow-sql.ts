@@ -357,13 +357,57 @@ async function runHeredocStatements(
 // import path (bm40-spec §Implementation §2).
 // ---------------------------------------------------------------------------
 
+export interface ValidationParams {
+  ban: string;
+  periodStart: string;
+  periodEnd: string;
+  // See AggregateParams.businessTimezone.
+  businessTimezone?: string;
+}
+
+// The flow's REAL Validation stage (the currency assertion over the period's
+// rows). It writes nothing; a HARD CURRENCY_MISMATCH is the DO block's RAISE
+// EXCEPTION, surfaced as a rejected promise carrying the server's own message
+// text. Zero claimable rows, or rows only from other months, resolve.
+export async function runValidation(
+  sql: postgresjs.Sql,
+  { ban, periodStart, periodEnd, businessTimezone }: ValidationParams,
+): Promise<void> {
+  const heredoc = extractStageHeredoc("validation");
+  const values: Record<string, string> = {
+    ban,
+    period_start: periodStart,
+    period_end: periodEnd,
+    tz: businessTimezone ?? "UTC",
+  };
+  await sql.begin((tx) => runHeredocStatements(tx, heredoc, values));
+}
+
 // bm63-spec §Design D1 — the flow's REAL Collection claim (correlation through
 // `inventory.product_inventory`, RATED → BILL_DRAFT), so a journey on the
 // `_SAMPLE_` `ci` seed claims exactly what the deployed flow would. Returns
 // nothing; read the claimed rows back if the count matters.
+export interface CollectionParams {
+  runId: string;
+  ban: string;
+  attempt: number;
+  // The claim takes only the period's rows (Validation's window scope).
+  periodStart: string;
+  periodEnd: string;
+  // See AggregateParams.businessTimezone.
+  businessTimezone?: string;
+}
+
 export async function runCollection(
   sql: postgresjs.Sql,
-  { runId, ban, attempt }: { runId: string; ban: string; attempt: number },
+  {
+    runId,
+    ban,
+    attempt,
+    periodStart,
+    periodEnd,
+    businessTimezone,
+  }: CollectionParams,
 ): Promise<void> {
   const heredoc = stripExplicitTransactionBounds(
     extractStageHeredoc("collection"),
@@ -372,6 +416,9 @@ export async function runCollection(
     run: runId,
     ban,
     attempt: String(attempt),
+    period_start: periodStart,
+    period_end: periodEnd,
+    tz: businessTimezone ?? "UTC",
   };
   await sql.begin((tx) => runHeredocStatements(tx, heredoc, values));
 }

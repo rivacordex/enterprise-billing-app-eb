@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // bm32-spec §Design/§Implementation §2. The per-record exception surface read:
-// resolves the run's WINDOW (the ≤2 UTC-month partitions it spans + the
-// start/end dates) and returns the repository's BILL_NOTUSED + orphan rows
+// resolves the run's WINDOW (the ≤2 month partitions it spans, the
+// start/end dates and the business time zone) and returns the repository's BILL_NOTUSED + orphan rows
 // verbatim. An unknown run yields an empty list rather than throwing.
 
 vi.mock("@/db/client", () => ({ db: {} }));
@@ -11,6 +11,9 @@ vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
 }));
 vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
   ratedLinesRepository: { listExceptionsForWindow: vi.fn() },
+}));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("Asia/Kuala_Lumpur"),
 }));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
@@ -41,6 +44,7 @@ describe("listExceptions (bm32-spec §2)", () => {
       partitions: ["2026-07-01"],
       periodStart: "2026-07-01",
       periodEnd: "2026-07-31",
+      timezone: "Asia/Kuala_Lumpur",
     });
   });
 
@@ -61,6 +65,7 @@ describe("listExceptions (bm32-spec §2)", () => {
       partitions: ["2026-07-01", "2026-08-01"],
       periodStart: "2026-07-15",
       periodEnd: "2026-08-14",
+      timezone: "Asia/Kuala_Lumpur",
     });
   });
 

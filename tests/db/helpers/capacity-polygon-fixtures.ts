@@ -111,7 +111,8 @@ export function createCapacityPolygonFixtures(
       (c) => c !== "polygon_id" || polygon.polygonId !== null,
     );
     if (polygon.polygonId !== null) columns.polygon_id = polygon.polygonId;
-    const price = `${polygon.ea * 100}.00`;
+    // 100 per EA, as a 2-dp money string (also valid for a fractional EA).
+    const price = (polygon.ea * 100).toFixed(2);
     await sql`
       INSERT INTO rating.udr_rated
         (partition_period, udr_type, start_datetime, end_datetime, status,

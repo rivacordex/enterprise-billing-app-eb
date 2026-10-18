@@ -16,7 +16,9 @@ import type { PreApprovalCheck } from "@/types/billing";
 //      `CHECKS_FAILED`.
 //   3. Stamp `approved_by`/`approved_at`/the immutable `total_amount` (the
 //      SQL sum of the postable — non-SKIPPED — bills).
-//   4. Mark every `PROCESSING_FAILED`/`EXCLUDED` account `SKIPPED`.
+//   4. Mark every `PROCESSING_FAILED`/`EXCLUDED` account `SKIPPED`, and
+//      release the skipped accounts' claimed rows back to `RATED` (Inv #19:
+//      their attempt is abandoned; known-issues §27).
 //   5. Flip the run `PROCESSED → APPROVED`.
 //   6. `insertAuditEvent(BILL_RUN_APPROVED)`.
 // Posting (`APPROVED → POSTING → INVOICED`) is bm11 — this stops at APPROVED.
@@ -73,10 +75,16 @@ export async function approveRun(
       tx,
       run.billRunId,
     );
-    const skippedCount = await billRunAccountRepository.markSkippedForRun(
+    const skippedBanIds = await billRunAccountRepository.markSkippedForRun(
       tx,
       run.billRunId,
     );
+    const skippedCount = skippedBanIds.length;
+    // A skipped account gets no bill, so its claimed usage (an account that
+    // failed after Collection) goes back to RATED for a later run — before
+    // markApproved below flips the run's remaining BILL_DRAFT rows. Without
+    // this, never-invoiced usage became BILL_APPROVED (known-issues §27).
+    await udrStatusRepository.releaseSkipped(tx, run.billRunId, skippedBanIds);
     const approved = await billRunRepository.approve(tx, run.billRunId, {
       approvedBy: actorId,
       totalAmount,
