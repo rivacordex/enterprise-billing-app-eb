@@ -164,6 +164,17 @@ function UnchargedAccountsSection({
   );
 }
 
+const EXCEPTION_LABELS: Record<ExceptionRow["kind"], string> = {
+  BILL_NOTUSED: "Not used",
+  ORPHAN: "Orphan",
+  PRIOR_PERIOD: "Earlier period",
+};
+
+// `YYYY-MM-01` → "Sep 2026" (the `long` calendar date minus its day).
+function formatUsageMonth(firstOfMonth: string): string {
+  return formatCalendarDate(firstOfMonth).replace(/^\d{2} /, "");
+}
+
 function ExceptionsSection({
   exceptions,
   locale,
@@ -177,8 +188,8 @@ function ExceptionsSection({
         <h2 className="text-body font-semibold text-foreground">Exceptions</h2>
         <p className="text-body-sm text-muted-foreground">
           {exceptions.length === 0
-            ? "No per-record exceptions this run — no not-used usage and no orphaned records."
-            : `${exceptions.length} per-record exception${exceptions.length === 1 ? "" : "s"} — informational; these records are not on any bill.`}
+            ? "No per-record exceptions this run — no not-used usage, no orphaned records and no unbilled usage from earlier periods."
+            : `${exceptions.length} exception${exceptions.length === 1 ? "" : "s"} — informational; these records are not on any bill. Earlier-period usage will not be billed by any run: raise an adjustment in billing.`}
         </p>
       </div>
 
@@ -224,11 +235,12 @@ function ExceptionsSection({
                   className="border-b border-[color:var(--border-subtle)] hover:bg-[color:var(--color-neutral-50)]"
                 >
                   <td className="px-4 py-3 align-top">
-                    <InfoBadge
-                      label={
-                        row.kind === "BILL_NOTUSED" ? "Not used" : "Orphan"
-                      }
-                    />
+                    <InfoBadge label={EXCEPTION_LABELS[row.kind]} />
+                    {row.usageMonth ? (
+                      <div className="mt-1 text-muted-foreground">
+                        {formatUsageMonth(row.usageMonth)}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 align-top">
                     {row.accountName ? (
@@ -249,6 +261,11 @@ function ExceptionsSection({
                   </td>
                   <td className="px-4 py-3 text-right align-top whitespace-nowrap text-muted-foreground tabular-nums">
                     {row.quantity} {row.unit}
+                    {row.recordCount > 1 ? (
+                      <div className="text-muted-foreground">
+                        {row.recordCount} records
+                      </div>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 text-right align-top whitespace-nowrap text-muted-foreground tabular-nums">
                     {formatCurrency(row.ratedPrice, row.currency, locale)}

@@ -23,13 +23,15 @@ import {
   insertRanRatecard,
   SAMPLE_5G_LKP_ROWS,
   SAMPLE_5G_COMMERCIAL_UNIT,
+  type RanLkpRow,
 } from "@/db/seeds/sample/sample-5g-fixture";
 
-// Shared harness for the DB+python-gated RAN_USAGE rating suites (rm13, rm23):
-// shells the real PRP/RP/RL runtime modules exactly as the flow's tasks do,
-// against a disposable database seeded with the Sample-5G graph. Feed
-// polygons are written exactly as the card holds them, so the rated udr_key is
-// the raw key (Inv 27) and udr_resource is the matched cell's label (Inv 28).
+// Shared harness for the DB+python-gated RAN_USAGE rating suites (rm08-rm11,
+// rm13, rm23, rm27, rm28): shells the real PRP/RP/RL runtime modules exactly as
+// the flow's tasks do, against a disposable database seeded with the Sample-5G
+// graph. Feed polygons are written exactly as the card holds them, so the rated
+// udr_key is the raw key (Inv 27) and udr_resource is the matched cell's label
+// (Inv 28).
 
 export const RATING_WORKER_DIR = join(
   process.cwd(),
@@ -121,7 +123,9 @@ export const RAN_USAGE_FEED_PROFILE = JSON.stringify({
   interval_seconds: null,
   future_tolerance_seconds: 300,
 });
-const FILE_KEY_RULE =
+// `rating-input-file-YYYYMMDDHHMI[_vN].udr` -> file_key
+// `rating-input-file-YYYYMMDDHHMI` (a `_vN` reissue keeps the file_key).
+export const RAN_USAGE_FILE_KEY_RULE =
   "^(?P<file_key>rating-input-file-\\d{12})(?:_v\\d+)?\\.udr$";
 const UDR_HEADER =
   "mno_public_id,commercial_unit,polygon_id,datetime_YYYYMMDDHHMI,usage_volume,district_name,service_code";
@@ -133,6 +137,18 @@ export interface Sample5gGraphOptions {
   productName: string;
   priceName: string;
   cardName: string;
+  // The ratecard cells (default: the three Sample-5G cells).
+  cells?: readonly RanLkpRow[];
+  // The billing-account currency (default: the fixture's MYR); one that differs
+  // from the price currency provokes RL's CURRENCY_MISMATCH.
+  accountCurrency?: string;
+}
+
+export interface Sample5gGraph {
+  partyRoleId: string;
+  productInventoryId: string;
+  offeringId: string;
+  priceId: string;
 }
 
 // Seeds the rateable Sample-5G graph via the SHARED fixture builders (the same
@@ -140,7 +156,7 @@ export interface Sample5gGraphOptions {
 export async function seedSample5gRatingGraph(
   db: Database,
   opts: Sample5gGraphOptions,
-): Promise<{ partyRoleId: string; productInventoryId: string }> {
+): Promise<Sample5gGraph> {
   const { tag } = opts;
   const words = tag.replaceAll("-", " ");
   const actorId = await getOrCreateAppUser(
@@ -148,7 +164,7 @@ export async function seedSample5gRatingGraph(
     `${tag}-actor`,
     `${tag}@example.invalid`,
   );
-  const { offeringId } = await insertRanOffering(db, {
+  const { offeringId, priceId } = await insertRanOffering(db, {
     name: opts.productName,
     priceName: opts.priceName,
     udrTypeValue: "RAN_USAGE",
@@ -171,6 +187,7 @@ export async function seedSample5gRatingGraph(
     partyRoleId,
     billCycleId,
     actorId,
+    ...(opts.accountCurrency ? { currency: opts.accountCurrency } : {}),
   });
   const productInventoryId = await insertRanSubscription(db, {
     partyRoleId,
@@ -183,10 +200,10 @@ export async function seedSample5gRatingGraph(
     cardName: opts.cardName,
     mnoPublicKey: opts.mno,
     lkpSubscriberRefId: partyRoleId,
-    rows: SAMPLE_5G_LKP_ROWS,
+    rows: opts.cells ?? SAMPLE_5G_LKP_ROWS,
     actorId,
   });
-  return { partyRoleId, productInventoryId };
+  return { partyRoleId, productInventoryId, offeringId, priceId };
 }
 
 export interface RatingPipelineOptions {
@@ -197,30 +214,61 @@ export interface RatingPipelineOptions {
   productName: string;
   now: string;
   tmpPrefix: string;
+  // The ratecard cells writeUdr emits one row for (default: Sample-5G's three).
+  cells?: readonly RanLkpRow[];
+  // PRP's ratecard_coverage_enforcement (default: the production HARD_STOP).
+  coverageEnforcement?: "HARD_STOP" | "WARN";
+  // The flow revision RP/RL stamp (default 1).
+  flowRevision?: number;
+}
+
+// One explicit `.udr` row. `datetime` is the feed's naive config-TZ
+// (Asia/Kuala_Lumpur) instant; `mno` defaults to the pipeline's MNO, and the
+// district / service_code are the cell's own labels.
+export interface UdrRow {
+  cell: RanLkpRow;
+  datetime: string;
+  volume: number | string;
+  mno?: string;
+}
+
+export interface RatingPipelineDirs {
+  landing: string;
+  error: string;
+  logs: string;
+  archive: string;
+  work: string;
 }
 
 export interface RatingPipeline {
-  // 3 clean rows, one per ratecard cell; `volumes[i]` is cell i's usage.
-  writeUdr(name: string, volumes: readonly number[]): string;
+  dirs: RatingPipelineDirs;
+  // One clean row per ratecard cell; `volumes[i]` is cell i's usage. Rows are
+  // dated 2026-08-14T10:0i (config TZ) unless `datetime` is given.
+  writeUdr(name: string, volumes: readonly number[], datetime?: string): string;
+  writeUdrRows(name: string, rows: readonly UdrRow[]): string;
   runPrp(sourcePath: string, execId: string): string;
-  runRp(manifestUri: string, execId: string): string;
+  runRp(manifestUri: string, execId: string, roundingMode?: string): string;
   runRl(manifestUri: string, execId: string): string;
+  // Any runtime module under the pipeline's env; returns the trimmed stdout.
+  runModule(module: string, args: string[]): string;
 }
 
 // Creates fresh landing/error/logs/archive/work dirs and returns runners that
-// invoke the runtime modules as rating_runtime; each returns the module's last
-// stdout line (the manifest URI it hands off).
+// invoke the runtime modules as rating_runtime; runPrp/runRp/runRl return the
+// module's last stdout line (the manifest URI it hands off).
 export function createRatingPipeline(
   opts: RatingPipelineOptions,
 ): RatingPipeline {
   const url = new URL(opts.databaseUrl);
   const root = mkdtempSync(join(tmpdir(), opts.tmpPrefix));
-  const landingDir = join(root, "landing");
-  const errorDir = join(root, "error");
-  const logsDir = join(root, "logs");
-  const archiveDir = join(root, "archive");
-  const workDir = join(root, "work");
-  for (const d of [landingDir, errorDir, logsDir, archiveDir, workDir]) {
+  const dirs: RatingPipelineDirs = {
+    landing: join(root, "landing"),
+    error: join(root, "error"),
+    logs: join(root, "logs"),
+    archive: join(root, "archive"),
+    work: join(root, "work"),
+  };
+  for (const d of Object.values(dirs)) {
     mkdirSync(d, { recursive: true });
   }
   const env = {
@@ -230,12 +278,14 @@ export function createRatingPipeline(
     RATING_DB_PORT: url.port || "5432",
     RATING_DB_NAME: url.pathname.replace(/^\//, ""),
     RATING_DB_USER: "rating_runtime",
-    RATING_LANDING_DIR: landingDir,
-    RATING_ERROR_DIR: errorDir,
-    RATING_LOGS_DIR: logsDir,
-    RATING_ARCHIVE_DIR: archiveDir,
+    RATING_LANDING_DIR: dirs.landing,
+    RATING_ERROR_DIR: dirs.error,
+    RATING_LOGS_DIR: dirs.logs,
+    RATING_ARCHIVE_DIR: dirs.archive,
     RATING_ENGINE_VERSION: opts.engineVersion,
   };
+  const cells = opts.cells ?? SAMPLE_5G_LKP_ROWS;
+  const flowRevision = String(opts.flowRevision ?? 1);
 
   function runModule(module: string, args: string[]): string {
     if (!PYTHON3) throw new Error("no absolute python3 (set RATING_PYTHON3)");
@@ -244,83 +294,104 @@ export function createRatingPipeline(
       encoding: "utf8",
       env,
     });
-    return out.trim().split("\n").pop() as string;
+    return out.trim();
+  }
+  const lastLine = (out: string): string => out.split("\n").pop() as string;
+
+  function writeUdrRows(name: string, rows: readonly UdrRow[]): string {
+    const lines = rows.map((row) =>
+      [
+        row.mno ?? opts.mno,
+        SAMPLE_5G_COMMERCIAL_UNIT,
+        row.cell.polygonId,
+        row.datetime,
+        String(row.volume),
+        row.cell.district ?? "",
+        row.cell.serviceCode ?? "",
+      ].join(","),
+    );
+    const path = join(dirs.landing, name);
+    writeFileSync(path, [UDR_HEADER, ...lines].join("\n") + "\n", "utf8");
+    return path;
   }
 
   return {
-    writeUdr(name, volumes) {
-      const rows = SAMPLE_5G_LKP_ROWS.map((cell, i) =>
-        [
-          opts.mno,
-          SAMPLE_5G_COMMERCIAL_UNIT,
-          cell.polygonId,
-          `2026-08-14T10:0${i}:00`,
-          String(volumes[i]),
-          cell.district ?? "",
-          cell.serviceCode ?? "",
-        ].join(","),
+    dirs,
+    writeUdr(name, volumes, datetime) {
+      return writeUdrRows(
+        name,
+        cells.map((cell, i) => ({
+          cell,
+          datetime: datetime ?? `2026-08-14T10:0${i}:00`,
+          volume: volumes[i]!,
+        })),
       );
-      const path = join(landingDir, name);
-      writeFileSync(path, [UDR_HEADER, ...rows].join("\n") + "\n", "utf8");
-      return path;
     },
+    writeUdrRows,
+    runModule,
     runPrp(sourcePath, execId) {
-      return runModule("runtime.prp", [
-        "--source-file",
-        sourcePath,
-        "--udr-type",
-        "RAN_USAGE",
-        "--profile",
-        RAN_USAGE_FEED_PROFILE,
-        "--file-key-rule",
-        FILE_KEY_RULE,
-        "--reject-threshold",
-        "0",
-        "--chunk-size",
-        "10000",
-        "--subscription-product-name",
-        opts.productName,
-        "--ratecard-coverage-enforcement",
-        "HARD_STOP",
-        "--workflow-execution-id",
-        execId,
-        "--now",
-        opts.now,
-        "--work-dir",
-        workDir,
-      ]);
+      return lastLine(
+        runModule("runtime.prp", [
+          "--source-file",
+          sourcePath,
+          "--udr-type",
+          "RAN_USAGE",
+          "--profile",
+          RAN_USAGE_FEED_PROFILE,
+          "--file-key-rule",
+          RAN_USAGE_FILE_KEY_RULE,
+          "--reject-threshold",
+          "0",
+          "--chunk-size",
+          "10000",
+          "--subscription-product-name",
+          opts.productName,
+          "--ratecard-coverage-enforcement",
+          opts.coverageEnforcement ?? "HARD_STOP",
+          "--workflow-execution-id",
+          execId,
+          "--now",
+          opts.now,
+          "--work-dir",
+          dirs.work,
+        ]),
+      );
     },
-    runRp(manifestUri, execId) {
-      return runModule("runtime.rp", [
-        "--manifest",
-        manifestUri,
-        "--udr-type",
-        "RAN_USAGE",
-        "--rounding-mode",
-        "HALF_UP",
-        "--subscriber-ref-column",
-        "product_inventory_id",
-        "--workflow-execution-id",
-        execId,
-        "--flow-revision",
-        "1",
-        "--work-dir",
-        workDir,
-      ]);
+    runRp(manifestUri, execId, roundingMode = "HALF_UP") {
+      return lastLine(
+        runModule("runtime.rp", [
+          "--manifest",
+          manifestUri,
+          "--udr-type",
+          "RAN_USAGE",
+          "--rounding-mode",
+          roundingMode,
+          "--subscriber-ref-column",
+          "product_inventory_id",
+          "--workflow-execution-id",
+          execId,
+          "--flow-revision",
+          flowRevision,
+          "--work-dir",
+          dirs.work,
+        ]),
+      );
     },
     runRl(manifestUri, execId) {
-      return runModule("runtime.rl", [
-        "--manifest",
-        manifestUri,
-        "--udr-type",
-        "RAN_USAGE",
-        "--landing-dir",
-        landingDir,
-        "--workflow-execution-id",
-        execId,
-        "--flow-revision",
-        "1",
-      ]);
+      return lastLine(
+        runModule("runtime.rl", [
+          "--manifest",
+          manifestUri,
+          "--udr-type",
+          "RAN_USAGE",
+          "--landing-dir",
+          dirs.landing,
+          "--workflow-execution-id",
+          execId,
+          "--flow-revision",
+          flowRevision,
+        ]),
+      );
     },
   };
 }

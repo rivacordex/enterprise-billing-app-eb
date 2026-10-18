@@ -27,10 +27,18 @@ export async function listExceptions(
   const run = await billRunRepository.findById(db, billRunId);
   if (!run) return [];
 
-  return ratedLinesRepository.listExceptionsForWindow(db, {
+  const window = {
     partitions: periodPartitions(run.periodStart, run.periodEnd),
     periodStart: run.periodStart,
     periodEnd: run.periodEnd,
     timezone: getAppTimezone(),
-  });
+  };
+  // known-issues §28 option 1 — after the in-window records, the run accounts'
+  // unbilled usage from EARLIER periods (summed per account and month): no run
+  // claims it any more, so it is listed here rather than lost silently.
+  const [inWindow, priorPeriod] = await Promise.all([
+    ratedLinesRepository.listExceptionsForWindow(db, window),
+    ratedLinesRepository.listPriorPeriodForRun(db, window, run.billRunId),
+  ]);
+  return [...inWindow, ...priorPeriod];
 }

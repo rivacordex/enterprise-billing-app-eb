@@ -113,7 +113,7 @@ kestra:
       # by the LOCAL compose engine only (--config /app/kestra.yml); the Azure
       # Container App engine does not load it, so neither this entry nor the
       # /distribution one reaches Azure yet (known issue, tracked in
-      # workflow-management/docs/rating-batch-operations.md §10).
+      # workflow-management/docs/opsguide-rating-batch.md §10).
       - type: io.kestra.plugin.fs.local.Trigger
         values:
           allowed-paths:

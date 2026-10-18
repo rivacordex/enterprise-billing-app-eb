@@ -40,6 +40,8 @@ function exception(overrides: Partial<ExceptionRow> = {}): ExceptionRow {
     unit: "GB",
     ratedPrice: "5.00",
     currency: "MYR",
+    usageMonth: null,
+    recordCount: 1,
     ...overrides,
   };
 }
@@ -161,5 +163,29 @@ describe("UnchargedTable (bm32-spec §4)", () => {
     // "5.00 MYR" concatenation): the amount is present and the raw form is not.
     expect(container.textContent).toContain("5.00");
     expect(container.textContent).not.toContain("5.00 MYR");
+  });
+
+  it("lists earlier-period usage summed per month, with its record count (known-issues §28)", () => {
+    const { container } = render(
+      <UnchargedTable
+        runId="BRN00000001"
+        rows={[]}
+        exceptions={[
+          exception({
+            kind: "PRIOR_PERIOD",
+            quantity: "300.000000",
+            ratedPrice: "1500.00",
+            usageMonth: "2026-09-01",
+            recordCount: 3,
+          }),
+        ]}
+        canRecover
+        locale="en-MY"
+      />,
+    );
+    expect(container.textContent).toContain("Earlier period");
+    expect(container.textContent).toContain("Sep 2026");
+    expect(container.textContent).toContain("3 records");
+    expect(container.textContent).toContain("raise an adjustment in billing");
   });
 });

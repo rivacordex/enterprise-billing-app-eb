@@ -1,13 +1,7 @@
 import { execFileSync } from "node:child_process";
-import {
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  existsSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -20,16 +14,24 @@ import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { appuser } from "@/db/schema/identity";
-import { organization, partyRole } from "@/db/schema/customer";
-import { billCycle } from "@/db/schema/billing/catalogs";
-import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
-import { productOffering, productOfferingPrice } from "@/db/schema/product";
-import { productOrder, productOrderItem } from "@/db/schema/ordering";
-import { productInventory } from "@/db/schema/inventory";
 import { udrRated } from "@/db/schema/rating/udr-rated";
 import { udrBatch } from "@/db/schema/rating/udr-batch";
-import type { UsageRateComponent } from "@/validation/product/pricing-component.schema";
+import {
+  createRatingPipeline,
+  dropModuleSchemas,
+  pythonRuntimeReady,
+  RATING_WORKER_DIR,
+  ratingPython3,
+  readManifest,
+  runSqlFile,
+  seedSample5gRatingGraph,
+  type RatingPipeline,
+  type UdrRow,
+} from "@/tests/helpers/rating-ran-harness";
+import {
+  SAMPLE_5G_LKP_ROWS,
+  type RanLkpRow,
+} from "@/db/seeds/sample/sample-5g-fixture";
 
 // rm10-spec §Verification checklist + code-standards §10 tests OWNED by rm10:
 //   #4  Live-row uniqueness (the skipped-supersede half) — a live row the
@@ -47,30 +49,17 @@ import type { UsageRateComponent } from "@/validation/product/pricing-component.
 // The static describe (no DATABASE_URL) checks rl.py's supersede predicate
 // text (file_key, not source_file; status-only; the two event codes) without
 // a live engine. The DB-gated describe shells out to the REAL
-// `python3 -m runtime.prp` -> runtime.rp -> runtime.rl, run multiple times
-// per scenario to exercise real reissues — a black-box test of the actual
-// loader, not a TS reimplementation. Requires `python3` on PATH with the
+// `python3 -m runtime.prp` -> runtime.rp -> runtime.rl through the shared
+// `rating-ran-harness` (the production rm21 7-column `.udr` profile, the
+// `rating-input-file-YYYYMMDDHHMI[_vN].udr` file-key rule, a Sample-5G graph
+// with its ratecard — PER_UNIT rating), run multiple times per scenario to
+// exercise real reissues — a black-box test of the actual loader, not a TS
+// reimplementation. Each case seeds its own graph (own MNO), so its raw
+// udr_keys never collide with another case's live rows. Requires the harness's
+// absolute python3 (`RATING_PYTHON3` or the fixed system path) with the
 // worker's requirements (psycopg + polars); skipped loudly, like the
 // DATABASE_URL gate, when unavailable — same posture as the rm06-rm09 suites.
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(
-  process.cwd(),
-  "workflow-management",
-  "worker",
-  "workflow-engine",
-);
-
-function pythonRuntimeReady(): boolean {
-  try {
-    execFileSync("python3", ["-c", "import runtime, polars, psycopg"], {
-      cwd: workerDir,
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
 const pythonReady = pythonRuntimeReady();
 
 const ROLE_PW = "rm10-test-only-pw";
@@ -79,54 +68,11 @@ const RATING_ROLES_SQL = join(
   "db/bootstrap/rating-db-roles.sql",
 );
 const ENGINE_VERSION = "rm10-test-engine@sha256:deadbeef";
-
-const FEED_PROFILE = JSON.stringify({
-  header: ["DATETIME", "PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE", "USAGE_MBPS"],
-  event_time_column: "DATETIME",
-  event_time_assumed_tz: "UTC",
-  usage_column: "USAGE_MBPS",
-  usage_unit: "MBPS",
-  udr_key_columns: ["PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE"],
-  subscriber_ref: null,
-  interval_seconds: null,
-  future_tolerance_seconds: 300,
-});
-// Matches RAN_USAGE_<date>.csv and RAN_USAGE_<date>_v<N>.csv to the SAME
-// file_key — a reissue under a new physical filename (rm10 D1/Inv #5, test #7).
-const FILE_KEY_RULE = "^(?P<file_key>RAN_USAGE_\\d{8})(?:_v\\d+)?\\.csv$";
 const NOW = "2026-08-20T00:00:00Z";
-const CURRENCY = "MYR";
-
-// pm51-spec D6 — component-envelope builder replacing the pre-reshape flat
-// usage price-row literal (same shape `db/seeds/demo/product-demo.ts`'s
-// `buildPriceEnvelope` builds in production).
-function usageRateEnvelope(
-  ratePerUnit: string,
-  unitOfMeasure: "Mbps",
-): UsageRateComponent {
-  return {
-    "@type": "usage_rate",
-    specVersion: 1,
-    plaSpecId: null,
-    priceType: "usage",
-    appliesAt: "rating",
-    basis: "quantity",
-    boundTo: { unitOfMeasure },
-    params: { ratePerUnit, rateCardLookUp: null },
-  };
-}
-
-function statements(path: string): string[] {
-  return readFileSync(path, "utf8")
-    .split("--> statement-breakpoint")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-async function runSqlFile(client: postgresjs.Sql, path: string): Promise<void> {
-  for (const statement of statements(path)) {
-    await client.unsafe(statement);
-  }
-}
+// A one-cell ratecard: each record of a scenario is the same raw udr_key, so
+// a reissue supersedes exactly the rows its predecessor loaded.
+const ONE_CELL: readonly RanLkpRow[] = [SAMPLE_5G_LKP_ROWS[0]!];
+const TWO_CELLS: readonly RanLkpRow[] = SAMPLE_5G_LKP_ROWS.slice(0, 2);
 
 // ---------------------------------------------------------------------
 // Static structural checks — no DATABASE_URL, no engine. rm10-spec D1-D4.
@@ -192,152 +138,11 @@ describe.skipIf(!databaseUrl || !pythonReady)(
   () => {
     let sql: postgresjs.Sql;
     let db: Database;
-    let dbParams: { host: string; port: string; name: string };
-    let landingDir: string;
-    let logsDir: string;
-    let archiveDir: string;
-    let workDir: string;
-    let invA: string; // pinned to OFF1, MYR account
-
-    const dropAll = async (client: postgresjs.Sql) => {
-      for (const s of [
-        "inventory",
-        "ordering",
-        "billing",
-        "customer",
-        "product",
-        "rating",
-        "core",
-        "drizzle",
-        "partman",
-      ]) {
-        await client.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-      }
-    };
-
-    async function seedProductGraph(): Promise<void> {
-      const userId = crypto.randomUUID();
-      await db.insert(appuser).values({
-        id: userId,
-        userName: "rm10-fixture-user",
-        userEmail: "rm10-fixture@example.invalid",
-        emailVerified: false,
-        authMethod: "LOCAL",
-        status: "ACTIVE",
-      });
-      const [org] = await db
-        .insert(organization)
-        .values({
-          name: "rm10-fixture-org",
-          organizationType: "COMPANY",
-          status: "ACTIVE",
-          lastModifiedBy: userId,
-        })
-        .returning({ organizationId: organization.organizationId });
-      const [pr] = await db
-        .insert(partyRole)
-        .values({ engagedParty: org!.organizationId, lastModifiedBy: userId })
-        .returning({ partyRoleId: partyRole.partyRoleId });
-      const partyRoleId = pr!.partyRoleId;
-      const [bc] = await db
-        .insert(billCycle)
-        .values({ name: "rm10-fixture-cycle", lastEditedBy: userId })
-        .returning({ billCycleId: billCycle.billCycleId });
-      const billCycleId = bc!.billCycleId;
-
-      const [fa] = await db
-        .insert(financialAccount)
-        .values({
-          name: "rm10-fa-MYR",
-          refPartyRoleId: partyRoleId,
-          currency: CURRENCY,
-          lastEditedBy: userId,
-        })
-        .returning({ financialAccountId: financialAccount.financialAccountId });
-      const [ban] = await db
-        .insert(billingAccount)
-        .values({
-          name: "rm10-ban-MYR",
-          refPartyRoleId: partyRoleId,
-          refFinancialAccountId: fa!.financialAccountId,
-          currency: CURRENCY,
-          refBillCycleId: billCycleId,
-          lastEditedBy: userId,
-        })
-        .returning({ billingAccountId: billingAccount.billingAccountId });
-      const myrAccount = ban!.billingAccountId;
-
-      // Inserted DRAFT, priced, then flipped to ACTIVE — pm36's DRAFT-guard
-      // trigger refuses a price write once the parent offering leaves DRAFT
-      // (same pattern as `db/seeds/demo/product-demo.ts`).
-      const [off1] = await db
-        .insert(productOffering)
-        .values({
-          name: "rm10-OFF1",
-          isBundle: false,
-          isSellable: true,
-          billingOnly: false,
-          lifecycleStatus: "DRAFT",
-          lastEditedBy: userId,
-        })
-        .returning({ productOfferingId: productOffering.productOfferingId });
-      const off1Id = off1!.productOfferingId;
-      // pm51-spec D6 — re-keyed, same rate/currency/start date. This file's
-      // own "supersession" is `udr_rated` batch-level reprocessing (RL's
-      // domain, below), not a catalog dated-successor chain — confirmed by
-      // inspection, this offering carries exactly one price throughout.
-      await db.insert(productOfferingPrice).values({
-        productOfferingId: off1Id,
-        name: "OFF1 usage",
-        componentType: "usage_rate",
-        priceComponent: usageRateEnvelope("0.0050", "Mbps"),
-        unitOfMeasure: "Mbps",
-        currency: CURRENCY,
-        startDateTime: new Date("2026-01-01T00:00:00Z"),
-      });
-      await db
-        .update(productOffering)
-        .set({ lifecycleStatus: "ACTIVE" })
-        .where(eq(productOffering.productOfferingId, off1Id));
-
-      const [order] = await db
-        .insert(productOrder)
-        .values({
-          customerPartyRoleId: partyRoleId,
-          billingAccountId: myrAccount,
-          status: "COMPLETED",
-          submittedBy: userId,
-          submittedAt: new Date("2026-01-01T00:00:00Z"),
-        })
-        .returning({ productOrderId: productOrder.productOrderId });
-      const [item] = await db
-        .insert(productOrderItem)
-        .values({
-          productOrderId: order!.productOrderId,
-          productOfferingId: off1Id,
-          quantity: 1,
-          startDate: "2026-01-01",
-        })
-        .returning({ productOrderItemId: productOrderItem.productOrderItemId });
-      const [inv] = await db
-        .insert(productInventory)
-        .values({
-          productOrderItemId: item!.productOrderItemId,
-          customerPartyRoleId: partyRoleId,
-          billingAccountId: myrAccount,
-          productOfferingId: off1Id,
-          quantity: 1,
-          status: "ACTIVE",
-          startDate: "2026-01-01",
-        })
-        .returning({ productInventoryId: productInventory.productInventoryId });
-      invA = inv!.productInventoryId;
-    }
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
-      await dropAll(sql);
+      await dropModuleSchemas(sql);
       db = drizzle(sql, { schema });
       await migrate(db, {
         migrationsFolder: "./db/migrations",
@@ -346,127 +151,53 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       await seedEventCatalog(db);
       await runSqlFile(sql, RATING_ROLES_SQL);
       await sql.unsafe(`ALTER ROLE rating_runtime WITH PASSWORD '${ROLE_PW}'`);
-      await seedProductGraph();
-
-      const url = new URL(databaseUrl as string);
-      dbParams = {
-        host: url.hostname,
-        port: url.port || "5432",
-        name: url.pathname.replace(/^\//, ""),
-      };
-
-      const root = mkdtempSync(join(tmpdir(), "rm10-rl-"));
-      landingDir = join(root, "landing");
-      logsDir = join(root, "logs");
-      archiveDir = join(root, "archive");
-      workDir = join(root, "work");
-      for (const d of [landingDir, logsDir, archiveDir, workDir]) {
-        mkdirSync(d, { recursive: true });
-      }
     }, 60_000);
 
     afterAll(async () => {
       if (!sql) return;
-      await dropAll(sql);
+      await dropModuleSchemas(sql);
       await sql.end();
     });
 
-    const runEnv = () => ({
-      ...process.env,
-      SECRET_RATING_RUNTIME_PASSWORD: ROLE_PW,
-      RATING_DB_HOST: dbParams.host,
-      RATING_DB_PORT: dbParams.port,
-      RATING_DB_NAME: dbParams.name,
-      RATING_DB_USER: "rating_runtime",
-      RATING_LANDING_DIR: landingDir,
-      RATING_LOGS_DIR: logsDir,
-      RATING_ARCHIVE_DIR: archiveDir,
-      RATING_ENGINE_VERSION: ENGINE_VERSION,
-    });
-
-    function runPrp(sourcePath: string, execId: string): string {
-      const out = execFileSync(
-        "python3",
-        [
-          "-m",
-          "runtime.prp",
-          "--source-file",
-          sourcePath,
-          "--udr-type",
-          "RAN_USAGE",
-          "--profile",
-          FEED_PROFILE,
-          "--file-key-rule",
-          FILE_KEY_RULE,
-          "--reject-threshold",
-          "0.5",
-          "--chunk-size",
-          "10000",
-          "--workflow-execution-id",
-          execId,
-          "--now",
-          NOW,
-          "--work-dir",
-          workDir,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      return out.trim().split("\n").pop() as string;
-    }
-
-    function runRp(manifestUri: string, execId: string): string {
-      const out = execFileSync(
-        "python3",
-        [
-          "-m",
-          "runtime.rp",
-          "--manifest",
-          manifestUri,
-          "--udr-type",
-          "RAN_USAGE",
-          "--rounding-mode",
-          "HALF_UP",
-          "--subscriber-ref-column",
-          "PUBLIC_KEY",
-          "--workflow-execution-id",
-          execId,
-          "--flow-revision",
-          "42",
-          "--work-dir",
-          workDir,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      return out.trim().split("\n").pop() as string;
-    }
-
-    function runRl(manifestUri: string, execId: string): string {
-      const out = execFileSync(
-        "python3",
-        [
-          "-m",
-          "runtime.rl",
-          "--manifest",
-          manifestUri,
-          "--udr-type",
-          "RAN_USAGE",
-          "--landing-dir",
-          landingDir,
-          "--workflow-execution-id",
-          execId,
-          "--flow-revision",
-          "42",
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      return out.trim().split("\n").pop() as string;
+    // One Sample-5G graph (own MNO, own card over `cells`) + its pipeline per
+    // case, keyed by `tag`.
+    async function graph(
+      tag: string,
+      cells: readonly RanLkpRow[] = ONE_CELL,
+      coverageEnforcement: "HARD_STOP" | "WARN" = "HARD_STOP",
+    ): Promise<RatingPipeline> {
+      const mno = `MNO-RM10-${tag.toUpperCase()}`;
+      const productName = `Sample 5G Services rm10 ${tag}`;
+      await seedSample5gRatingGraph(db, {
+        tag: `rm10-${tag}`,
+        mno,
+        productName,
+        priceName: `Sample 5G Usage Rate rm10 ${tag}`,
+        cardName: `RATECARD_RM10_${tag.toUpperCase()}`,
+        cells,
+      });
+      return createRatingPipeline({
+        databaseUrl: databaseUrl as string,
+        rolePassword: ROLE_PW,
+        engineVersion: ENGINE_VERSION,
+        mno,
+        productName,
+        now: NOW,
+        tmpPrefix: `rm10-${tag}-`,
+        cells,
+        coverageEnforcement,
+      });
     }
 
     // Runs RL expecting a non-zero exit (a refusal / an aborted transaction),
     // returning the captured stderr for diagnosis.
-    function runRlExpectFail(manifestUri: string, execId: string): string {
+    function runRlExpectFail(
+      p: RatingPipeline,
+      manifestUri: string,
+      execId: string,
+    ): string {
       try {
-        runRl(manifestUri, execId);
+        p.runRl(manifestUri, execId);
         throw new Error("expected RL to exit non-zero, but it succeeded");
       } catch (e) {
         const err = e as { status?: number; stderr?: string; message?: string };
@@ -475,39 +206,27 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       }
     }
 
-    function uriToPath(uri: string): string {
-      return decodeURIComponent(uri.replace(/^file:\/\//, ""));
-    }
-    function readManifest(uri: string): Record<string, unknown> {
-      return JSON.parse(readFileSync(uriToPath(uri), "utf8"));
-    }
     function readParquetRows(fileUri: string): Record<string, string | null>[] {
-      const path = uriToPath(fileUri);
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         [
           "-c",
           "import sys, json, polars as pl\n" +
             "df = pl.read_parquet(sys.argv[1])\n" +
             "print(json.dumps([{k:(str(v) if v is not None else None) for k,v in r.items()} for r in df.iter_rows(named=True)]))",
-          path,
+          fileURLToPath(fileUri),
         ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
+        { cwd: RATING_WORKER_DIR, encoding: "utf8" },
       );
       return JSON.parse(out);
     }
 
-    function writeCsv(name: string, rows: string[]): string {
-      const header = "DATETIME,PUBLIC_KEY,COMMERCIAL_UNIT,SITE,USAGE_MBPS";
-      const path = join(landingDir, name);
-      writeFileSync(path, [header, ...rows].join("\n") + "\n", "utf8");
-      return path;
-    }
     function logLinesFor(
+      p: RatingPipeline,
       component: string,
       execId: string,
     ): Record<string, unknown>[] {
-      const path = join(logsDir, `${component}-${execId}.jsonl`);
+      const path = join(p.dirs.logs, `${component}-${execId}.jsonl`);
       if (!existsSync(path)) return [];
       return readFileSync(path, "utf8")
         .split("\n")
@@ -534,19 +253,28 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       return db.select().from(udrRated).where(eq(udrRated.udrKey, udrKey));
     }
 
-    // prp -> rp for one CSV, returning the rl manifest URI + parsed rows.
+    // One `.udr` row per (cell, volume) on the pipeline's MNO, at `datetime`
+    // (naive config-TZ instant, Asia/Kuala_Lumpur).
+    const rowsAt = (
+      datetime: string,
+      cellVolumes: readonly [RanLkpRow, number][],
+    ): UdrRow[] =>
+      cellVolumes.map(([cell, volume]) => ({ cell, datetime, volume }));
+
+    // prp -> rp for one `.udr`, returning the rl manifest URI + parsed rows.
     function prepRated(
+      p: RatingPipeline,
       fileName: string,
       execSuffix: string,
-      rows: string[],
+      rows: readonly UdrRow[],
     ): {
       rpManifestUri: string;
       manifest: Record<string, unknown>;
       rated: Record<string, string | null>[];
     } {
-      const path = writeCsv(fileName, rows);
-      const prpUri = runPrp(path, `prp-${execSuffix}`);
-      const rpUri = runRp(prpUri, `rp-${execSuffix}`);
+      const path = p.writeUdrRows(fileName, rows);
+      const prpUri = p.runPrp(path, `prp-${execSuffix}`);
+      const rpUri = p.runRp(prpUri, `rp-${execSuffix}`);
       const manifest = readManifest(rpUri);
       const rated = (manifest.rated_chunk_uris as string[]).flatMap((u) =>
         readParquetRows(u),
@@ -557,42 +285,54 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // Loads one file end-to-end (prp -> rp -> rl) and returns the batch id +
     // the manifest + the parsed rated rows (for reading udr_key back).
     function loadFile(
+      p: RatingPipeline,
       fileName: string,
       execSuffix: string,
-      rows: string[],
+      rows: readonly UdrRow[],
     ): {
       batchId: string;
       manifest: Record<string, unknown>;
       rated: Record<string, string | null>[];
     } {
       const { rpManifestUri, manifest, rated } = prepRated(
+        p,
         fileName,
         execSuffix,
         rows,
       );
-      runRl(rpManifestUri, `rl-${execSuffix}`);
+      p.runRl(rpManifestUri, `rl-${execSuffix}`);
       return { batchId: manifest.batch_id as string, manifest, rated };
     }
+
+    const cell0 = SAMPLE_5G_LKP_ROWS[0]!;
+    const cell1 = SAMPLE_5G_LKP_ROWS[1]!;
 
     // -----------------------------------------------------------------
     // #7 — supersession scopes by file_key, never source_file.
     // -----------------------------------------------------------------
     it("7. a reissue under a NEW filename (same file_key) supersedes the prior run, leaving one live row", async () => {
-      const run1 = loadFile("RAN_USAGE_20260301.csv", "scope-1", [
-        `2026-03-14T10:00:00Z,${invA},CU,scope,100`,
-      ]);
-      const run2 = loadFile("RAN_USAGE_20260301_v2.csv", "scope-2", [
-        `2026-03-14T10:00:00Z,${invA},CU,scope,120`,
-      ]);
+      const p = await graph("scope");
+      const run1 = loadFile(
+        p,
+        "rating-input-file-202603140000.udr",
+        "scope-1",
+        rowsAt("2026-03-14T18:00:00", [[cell0, 100]]),
+      );
+      const run2 = loadFile(
+        p,
+        "rating-input-file-202603140000_v2.udr",
+        "scope-2",
+        rowsAt("2026-03-14T18:00:00", [[cell0, 120]]),
+      );
       const udrKey = run1.rated[0]!.udr_key as string;
 
-      expect(run1.manifest.file_key).toBe("RAN_USAGE_20260301");
-      expect(run2.manifest.file_key).toBe("RAN_USAGE_20260301");
+      expect(run1.manifest.file_key).toBe("rating-input-file-202603140000");
+      expect(run2.manifest.file_key).toBe("rating-input-file-202603140000");
       expect((await batchRow(run1.batchId)).sourceFile).toBe(
-        "RAN_USAGE_20260301.csv",
+        "rating-input-file-202603140000.udr",
       );
       expect((await batchRow(run2.batchId)).sourceFile).toBe(
-        "RAN_USAGE_20260301_v2.csv",
+        "rating-input-file-202603140000_v2.udr",
       );
 
       const live = await liveRowsForKey(udrKey);
@@ -618,10 +358,12 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // aborts the COPY on the unique constraint (Inv #3 backstop).
     // -----------------------------------------------------------------
     it("4. a live row outside the file_key chain still aborts the COPY on the unique constraint", async () => {
+      const p = await graph("proof");
       const { rpManifestUri, manifest, rated } = prepRated(
-        "RAN_USAGE_20260302.csv",
+        p,
+        "rating-input-file-202603150000.udr",
         "proof-1",
-        ["2026-03-15T10:00:00Z,".concat(invA, ",CU,proof,50")],
+        rowsAt("2026-03-15T18:00:00", [[cell0, 50]]),
       );
       const batchId = manifest.batch_id as string;
       const incoming = rated[0]!;
@@ -641,18 +383,19 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         udrKey: incoming.udr_key as string,
         udrUsageQuantity: incoming.udr_usage_quantity as string,
         udrUsageUnit: incoming.udr_usage_unit as string,
-        udrRateType: "FLAT",
+        udrRateType: "PER_UNIT",
         udrRatedPrice: incoming.udr_rated_price as string,
         udrRatedPriceRaw: incoming.udr_rated_price_raw as string,
         udrRoundingMode: incoming.udr_rounding_mode as string,
         udrCurrency: incoming.udr_currency as string,
         udrRefBatchId: "SENTINEL-NOTCHAIN",
-        udrSourceFile: "unrelated.csv",
+        udrSourceFile: "unrelated.udr",
         ratingEngineVersion: ENGINE_VERSION,
         ratingFlowRevision: 1,
+        udrResource: incoming.udr_resource ?? null,
       });
 
-      runRlExpectFail(rpManifestUri, "rl-proof");
+      runRlExpectFail(p, rpManifestUri, "rl-proof");
 
       // The transaction aborted — nothing from THIS batch was written, and
       // the batch never reached a terminal status (stranded at PROCESSING
@@ -671,14 +414,21 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // Cross-period supersede (D2).
     // -----------------------------------------------------------------
     it("2. a corrected timestamp crossing a month boundary is still superseded, and emits CROSS_PERIOD_SUPERSEDE at WARNING", async () => {
-      const run1 = loadFile("RAN_USAGE_20260401.csv", "xperiod-1", [
-        "2026-04-15T10:00:00Z,".concat(invA, ",CU,xperiod,75"),
-      ]);
-      // Same identity (PUBLIC_KEY/COMMERCIAL_UNIT/SITE), corrected DATETIME
-      // moving the record into MAY (a different monthly partition).
-      const run2 = loadFile("RAN_USAGE_20260401_v2.csv", "xperiod-2", [
-        "2026-05-02T10:00:00Z,".concat(invA, ",CU,xperiod,75"),
-      ]);
+      const p = await graph("xperiod");
+      const run1 = loadFile(
+        p,
+        "rating-input-file-202604010000.udr",
+        "xperiod-1",
+        rowsAt("2026-04-15T18:00:00", [[cell0, 75]]),
+      );
+      // Same identity (mno_public_id/commercial_unit/polygon_id), corrected
+      // datetime moving the record into MAY (a different monthly partition).
+      const run2 = loadFile(
+        p,
+        "rating-input-file-202604010000_v2.udr",
+        "xperiod-2",
+        rowsAt("2026-05-02T18:00:00", [[cell0, 75]]),
+      );
       const udrKey = run1.rated[0]!.udr_key as string;
 
       const all = await allRowsForKey(udrKey);
@@ -690,7 +440,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(live.status).toBe("RATED");
       expect(String(live.partitionPeriod)).toMatch(/2026-05-01/);
 
-      const lines = logLinesFor("RL", "rl-xperiod-2");
+      const lines = logLinesFor(p, "RL", "rl-xperiod-2");
       const crossPeriod = lines.find(
         (l) => l.event_code === "CROSS_PERIOD_SUPERSEDE",
       );
@@ -702,29 +452,48 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // #10 — SHRINKING_REISSUE (D4).
     // -----------------------------------------------------------------
     it("10. a reissue smaller than its predecessor raises SHRINKING_REISSUE at MAJOR, not a silent loss", async () => {
-      const run1 = loadFile("RAN_USAGE_20260501.csv", "shrink-1", [
-        "2026-05-14T10:00:00Z,".concat(invA, ",CU,shrink-keep,60"),
-        "2026-05-14T11:00:00Z,".concat(invA, ",CU,shrink-drop,40"),
-      ]);
+      // A two-cell card under ratecard_coverage_enforcement = WARN (rm21 §5):
+      // under the production HARD_STOP a reissue that drops a card cell is
+      // refused RATECARD_COVERAGE_GAP before RL, so it never reaches
+      // supersession; WARN rates it and flags the gap — the path on which a
+      // shrinking reissue can actually retire a record.
+      const p = await graph("shrink", TWO_CELLS, "WARN");
+      const run1 = loadFile(
+        p,
+        "rating-input-file-202605010000.udr",
+        "shrink-1",
+        rowsAt("2026-05-14T18:00:00", [
+          [cell0, 60],
+          [cell1, 40],
+        ]),
+      );
       // The reissue carries only ONE of run1's two records — the other is
       // silently retired by D3's batch-level supersede unless SHRINKING_REISSUE
       // surfaces it.
-      const run2 = loadFile("RAN_USAGE_20260501_v2.csv", "shrink-2", [
-        "2026-05-14T10:00:00Z,".concat(invA, ",CU,shrink-keep,65"),
-      ]);
+      const run2 = loadFile(
+        p,
+        "rating-input-file-202605010000_v2.udr",
+        "shrink-2",
+        rowsAt("2026-05-14T18:00:00", [[cell0, 65]]),
+      );
+      expect(
+        logLinesFor(p, "PRP", "prp-shrink-2").some(
+          (l) => l.event_code === "RATECARD_COVERAGE_GAP_WARN",
+        ),
+      ).toBe(true);
 
       const run2Batch = await batchRow(run2.batchId);
       // Both of run1's rows were retired (batch-level, not record-matched).
       expect(run2Batch.supersededCount).toBe(2);
 
-      const lines = logLinesFor("RL", "rl-shrink-2");
+      const lines = logLinesFor(p, "RL", "rl-shrink-2");
       const shrinking = lines.find((l) => l.event_code === "SHRINKING_REISSUE");
       expect(shrinking).toBeDefined();
       const info = shrinking!.additional_info as Record<string, unknown>;
       expect(info.parsed_count).toBe(1);
       expect(info.prev_parsed_count).toBe(2);
 
-      // The dropped record ("shrink-drop") now has no live row anywhere.
+      // The dropped record (cell 1) now has no live row anywhere.
       const droppedRow = run1.rated.find(
         (r) => r.udr_key !== run2.rated[0]!.udr_key,
       )!;
@@ -736,23 +505,15 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // #5 — four consecutive reprocessings: batch-level lineage chain.
     // -----------------------------------------------------------------
     it("5. four consecutive reprocessings leave four SUPERSEDED rows and one live row, each retired batch pointing at its replacement", async () => {
-      const fileKey = "RAN_USAGE_20260601";
+      const p = await graph("chain");
+      const fileKey = "rating-input-file-202606010000";
+      const at = "2026-06-10T18:00:00";
       const runs = [
-        loadFile(`${fileKey}.csv`, "chain-1", [
-          "2026-06-10T10:00:00Z,".concat(invA, ",CU,chain,10"),
-        ]),
-        loadFile(`${fileKey}_v2.csv`, "chain-2", [
-          "2026-06-10T10:00:00Z,".concat(invA, ",CU,chain,20"),
-        ]),
-        loadFile(`${fileKey}_v3.csv`, "chain-3", [
-          "2026-06-10T10:00:00Z,".concat(invA, ",CU,chain,30"),
-        ]),
-        loadFile(`${fileKey}_v4.csv`, "chain-4", [
-          "2026-06-10T10:00:00Z,".concat(invA, ",CU,chain,40"),
-        ]),
-        loadFile(`${fileKey}_v5.csv`, "chain-5", [
-          "2026-06-10T10:00:00Z,".concat(invA, ",CU,chain,50"),
-        ]),
+        loadFile(p, `${fileKey}.udr`, "chain-1", rowsAt(at, [[cell0, 10]])),
+        loadFile(p, `${fileKey}_v2.udr`, "chain-2", rowsAt(at, [[cell0, 20]])),
+        loadFile(p, `${fileKey}_v3.udr`, "chain-3", rowsAt(at, [[cell0, 30]])),
+        loadFile(p, `${fileKey}_v4.udr`, "chain-4", rowsAt(at, [[cell0, 40]])),
+        loadFile(p, `${fileKey}_v5.udr`, "chain-5", rowsAt(at, [[cell0, 50]])),
       ];
       const udrKey = runs[0]!.rated[0]!.udr_key as string;
 

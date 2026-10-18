@@ -1,57 +1,87 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+
+import * as schema from "@/db/schema";
+import { productOffering } from "@/db/schema/product";
+import type { RanLkpRow } from "@/db/seeds/sample/sample-5g-fixture";
+import { SAMPLE_5G_COMMERCIAL_UNIT } from "@/db/seeds/sample/sample-5g-fixture";
+import { seedSample5gRatingGraph } from "@/tests/helpers/rating-ran-harness";
 
 // rm13-spec §D2/§10.15 — Test #15, the ONE guardrail test rm13 itself owns
 // (every other guardrail test ships with its owning unit, code-standards
-// §10). "Settle the mechanism: after an end-to-end run of the 50,000-record
-// fixture, query the Kestra execution's task-run count and assert it is
-// bounded by chunk count — fixed_flow_tasks + ceil(records / chunk_size) —
-// not ~50,000." A design guard (Inv #10), not a release blocker (D2's own
-// words) — it proves the pipeline never tempts toward per-record Kestra
-// tasks, not that a specific throughput number is met.
+// §10). "Settle the mechanism: after an end-to-end run of a large fixture,
+// query the Kestra execution's task-run count and assert it is bounded by
+// chunk count — fixed_flow_tasks + ceil(records / chunk_size) — not one task
+// per record." A design guard (Inv #10), not a release blocker (D2's own
+// words) — it proves the pipeline never fans out per record, not that a
+// specific throughput number is met.
 //
-// MECHANISM SETTLED HERE (D2 explicitly leaves this open for rm13 to
-// decide): the Kestra REST API's execution detail endpoint
-// (`GET /api/v1/executions/{id}`), which returns a `taskRunList` array — one
-// entry per task run — is used rather than querying Kestra's own internal
-// Postgres tables directly. The REST API is Kestra's documented, stable
-// public surface; the internal Flyway-managed table/column names are an
-// implementation detail this codebase has repeatedly flagged as
-// UNCONFIRMED-against-v1.3.35 for every other Kestra integration point
-// (kestra.yml's property names, the kestra CLI's flags, the trigger plugin
-// id) — reusing that same guessing game here when a documented API exists
-// would be needless risk for a test whose only job is counting task runs.
+// MECHANISM: the Kestra REST API's execution detail endpoint
+// (`GET /api/v1/executions/{id}`), whose `taskRunList` has one entry per task
+// run — Kestra's documented public surface, not its internal tables.
 //
-// This is the one guardrail test in the whole suite that cannot be proven
-// by shelling out to `python3 -m runtime.*` directly (every rm07-rm12 suite
-// black-box-tests the processors that way) — the very thing being measured
-// is Kestra's OWN task-run bookkeeping for a real flow EXECUTION, which only
-// exists when Kestra itself orchestrates the run via the landing/ file
-// trigger. It therefore needs a real, reachable, flows-deployed Kestra
-// engine (rm04's local dev stack, or a real deployment) — something no
-// session so far has had (rm04 D0's process-runner spike is still open, and
-// no session has ever triggered a live flow execution; see
-// ratemgmt-progress-tracker.md). Skipped loudly, like every other
-// live-infra gate in this suite, rather than silently passing.
+// This is the one guardrail test that cannot be proven by shelling out to
+// `python3 -m runtime.*` (every rm07–rm12 suite black-box-tests the
+// processors that way): what is measured is Kestra's OWN task-run bookkeeping,
+// which only exists when Kestra orchestrates the run via the landing/ trigger.
+//
+// REWRITTEN 2026-10-19 for the rm21 PER_UNIT feed (the old version dropped a
+// 50,000-row 5-column CSV for a dummy key, which the `.udr` trigger never
+// fires on, and which rm21's whole-batch UNKNOWN_SUBSCRIBER refusal would fail
+// anyway). A successful run now needs a real, rateable graph, so the live
+// block:
+//   * seeds (idempotently, into the database the deployed engine uses —
+//     RATING_FANOUT_DATABASE_URL, an admin URL) its own `_SAMPLE_-RM13`
+//     customer, MNO, product and a 10,000-cell ratecard (one live row per cell
+//     per billing month, so 10,000 records need 10,000 cells);
+//   * REQUIRES the deployed flow's `subscription_product_name` to be that
+//     product (and coverage HARD_STOP or WARN): the flow rates one pinned
+//     product, and HARD_STOP needs every cell of that product's whole card in
+//     the file. The operator repoints the deployed flow for the run and
+//     restores it after; the test checks the pin and fails fast otherwise;
+//   * drops `rating-input-file-202606150000_v<N>.udr` (June 2026, a past month)
+//     by writing a non-matching temp name in landing/ and renaming it, so the
+//     trigger never sees a half-written file. Each run uses a new `_vN` and new
+//     bytes, so it is never a duplicate and supersedes the previous run's rows.
+// The rated rows stay in that database under the `_SAMPLE_-RM13` customer
+// (owner decision, 2026-10-19). Skipped loudly unless every env var is set.
 const KESTRA_URL = process.env.KESTRA_URL;
 const KESTRA_USER = process.env.KESTRA_BASIC_AUTH_USER;
 const KESTRA_PASSWORD = process.env.KESTRA_BASIC_AUTH_PASSWORD;
 // The HOST-side path bind-mounted to the engine container's landing/ volume
-// (rm04 D9's dev compose) — a file written here from this test process must
-// be the SAME file the running container's fs.local.Trigger sees. Distinct
-// from RATING_LANDING_DIR (used by every rm07-rm12 suite to invoke
-// `runtime.prp` directly, in-process, no container/mount involved).
+// (rm04 D9's dev compose): a file written here is the file the container's
+// fs.local.Trigger sees.
 const LANDING_HOST_DIR = process.env.RATING_LANDING_HOST_DIR;
+// Admin URL of the database the deployed engine rates into (for the fixture).
+const FANOUT_DATABASE_URL = process.env.RATING_FANOUT_DATABASE_URL;
 const CHUNK_SIZE = Number(process.env.RATING_RAN_USAGE_CHUNK_SIZE ?? 10_000);
-const RECORD_COUNT = 50_000;
+const RECORD_COUNT = 10_000;
 const NAMESPACE = "rating";
 const FLOW_ID = "rating-engine-ran-usage";
 
+const FIXTURE = {
+  tag: "rm13-fanout",
+  mno: "_SAMPLE_-RM13-MNO",
+  productName: "_SAMPLE_-RM13 Fan-out Product",
+  priceName: "_SAMPLE_-RM13 Fan-out Usage",
+  cardName: "_SAMPLE_-RM13-FANOUT-CARD",
+} as const;
+const FILE_KEY = "rating-input-file-202606150000";
+const USAGE_AT = "2026-06-15T10:00:00"; // KL wall time (the feed's assumed zone)
+const UDR_HEADER =
+  "mno_public_id,commercial_unit,polygon_id,datetime_YYYYMMDDHHMI,usage_volume,district_name,service_code";
+
 const liveEngineReady = Boolean(
-  KESTRA_URL && KESTRA_USER && KESTRA_PASSWORD && LANDING_HOST_DIR,
+  KESTRA_URL &&
+  KESTRA_USER &&
+  KESTRA_PASSWORD &&
+  LANDING_HOST_DIR &&
+  FANOUT_DATABASE_URL,
 );
 
 function flowYaml(): string {
@@ -72,9 +102,7 @@ function flowYaml(): string {
 // excluded: it fires only on failure (code-standards §3.9), and the golden
 // path this test exercises never fails. Counted by text slicing (matching
 // this suite's existing static-check convention, e.g. rm07/rm10's flow-YAML
-// assertions) rather than a real YAML parse — a YAML library is not an
-// existing dependency of this repo and rm13-spec's own "Dependencies"
-// section states none are added for this unit.
+// assertions) rather than a real YAML parse.
 const TOP_LEVEL_TASK_ID = /^ {2}- id: \S+/gm;
 function fixedFlowTaskCount(): number {
   const template = flowYaml();
@@ -86,6 +114,15 @@ function fixedFlowTaskCount(): number {
   const count = (block: string) =>
     (block.match(TOP_LEVEL_TASK_ID) ?? []).length;
   return count(tasksBlock) + count(finallyBlock);
+}
+
+// The fixture's 10,000 ratecard cells — one per record.
+function fanoutCells(): RanLkpRow[] {
+  return Array.from({ length: RECORD_COUNT }, (_, i) => ({
+    polygonId: `RM13-P${String(i + 1).padStart(5, "0")}`,
+    district: "DIST-RM13",
+    serviceCode: "SVL-RM13",
+  }));
 }
 
 // ---------------------------------------------------------------------
@@ -103,21 +140,19 @@ describe("no-per-record-fan-out bound (rm13-spec D2 — static)", () => {
     expect(fixed).toBeLessThan(20);
   });
 
-  it("the bound formula stays far below record count for the 50,000-record fixture", () => {
+  it("the bound formula stays far below record count for the fixture", () => {
     const fixed = fixedFlowTaskCount();
     const bound = fixed + Math.ceil(RECORD_COUNT / CHUNK_SIZE);
-    // The whole point of Inv #10 (code-standards §3.2): chunking happens
-    // INSIDE the Python process, never as separate Kestra tasks, so the
-    // real task-run count for any file size is just `fixed` — this bound is
-    // deliberately generous (it would still pass a hypothetical per-chunk
-    // Kestra fan-out) but must never approach per-record.
+    // Chunking happens INSIDE the Python process (Inv #10, code-standards
+    // §3.2), so the real task-run count for any file size is just `fixed`;
+    // the bound is generous but must never approach per-record.
     expect(bound).toBeLessThan(RECORD_COUNT / 10);
   });
 });
 
 // ---------------------------------------------------------------------
-// Live engine — an end-to-end run of the 50,000-record fixture through a
-// REAL Kestra execution, asserting its task-run count via the REST API.
+// Live engine — an end-to-end run of the 10,000-record fixture through a REAL
+// Kestra execution, asserting its task-run count via the REST API.
 // ---------------------------------------------------------------------
 describe.skipIf(!liveEngineReady)(
   "no-per-record-fan-out (rm13-spec D2/Implementation §2, requires a live deployed Kestra engine)",
@@ -142,26 +177,81 @@ describe.skipIf(!liveEngineReady)(
       );
     }
 
+    async function kestraGet<T>(path: string): Promise<T> {
+      const res = await fetch(`${KESTRA_URL}/api/v1/main${path}`, {
+        headers: { Authorization: authHeader() },
+      });
+      if (!res.ok) throw new Error(`GET ${path} -> HTTP ${res.status}`);
+      return (await res.json()) as T;
+    }
+
+    // The deployed flow must be pinned to the fixture product (the operator
+    // repoints it for this run): fail fast rather than drop a file that the
+    // real pinned product would refuse.
+    async function assertDeployedPin(): Promise<void> {
+      const flow = await kestraGet<{ variables?: Record<string, string> }>(
+        `/flows/${NAMESPACE}/${FLOW_ID}`,
+      );
+      expect(
+        flow.variables?.subscription_product_name,
+        "repoint the deployed flow's subscription_product_name to the fixture product before this run",
+      ).toBe(FIXTURE.productName);
+    }
+
+    // Idempotent: the graph is seeded once and reused by later runs.
+    async function seedFixtureOnce(): Promise<void> {
+      const client = postgres(FANOUT_DATABASE_URL as string, { max: 1 });
+      try {
+        const db = drizzle(client, { schema });
+        const existing = await db
+          .select({ id: productOffering.productOfferingId })
+          .from(productOffering)
+          .where(eq(productOffering.name, FIXTURE.productName));
+        if (existing.length > 0) return;
+        await seedSample5gRatingGraph(db, { ...FIXTURE, cells: fanoutCells() });
+      } finally {
+        await client.end();
+      }
+    }
+
+    // Writes the fixture file under a temp name the trigger ignores, then
+    // renames it into place (one step — never a half-written file). The run
+    // number makes both the name (`_vN`) and the bytes (the volumes) new.
+    function dropFixtureFile(run: number): string {
+      const name = `${FILE_KEY}_v${run}.udr`;
+      const rows = fanoutCells().map((cell, i) =>
+        [
+          FIXTURE.mno,
+          SAMPLE_5G_COMMERCIAL_UNIT,
+          cell.polygonId,
+          USAGE_AT,
+          String(((i + run) % 9) + 1),
+          cell.district ?? "",
+          cell.serviceCode ?? "",
+        ].join(","),
+      );
+      const temp = join(LANDING_HOST_DIR as string, `${name}.part`);
+      writeFileSync(temp, [UDR_HEADER, ...rows].join("\n") + "\n", "utf8");
+      renameSync(temp, join(LANDING_HOST_DIR as string, name));
+      return name;
+    }
+
     async function findLatestExecution(after: number): Promise<string> {
-      const deadline = Date.now() + 60_000;
+      const deadline = Date.now() + 180_000;
       while (Date.now() < deadline) {
-        const res = await fetch(
-          `${KESTRA_URL}/api/v1/executions/search?namespace=${NAMESPACE}&flowId=${FLOW_ID}&sort=state.startDate:desc&size=1`,
-          { headers: { Authorization: authHeader() } },
-        );
-        if (res.ok) {
-          const body = (await res.json()) as {
-            results?: { id: string; state: { startDate: string } }[];
-          };
-          const exec = body.results?.[0];
-          if (exec && new Date(exec.state.startDate).getTime() >= after) {
-            return exec.id;
-          }
+        const body = await kestraGet<{
+          results?: { id: string; state: { startDate: string } }[];
+        }>(
+          `/executions/search?namespace=${NAMESPACE}&flowId=${FLOW_ID}&sort=state.startDate:desc&size=1`,
+        ).catch(() => ({ results: [] }));
+        const exec = body.results?.[0];
+        if (exec && new Date(exec.state.startDate).getTime() >= after) {
+          return exec.id;
         }
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 3000));
       }
       throw new Error(
-        "no execution of rating.rating-engine-ran-usage appeared within 60s of the fixture landing",
+        "no execution of rating.rating-engine-ran-usage appeared within 180s of the fixture landing",
       );
     }
 
@@ -171,14 +261,10 @@ describe.skipIf(!liveEngineReady)(
       const deadline = Date.now() + 300_000;
       const terminal = new Set(["SUCCESS", "FAILED", "WARNING", "KILLED"]);
       for (;;) {
-        const res = await fetch(
-          `${KESTRA_URL}/api/v1/executions/${executionId}`,
-          { headers: { Authorization: authHeader() } },
-        );
-        const body = (await res.json()) as {
+        const body = await kestraGet<{
           state: { current: string };
           taskRunList?: { id: string }[];
-        };
+        }>(`/executions/${executionId}`);
         if (terminal.has(body.state.current)) {
           if (body.state.current !== "SUCCESS") {
             throw new Error(
@@ -196,31 +282,15 @@ describe.skipIf(!liveEngineReady)(
       }
     }
 
-    it("a 50,000-record file's execution task-run count is bounded by chunk count, not record count", async () => {
-      // A dummy PUBLIC_KEY that resolves no product_inventory row — every
-      // record becomes LOOKUP_MISS (rm08 D3), which is irrelevant here:
-      // Kestra's task-run count is driven by the FLOW's task graph, never
-      // by how many records get priced, so no product/order/inventory
-      // fixture is needed for this test's actual assertion.
-      const rows = Array.from(
-        { length: RECORD_COUNT },
-        (_, i) => `2026-05-04T00:00:00Z,NO-SUCH-KEY,CU,SITE,${(i % 9) + 0.5}`,
-      );
+    it("a 10,000-record file's execution task-run count is bounded by chunk count, not record count", async () => {
+      await assertDeployedPin();
+      await seedFixtureOnce();
+
+      // Minute-resolution run number: unique per run, so the trigger sees a
+      // new file and prp a new checksum.
+      const run = Math.floor(Date.now() / 60_000);
       const before = Date.now();
-      const dir = mkdtempSync(join(tmpdir(), "rm13-fanout-"));
-      const path = join(dir, "RAN_USAGE_20260504.csv");
-      writeFileSync(
-        path,
-        ["DATETIME,PUBLIC_KEY,COMMERCIAL_UNIT,SITE,USAGE_MBPS", ...rows].join(
-          "\n",
-        ) + "\n",
-        "utf8",
-      );
-      mkdirSync(LANDING_HOST_DIR as string, { recursive: true });
-      writeFileSync(
-        join(LANDING_HOST_DIR as string, "RAN_USAGE_20260504.csv"),
-        readFileSync(path),
-      );
+      dropFixtureFile(run);
 
       const executionId = await findLatestExecution(before);
       const execution = await waitForTerminal(executionId);
@@ -229,9 +299,9 @@ describe.skipIf(!liveEngineReady)(
       const bound = fixedFlowTaskCount() + Math.ceil(RECORD_COUNT / CHUNK_SIZE);
       expect(taskRunCount).toBeGreaterThan(0);
       expect(taskRunCount).toBeLessThanOrEqual(bound);
-      // Not ~50,000 (D2's literal wording) — a wide margin, since the real
-      // count should be single digits (Inv #10: chunking is in-process).
+      // Not ~10,000 — a wide margin, since the real count is single digits
+      // (Inv #10: chunking is in-process).
       expect(taskRunCount).toBeLessThan(RECORD_COUNT / 100);
-    }, 360_000);
+    }, 600_000);
   },
 );

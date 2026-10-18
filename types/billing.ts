@@ -400,7 +400,20 @@ export interface UnchargedRow {
 // `product_inventory`) shows a `null` account and is identified by
 // `subscriberRef` — it is never dropped (revenue leakage). Money/usage fields
 // are `string` (code-standards §2.3).
-export const EXCEPTION_KINDS = ["BILL_NOTUSED", "ORPHAN"] as const;
+//
+// known-issues §28 option 1 (owner decision, 2026-10-19) adds `PRIOR_PERIOD`:
+// a run account's unclaimed live `RATED` `RAN_USAGE` usage dated BEFORE the
+// run's period (rated late, released at approval for a SKIPPED account, or a
+// partial-period exclusion). No run bills it any more, so it is surfaced, never
+// dropped. One row per (account, subscriber, usage type, unit, currency,
+// billing month): `usageMonth` is that month (`YYYY-MM-01`) and `recordCount`
+// the records it sums. `BILL_NOTUSED`/`ORPHAN` rows are one record each
+// (`usageMonth` null, `recordCount` 1).
+export const EXCEPTION_KINDS = [
+  "BILL_NOTUSED",
+  "ORPHAN",
+  "PRIOR_PERIOD",
+] as const;
 export type ExceptionKind = (typeof EXCEPTION_KINDS)[number];
 
 export interface ExceptionRow {
@@ -412,6 +425,8 @@ export interface ExceptionRow {
   unit: string;
   ratedPrice: string;
   currency: string;
+  usageMonth: string | null;
+  recordCount: number;
 }
 
 // bm07-spec §Design/§2. The Errors tab's read model — one row per blocking
@@ -503,6 +518,12 @@ export const PRE_APPROVAL_CHECKS = [
   // is simply not posted (`post-run.ts`), so the zero totals still have to be
   // reported — just not gated.
   "zero_total_bills",
+  // known-issues §28 option 1 (owner decision, 2026-10-19) — the count of the
+  // run accounts' unbilled usage from EARLIER periods (the `PRIOR_PERIOD`
+  // exception rows). INFORMATIONAL, never blocking, same contract as
+  // `orphan_count`: no run bills that usage, so the approver must see it and
+  // billing raises an adjustment.
+  "prior_period_usage",
 ] as const;
 export type PreApprovalCheckKey = (typeof PRE_APPROVAL_CHECKS)[number];
 

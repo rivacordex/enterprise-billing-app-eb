@@ -1149,3 +1149,34 @@ That usage is now final as "billed" but was never invoiced, and no later run can
 **Against the design:** Inv #19 says a claim is released whenever its attempt is abandoned (reject, cancel, rerun). Skipping an account at approval abandons its attempt but does not release.
 
 **Fixed (owner decision, 2026-10-18):** in the approve transaction, `markSkippedForRun` now returns the skipped accounts and `udrStatusRepository.releaseSkipped` returns their `BILL_DRAFT` rows to `RATED` (claim columns cleared; an empty list is a no-op) **before** `markApproved`. The usage is re-claimable by a later run. Inv #19 now lists "skipped at approval". Tests: `approve-run.service.test.ts` (release before approve, in order), `billing-e2e-happy-path.integration.test.ts` (a failed account's two claimed rows end `RATED`, unclaimed).
+
+## 28. 🟡 PARTLY RESOLVED (surfaced, option 1, 2026-10-19): usage left `RATED` after its period's run is never billed (bm73 code review, 2026-10-18)
+
+**Since:** the bm73 review fix that scopes Validation and Collection to the run's period (bm27 amendment). Before it, such rows failed the next run's accounts HARD (`WINDOW_COVERAGE`) every month, so they were visible but still never billed.
+
+**Which rows:** `RATED` usage dated in a period whose run is already approved:
+
+- usage rated late, after its period's run collected;
+- rows released to `RATED` at approval for a `SKIPPED` account (known-issues §27 fix);
+- a partial-period account's usage for the month it was `EXCLUDED` (by design today, O-TC7, §17).
+
+**Why it is lost:** a run claims only usage dated inside its own period, the `(cycle, period_start)` run is unique and closed once approved, and the exception surface / orphan count (`rated-lines.repository.ts`, pre-approval `orphan_count`) only look inside the run's window. Nothing reports these rows.
+
+**Options (owner decision pending):**
+
+1. **Surface only:** an informational pre-approval check (and Exceptions-tab row) counting the run's in-scope accounts' `RATED` usage dated before `period_start`, plus an operator process (adjustment / credit note in billing).
+2. **Catch-up:** Collection also claims an account's prior-period `RATED` rows into the next run, shown as a separate "prior period" line (changes the bm27/bm28 grain and the invoice).
+3. **Off-cycle run:** use the existing `offCycle` `run_type` to bill a closed period's leftovers (no UI or trigger path exists yet).
+
+**Decision (owner, 2026-10-19): option 1 — surface it.** Built:
+
+- `ratedLinesRepository.listPriorPeriodForRun` / `countPriorPeriodForRun` over one shared predicate (`priorPeriodConditions`): live, unclaimed `RATED` `RAN_USAGE` rows dated (business zone) before `period_start`, whose subscriber resolves to an account in the run's snapshot (any status, so `EXCLUDED` partial-period months show too).
+- Exceptions tab: a new `PRIOR_PERIOD` kind ("Earlier period"), one row per account, subscriber, usage type, unit, currency and billing month, with the month, the record count and SQL-summed quantity and value.
+- Pre-approval checklist: a new informational `prior_period_usage` line ("Unbilled usage from earlier periods") with the record and account counts. It never blocks.
+- Operator process: raise an adjustment in billing for the listed usage (ops guide `workflow-management/docs/opsguide-rating-batch.md`, rule 4).
+
+**Still open:**
+
+- **The rows stay `RATED`, so they reappear on every later run of that account**, even after billing has raised the adjustment: there is no way to mark them handled (that would need an app write, e.g. to `BILL_NOTUSED`, a new decision).
+- An unresolvable subscriber's earlier-period rows are not counted (not attributable to a run; they stay orphans of their own period's window).
+- Billing the usage itself is still options 2 or 3.

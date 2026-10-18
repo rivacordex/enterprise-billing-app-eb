@@ -133,11 +133,12 @@ describe.skipIf(!databaseUrl)(
       periodStart: string,
       periodEnd: string,
       scheduled: string,
+      runCycleId: string = cycleId,
     ): Promise<string> {
       const [run] = await db
         .insert(billRun)
         .values({
-          refBillCycleId: cycleId,
+          refBillCycleId: runCycleId,
           periodStart,
           periodEnd,
           scheduledRunDate: scheduled,
@@ -429,6 +430,92 @@ describe.skipIf(!databaseUrl)(
           timezone: "Asia/Kuala_Lumpur",
         });
         expect(count).toBe(2);
+      },
+    );
+
+    it(
+      "Exceptions + checklist (known-issues §28): a run account's unclaimed " +
+        "RATED usage dated BEFORE the period is listed per account and month " +
+        "and counted; in-window, claimed, out-of-scope and unresolvable rows " +
+        "are not; the period start is read in the business zone",
+      async () => {
+        // Its own cycle: the Uncharged test already holds this cycle's June run
+        // ((cycle, period_start) is unique).
+        const [priorCycle] = await db
+          .insert(billCycle)
+          .values({ name: "BM32 Prior-Period Cycle", lastEditedBy: null })
+          .returning({ billCycleId: billCycle.billCycleId });
+        const runId = await newRun(
+          PERIOD_START,
+          PERIOD_END,
+          SCHEDULED,
+          priorCycle!.billCycleId,
+        );
+        const billed = await newAccount("PriorBilled");
+        const excluded = await newAccount("PriorExcluded");
+        const outOfScope = await newAccount("PriorOutOfScope");
+        await scopeAccount(runId, billed.ban, "PROCESSED");
+        await scopeAccount(runId, excluded.ban, "EXCLUDED");
+        await newInventory("PRDINV-BM32-PRIOR-A", billed.ban);
+        await newInventory("PRDINV-BM32-PRIOR-X", excluded.ban);
+        await newInventory("PRDINV-BM32-PRIOR-O", outOfScope.ban);
+        const unclaimed = (subRef: string, start: string) =>
+          insertRatedRow({ subRef, status: "RATED", ban: null, start });
+
+        // Counted: two May records + one April record of the PROCESSED
+        // account, one May record of the EXCLUDED account (partial period).
+        await unclaimed("PRDINV-BM32-PRIOR-A", "2026-05-10T00:00:00.000Z");
+        await unclaimed("PRDINV-BM32-PRIOR-A", "2026-05-11T00:00:00.000Z");
+        await unclaimed("PRDINV-BM32-PRIOR-A", "2026-04-10T00:00:00.000Z");
+        await unclaimed("PRDINV-BM32-PRIOR-X", "2026-05-12T00:00:00.000Z");
+        // Not counted: an account outside the run; an unresolvable subscriber;
+        // a claimed May row; a June row (an in-window orphan, incl. 00:30 KL on
+        // 1 June, which UTC would date 31 May); a July row (its own run).
+        await unclaimed("PRDINV-BM32-PRIOR-O", "2026-05-10T00:00:00.000Z");
+        await unclaimed("PRDINV-BM32-PRIOR-NONE", "2026-05-10T00:00:00.000Z");
+        await insertRatedRow({
+          subRef: "PRDINV-BM32-PRIOR-A",
+          status: "BILL_APPROVED",
+          ban: billed.ban,
+          start: "2026-05-13T00:00:00.000Z",
+        });
+        await unclaimed("PRDINV-BM32-PRIOR-A", "2026-05-31T16:30:00.000Z");
+        await unclaimed("PRDINV-BM32-PRIOR-A", "2026-07-02T00:00:00.000Z");
+
+        const exceptions = await listExceptions(runId);
+        const prior = exceptions.filter((e) => e.kind === "PRIOR_PERIOD");
+        expect(
+          prior.map((p) => [p.accountName, p.usageMonth, p.recordCount]),
+        ).toEqual([
+          [billed.name, "2026-04-01", 1],
+          [billed.name, "2026-05-01", 2],
+          [excluded.name, "2026-05-01", 1],
+        ]);
+        // Summed in SQL: 2 records × 2.000000 GB, 2 × 7.50.
+        const may = prior.find(
+          (p) => p.accountName === billed.name && p.usageMonth === "2026-05-01",
+        );
+        expect(Number(may?.quantity)).toBe(4);
+        expect(may?.ratedPrice).toBe("15.00");
+        // The 1 June 00:30 KL row is an in-window orphan, not prior-period.
+        expect(
+          exceptions.filter(
+            (e) =>
+              e.kind === "ORPHAN" && e.subscriberRef === "PRDINV-BM32-PRIOR-A",
+          ),
+        ).toHaveLength(1);
+
+        const count = await ratedLinesRepository.countPriorPeriodForRun(
+          db,
+          {
+            partitions: [PARTITION],
+            periodStart: PERIOD_START,
+            periodEnd: PERIOD_END,
+            timezone: "Asia/Kuala_Lumpur",
+          },
+          runId,
+        );
+        expect(count).toEqual({ records: 4, accounts: 2 });
       },
     );
   },

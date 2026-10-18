@@ -10,7 +10,10 @@ vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
   billRunRepository: { findById: vi.fn() },
 }));
 vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
-  ratedLinesRepository: { listExceptionsForWindow: vi.fn() },
+  ratedLinesRepository: {
+    listExceptionsForWindow: vi.fn(),
+    listPriorPeriodForRun: vi.fn(),
+  },
 }));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppTimezone: vi.fn().mockReturnValue("Asia/Kuala_Lumpur"),
@@ -24,9 +27,13 @@ const mockFindById = vi.mocked(billRunRepository.findById);
 const mockListExceptions = vi.mocked(
   ratedLinesRepository.listExceptionsForWindow,
 );
+const mockListPriorPeriod = vi.mocked(
+  ratedLinesRepository.listPriorPeriodForRun,
+);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockListPriorPeriod.mockResolvedValue([]);
 });
 
 describe("listExceptions (bm32-spec §2)", () => {
@@ -85,6 +92,8 @@ describe("listExceptions (bm32-spec §2)", () => {
         unit: "GB",
         ratedPrice: "5.00",
         currency: "MYR",
+        usageMonth: null,
+        recordCount: 1,
       },
       {
         kind: "ORPHAN" as const,
@@ -95,11 +104,57 @@ describe("listExceptions (bm32-spec §2)", () => {
         unit: "GB",
         ratedPrice: "1.00",
         currency: "MYR",
+        usageMonth: null,
+        recordCount: 1,
       },
     ];
     mockListExceptions.mockResolvedValue(rows);
 
     expect(await listExceptions("BRN00000001")).toEqual(rows);
+  });
+
+  it("appends the run accounts' earlier-period usage after the in-window rows (known-issues §28)", async () => {
+    mockFindById.mockResolvedValue({
+      billRunId: "BRN00000002",
+      periodStart: "2026-10-01",
+      periodEnd: "2026-10-31",
+    } as never);
+    const orphan = {
+      kind: "ORPHAN" as const,
+      subscriberRef: "PRDINV99999999",
+      accountName: null,
+      udrType: "RAN_USAGE",
+      quantity: "1.000000",
+      unit: "GB",
+      ratedPrice: "1.00",
+      currency: "MYR",
+      usageMonth: null,
+      recordCount: 1,
+    };
+    const prior = {
+      ...orphan,
+      kind: "PRIOR_PERIOD" as const,
+      subscriberRef: "PRDINV00000005",
+      accountName: "Acme Sdn Bhd",
+      quantity: "300.000000",
+      ratedPrice: "1500.00",
+      usageMonth: "2026-09-01",
+      recordCount: 3,
+    };
+    mockListExceptions.mockResolvedValue([orphan]);
+    mockListPriorPeriod.mockResolvedValue([prior]);
+
+    expect(await listExceptions("BRN00000002")).toEqual([orphan, prior]);
+    expect(mockListPriorPeriod).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        partitions: ["2026-10-01"],
+        periodStart: "2026-10-01",
+        periodEnd: "2026-10-31",
+        timezone: "Asia/Kuala_Lumpur",
+      },
+      "BRN00000002",
+    );
   });
 
   it("returns an empty list for an unknown run (no throw)", async () => {

@@ -1,8 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -14,6 +11,16 @@ import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+import {
+  createRatingPipeline,
+  dropModuleSchemas,
+  pythonRuntimeReady,
+  RAN_USAGE_FILE_KEY_RULE,
+  readManifest,
+  runSqlFile,
+  seedSample5gRatingGraph,
+  type RatingPipeline,
+} from "@/tests/helpers/rating-ran-harness";
 
 // rm11-spec §Verification checklist + code-standards §10 test #14 (rm11's
 // half — "the stranded batch it resolves"):
@@ -31,6 +38,12 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 // engine to prove for real, same posture as every other flow-trigger item in
 // this repo's rm04-rm10 suites.
 //
+// The DB-gated describe drives the real PRP through the shared
+// `rating-ran-harness` (the production rm21 7-column `.udr` profile, the
+// `rating-input-file-YYYYMMDDHHMI[_vN].udr` file-key rule and a Sample-5G graph
+// with its ratecard) — a claim needs a resolvable subscription + a covered
+// ratecard since rm21.
+//
 // NOT exercised here (deliberately, not an oversight): a byte-identical
 // redelivery of the SAME physical file after its stranded batch is resolved.
 // prp.py's `is_duplicate_redelivery` (rm07 D5) matches on `(file_key,
@@ -38,34 +51,16 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 // with the exact same bytes as the just-FAILED run would be discarded as
 // DUPLICATE_BATCH by PRP's own dedup guard, not reprocessed. Whether that is
 // correct (an operator-triggered reprocess is expected to resend under a new
-// name/content, matching the RAN_USAGE_<date>_vN.csv reissue convention
-// rm10's tests already use) or a genuine cross-unit gap is NOT decided by
-// this unit — rm11's spec does not mention it, and prp.py's dedup policy is
-// rm07's, not rm11's, to relitigate (ai-workflow-rules §5.6: don't "fix"
-// either side to match without confirming which is correct). Flagged in the
-// progress tracker's Open Questions instead. This suite proves what rm11
+// name/content, matching the `rating-input-file-<stamp>_vN.udr` reissue
+// convention rm10's tests already use) or a genuine cross-unit gap is NOT
+// decided by this unit — rm11's spec does not mention it, and prp.py's dedup
+// policy is rm07's, not rm11's, to relitigate (ai-workflow-rules §5.6: don't
+// "fix" either side to match without confirming which is correct). Flagged in
+// the progress tracker's Open Questions instead. This suite proves what rm11
 // itself owns: the udr_batch row is released from PROCESSING, and a fresh
 // claim under batch_run_num = N+1 (a corrected reissue, `_v2`) succeeds and
 // is unaffected by run 1's now-resolved state.
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(
-  process.cwd(),
-  "workflow-management",
-  "worker",
-  "workflow-engine",
-);
-
-function pythonRuntimeReady(): boolean {
-  try {
-    execFileSync("python3", ["-c", "import runtime, polars, psycopg"], {
-      cwd: workerDir,
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
 const pythonReady = pythonRuntimeReady();
 
 const ROLE_PW = "rm11-test-only-pw";
@@ -74,33 +69,7 @@ const RATING_ROLES_SQL = join(
   "db/bootstrap/rating-db-roles.sql",
 );
 const ENGINE_VERSION = "rm11-test-engine@sha256:deadbeef";
-
-const FEED_PROFILE = JSON.stringify({
-  header: ["DATETIME", "PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE", "USAGE_MBPS"],
-  event_time_column: "DATETIME",
-  event_time_assumed_tz: "UTC",
-  usage_column: "USAGE_MBPS",
-  usage_unit: "MBPS",
-  udr_key_columns: ["PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE"],
-  subscriber_ref: null,
-  interval_seconds: null,
-  future_tolerance_seconds: 300,
-});
-const FILE_KEY_RULE = "^(?P<file_key>RAN_USAGE_\\d{8})(?:_v\\d+)?\\.csv$";
 const NOW = "2026-08-20T00:00:00Z";
-const CSV_HEADER = "DATETIME,PUBLIC_KEY,COMMERCIAL_UNIT,SITE,USAGE_MBPS\n";
-
-function statements(path: string): string[] {
-  return readFileSync(path, "utf8")
-    .split("--> statement-breakpoint")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-async function runSqlFile(client: postgresjs.Sql, path: string): Promise<void> {
-  for (const statement of statements(path)) {
-    await client.unsafe(statement);
-  }
-}
 
 // ---------------------------------------------------------------------
 // Static structural checks — no DATABASE_URL, no engine.
@@ -178,38 +147,21 @@ describe("stranded-batch reconcile (rm11-spec D1-D9 — static)", () => {
 });
 
 // ---------------------------------------------------------------------
-// Black-box recovery — live DB + the real prp + stranded_reconcile.
+// Black-box recovery — live DB + the real prp + stranded_reconcile, on the
+// maintained `rating-ran-harness` (the production 7-column `.udr` profile and
+// the Sample-5G graph with its ratecard, rm21). Each case seeds its own graph
+// (own MNO) so its PRP claim is independent of the other case's.
 // ---------------------------------------------------------------------
 describe.skipIf(!databaseUrl || !pythonReady)(
   "stranded-batch reconcile (rm11-spec D1-D9, requires DATABASE_URL and python3+runtime)",
   () => {
     let sql: postgresjs.Sql;
     let db: Database;
-    let dbParams: { host: string; port: string; name: string };
-    let landingDir: string;
-    let logsDir: string;
-    let workDir: string;
-
-    const dropAll = async (client: postgresjs.Sql) => {
-      for (const s of [
-        "inventory",
-        "ordering",
-        "billing",
-        "customer",
-        "product",
-        "rating",
-        "core",
-        "drizzle",
-        "partman",
-      ]) {
-        await client.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-      }
-    };
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
-      await dropAll(sql);
+      await dropModuleSchemas(sql);
       db = drizzle(sql, { schema });
       await migrate(db, {
         migrationsFolder: "./db/migrations",
@@ -218,97 +170,70 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       await seedEventCatalog(db);
       await runSqlFile(sql, RATING_ROLES_SQL);
       await sql.unsafe(`ALTER ROLE rating_runtime WITH PASSWORD '${ROLE_PW}'`);
-
-      const url = new URL(databaseUrl as string);
-      dbParams = {
-        host: url.hostname,
-        port: url.port || "5432",
-        name: url.pathname.replace(/^\//, ""),
-      };
-
-      const root = mkdtempSync(join(tmpdir(), "rm11-reconcile-"));
-      landingDir = join(root, "landing");
-      logsDir = join(root, "logs");
-      workDir = join(root, "work");
-      for (const d of [landingDir, logsDir, workDir]) {
-        mkdirSync(d, { recursive: true });
-      }
     }, 60_000);
 
     afterAll(async () => {
       if (!sql) return;
-      await dropAll(sql);
+      await dropModuleSchemas(sql);
       await sql.end();
     });
 
-    const runEnv = () => ({
-      ...process.env,
-      SECRET_RATING_RUNTIME_PASSWORD: ROLE_PW,
-      RATING_DB_HOST: dbParams.host,
-      RATING_DB_PORT: dbParams.port,
-      RATING_DB_NAME: dbParams.name,
-      RATING_DB_USER: "rating_runtime",
-      RATING_LANDING_DIR: landingDir,
-      RATING_LOGS_DIR: logsDir,
-      RATING_ENGINE_VERSION: ENGINE_VERSION,
-    });
-
-    function uriToPath(uri: string): string {
-      // fileURLToPath handles both POSIX (file:///home/…) and Windows
-      // (file:///C:/…) URIs that prp emits via Path.resolve().as_uri(); a bare
-      // `replace(/^file:\/\//,"")` leaves a leading slash before the drive
-      // letter on Windows (`/C:/…`), which then resolves against the wrong
-      // drive root.
-      return fileURLToPath(uri.trim());
+    // One Sample-5G graph + its pipeline per case, keyed by `tag`.
+    async function graph(tag: string): Promise<RatingPipeline> {
+      const mno = `MNO-RM11-${tag.toUpperCase()}`;
+      const productName = `Sample 5G Services rm11 ${tag}`;
+      await seedSample5gRatingGraph(db, {
+        tag: `rm11-${tag}`,
+        mno,
+        productName,
+        priceName: `Sample 5G Usage Rate rm11 ${tag}`,
+        cardName: `RATECARD_RM11_${tag.toUpperCase()}`,
+      });
+      return createRatingPipeline({
+        databaseUrl: databaseUrl as string,
+        rolePassword: ROLE_PW,
+        engineVersion: ENGINE_VERSION,
+        mno,
+        productName,
+        now: NOW,
+        tmpPrefix: `rm11-${tag}-`,
+      });
     }
 
     function runPrp(
+      pipeline: RatingPipeline,
       sourcePath: string,
       execId: string,
     ): Record<string, unknown> {
-      const out = execFileSync(
-        "python3",
-        [
-          "-m",
-          "runtime.prp",
-          "--source-file",
-          sourcePath,
-          "--udr-type",
-          "RAN_USAGE",
-          "--profile",
-          FEED_PROFILE,
-          "--file-key-rule",
-          FILE_KEY_RULE,
-          "--reject-threshold",
-          "0.5",
-          "--chunk-size",
-          "10000",
-          "--workflow-execution-id",
-          execId,
-          "--now",
-          NOW,
-          "--work-dir",
-          workDir,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      const manifestUri = out.trim().split("\n").pop() as string;
-      return JSON.parse(readFileSync(uriToPath(manifestUri), "utf8"));
+      return readManifest(pipeline.runPrp(sourcePath, execId));
     }
 
-    function runReconcile(thresholdSeconds: number, execId: string): string {
-      return execFileSync(
-        "python3",
-        [
-          "-m",
-          "runtime.stranded_reconcile",
-          "--threshold-seconds",
-          String(thresholdSeconds),
-          "--workflow-execution-id",
-          execId,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      ).trim();
+    // The reconcile module under the pipeline's env (its logs land in
+    // pipeline.dirs.logs).
+    function runReconcile(
+      pipeline: RatingPipeline,
+      thresholdSeconds: number,
+      execId: string,
+    ): string {
+      return pipeline.runModule("runtime.stranded_reconcile", [
+        "--threshold-seconds",
+        String(thresholdSeconds),
+        "--workflow-execution-id",
+        execId,
+      ]);
+    }
+
+    function logLines(
+      pipeline: RatingPipeline,
+      execId: string,
+    ): Record<string, unknown>[] {
+      return readFileSync(
+        join(pipeline.dirs.logs, `SCHEDULER-${execId}.jsonl`),
+        "utf8",
+      )
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
     }
 
     async function batchRow(batchId: string) {
@@ -327,54 +252,53 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     }
 
     it("1-3, 5. resolves a batch stranded beyond the threshold (releasing it from PROCESSING), is idempotent on re-run, and a corrected reissue claims cleanly as batch_run_num = 2", async () => {
-      const csvPath = join(landingDir, "RAN_USAGE_20260601.csv");
-      writeFileSync(
-        csvPath,
-        `${CSV_HEADER}2026-06-01T00:00:00Z,PK1,CU1,SITE1,10.0\n`,
+      const pipeline = await graph("strand");
+      const udrPath = pipeline.writeUdr(
+        "rating-input-file-202606010000.udr",
+        [10, 20, 30],
+        "2026-06-01T08:00:00",
       );
 
       // A real claim (run 1) — PROCESSING with a fresh started_at.
-      const manifest = runPrp(csvPath, "rm11-exec-1");
+      const manifest = runPrp(pipeline, udrPath, "rm11-exec-1");
       const batchId = manifest.batch_id as string;
       const fileKey = manifest.file_key as string;
+      expect(fileKey).toBe("rating-input-file-202606010000");
 
       let row = await batchRow(batchId);
       expect(row?.status).toBe("PROCESSING"); // item 1 — stranded shape
 
       // Simulate the killed worker: back-date started_at past the threshold.
-      // The raw file (csvPath) is untouched in landing/ — RL never ran, so it
-      // was never archived (item 1's "zero rows in udr_rated" holds too:
-      // nothing here ever reached RL).
+      // The raw file is untouched in landing/ — RL never ran, so it was never
+      // archived (item 1's "zero rows in udr_rated" holds too: nothing here
+      // ever reached RL).
+      expect(existsSync(udrPath)).toBe(true);
       await sql`UPDATE rating.udr_batch SET started_at = now() - interval '2 hours' WHERE batch_id = ${batchId}`;
 
       // A batch still within the threshold is untouched (item 4) — proven
       // together with the resolve below via a short threshold that only the
       // back-dated row exceeds.
-      const out1 = runReconcile(3600, "rm11-exec-reconcile-1");
+      const out1 = runReconcile(pipeline, 3600, "rm11-exec-reconcile-1");
       expect(out1).toMatch(/1 batch\(es\) resolved/);
 
       row = await batchRow(batchId);
       expect(row?.status).toBe("FAILED"); // item 2 — resolved, claim released
       expect(row?.error_summary).toMatch(/BATCH_STRANDED/);
 
-      const logPath = join(logsDir, "SCHEDULER-rm11-exec-reconcile-1.jsonl");
-      const lines = readFileSync(logPath, "utf8")
-        .trim()
-        .split("\n")
-        .map((l) => JSON.parse(l));
+      const lines = logLines(pipeline, "rm11-exec-reconcile-1");
       expect(lines).toHaveLength(1);
-      expect(lines[0].event_code).toBe("BATCH_STRANDED");
-      expect(lines[0].component).toBe("SCHEDULER");
+      expect(lines[0]!.event_code).toBe("BATCH_STRANDED");
+      expect(lines[0]!.component).toBe("SCHEDULER");
       // The run-independent DELIVERY alarm_key — identical to the key RL stamps
       // on BATCH_COMPLETE (`{udr_type}:{file_key}`), so the reprocessed run's
       // BATCH_COMPLETE auto-clears this MAJOR alarm (rm11 verification item 6).
       // NOT the run-scoped `BATCH_STRANDED:<file_key>:<run>` form, which a later
       // run's clearer could never match.
-      expect(lines[0].alarm_key).toBe(`RAN_USAGE:${fileKey}`);
-      expect(lines[0].batch_id).toBe(batchId);
+      expect(lines[0]!.alarm_key).toBe(`RAN_USAGE:${fileKey}`);
+      expect(lines[0]!.batch_id).toBe(batchId);
 
       // Idempotent (item 5): running it again finds nothing to resolve.
-      const out2 = runReconcile(3600, "rm11-exec-reconcile-2");
+      const out2 = runReconcile(pipeline, 3600, "rm11-exec-reconcile-2");
       expect(out2).toMatch(/0 batch\(es\) resolved/);
       row = await batchRow(batchId);
       expect(row?.status).toBe("FAILED"); // unchanged, not re-touched
@@ -385,34 +309,35 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // insert's COALESCE(max(batch_run_num),0)+1 does not gate on status) —
       // what rm11 actually changed is that run 1 now reads as a DECIDED
       // terminal outcome instead of an indefinitely-open one.
-      const csvPath2 = join(landingDir, "RAN_USAGE_20260601_v2.csv");
-      writeFileSync(
-        csvPath2,
-        `${CSV_HEADER}2026-06-01T00:00:00Z,PK1,CU1,SITE1,10.0\n2026-06-01T00:05:00Z,PK2,CU1,SITE1,5.0\n`,
+      const udrPath2 = pipeline.writeUdr(
+        "rating-input-file-202606010000_v2.udr",
+        [11, 21, 31],
+        "2026-06-01T08:00:00",
       );
-      const manifest2 = runPrp(csvPath2, "rm11-exec-3");
+      const manifest2 = runPrp(pipeline, udrPath2, "rm11-exec-3");
       expect(manifest2.file_key).toBe(fileKey);
       expect(manifest2.status).toBe("PROCESSING");
       const row2 = await batchRow(manifest2.batch_id as string);
       expect(row2?.batch_run_num).toBe(2);
-    });
+    }, 120_000);
 
     it("4. a genuinely-running batch within the threshold is untouched", async () => {
-      const csvPath = join(landingDir, "RAN_USAGE_20260602.csv");
-      writeFileSync(
-        csvPath,
-        `${CSV_HEADER}2026-06-02T00:00:00Z,PK1,CU1,SITE1,10.0\n`,
+      const pipeline = await graph("fresh");
+      const udrPath = pipeline.writeUdr(
+        "rating-input-file-202606020000.udr",
+        [10, 20, 30],
+        "2026-06-02T08:00:00",
       );
-      const manifest = runPrp(csvPath, "rm11-exec-fresh");
+      const manifest = runPrp(pipeline, udrPath, "rm11-exec-fresh");
       const batchId = manifest.batch_id as string;
 
       // started_at is fresh (just claimed) — well within a 3600s threshold.
-      const out = runReconcile(3600, "rm11-exec-reconcile-fresh");
+      const out = runReconcile(pipeline, 3600, "rm11-exec-reconcile-fresh");
       expect(out).toMatch(/0 batch\(es\) resolved/);
 
       const row = await batchRow(batchId);
       expect(row?.status).toBe("PROCESSING");
-    });
+    }, 120_000);
 
     it("1 (RECEIVED variant). resolves a batch stranded at RECEIVED (worker killed before parse finished), aged from received_at", async () => {
       // PRP commits the claim as RECEIVED *before* it parses (prp.claim_batch),
@@ -422,34 +347,30 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // batch_run_num) claim blocks the file forever, D1), aged from the
       // NOT-NULL received_at via COALESCE(started_at, received_at). This class
       // was previously never matched by the PROCESSING-only find query.
+      const pipeline = await graph("received");
       const [inserted] = await sql<{ batch_id: string; file_key: string }[]>`
         INSERT INTO rating.udr_batch
           (file_key, source_file, file_key_rule, udr_type, status, received_at)
         VALUES
-          ('RAN_USAGE_20260603', 'RAN_USAGE_20260603.csv', ${FILE_KEY_RULE},
-           'RAN_USAGE', 'RECEIVED', now() - interval '2 hours')
+          ('rating-input-file-202606030000', 'rating-input-file-202606030000.udr',
+           ${RAN_USAGE_FILE_KEY_RULE}, 'RAN_USAGE', 'RECEIVED',
+           now() - interval '2 hours')
         RETURNING batch_id, file_key
       `;
       const batchId = inserted!.batch_id;
 
-      const out = runReconcile(3600, "rm11-exec-received");
+      const out = runReconcile(pipeline, 3600, "rm11-exec-received");
       expect(out).toMatch(/1 batch\(es\) resolved/);
 
       const row = await batchRow(batchId);
       expect(row?.status).toBe("FAILED"); // reaped — claim released
       expect(row?.error_summary).toMatch(/BATCH_STRANDED/);
 
-      const lines = readFileSync(
-        join(logsDir, "SCHEDULER-rm11-exec-received.jsonl"),
-        "utf8",
-      )
-        .trim()
-        .split("\n")
-        .map((l) => JSON.parse(l));
+      const lines = logLines(pipeline, "rm11-exec-received");
       expect(lines).toHaveLength(1);
-      expect(lines[0].event_code).toBe("BATCH_STRANDED");
-      expect(lines[0].alarm_key).toBe(`RAN_USAGE:${inserted!.file_key}`);
-    });
+      expect(lines[0]!.event_code).toBe("BATCH_STRANDED");
+      expect(lines[0]!.alarm_key).toBe(`RAN_USAGE:${inserted!.file_key}`);
+    }, 120_000);
 
     it("6-7. BATCH_STRANDED resolves to MAJOR via event_catalog, and the INDETERMINATE count stays zero", async () => {
       const [resolved] = await sql<

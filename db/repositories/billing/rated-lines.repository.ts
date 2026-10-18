@@ -2,10 +2,11 @@ import { and, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billingAccount } from "@/db/schema/billing/accounts";
+import { billRunAccount } from "@/db/schema/billing/bill-run-account";
 import { customerBillLine } from "@/db/schema/billing/customer-bill-line";
 import { productInventory } from "@/db/schema/inventory";
 import { udrRated } from "@/db/schema/rating/udr-rated";
-import type { ExceptionKind } from "@/types/billing";
+import type { ExceptionKind, ExceptionRow } from "@/types/billing";
 
 // bm32 — the run WINDOW that scopes the per-record exception reads. Both the
 // exception surface and the informational orphan count are scoped to the ≤2
@@ -43,6 +44,30 @@ function orphanConditions() {
     isNull(udrRated.billrunBanId),
     eq(udrRated.isLive, true),
     eq(udrRated.udrType, "RAN_USAGE"),
+  ];
+}
+
+// known-issues §28 option 1 (owner decision, 2026-10-19) — PRIOR-PERIOD usage:
+// an unclaimed live `RATED` `RAN_USAGE` row dated (as a calendar date in the
+// business zone) BEFORE the run's `periodStart`, whose subscriber resolves to
+// an account in THIS run's snapshot (`bill_run_account`, any status — an
+// EXCLUDED partial-period account's month shows here too). Since the bm73
+// review scoped Validation + Collection to the period, no run claims such a row
+// (rated late, released at approval for a SKIPPED account, or excluded), and
+// the window-scoped orphan reads never see it. Defined ONCE for the list and
+// the count so the checklist number equals what the Exceptions tab sums. The
+// partition bound (`<= the window's first partition`) only prunes the scan; the
+// date predicate decides. An unresolvable subscriber is not attributable to a
+// run, so it is not counted here (it stays an orphan of its own period).
+function priorPeriodConditions(window: ExceptionWindow, billRunId: string) {
+  return [
+    ...orphanConditions(),
+    sql`${udrRated.partitionPeriod} <= ${window.partitions[0] ?? window.periodStart}::date`,
+    sql`(${udrRated.startDatetime} AT TIME ZONE ${window.timezone})::date < ${window.periodStart}::date`,
+    inArray(
+      productInventory.billingAccountId,
+      sql`(SELECT ${billRunAccount.refBillingAccountId} FROM ${billRunAccount} WHERE ${billRunAccount.refBillRunId} = ${billRunId})`,
+    ),
   ];
 }
 
@@ -392,18 +417,7 @@ export const ratedLinesRepository = {
   async listExceptionsForWindow(
     db: Database,
     window: ExceptionWindow,
-  ): Promise<
-    {
-      kind: ExceptionKind;
-      subscriberRef: string;
-      accountName: string | null;
-      udrType: string;
-      quantity: string;
-      unit: string;
-      ratedPrice: string;
-      currency: string;
-    }[]
-  > {
+  ): Promise<ExceptionRow[]> {
     return db
       .select({
         kind: sql<ExceptionKind>`CASE WHEN ${udrRated.status} = 'BILL_NOTUSED' THEN 'BILL_NOTUSED' ELSE 'ORPHAN' END`,
@@ -414,6 +428,8 @@ export const ratedLinesRepository = {
         unit: udrRated.udrUsageUnit,
         ratedPrice: udrRated.udrRatedPrice,
         currency: udrRated.udrCurrency,
+        usageMonth: sql<string | null>`NULL::text`,
+        recordCount: sql<number>`1`,
       })
       .from(udrRated)
       .leftJoin(
@@ -455,5 +471,75 @@ export const ratedLinesRepository = {
       .from(udrRated)
       .where(and(...windowConditions(window), ...orphanConditions()));
     return row?.count ?? 0;
+  },
+
+  // known-issues §28 option 1 — the run accounts' PRIOR-PERIOD usage
+  // (`priorPeriodConditions`) for the Exceptions tab, summed per (account,
+  // subscriber, usage type, unit, currency, billing month) so a late file of
+  // thousands of records is a handful of rows. Money and quantity are summed
+  // in SQL (numeric), returned as text. Read-only (no `rating.*` write).
+  async listPriorPeriodForRun(
+    db: Database,
+    window: ExceptionWindow,
+    billRunId: string,
+  ): Promise<ExceptionRow[]> {
+    return db
+      .select({
+        kind: sql<ExceptionKind>`'PRIOR_PERIOD'`,
+        subscriberRef: udrRated.udrSubscriptionRefId,
+        accountName: billingAccount.name,
+        udrType: udrRated.udrType,
+        quantity: sql<string>`sum(${udrRated.udrUsageQuantity})::text`,
+        unit: udrRated.udrUsageUnit,
+        ratedPrice: sql<string>`sum(${udrRated.udrRatedPrice})::numeric(18,2)::text`,
+        currency: udrRated.udrCurrency,
+        usageMonth: sql<string | null>`${udrRated.partitionPeriod}::text`,
+        recordCount: sql<number>`count(*)::int`,
+      })
+      .from(udrRated)
+      .innerJoin(
+        productInventory,
+        eq(productInventory.productInventoryId, udrRated.udrSubscriptionRefId),
+      )
+      .innerJoin(
+        billingAccount,
+        eq(billingAccount.billingAccountId, productInventory.billingAccountId),
+      )
+      .where(and(...priorPeriodConditions(window, billRunId)))
+      .groupBy(
+        billingAccount.name,
+        udrRated.udrSubscriptionRefId,
+        udrRated.udrType,
+        udrRated.udrUsageUnit,
+        udrRated.udrCurrency,
+        udrRated.partitionPeriod,
+      )
+      .orderBy(
+        billingAccount.name,
+        udrRated.udrSubscriptionRefId,
+        udrRated.partitionPeriod,
+        udrRated.udrType,
+      );
+  },
+
+  // known-issues §28 option 1 — the informational pre-approval count over the
+  // SAME predicate as `listPriorPeriodForRun`: records and distinct accounts.
+  async countPriorPeriodForRun(
+    db: Database,
+    window: ExceptionWindow,
+    billRunId: string,
+  ): Promise<{ records: number; accounts: number }> {
+    const [row] = await db
+      .select({
+        records: sql<number>`count(*)::int`,
+        accounts: sql<number>`count(DISTINCT ${productInventory.billingAccountId})::int`,
+      })
+      .from(udrRated)
+      .innerJoin(
+        productInventory,
+        eq(productInventory.productInventoryId, udrRated.udrSubscriptionRefId),
+      )
+      .where(and(...priorPeriodConditions(window, billRunId)));
+    return { records: row?.records ?? 0, accounts: row?.accounts ?? 0 };
   },
 };

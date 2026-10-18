@@ -385,20 +385,28 @@ export async function insertRanRatecard(
   if (!version)
     throw new Error("insertRanRatecard: ratecard_version returned no row.");
 
-  await db.insert(ratecardRanUsageLkp).values(
-    opts.rows.map((row) => ({
-      ratecardVersionId: version.ratecardVersionId,
-      mnoPublicKey: opts.mnoPublicKey,
-      commercialUnitPublicKey:
-        opts.commercialUnitPublicKey ?? SAMPLE_5G_COMMERCIAL_UNIT,
-      polygonId: row.polygonId,
-      polygonStartDate: snapshotDate,
-      polygonEndDate: null,
-      state: opts.state === undefined ? SAMPLE_5G_RATECARD_STATE : opts.state,
-      district: row.district,
-      lkpSubscriberRefId: opts.lkpSubscriberRefId,
-      serviceCode: row.serviceCode,
-      ratePerUnit: null,
-    })),
-  );
+  const values = opts.rows.map((row) => ({
+    ratecardVersionId: version.ratecardVersionId,
+    mnoPublicKey: opts.mnoPublicKey,
+    commercialUnitPublicKey:
+      opts.commercialUnitPublicKey ?? SAMPLE_5G_COMMERCIAL_UNIT,
+    polygonId: row.polygonId,
+    polygonStartDate: snapshotDate,
+    polygonEndDate: null,
+    state: opts.state === undefined ? SAMPLE_5G_RATECARD_STATE : opts.state,
+    district: row.district,
+    lkpSubscriberRefId: opts.lkpSubscriberRefId,
+    serviceCode: row.serviceCode,
+    ratePerUnit: null,
+  }));
+  // Batched: one INSERT binds 11 parameters per row and Postgres caps a
+  // statement at 65,535, so a large card (e.g. rm13's 10,000-cell fan-out
+  // fixture) is written in slices.
+  for (let i = 0; i < values.length; i += LKP_INSERT_BATCH) {
+    await db
+      .insert(ratecardRanUsageLkp)
+      .values(values.slice(i, i + LKP_INSERT_BATCH));
+  }
 }
+
+const LKP_INSERT_BATCH = 2_000;

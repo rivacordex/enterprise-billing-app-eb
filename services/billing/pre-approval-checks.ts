@@ -313,6 +313,40 @@ async function checkOrphanCount(
   };
 }
 
+// known-issues §28 option 1 (owner decision, 2026-10-19) — the run accounts'
+// unbilled usage from EARLIER periods. INFORMATIONAL, never blocking (same
+// contract as `orphan_count`). Since Validation + Collection are scoped to the
+// period (bm73 review), no run bills a RATED record dated before it: usage
+// rated late, rows released at approval for a SKIPPED account (§27), or a
+// partial-period exclusion. It is counted over the SAME predicate as the
+// Exceptions tab's PRIOR_PERIOD rows, so the approver sees it and billing
+// raises an adjustment (ops guide, rule 4).
+async function checkPriorPeriodUsage(
+  dbOrTx: Database,
+  run: BillRun,
+): Promise<PreApprovalCheck> {
+  const { records, accounts } =
+    await ratedLinesRepository.countPriorPeriodForRun(
+      dbOrTx,
+      {
+        partitions: periodPartitions(run.periodStart, run.periodEnd),
+        periodStart: run.periodStart,
+        periodEnd: run.periodEnd,
+        timezone: getAppTimezone(),
+      },
+      run.billRunId,
+    );
+  return {
+    check: "prior_period_usage",
+    pass: true,
+    informational: true,
+    remediation:
+      records > 0
+        ? `${records} usage record${records === 1 ? "" : "s"} from earlier periods on ${accounts} account${accounts === 1 ? "" : "s"} will not be billed by any run — raise an adjustment in billing (see Exceptions); informational, does not block approval`
+        : null,
+  };
+}
+
 export async function runPreApprovalChecks(
   dbOrTx: Database,
   run: BillRun,
@@ -328,6 +362,7 @@ export async function runPreApprovalChecks(
     templateVersionsCaptured,
     orphanCount,
     zeroTotalBills,
+    priorPeriodUsage,
   ] = await Promise.all([
     checkPeriodOpen(dbOrTx, run),
     checkGlMappingsResolvable(dbOrTx, run),
@@ -338,6 +373,7 @@ export async function runPreApprovalChecks(
     checkTemplateVersionsCaptured(dbOrTx, run),
     checkOrphanCount(dbOrTx, run),
     checkZeroTotalBills(dbOrTx, run),
+    checkPriorPeriodUsage(dbOrTx, run),
   ]);
 
   return [
@@ -350,5 +386,6 @@ export async function runPreApprovalChecks(
     templateVersionsCaptured,
     orphanCount,
     zeroTotalBills,
+    priorPeriodUsage,
   ];
 }

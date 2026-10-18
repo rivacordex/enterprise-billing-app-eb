@@ -417,7 +417,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         execId: "rm12-exec-4",
       });
       expect(out4).toMatch(/0 event\(s\) emitted/);
-    });
+      // Four python runs of the completeness check: ~7 s on a Windows host,
+      // over vitest's 5 s default.
+    }, 60_000);
 
     // -------------------------------------------------------------
     // On-time arrival: no alarm at all.
