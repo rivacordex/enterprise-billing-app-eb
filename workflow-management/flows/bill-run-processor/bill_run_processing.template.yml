@@ -34,6 +34,10 @@ inputs:
   - { id: ban_ids, type: JSON } # accounts scoped app-side at trigger (bm03)
   - { id: attempt, type: INT } # app-assigned; the idempotency key component
   - { id: gl_event_at, type: STRING }
+  # The business time zone (IANA, the app's APP_TIMEZONE): every calendar-date
+  # decision (window coverage, price as-of) is made in it, matching
+  # rating.period_of()'s billing month (rating X1). Default UTC.
+  - { id: business_timezone, type: STRING }
   # bm42: the single-band production guard (default 1). The capacity SQL is
   # N-band; raising this enables multi-step motivation later as a config
   # change, never a pricing-SQL edit (TC52).
@@ -73,8 +77,9 @@ tasks:
         #   Validation never re-runs that join (heaviest in the pipeline, Inv #24).
         #   - Currency: a correlated row with udr_currency <> account_currency ->
         #     signal FAILED, HARD finding CURRENCY_MISMATCH (the _CURRENCY_SQL check).
-        #   - Window coverage: a correlated row whose start_datetime is outside
-        #     [period_start, period_end] -> HARD finding WINDOW_COVERAGE.
+        #   - Window coverage: a correlated row whose start_datetime, as a date in
+        #     business_timezone, is outside [period_start, period_end] -> HARD
+        #     finding WINDOW_COVERAGE.
         #   - Zero-claimable: NO correlated rows for the account -> signal DONE
         #     (a zero-charge exception, NOT an error); Collection claims nothing,
         #     Aggregation writes no usage line (recurring may still bill it, bm29).

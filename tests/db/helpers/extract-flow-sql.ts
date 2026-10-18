@@ -394,6 +394,10 @@ export interface AggregateParams {
   // every pre-bm43 caller is unaffected; a gate test overrides it to false
   // to exercise the WARN-and-bill-Model-1 path.
   capacityRateMatching?: boolean;
+  // The flow's `business_timezone` input (default "UTC", mirroring the flow's
+  // own `defaults: "UTC"`) — the zone the price as-of dates are taken in.
+  // Optional so every existing caller is unaffected.
+  businessTimezone?: string;
 }
 
 export async function runAggregation(
@@ -407,6 +411,7 @@ export async function runAggregation(
     glEventAt,
     capacityMaxBands,
     capacityRateMatching,
+    businessTimezone,
   }: AggregateParams,
 ): Promise<void> {
   const heredoc = stripExplicitTransactionBounds(
@@ -418,6 +423,7 @@ export async function runAggregation(
     attempt: String(attempt),
     period_start: periodStart,
     period_end: periodEnd,
+    tz: businessTimezone ?? "UTC",
     gl_event_at: glEventAt,
     capacity_max_bands: String(capacityMaxBands ?? 1),
     capacity_rate_matching: String(capacityRateMatching ?? true),
@@ -431,6 +437,8 @@ export interface VerificationParams {
   attempt: number;
   // bm43-spec §Implementation §1 — see AggregateParams.capacityRateMatching.
   capacityRateMatching?: boolean;
+  // See AggregateParams.businessTimezone.
+  businessTimezone?: string;
 }
 
 export interface VerificationOutcome {
@@ -441,7 +449,13 @@ export interface VerificationOutcome {
 
 export async function runVerification(
   sql: postgresjs.Sql,
-  { runId, ban, attempt, capacityRateMatching }: VerificationParams,
+  {
+    runId,
+    ban,
+    attempt,
+    capacityRateMatching,
+    businessTimezone,
+  }: VerificationParams,
 ): Promise<VerificationOutcome> {
   const heredoc = stripExplicitTransactionBounds(
     extractStageHeredoc("verification"),
@@ -450,6 +464,7 @@ export async function runVerification(
     run: runId,
     ban,
     attempt: String(attempt),
+    tz: businessTimezone ?? "UTC",
     capacity_rate_matching: String(capacityRateMatching ?? true),
   };
   // Runs the flow's OWN statements verbatim: the `SELECT set_config(...)`

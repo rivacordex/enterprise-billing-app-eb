@@ -67,8 +67,8 @@ export function firstOfMonth(periodStart: string): string {
 
 // bm32 — the set of monthly `partition_period` buckets a run window spans. A
 // monthly run whose `cycle_day != 1` straddles two calendar months, so its
-// `rating.udr_rated` rows (bucketed by `period_of(start_datetime)`, the UTC month
-// of the usage) land in up to two partitions. Deduped so the common
+// `rating.udr_rated` rows (bucketed by `period_of(start_datetime)`, the billing
+// month of the usage in the business zone — rating X1) land in up to two partitions. Deduped so the common
 // calendar-month case yields a single bucket. Used to scope the exception-surface
 // reads by partition (pruning) alongside the exact `start_datetime` window check.
 export function periodPartitions(

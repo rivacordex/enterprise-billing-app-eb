@@ -12,6 +12,7 @@ import { firstOfMonth } from "@/services/billing/derive-periods";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 
 // bm03-spec §Design/§7. The trigger transaction: row-locked double-trigger
 // guard → scope accounts → PROCESSING + gl_event_at/triggered_by →
@@ -159,6 +160,7 @@ export async function triggerRun(
             ban_ids: banIds,
             attempt,
             gl_event_at: run.scheduledRunDate,
+            business_timezone: getAppTimezone(),
             // bm36-spec §Implementation §4 — the deploy-time/test force-fail
             // toggle (default false → unchanged behaviour). Read only here,
             // never by a UI/action; when true the flow drives the first scoped

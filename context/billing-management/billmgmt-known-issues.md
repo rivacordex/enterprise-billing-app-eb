@@ -889,6 +889,14 @@ generated v1 is now produced by the generator from that layout
 byte-identical whole document; `generate-parity.test.ts`'s former `it.fails`
 case is now a plain passing test. The text below is the original finding.
 
+**Re-checked against the pinned v1 (bm73, 2026-10-17):** bm71 removed the
+usage annex and its CSS outright, and bm72 regenerated v1 for the last time
+and pinned it (`tests/guardrails/invoice-template-v1-pin.test.ts`). The
+generator's output from the pinned layout is still identical to the stored
+generated v1 (`generate-parity.test.ts`, green in the bm73 unit run), and the
+Total Amount page and footnote CSS live in `shell.hbs`, so a generated version
+can no longer render unstyled. Closed.
+
 **Where:** `db/seeds/invoice-templates/INVTPL-STD-A4/v1/shell.hbs` (layout
 BTV00000001, seeded immutably by bm50) and the hand-written generated v1
 `db/seeds/invoice-templates/generated/INVOICE/v1/invoice.hbs` (BTV00000002).
@@ -1114,3 +1122,15 @@ Kept, by owner decision or by an existing rule:
 - **25c. 🟢 Kept: the wrapped resolver in `InvoiceStructureForm`.** Code-standards Part 2 Next.js rule 2 (the bm72 correction) records it, following the company-profile form's precedent.
 - **25d. 🟡 OPEN, outside bm72: the company-profile form has the same remount race.** `company-profile/page.tsx` keys `CompanyProfileEditForm` on `${shown.version}:${draft?.token}`, so the refresh after a save can still close its Activate dialog. The fix is the same: adopt a server state the form does not hold, instead of remounting. Owner: a company-profile (bm61) follow-up.
 - **25e. 🟢 Note: the render path is not changed for a stale structure.** On a DB that predates bm72's `0046` rewrite, `loadGenerated` already refuses the reseeded v1 blobs with `TEMPLATE_CHECKSUM_MISMATCH`, and old blobs never read `footnote`. The page read now fails loudly (`STRUCTURE_INVALID`). The fix for both is the bm64 reset.
+
+## 26. 🟡 OPEN: the draft PRO-FORMA preview times out on large invoices (bm73 manual run, 2026-10-18)
+
+**Seen:** on the bm73 manual run (`BRN00000001`, 4 BANs × 900 polygons, each invoice 34 pages), opening a draft showed "The draft invoice took too long to render. Please try again." Approval, posting and the final renders were unaffected (posting rendered all 4 final PDFs in about 12 s in total).
+
+**Why:**
+
+- The 25 s limit is client-side only (`components/billing/invoice-preview-modal.tsx`, `RENDER_TIMEOUT_MS`). The browser aborts its fetch, but the route (`app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/route.ts`) ignores the request's abort signal, so the server keeps rendering, holds one of the two render permits (`render-invoice.ts`, `MAX_CONCURRENT_RENDERS = 2`) and then throws the PDF away (draft previews are not stored).
+- Each Retry starts a new render from scratch and can queue behind the abandoned ones, so retrying quickly makes a timeout more likely.
+- Seen on `next dev` (on-demand route compilation, a ~1.1 GB dev-server process, page loads already 30–60 s). Not yet measured on a production build, and not split between building the invoice and the Chromium PDF.
+
+**Options for a later unit:** measure first (bind vs PDF, dev vs `next build`); then any of raising the client limit for large invoices, passing the request's abort signal through to free the permit, or caching the draft PDF per (run, BAN, attempt).

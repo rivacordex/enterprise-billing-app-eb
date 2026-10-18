@@ -40,6 +40,14 @@ const PERIOD_START = "2026-06-01";
 const PERIOD_END = "2026-06-30";
 const IN_WINDOW = "2026-06-10T00:00:00.000Z";
 const OUT_OF_WINDOW = "2026-05-10T00:00:00.000Z";
+// The flow's `business_timezone` input (the app's APP_TIMEZONE). Validation
+// dates usage in this zone so it agrees with rating.period_of() (rating X1).
+const BUSINESS_TZ = "Asia/Kuala_Lumpur";
+// 00:30 on 1 June in Kuala Lumpur (+08) is still 31 May in UTC — the boundary
+// the first live run tripped (bm73 manual run, 2026-10-18).
+const FIRST_OF_MONTH_EARLY_LOCAL = "2026-05-31T16:30:00.000Z";
+// 00:30 on 1 July in Kuala Lumpur — 30 June in UTC, but outside a June window.
+const FIRST_OF_NEXT_MONTH_EARLY_LOCAL = "2026-06-30T16:30:00.000Z";
 
 describe.skipIf(!databaseUrl)(
   "bm27 collection correlation & claim (requires DATABASE_URL)",
@@ -224,8 +232,8 @@ describe.skipIf(!databaseUrl)(
                count(*) FILTER (WHERE udr_currency <> account_currency)::int
                  AS currency_mismatch,
                count(*) FILTER (
-                 WHERE (start_datetime AT TIME ZONE 'UTC')::date < ${PERIOD_START}::date
-                    OR (start_datetime AT TIME ZONE 'UTC')::date > ${PERIOD_END}::date)::int
+                 WHERE (start_datetime AT TIME ZONE ${BUSINESS_TZ})::date < ${PERIOD_START}::date
+                    OR (start_datetime AT TIME ZONE ${BUSINESS_TZ})::date > ${PERIOD_END}::date)::int
                  AS out_of_window
         FROM   correlated
       `;
@@ -392,6 +400,39 @@ describe.skipIf(!databaseUrl)(
         expect(v.claimable).toBe(1);
         expect(v.currency_mismatch).toBe(0);
         expect(v.out_of_window).toBe(1); // ⇒ HARD WINDOW_COVERAGE
+      },
+      120_000,
+    );
+
+    it(
+      "Validation dates usage in the business time zone: 00:30 +08 on the 1st " +
+        "is in window, 00:30 +08 on the next month's 1st is not (rating X1)",
+      async () => {
+        const banK = await newAccount("BusinessTz", "MYR");
+        const piK = "PRDINV-BM27-K";
+        await newInventory(piK, banK);
+        await insertRatedRow({
+          subRef: piK,
+          currency: "MYR",
+          start: FIRST_OF_MONTH_EARLY_LOCAL,
+        });
+
+        const inWindow = await validate(banK);
+        expect(inWindow.claimable).toBe(1);
+        expect(inWindow.out_of_window).toBe(0); // UTC dating would say 1
+
+        const banL = await newAccount("BusinessTzNext", "MYR");
+        const piL = "PRDINV-BM27-L";
+        await newInventory(piL, banL);
+        await insertRatedRow({
+          subRef: piL,
+          currency: "MYR",
+          start: FIRST_OF_NEXT_MONTH_EARLY_LOCAL,
+        });
+
+        const nextMonth = await validate(banL);
+        expect(nextMonth.claimable).toBe(1);
+        expect(nextMonth.out_of_window).toBe(1); // UTC dating would say 0
       },
       120_000,
     );

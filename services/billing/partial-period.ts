@@ -41,8 +41,10 @@ export function isPartialPeriod(input: PartialPeriodInput): boolean {
   const { periodStart, periodEnd, subscriptions, transitions } = input;
 
   for (const sub of subscriptions) {
-    // Started mid-period: strictly after period_start.
-    if (sub.startDate > periodStart) return true;
+    // Started mid-period: strictly after period_start, but not after the
+    // window ended (a subscription that only starts after this window never
+    // touched it — e.g. a later resubscription on the same account).
+    if (sub.startDate > periodStart && sub.startDate <= periodEnd) return true;
     // Ceased mid-period: strictly before period_end, but not before the
     // window started (a subscription that already ended before this window
     // began never touched it).

@@ -426,6 +426,7 @@ describe.skipIf(!databaseUrl)(
           partitions: ["2026-06-01", "2026-07-01"],
           periodStart: OFF_PERIOD_START,
           periodEnd: OFF_PERIOD_END,
+          timezone: "Asia/Kuala_Lumpur",
         });
         expect(count).toBe(2);
       },

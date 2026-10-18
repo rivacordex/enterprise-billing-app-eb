@@ -8,12 +8,12 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 
 **Invoice Template delta (minimal, 2026-10-07):** **no** new app color, type, radius or shadow token, and still **no AI**. Four UI touches: (1) two new Administration › Invoice Settings screens (Company profile, Invoice template) mapped onto existing families in **§10**, including the new `TemplateVersionStatusBadge`; (2) **Activate** on those screens takes the existing Deep Petrol featured accent (§7); (3) the invoice **document** gets its own print palette and typography, which sit **outside** the app token system and use shared hex values only as fixed layout CSS (§10c); (4) the PDF gains a "Page X of Y" footer, and the draft watermark stays `position:fixed` (§6c). Sources: `billmgmt-update-overview.md` Part 2, `billmgmt-architecture.md` › Invoice Template deltas, `billmgmt-code-standards.md` › Invoice Template deltas.
 
-**Invoice Template Phase 3 delta (minimal, 2026-10-15; planned, not built):** **no** new app color, type, radius, shadow or accent token, still **no AI**, and the Deep Petrol CTA (§7) is unchanged. Three UI touches:
+**Invoice Template Phase 3 delta (minimal, 2026-10-15; delivered bm64–bm72, signed off by bm73 on 2026-10-17):** **no** new app color, type, radius, shadow or accent token, still **no AI**, and the Deep Petrol CTA (§7) is unchanged. Three UI touches:
 1. The Invoice template editor keeps one section toggle (**Payment information**) and gains **Footnote** lines; every other toggle is removed (D56, §10b).
 2. The rewritten layout v1 replaces the Usage annex with per-type, per-State-District detail pages and a Total Amount page. It reuses the §10c `--inv-*` print palette and adds **no** layout variable (§10d).
 3. New park/skip reasons surface on existing surfaces with existing families (§10d).
 
-Sources: `billmgmt-update-overview.md`, `billmgmt-architecture.md` › Invoice Template Phase 3 deltas, `billmgmt-code-standards.md` › Invoice Template Phase 3 deltas.
+Sources: `billmgmt-project-overview.md` › Invoice Template Phase 3 (folded from the update overview at bm73), `billmgmt-architecture.md` › Invoice Template Phase 3 deltas, `billmgmt-code-standards.md` › Invoice Template Phase 3 deltas.
 
 **Rendering rule (shared §8):** every badge/pill renders the dark `-fg` text on the light `-bg` tint (never white-on-tint) and always pairs color with an icon **and** label, so meaning never depends on colour alone. Match the component names in `billmgmt-code-standards.md` §4.
 
@@ -392,7 +392,7 @@ The invoice is print CSS in the layout's `shell.hbs` (code-standards › Invoice
 
 Weights stay at 400 and 600 only (shared §5). The CSV output has no styling.
 
-### 10d. Invoice document — Standard layout v1 rewrite (Invoice Template Phase 3, planned)
+### 10d. Invoice document — Standard layout v1 rewrite (Invoice Template Phase 3, delivered bm70–bm72)
 
 Print CSS in the rewritten v1 `shell.hbs` and partials. It uses the §10c `--inv-*` variables **only** and adds no new one. The business mockup (`mockup-invoice-layout-v2.html`) sets the arrangement, **not** the tokens: its `#12355B` is sample brand data (the admin's `--inv-brand` replaces it), and its weight 700 maps to 600.
 

@@ -12,7 +12,10 @@ import {
   createFlowDoubleFixtures,
   dropFlowDoubleSchemas,
 } from "@/tests/db/helpers/billrun-flow-double-fixtures";
-import { createCapacityPricingFixtures } from "@/tests/db/helpers/billrun-capacity-pricing-fixtures";
+import {
+  createCapacityPolygonFixtures,
+  polygonResource as resource,
+} from "@/tests/db/helpers/capacity-polygon-fixtures";
 import {
   invoiceRenderInputRepository,
   type RawInvoiceRenderInput,
@@ -23,8 +26,6 @@ import {
   InvoiceRenderError,
   type InvoiceRenderInput,
 } from "@/types/billing";
-import { buildRawUdrKey } from "@/validation/rating/udr-key";
-import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 import {
   SEEDED_FOOTNOTE,
   SEEDED_TEMPLATE_STAMP,
@@ -56,7 +57,6 @@ const PERIOD_START = "2026-06-01";
 const PERIOD_END = "2026-06-30";
 const GL_EVENT_AT = "2026-06-01";
 const IN_WINDOW = "2026-06-10T00:00:00.000Z";
-const KEY_COLUMNS = ["commercial_unit", "mno_public_id", "polygon_id"];
 
 const DRAFT_CTX = {
   isDraft: true,
@@ -66,14 +66,6 @@ const DRAFT_CTX = {
   profile: null,
   footnote: [...SEEDED_FOOTNOTE],
 };
-
-function resource(
-  state: string | null,
-  district: string | null,
-  date = "2025-03-01",
-): string {
-  return formatUdrResource({ state, district, polygonStartDate: date });
-}
 
 describe.skipIf(!databaseUrl)(
   "bm71 invoice capacity detail (guardrail 63, requires DATABASE_URL)",
@@ -95,138 +87,22 @@ describe.skipIf(!databaseUrl)(
       });
     }
 
-    const capacityFixtures = createCapacityPricingFixtures({
+    // One BAN per call on its own fixture run (the shared builder, also used
+    // by the Phase 3 journey's ~900-polygon BAN).
+    const {
+      capacityBill,
+      capacityFixtures,
+      offeringOpts: OFFERING_OPTS,
+    } = createCapacityPolygonFixtures({
       getSql: () => sql,
-      newOffering: (name) => fixtures().newOffering(name),
-      newProductSpec: (offeringId, name, defaultValue) =>
-        fixtures().newProductSpec(offeringId, name, defaultValue),
-      newAccount: (label) => fixtures().newAccount(label),
-      newRun: (runId) => fixtures().newRun(runId),
-      newInventory: (args) => fixtures().newInventory(args),
-      claimAt: IN_WINDOW,
+      getDb: () => db,
+      flowDouble: fixtures,
       labelPrefix: "BM71",
+      claimAt: IN_WINDOW,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+      glEventAt: GL_EVENT_AT,
     });
-
-    const OFFERING_OPTS = {
-      baseRate: "100",
-      committedQuantity: 1000,
-      steps: [{ aboveQuantity: 1000, ratePerUnit: "50" }],
-      udrType: "RAN_USAGE",
-    } as const;
-
-    interface Polygon {
-      polygonId: string | null; // null → a key with no polygon_id= segment
-      udrResource: string | null;
-      ea: number;
-      status?: "BILL_DRAFT" | "BILL_NOTUSED";
-      attempt?: number;
-    }
-
-    // A rating-shaped claimed row at RM100/Mbps. The commercial unit is per
-    // subscription, so the same polygon id under two types has two keys (the
-    // live-row unique constraint is on `udr_key`).
-    async function insertPolygon(args: {
-      piId: string;
-      runId: string;
-      ban: string;
-      cu: string;
-      priceRef: string | null;
-      polygon: Polygon;
-    }): Promise<void> {
-      const { polygon } = args;
-      const columns: Record<string, string> = {
-        commercial_unit: args.cu,
-        mno_public_id: "MNO-BM71",
-      };
-      const keyColumns = KEY_COLUMNS.filter(
-        (c) => c !== "polygon_id" || polygon.polygonId !== null,
-      );
-      if (polygon.polygonId !== null) columns.polygon_id = polygon.polygonId;
-      const price = `${polygon.ea * 100}.00`;
-      await sql`
-        INSERT INTO rating.udr_rated
-          (partition_period, udr_type, start_datetime, end_datetime, status,
-           udr_subscription_ref_id, udr_key, udr_resource, udr_usage_quantity,
-           udr_usage_unit, udr_rate_type, udr_usage_rate, udr_price_ref,
-           udr_rated_price, udr_rated_price_raw, udr_rounding_mode, udr_currency,
-           udr_ref_batch_id, udr_source_file, rating_engine_version,
-           rating_flow_revision, billrun_ref_id, billrun_ban_id, billrun_attempt,
-           billrun_checksum, upsert_datetime)
-        VALUES
-          (rating.period_of(${IN_WINDOW}::timestamptz), 'RAN_USAGE',
-           ${IN_WINDOW}::timestamptz, ${IN_WINDOW}::timestamptz,
-           ${polygon.status ?? "BILL_DRAFT"}, ${args.piId},
-           ${buildRawUdrKey(columns, keyColumns)}, ${polygon.udrResource},
-           ${polygon.ea.toFixed(6)}, 'EA', 'PER_UNIT', '100.000000',
-           ${args.priceRef}, ${price}, ${price}, 'HALF_UP', 'MYR', '_BM71_BATCH',
-           '_BM71', '_BM71', 0, ${args.runId}, ${args.ban},
-           ${polygon.attempt ?? 1}, 'bm71-claim', now())
-      `;
-    }
-
-    // One BAN with one capacity subscription per entry of `types` (label →
-    // its polygons), aggregated by the extracted flow SQL for `attempt`.
-    async function capacityBill(
-      label: string,
-      types: Record<string, Polygon[]>,
-      attempt = 1,
-    ): Promise<{ runId: string; ban: string; offerings: string[] }> {
-      const entries = Object.entries(types);
-      const first = await capacityFixtures.setupSingleAccountCapacity(
-        label,
-        entries[0]![0],
-        OFFERING_OPTS,
-      );
-      const { ban, runId } = first;
-      const subs = [
-        {
-          offeringId: first.offeringId,
-          priceRef: first.usageRatePriceId,
-          piId: first.piId,
-        },
-      ];
-      for (const [i, [name]] of entries.slice(1).entries()) {
-        const { offeringId, usageRatePriceId } =
-          await capacityFixtures.newCapacityOffering(name, OFFERING_OPTS);
-        const piId = `${first.piId}-${i + 2}`;
-        await fixtures().newInventory({
-          piId,
-          ban,
-          offeringId,
-          quantity: 1,
-          orderItemId: `_bm71-oi-${label.toLowerCase()}-${i + 2}`,
-        });
-        subs.push({ offeringId, priceRef: usageRatePriceId, piId });
-      }
-      for (const [i, [, polygons]] of entries.entries()) {
-        for (const polygon of polygons) {
-          await insertPolygon({
-            piId: subs[i]!.piId,
-            runId,
-            ban,
-            cu: `CU-BM71-${label}-${i + 1}`,
-            priceRef: subs[i]!.priceRef,
-            polygon,
-          });
-        }
-      }
-      await runAggregation(sql, {
-        runId,
-        ban,
-        attempt,
-        periodStart: PERIOD_START,
-        periodEnd: PERIOD_END,
-        glEventAt: GL_EVENT_AT,
-      });
-      await db.insert(billRunAccount).values({
-        refBillRunId: runId,
-        refBillingAccountId: ban,
-        periodPartition: PERIOD_START,
-        status: "PROCESSED",
-        attemptCount: attempt,
-      });
-      return { runId, ban, offerings: subs.map((s) => s.offeringId) };
-    }
 
     async function read(
       runId: string,

@@ -230,7 +230,7 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(svc).not.toMatch(/ACTIVE.*status|activate/i);
   });
 
-  it("while a working draft exists the draft is the only editable version, and the form reloads per draft token (bm57)", () => {
+  it("while a working draft exists the draft is the only editable version, and the form adopts a newer draft token (bm57, bm72 review)", () => {
     const src = read(
       "app/(app)/administration/invoice-settings/invoice-template/page.tsx",
     );
@@ -238,10 +238,19 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(src).toMatch(
       /editable=\{\s*canEdit &&\s*\(shownIsDraft \|\|\s*\(!draft &&/,
     );
-    // A new token (own save, or Reload after DRAFT_CONFLICT) remounts the form.
-    expect(src).toMatch(
-      /key=\{`\$\{shown\.billTemplateVersionId\}:\$\{draft\?\.token \?\? "none"\}`\}/,
+    // The working copy keeps one form; a version opened from the history gets
+    // its own (bm72 review: the post-save refresh no longer remounts it).
+    expect(src).toContain(
+      'key={viewingOther ? shown.billTemplateVersionId : "working"}',
     );
+    // A token or draft the form does not already hold (a Reload after
+    // DRAFT_CONFLICT, an activation) is adopted: the form reloads from it.
+    const form = read(
+      "components/billing/invoice-settings/invoice-structure-form.tsx",
+    );
+    expect(form).toContain("expectedDraftToken === draftToken");
+    expect(form).toContain("setDraftToken(expectedDraftToken)");
+    expect(form).toContain("reset(toFormValues(adopted))");
     // The Generated .hbs tab defaults to the current version, not the file-less draft.
     expect(src).toContain("onGenerated && version === undefined ? current");
     // A READ user gets no View link on a DRAFT history row.

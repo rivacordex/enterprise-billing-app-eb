@@ -9,6 +9,7 @@ import { firstOfMonth } from "@/services/billing/derive-periods";
 import { computeRunCounters } from "@/services/billing/compute-run-status";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 import type { AccountStatus } from "@/types/billing";
 import type { RerunStage } from "@/validation/billing/rerun-run.schema";
 
@@ -189,6 +190,7 @@ export async function rerunRun(
             ban_ids: banIds,
             attempt: newAttempt,
             gl_event_at: run.glEventAt ?? run.scheduledRunDate,
+            business_timezone: getAppTimezone(),
           },
         );
       } catch (err) {

@@ -56,6 +56,16 @@ inputs:
   - id: gl_event_at
     type: STRING
     defaults: "2026-09-01"
+  # The business time zone (IANA name) — the app's APP_TIMEZONE
+  # (getAppTimezone(), Asia/Kuala_Lumpur in every deployment), sent on every
+  # trigger and rerun. It is the zone every calendar-date decision below is
+  # made in: a usage record's date for the window check (so it agrees with
+  # rating.period_of(), the billing month — rating X1) and a price's effective
+  # date for the as-of resolution. Default UTC only for a hand-run execution
+  # with no app payload (behaviour-preserving, like APP_TIMEZONE unset).
+  - id: business_timezone
+    type: STRING
+    defaults: "UTC"
   # bm36 §Implementation §4 — the deploy-time/test force-fail toggle, set by
   # trigger-run.ts from BILLRUN_PROCESSING_FORCE_FAIL (default false → no-op).
   # When true the aggregation stage of the FIRST scoped account (ban_ids[0])
@@ -80,7 +90,7 @@ inputs:
 tasks:
   - id: start
     type: io.kestra.plugin.core.log.Log
-    message: "bill_run_processing START run={{ inputs.bill_run_id }} attempt={{ inputs.attempt }} period={{ inputs.period_start }}..{{ inputs.period_end }} gl_event_at={{ inputs.gl_event_at }}"
+    message: "bill_run_processing START run={{ inputs.bill_run_id }} attempt={{ inputs.attempt }} period={{ inputs.period_start }}..{{ inputs.period_end }} gl_event_at={{ inputs.gl_event_at }} business_timezone={{ inputs.business_timezone }}"
   - id: per_account
     type: io.kestra.plugin.core.flow.ForEach
     values: "{{ inputs.ban_ids }}"
@@ -161,10 +171,12 @@ tasks:
                 psql -v ON_ERROR_STOP=1 \
                   -v ban="{{ parents[0].taskrun.value }}" \
                   -v period_start="{{ inputs.period_start }}" \
-                  -v period_end="{{ inputs.period_end }}" <<'SQL'
+                  -v period_end="{{ inputs.period_end }}" \
+                  -v tz="{{ inputs.business_timezone }}" <<'SQL'
                 SELECT set_config('billrun.ban',          :'ban',          false),
                        set_config('billrun.period_start', :'period_start', false),
-                       set_config('billrun.period_end',   :'period_end',   false);
+                       set_config('billrun.period_end',   :'period_end',   false),
+                       set_config('billrun.tz',           :'tz',           false);
                 DO $$
                 DECLARE
                   v_claimable        int;
@@ -173,8 +185,12 @@ tasks:
                 BEGIN
                   -- Correlate ONCE (Inv #24), the _CURRENCY_SQL join shape:
                   -- udr_subscription_ref_id -> product_inventory -> billing_account.
-                  -- `(start_datetime AT TIME ZONE 'UTC')::date` buckets the window in
-                  -- UTC regardless of the runner's session TimeZone (no boundary drift).
+                  -- `(start_datetime AT TIME ZONE <business_timezone>)::date` is the
+                  -- usage's calendar date in the business zone, independent of the
+                  -- runner's session TimeZone — the same zone rating.period_of()
+                  -- buckets the billing month in (rating X1). A UTC date here
+                  -- rejected the 00:00–07:59 +08 records of the 1st as out of
+                  -- window (bm73 manual run, 2026-10-18).
                   WITH correlated AS (
                     SELECT ur.udr_currency, ur.start_datetime,
                            ba.currency AS account_currency
@@ -190,15 +206,16 @@ tasks:
                   SELECT count(*),
                          count(*) FILTER (WHERE udr_currency <> account_currency),
                          count(*) FILTER (
-                           WHERE (start_datetime AT TIME ZONE 'UTC')::date
+                           WHERE (start_datetime AT TIME ZONE current_setting('billrun.tz'))::date
                                    <  current_setting('billrun.period_start')::date
-                              OR (start_datetime AT TIME ZONE 'UTC')::date
+                              OR (start_datetime AT TIME ZONE current_setting('billrun.tz'))::date
                                    >  current_setting('billrun.period_end')::date)
                   INTO   v_claimable, v_currency_mismatch, v_out_of_window
                   FROM   correlated;
 
-                  RAISE NOTICE 'validation ban=% claimable=% currency_mismatch=% out_of_window=%',
-                    current_setting('billrun.ban'), v_claimable, v_currency_mismatch, v_out_of_window;
+                  RAISE NOTICE 'validation ban=% tz=% claimable=% currency_mismatch=% out_of_window=%',
+                    current_setting('billrun.ban'), current_setting('billrun.tz'),
+                    v_claimable, v_currency_mismatch, v_out_of_window;
 
                   IF v_currency_mismatch > 0 THEN
                     RAISE EXCEPTION 'CURRENCY_MISMATCH (HARD): % correlated row(s) with udr_currency <> account_currency', v_currency_mismatch;
@@ -394,6 +411,7 @@ tasks:
                   -v attempt="{{ inputs.attempt }}" \
                   -v period_start="{{ inputs.period_start }}" \
                   -v period_end="{{ inputs.period_end }}" \
+                  -v tz="{{ inputs.business_timezone }}" \
                   -v gl_event_at="{{ inputs.gl_event_at }}" \
                   -v capacity_max_bands="{{ inputs.capacity_max_bands }}" \
                   -v capacity_rate_matching="{{ inputs.capacity_rate_matching }}" <<'SQL'
@@ -456,14 +474,19 @@ tasks:
                     SELECT offering_id, unit_price, price_ref,
                            effective_date, currency, rc_len, rc_type
                     FROM (
+                      -- effective_date: the price's start as a calendar date in the
+                      -- business zone (:'tz', business_timezone input), so a price
+                      -- starting at 00:00 +08 on the 1st is effective on the 1st, the
+                      -- same date the period window uses. The capacity and
+                      -- verification as-of reads below do the same.
                       SELECT pop.product_offering_id                       AS offering_id,
                              (pop.price_component #>> '{params,amount}')::numeric AS unit_price,
                              pop.product_offering_price_id                 AS price_ref,
-                             (pop.start_date_time AT TIME ZONE 'UTC')::date AS effective_date,
+                             (pop.start_date_time AT TIME ZONE :'tz')::date AS effective_date,
                              pop.currency                                  AS currency,
                              pop.recurring_charge_period_length            AS rc_len,
                              pop.recurring_charge_period_type              AS rc_type,
-                             lead((pop.start_date_time AT TIME ZONE 'UTC')::date) OVER (
+                             lead((pop.start_date_time AT TIME ZONE :'tz')::date) OVER (
                                PARTITION BY pop.product_offering_id, pop.component_type,
                                             pop.unit_of_measure,
                                             pop.price_component ->> 'priceType'
@@ -590,8 +613,8 @@ tasks:
                              pop.price_component                            AS price_component,
                              pop.product_offering_price_id                  AS price_ref,
                              pop.currency                                   AS currency,
-                             (pop.start_date_time AT TIME ZONE 'UTC')::date AS effective_date,
-                             lead((pop.start_date_time AT TIME ZONE 'UTC')::date) OVER (
+                             (pop.start_date_time AT TIME ZONE :'tz')::date AS effective_date,
+                             lead((pop.start_date_time AT TIME ZONE :'tz')::date) OVER (
                                PARTITION BY pop.product_offering_id, pop.component_type,
                                             pop.unit_of_measure
                                ORDER BY pop.start_date_time
@@ -1217,6 +1240,7 @@ tasks:
                   -v ban="{{ parents[0].taskrun.value }}" \
                   -v run="{{ inputs.bill_run_id }}" \
                   -v attempt="{{ inputs.attempt }}" \
+                  -v tz="{{ inputs.business_timezone }}" \
                   -v capacity_rate_matching="{{ inputs.capacity_rate_matching }}" <<'SQL'
                 BEGIN;
                 -- the ON COMMIT DROP temp tables below (_bm43_capacity etc.)
@@ -1252,8 +1276,8 @@ tasks:
                              pop.price_component                            AS price_component,
                              pop.product_offering_price_id                  AS price_ref,
                              pop.currency                                   AS currency,
-                             (pop.start_date_time AT TIME ZONE 'UTC')::date AS effective_date,
-                             lead((pop.start_date_time AT TIME ZONE 'UTC')::date) OVER (
+                             (pop.start_date_time AT TIME ZONE :'tz')::date AS effective_date,
+                             lead((pop.start_date_time AT TIME ZONE :'tz')::date) OVER (
                                PARTITION BY pop.product_offering_id, pop.component_type,
                                             pop.unit_of_measure
                                ORDER BY pop.start_date_time

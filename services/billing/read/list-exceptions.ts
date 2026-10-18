@@ -2,6 +2,7 @@ import { db } from "@/db/client";
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
 import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
 import { periodPartitions } from "@/services/billing/derive-periods";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 import type { ExceptionRow } from "@/types/billing";
 
 // bm32-spec §Design/§Implementation §2. The per-record exception surface read —
@@ -30,5 +31,6 @@ export async function listExceptions(
     partitions: periodPartitions(run.periodStart, run.periodEnd),
     periodStart: run.periodStart,
     periodEnd: run.periodEnd,
+    timezone: getAppTimezone(),
   });
 }

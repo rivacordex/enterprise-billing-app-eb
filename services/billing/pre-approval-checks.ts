@@ -6,6 +6,7 @@ import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-ru
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
 import { periodPartitions } from "@/services/billing/derive-periods";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 import type { Database } from "@/db/client";
 import type { BillRun } from "@/db/schema/billing/bill-run";
 import { TRIGGER_EVENT_TYPES } from "@/types/billing";
@@ -299,6 +300,7 @@ async function checkOrphanCount(
     partitions: periodPartitions(run.periodStart, run.periodEnd),
     periodStart: run.periodStart,
     periodEnd: run.periodEnd,
+    timezone: getAppTimezone(),
   });
   return {
     check: "orphan_count",

@@ -10,23 +10,26 @@ import type { ExceptionKind } from "@/types/billing";
 // bm32 — the run WINDOW that scopes the per-record exception reads. Both the
 // exception surface and the informational orphan count are scoped to the ≤2
 // UTC-month partitions the run window spans (partition pruning) AND to
-// `start_datetime` within `[periodStart, periodEnd]`. `udr_rated.partition_period`
-// is `rating.period_of(start_datetime)` — the UTC month of the USAGE timestamp —
-// so a `cycle_day != 1` run whose period straddles two calendar months lands its
+// `start_datetime` within `[periodStart, periodEnd]`, read as a calendar date in
+// the business `timezone` (`getAppTimezone()`). `udr_rated.partition_period`
+// is `rating.period_of(start_datetime)` — the billing month of the USAGE
+// timestamp in the business zone (rating X1) — so a `cycle_day != 1` run whose period straddles two calendar months lands its
 // rows in two partitions; scoping by a single `firstOfMonth(periodStart)` would
 // silently drop the second month's in-window rows and admit the first month's
 // out-of-window rows (Inv #25 — never filter silently). The date comparison
-// mirrors bm27 Validation's window check exactly.
+// mirrors bm27 Validation's window check exactly, including the zone (the flow's
+// `business_timezone` input carries the same `getAppTimezone()` value).
 export interface ExceptionWindow {
   partitions: string[];
   periodStart: string;
   periodEnd: string;
+  timezone: string;
 }
 
 function windowConditions(window: ExceptionWindow) {
   return [
     inArray(udrRated.partitionPeriod, window.partitions),
-    sql`(${udrRated.startDatetime} AT TIME ZONE 'UTC')::date BETWEEN ${window.periodStart}::date AND ${window.periodEnd}::date`,
+    sql`(${udrRated.startDatetime} AT TIME ZONE ${window.timezone})::date BETWEEN ${window.periodStart}::date AND ${window.periodEnd}::date`,
   ];
 }
 

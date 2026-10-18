@@ -51,6 +51,9 @@ vi.mock("@/services/billing/scope-accounts", () => ({
 vi.mock("@/services/billing/engine-registry", () => ({
   engineRegistry: { trigger: vi.fn() },
 }));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("Asia/Kuala_Lumpur"),
+}));
 vi.mock("@/services/billing/capture-template-stamps", () => ({
   captureTemplateStamps: vi.fn(),
 }));
@@ -166,6 +169,8 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
       ban_ids: ["BAN00000001"],
       attempt: 1,
       gl_event_at: "2026-08-01",
+      // The business zone the flow dates usage and prices in (getAppTimezone()).
+      business_timezone: "Asia/Kuala_Lumpur",
       // bm36 — force-fail toggle threaded from billRunProcessingForceFail
       // (default false; env unset in the test).
       force_fail: false,

@@ -1,13 +1,13 @@
 # Billing Management — AI Workflow Rules (Module Supplement)
 
-Read `context/ai-workflow-rules.md` first and obey it in full. This supplement never weakens it. Where §6 below pre-authorizes an edit to a file the general §5 protects, that is the recorded instruction general §5 asks for. It does not skip general §5's "stop, explain why, and get explicit confirmation" step, which you still run at the start of that unit. It records only the Billing Management deltas for the in-flight update, **Invoice Template Phase 3** (the bill run uses the BAN's invoice template, plus the new Standard layout written into v1), and the rules from delivered work that still bind it. Where a facet is not mentioned here, the general rule applies unchanged. If anything here appears to weaken a general rule or a Module Invariant, stop and treat it as a bug.
+Read `context/ai-workflow-rules.md` first and obey it in full. This supplement never weakens it. Where §6 below pre-authorizes an edit to a file the general §5 protects, that is the recorded instruction general §5 asks for. It does not skip general §5's "stop, explain why, and get explicit confirmation" step, which you still run at the start of that unit. It records only the Billing Management deltas and the rules from delivered work that still bind every later change. **No update is in flight:** Invoice Template Phase 3 (the bill run uses the BAN's invoice template, plus the new Standard layout written into v1) was signed off by the bm73 ship gate on 2026-10-17, and its still-binding rules are in §0 item 8. §1–§8 keep the Phase 3 unit discipline as the record, and as the default for the next update until that update's own revision replaces them. Where a facet is not mentioned here, the general rule applies unchanged. If anything here appears to weaken a general rule or a Module Invariant, stop and treat it as a bug.
 
 **Companion docs (authoritative; do not restate or contradict them):**
 
-- `billmgmt-update-overview.md`: the in-flight update, with its goals, flow, features, scope and success criteria 1–15. `billmgmt-project-overview.md` holds everything delivered: phases 1–4 (bm01–bm39), Target Capacity Pricing (Part 1, bm40–bm46) and the Invoice Template update (Part 2, bm47–bm63).
+- `billmgmt-update-overview.md`: pointers only; no update is in flight. `billmgmt-project-overview.md` holds everything delivered: phases 1–4 (bm01–bm39), Target Capacity Pricing (Part 1, bm40–bm46), the Invoice Template update (Part 2, bm47–bm63) and Invoice Template Phase 3 (bm64–bm73), with success criteria 1–15 and their evidence.
 - `_updatemodule-billing-invoice-template-phase3-billrun-plan.md`: the design authority, decisions **D1–D60**. Later decisions amend earlier ones; each amendment names what it amends.
 - `billmgmt-architecture.md`:
-  - **58 Module Invariants (§6)**. **#51–#58** are this update's (planned); #15 is a retired tombstone.
+  - **58 Module Invariants (§6)**. **#51–#58** are Invoice Template Phase 3's (built bm64–bm72, audited at bm73); #15 is a retired tombstone.
   - The 2026-10-15 amendment notes under #36, #40, #41, #42, #44 and #46.
   - The dated section _Invoice Template Phase 3 — architecture deltas_, including its contradiction table **P1–P11**.
 - `billmgmt-code-standards.md`:
@@ -63,6 +63,15 @@ These come from phases 1–4, Part 1 and Part 2. They are **permanent**, and Pha
    - no four-eyes on profile activation (G14);
    - no `ONE_TIME` source (G5);
    - partial-period capacity billing (**O-TC7**) is an open business decision; never build a method for it.
+8. **Invoice Template Phase 3 is settled (bm64–bm73, signed off 2026-10-17):**
+   - A BAN's template is captured once at run start and frozen on `bill_run_account`; drafts, posting and reprint read the stamps, and only a rerun re-captures, for the rerun BANs only (Inv #51, #52).
+   - One resolver: never add a live-resolver call on a run path, not even behind a flag. Only `captureTemplateStamps` and the editor's `preview-family` mode resolve "current ACTIVE" (Inv #53, guardrail 57).
+   - Customer Management stays read-only: `billRunAccountRepository.listBanFamilies` is the one billing reader of `billing_account.ref_bill_template_version_id`, and NULL means the default family (Inv #54, D46).
+   - Utilised / Unutilised are derived in SQL from the bill line and never stored; a negative Utilised fails `INVOICE_NEGATIVE_UTILISED` (Inv #55).
+   - Per-polygon detail has one source, the live `udr_rated` read, reconciled per type; bad data fails `INVOICE_POLYGON_DATA_MISSING` / `INVOICE_USAGE_OVER_LIMIT` / `INVOICE_RECONCILIATION_FAILED`, and the flow writes no `additional_info.appendix` (Inv #56, #36 note).
+   - Layout v1 and its first generated version are pinned (`tests/guardrails/invoice-template-v1-pin.test.ts`). The in-place rewrite authority of §6.3–§6.4 is spent: every later layout, structure or footnote change is a new immutable version, and `0046` is applied and protected again (Inv #57).
+   - A template problem at run start never excludes a BAN or blocks the trigger: the draft 422s, approval is blocked (D58a), posting skips before the INV, and a rerun after activating a version recovers it (Inv #58).
+   - The footnote (1–5 plain-text lines of at most 200 characters) is the only admin-authored text, and Payment information the only section toggle (Inv #46 amended, D56).
 
 ---
 
@@ -326,7 +335,13 @@ If any item fails, the unit is not done. Fix it before moving on. Never defer a 
 
 ---
 
-## What Changed in This Revision (2026-10-15)
+## What Changed in This Revision (2026-10-17, bm73 ship gate)
+
+| Was | Now | Why |
+| --- | --- | --- |
+| Scoped to the in-flight **Invoice Template Phase 3**; #51–#58 planned; the `0046` and v1 in-place edits authorized | **No update in flight.** Phase 3's still-binding rules condensed into §0 item 8; §1–§8 kept as the record and the default discipline for the next update; the in-place authority is spent (v1 pinned, `0046` protected again) | bm73 signed off Phase 3 (criteria 1–15, Inv #51–#58 audited, guardrails 57–67 green); the update is folded into `billmgmt-project-overview.md` |
+
+## What Changed in the Previous Revision (2026-10-15)
 
 | Was | Now | Why |
 | --- | --- | --- |

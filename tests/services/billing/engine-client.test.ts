@@ -31,6 +31,7 @@ const PAYLOAD = {
   ban_ids: ["BAN00000001", "BAN00000002"],
   attempt: 1,
   gl_event_at: "2026-08-01",
+  business_timezone: "Asia/Kuala_Lumpur",
 };
 
 beforeEach(() => {

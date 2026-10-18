@@ -29,7 +29,7 @@ the app on each stage (write-then-signal). The placeholder/stub-data mode of
 earlier phases has been retired; the pipeline runs against real Postgres, real
 Kestra, a real blob store and a real SFTP endpoint.
 
-> **Current state (2026-10-12, verified against dev1 `614743a`).** The compute, posting, rendering and distribution
+> **Current state (2026-10-17; Phase 3 signed off by bm73).** The compute, posting, rendering and distribution
 > planes are all built and real (Phases 1–3, bm01–bm35), and **Phase 4 is
 > delivered (bm36–bm39):** the processor signal-back is real (bm36 —
 > `bill_run_processing.yml` POSTs a per-stage `DONE` after each stage, a per-account
@@ -53,7 +53,11 @@ Kestra, a real blob store and a real SFTP endpoint.
 > the live-Kestra capacity journey (TC54) has no capacity-aware harness yet
 > (`billmgmt-progress-tracker.md`), and **O-TC7** (partial-period capacity
 > billing) remains an open business decision. **The Invoice Template update
-> (bm47–bm63) is delivered** and folded below.
+> (bm47–bm63) is delivered** and folded below. **Invoice Template Phase 3
+> (bm64–bm73) is delivered** (2026-10-17): each BAN's invoice template is
+> captured once at run start and frozen for the run, and the rewritten, pinned
+> Standard layout v1 prints the capacity summary, per-polygon detail and Total
+> Amount page; see its section below.
 
 ## Lifecycle
 
@@ -503,6 +507,69 @@ The Billing Management module runs the monthly bill run for Revenue Operations: 
 - **G14** (2026-10-11): no four-eyes on profile activation; the bank-change warning and the `bankDetailsChanged` audit flag are the mitigations.
 - **G15 = A**: before the first profile activation, invoices render without the issuer and payment blocks and the profile stamp is `NULL`.
 - **G16** (2026-10-11): the app's user-assigned Managed Identity with container-scoped `Storage Blob Data Contributor`; the `appBlobAuth` flip is a cloud-cutover ops step.
+
+## Invoice Template Phase 3 — bill run uses the BAN's template (delivered, bm64–bm73)
+
+_Folded from `billmgmt-update-overview.md` at the bm73 ship gate (2026-10-17). Users: Revenue Operations (trigger, review, rerun, approve) and Admin/Manager (Standard template versions and footnote). Source plan: `_updatemodule-billing-invoice-template-phase3-billrun-plan.md` (D1–D60). Invariants: `billmgmt-architecture.md` Inv #51–#58 and the 2026-10-15 amendments to #36, #40–#42, #44, #46. Guardrails: code-standards items 57–67. Per-unit detail: `specs/bm64`–`bm73`; history, the invariant audit and the run timings: `billmgmt-progress-tracker.md`. Companion: rating Phase H (`_updatemodule-rating-udr-key-resource-plan.md`, rm24–rm29) stores the raw `udr_key` and writes `udr_resource`._
+
+**Delivered (bm64–bm72).** The Standard template family is in the catalog (bm64); each BAN's template is captured at run start and on rerun (bm65); drafts render from the captured template (bm66) and posting copies it onto the bill (bm67); the flow stops writing the usage appendix (bm68); dates print DD/MM/YYYY and Mbps as whole numbers (bm69); layout v1 is rewritten to the business design, page 1 (bm70), the detail pages (bm71) and the Total Amount page with the editable footnote (bm72), and is then pinned. bm73 proved criteria 1–15 (below), audited Inv #51–#58 and guardrails 57–67, and folded this section.
+
+### Overview
+
+Before this update, the draft and posting each looked up the live invoice template separately and neither read the BAN's template reference, so a mid-run activation could split a run across versions (known-issues §19). The bill run now reads each BAN's reference **once, at run start**: NULL resolves to the default family "Standard", and the run uses that family's ACTIVE version. The choice is frozen on `bill_run_account`, so the invoice RevOps reviews is the invoice that is posted. The Standard layout `INVTPL-STD-A4` v1 was rewritten once, in place, to the business's page design (`Invoice Structure.docx`) and pinned: a summary per type of service with Utilised / Unutilised capacity charges, an "Other charges" block, per-polygon detail by type then State-District, a Total Amount page with an editable footnote, and "Page X of Y" bottom-right. It was a fresh-DB round: every environment is rebuilt from an empty database and an empty `invoice-templates` container. Only Wholesale Network is billed in this phase.
+
+### Goals
+
+1. **Use the BAN's referenced template:** NULL → Standard → its ACTIVE version; non-NULL → that version's family → its ACTIVE version.
+2. **Freeze the template at run start:** family, generated version, profile version, CSV version and the capture time on `bill_run_account`; drafts, posting and reprint read the stamps.
+3. **Let a fix reach the current cycle through rerun:** a rerun re-captures exactly the rerun BANs.
+4. **One template resolver:** `resolve-template.ts` with `run`, `final`, `preview-posted` and `preview-family` modes; the live posting resolver is deleted, and a guardrail fails if a run path resolves live.
+5. **Ship the business layout as v1**, rewritten once and then pinned by a checksum test.
+6. **Correct capacity figures with no new amount columns:** Unutilised = `gross − rated`, Utilised = `net − Unutilised`, never negative.
+7. **Every polygon from one source:** the live `udr_rated` query, reconciled per type against the bill lines; the flow no longer writes `additional_info.appendix`.
+8. **Fail loudly on bad data:** `INVOICE_POLYGON_DATA_MISSING`, `INVOICE_USAGE_OVER_LIMIT`, `INVOICE_RECONCILIATION_FAILED`, `INVOICE_NEGATIVE_UTILISED` park that account; the others keep billing.
+
+### Core user flow
+
+1. **Admin/Manager (optional, any time):** Administration › Invoice Settings › Invoice template — "Standard (default)" → edit the footnote → save DRAFT (reuses v1's layout through `ref_layout_version_id`) → preview → **Activate** with a change note. The previous **non-default** ACTIVE version retires; the default v1 stays ACTIVE as the fallback (Inv #42, P7). Runs already started keep their captured version (Inv #51).
+2. **RevOps triggers the run** (`billrun_operate`). In the snapshot transaction, `captureTemplateStamps` stamps every non-EXCLUDED BAN; `BILL_RUN_TRIGGERED` `afterData.templateStamps` lists them. A family with no ACTIVE version stamps a NULL version and never blocks the trigger (D55).
+3. **The flow processes** (no appendix write). Accounts reach `PROCESSED`.
+4. **RevOps reviews drafts** rendered from the stamped version. A data or template problem shows as a 422 with its reason.
+5. **Fix and rerun (if needed):** the rerun audit is written, the claims are released, the stamps are re-captured (`BILL_RUN_RERUN` `afterData.templateStamps`), and only those BANs re-process.
+6. **A second `billrun_approve` user approves.** The `template_versions_captured` check blocks approval while any PROCESSED account has a NULL version (D58a). Posting renders each final PDF from the stamped version and copies the stamps plus the family onto `customer_bill` in the `ref_inv_document_id` UPDATE; a NULL version is skipped before its INV (D58 backstop).
+7. **Distribution** delivers each stored PDF (loopback now, SFTP later) → `COMPLETED`. Reprint downloads the stored bytes.
+
+### Features
+
+- **Catalog:** `billing.bill_template_family` (Standard only, `is_default`); `bill_template_version.ref_bill_template_family_id` with family-scoped one-ACTIVE / one-DRAFT uniqueness and an immutable family (migration `0046`, edited in place for the fresh-DB round).
+- **Freeze:** five stamp columns on `bill_run_account` (`0051`), `customer_bill.ref_bill_template_family_id` (`0052`); the one sanctioned reader of `billing_account.ref_bill_template_version_id` is `billRunAccountRepository.listBanFamilies` (Inv #54; Customer Management untouched).
+- **Binder (bm70–bm72):** per-type Utilised / Unutilised / Total and the last page's Total Amount (Σ Utilised) in SQL; Other charges; per-polygon detail (`polygon_id=` from `udr_key`, State / District / start date from `udr_resource`) with Sub Totals and per-type reconciliation; the four fail-loud guards.
+- **Layout v1:** page 1 summary; each type on a new page with "Access Seeker"; State-District groups (`STATE - DISTRICT` / one part / "Unassigned region") with the group label and column header repeated in each `thead`; the Total Amount page with the footnote; "Page X of Y" bottom-right; DD/MM/YYYY, Mbps, MYR formats; IBM Plex embedded. Pinned by `tests/guardrails/invoice-template-v1-pin.test.ts`.
+- **Editor:** one section toggle (Payment information) and 1–5 footnote lines of at most 200 characters (React Hook Form + the shared zod schema); the Activate dialog lists the changes.
+- **Flow (bm68):** `bill_run_processing.yml` keeps `pricing`, `calc[]`, `summary[]` only; `billrun_runtime`'s two ratecard grants revoked.
+- **Access:** no permission change; DB grants per architecture's auth deltas.
+
+### In scope / out of scope
+
+In scope and delivered: everything above. Out of scope, unchanged: any Customer Management change (the family dropdown, a family-aware `assertBindableTemplate`, a family column on `billing_account`); creating or retiring families and binding a BAN to a non-Standard family (deferred to the phase that adds a second family, D45/D46); Bespoke / In-building; a "(continued)" marker; a visible discount line; adjustments, OCC, credit/debit notes; real tax; MyInvois; CSV changes (§23j open); freezing customer contact or address (D36, D51); anything after the loopback/SFTP hand-off; RBAC changes; `udr_rated` backfill; O-TC7; a large DB seed (the owner supplies sample data).
+
+### Success criteria and evidence
+
+1. **Template resolution.** _Met._ `tests/db/trigger-run.integration.test.ts`, `run-template-capture.integration.test.ts` (bm65); journey step 1 (`tests/e2e/invoice-template-journey.integration.test.ts`, "bm73 — the Invoice Template Phase 3 journey"); the NULL-version path: journey steps 8a (draft 422, posting SKIPPED, no INV) and 8e (an ACTIVE version + rerun bills the BAN).
+2. **Freeze.** _Met._ `draft-uses-run-stamps.integration.test.ts` (bm66); `tests/guardrails/invoice-version-pinning.integration.test.ts` (bm67); journey steps 4 and 6.
+3. **Rerun.** _Met._ `run-template-capture` case 2 (bm65); journey steps 5–6 (only the rerun BAN re-captures; its posted PDF prints the new footnote, the others the old one; `BILL_RUN_RERUN` lists it).
+4. **One resolver.** _Met._ `tests/guardrails/no-live-template-resolution.test.ts` (item 57); journey step 6 activates a newer version before approval and every posted stamp still equals its run stamp.
+5. **Amounts.** _Met._ `tests/db/invoice-capacity-summary.integration.test.ts` (item 62, the four anchors); `invoice-capacity-detail` (2,000 Mbps: Total Amount 150,000.00 vs Sub Totals 200,000.00); `invoice-golden` last page.
+6. **Non-negative guard.** _Met._ The item 62 negative case (bm70); journey step 8b.
+7. **Other charges.** _Met._ `bind.test.ts` and the page-1 golden (bm70).
+8. **Detail section.** _Met._ `tests/db/invoice-capacity-detail.integration.test.ts` (item 63, bm71).
+9. **Bad data fails loud.** _Met._ Item 63 cases 4–6 (bm71); journey steps 8c (`INVOICE_POLYGON_DATA_MISSING`) and 8d (`INVOICE_USAGE_OVER_LIMIT`).
+10. **Layout.** _Met._ `invoice-golden` structural goldens (item 64); the Chromium e2e on ~900 polygons (`RUN_CHROMIUM_E2E=1`); journey step 2 (a 900-polygon BAN built by `tests/db/helpers/capacity-polygon-fixtures.ts`: 9 groups each repeating label + header in `thead`, a multi-page Chromium PDF, the "Page X of Y" footer).
+11. **v1 pinned.** _Met._ `tests/guardrails/invoice-template-v1-pin.test.ts` and `tests/db/activate-template.integration.test.ts` (item 65); journey setup seeds and renders v1 on a fresh database; journey step 3.
+12. **Flow.** _Met._ `tests/db/billrun-capacity-trace.integration.test.ts` and `tests/guardrails/phase3-boundaries.test.ts` (item 66, bm68).
+13. **Customer Management untouched.** _Met._ `phase3-boundaries.test.ts`; `git diff --stat 0e65a57^` (the parent of bm64, where Phase 3 began) is empty over `services/accounts/`, `components/customers/`, `app/(app)/customers/`, `actions/accounts/` and `0050`. The changes between bm63 (`614743a`) and bm64 under those paths are all the Customer Management binding update (cm17–cm21, 2026-10-12/13), which created `0050` before Phase 3 started (tracker, bm73).
+14. **End-to-end on the owner's sample data.** _Met (owner sign-off 2026-10-18), with a recorded gap._ `BRN00000001` (September 2026, 4 BANs × 900 polygons, through the real rating path) reached `COMPLETED` on local Kestra + Postgres + Azurite: processing ~10 s, posting ~12 s, distribution ~39 s (well inside the ~1 hour budget); each posted PDF 34 pages. Steps 1, 6 and 7 proven on the owner's data. **Gap, accepted by the owner:** steps 3–5 (footnote edit + activate, frozen drafts, one-BAN rerun picking up the new footnote) rest on the automated journey (19/19), and step 2's draft review rests on the posted PDFs because the draft preview timed out (known-issues §26). Detail: the bm73 entry in `billmgmt-progress-tracker.md`.
+15. **Build health.** See the bm73 entry in the tracker (typecheck, lint, unit, integration, Chromium e2e and browser e2e counts).
 
 ## Success criteria (module-level)
 

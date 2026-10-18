@@ -44,6 +44,9 @@ vi.mock("@/db/repositories/audit.repository", () => ({
 vi.mock("@/services/billing/engine-registry", () => ({
   engineRegistry: { trigger: vi.fn() },
 }));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("Asia/Kuala_Lumpur"),
+}));
 vi.mock("@/services/billing/capture-template-stamps", () => ({
   captureTemplateStamps: vi.fn(),
 }));
@@ -185,7 +188,11 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     expect(mockTrigger).toHaveBeenCalledWith(
       "billrun",
       "bill_run_processing",
-      expect.objectContaining({ ban_ids: ["BAN00000001"], attempt: 2 }),
+      expect.objectContaining({
+        ban_ids: ["BAN00000001"],
+        attempt: 2,
+        business_timezone: "Asia/Kuala_Lumpur",
+      }),
     );
   });
 

@@ -172,7 +172,13 @@ GRANT INSERT (
   "quantity","unit","gross_amount","discount_amount","net_amount",
   "discount_type","discount_rate","discount_amount_raw","udr_count",
   "grouping_key","currency","snapshot_price_ref","snapshot_unit_price",
-  "snapshot_quantity","snapshot_effective_date"
+  "snapshot_quantity","snapshot_effective_date",
+  -- bm41 (0044) — written by aggregation since bm42 (`rated_amount` on every
+  -- USAGE line, `additional_info` the capacity calc trace). Missing here until
+  -- the bm73 manual run (2026-10-18): the first aggregation as billrun_runtime
+  -- failed "permission denied for table customer_bill_line" (the integration
+  -- suites run the flow SQL as the owner, so never hit the column grant).
+  "rated_amount","additional_info"
 ) ON TABLE "billing"."customer_bill_line" TO billrun_runtime;
 --> statement-breakpoint
 
