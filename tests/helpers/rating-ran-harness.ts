@@ -324,15 +324,17 @@ export function createRatingPipeline(
           `writeUdr: ${volumes.length} volumes for ${cells.length} cells`,
         );
       }
-      const pad = (n: number) => String(n).padStart(2, "0");
+      // Naive config-TZ instants, formatted via UTC so no host TZ applies.
+      const start = Date.UTC(2026, 7, 14, 10, 0, 0);
       return writeUdrRows(
         name,
         cells.map((cell, i) => ({
           cell,
-          // One minute apart from 10:00, so any cell count stays a valid time.
+          // One minute apart from 10:00; calendar arithmetic rolls past
+          // midnight into the next date, so any cell count stays valid.
           datetime:
             datetime ??
-            `2026-08-14T${pad(10 + Math.floor(i / 60))}:${pad(i % 60)}:00`,
+            new Date(start + i * 60_000).toISOString().slice(0, 19),
           volume: volumes[i]!,
         })),
       );
