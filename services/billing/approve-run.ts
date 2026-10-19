@@ -10,7 +10,7 @@ import type { PreApprovalCheck } from "@/types/billing";
 // bm10-spec §Design/§Implementation §1. The approve transaction — the
 // four-eyes money gate. One `db.transaction`:
 //   1. `SELECT … FOR UPDATE` the run → guard `status = 'PROCESSED'`.
-//   2. Run all five pre-approval checks (fail → typed result, no state
+//   2. Run the blocking pre-approval checks (fail → typed result, no state
 //      change). Four-eyes gets its own result code (`FOUR_EYES_VIOLATION`,
 //      backed by the DB CHECK too); the other four bucket under
 //      `CHECKS_FAILED`.
@@ -43,7 +43,11 @@ export async function approveRun(
       return { ok: false, code: "NOT_APPROVABLE" } as const;
     }
 
-    const checks = await runPreApprovalChecks(tx, run, actorId);
+    // Blocking checks only: the informational ones never gate approval, so
+    // they are not read under the run lock (added back below on failure).
+    const checks = await runPreApprovalChecks(tx, run, actorId, {
+      informational: false,
+    });
     const fourEyes = checks.find((c) => c.check === "four_eyes");
     if (fourEyes && !fourEyes.pass) {
       return { ok: false, code: "FOUR_EYES_VIOLATION" } as const;
@@ -55,8 +59,13 @@ export async function approveRun(
     if (failing.length > 0) {
       // Return the COMPLETE re-check result (not just the failing subset) so the
       // panel can replace its checklist wholesale — a check that was failing at
-      // page-load but now passes is cleared rather than left stale.
-      return { ok: false, code: "CHECKS_FAILED", checks } as const;
+      // page-load but now passes is cleared rather than left stale. Rare and
+      // write-free, so it re-runs the full list, informational lines included.
+      return {
+        ok: false,
+        code: "CHECKS_FAILED",
+        checks: await runPreApprovalChecks(tx, run, actorId),
+      } as const;
     }
 
     // Single-currency-per-cycle is a v1 invariant, but `sumPostableTotalForRun`

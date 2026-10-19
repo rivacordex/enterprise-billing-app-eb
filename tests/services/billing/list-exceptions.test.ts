@@ -92,7 +92,8 @@ describe("listExceptions (bm32-spec §2)", () => {
         unit: "GB",
         ratedPrice: "5.00",
         currency: "MYR",
-        usageMonth: null,
+        usagePeriodStart: null,
+        usagePeriodEnd: null,
         recordCount: 1,
       },
       {
@@ -104,7 +105,8 @@ describe("listExceptions (bm32-spec §2)", () => {
         unit: "GB",
         ratedPrice: "1.00",
         currency: "MYR",
-        usageMonth: null,
+        usagePeriodStart: null,
+        usagePeriodEnd: null,
         recordCount: 1,
       },
     ];
@@ -128,7 +130,8 @@ describe("listExceptions (bm32-spec §2)", () => {
       unit: "GB",
       ratedPrice: "1.00",
       currency: "MYR",
-      usageMonth: null,
+      usagePeriodStart: null,
+      usagePeriodEnd: null,
       recordCount: 1,
     };
     const prior = {
@@ -138,7 +141,8 @@ describe("listExceptions (bm32-spec §2)", () => {
       accountName: "Acme Sdn Bhd",
       quantity: "300.000000",
       ratedPrice: "1500.00",
-      usageMonth: "2026-09-01",
+      usagePeriodStart: "2026-09-01",
+      usagePeriodEnd: "2026-09-30",
       recordCount: 3,
     };
     mockListExceptions.mockResolvedValue([orphan]);

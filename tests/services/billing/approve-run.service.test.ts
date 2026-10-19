@@ -199,8 +199,35 @@ describe("approveRun (bm10-spec §Design/§1)", () => {
       code: "CHECKS_FAILED",
       checks: failed,
     });
+    // Blocking checks first; the full list (informational lines too) only
+    // for the failure result.
+    expect(mockRunChecks).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      "user-approver",
+      { informational: false },
+    );
+    expect(mockRunChecks).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      "user-approver",
+    );
     expect(mockApprove).not.toHaveBeenCalled();
     expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not run the informational checks on a successful approval (bm73 review)", async () => {
+    await approveRun("BRN00000001", "user-approver");
+
+    expect(mockRunChecks).toHaveBeenCalledTimes(1);
+    expect(mockRunChecks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "user-approver",
+      { informational: false },
+    );
   });
 
   it("returns MULTI_CURRENCY (no writes) when the run has more than one postable currency", async () => {

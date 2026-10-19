@@ -8,6 +8,7 @@ import postgres from "postgres";
 
 import * as schema from "@/db/schema";
 import { productOffering } from "@/db/schema/product";
+import type { Database } from "@/db/client";
 import type { RanLkpRow } from "@/db/seeds/sample/sample-5g-fixture";
 import { SAMPLE_5G_COMMERCIAL_UNIT } from "@/db/seeds/sample/sample-5g-fixture";
 import { seedSample5gRatingGraph } from "@/tests/helpers/rating-ran-harness";
@@ -37,8 +38,12 @@ import { seedSample5gRatingGraph } from "@/tests/helpers/rating-ran-harness";
 // block:
 //   * seeds (idempotently, into the database the deployed engine uses —
 //     RATING_FANOUT_DATABASE_URL, an admin URL) its own `_SAMPLE_-RM13`
-//     customer, MNO, product and a 10,000-cell ratecard (one live row per cell
-//     per billing month, so 10,000 records need 10,000 cells);
+//     customer, MNO, product and a 25,000-cell ratecard (one live row per cell
+//     per billing month, so 25,000 records need 25,000 cells). 25,000 records
+//     span three chunks at the default chunk size of 10,000, so the run
+//     exercises the in-process chunking past the first chunk. The names carry
+//     "-25K": the earlier 10,000-cell fixture stays in that database, and the
+//     seed must not mistake it for this one;
 //   * REQUIRES the deployed flow's `subscription_product_name` to be that
 //     product (and coverage HARD_STOP or WARN): the flow rates one pinned
 //     product, and HARD_STOP needs every cell of that product's whole card in
@@ -60,16 +65,16 @@ const LANDING_HOST_DIR = process.env.RATING_LANDING_HOST_DIR;
 // Admin URL of the database the deployed engine rates into (for the fixture).
 const FANOUT_DATABASE_URL = process.env.RATING_FANOUT_DATABASE_URL;
 const CHUNK_SIZE = Number(process.env.RATING_RAN_USAGE_CHUNK_SIZE ?? 10_000);
-const RECORD_COUNT = 10_000;
+const RECORD_COUNT = 25_000;
 const NAMESPACE = "rating";
 const FLOW_ID = "rating-engine-ran-usage";
 
 const FIXTURE = {
-  tag: "rm13-fanout",
-  mno: "_SAMPLE_-RM13-MNO",
-  productName: "_SAMPLE_-RM13 Fan-out Product",
-  priceName: "_SAMPLE_-RM13 Fan-out Usage",
-  cardName: "_SAMPLE_-RM13-FANOUT-CARD",
+  tag: "rm13-fanout-25k",
+  mno: "_SAMPLE_-RM13-25K-MNO",
+  productName: "_SAMPLE_-RM13 Fan-out Product 25K",
+  priceName: "_SAMPLE_-RM13 Fan-out Usage 25K",
+  cardName: "_SAMPLE_-RM13-FANOUT-CARD-25K",
 } as const;
 const FILE_KEY = "rating-input-file-202606150000";
 const USAGE_AT = "2026-06-15T10:00:00"; // KL wall time (the feed's assumed zone)
@@ -116,7 +121,7 @@ function fixedFlowTaskCount(): number {
   return count(tasksBlock) + count(finallyBlock);
 }
 
-// The fixture's 10,000 ratecard cells — one per record.
+// The fixture's 25,000 ratecard cells — one per record.
 function fanoutCells(): RanLkpRow[] {
   return Array.from({ length: RECORD_COUNT }, (_, i) => ({
     polygonId: `RM13-P${String(i + 1).padStart(5, "0")}`,
@@ -148,10 +153,16 @@ describe("no-per-record-fan-out bound (rm13-spec D2 — static)", () => {
     // the bound is generous but must never approach per-record.
     expect(bound).toBeLessThan(RECORD_COUNT / 10);
   });
+
+  it("the fixture spans more than one chunk", () => {
+    // One chunk would never exercise the chunking past the first, so a
+    // regression there (or a task per chunk) could not show in the count.
+    expect(Math.ceil(RECORD_COUNT / CHUNK_SIZE)).toBeGreaterThan(1);
+  });
 });
 
 // ---------------------------------------------------------------------
-// Live engine — an end-to-end run of the 10,000-record fixture through a REAL
+// Live engine — an end-to-end run of the 25,000-record fixture through a REAL
 // Kestra execution, asserting its task-run count via the REST API.
 // ---------------------------------------------------------------------
 describe.skipIf(!liveEngineReady)(
@@ -198,17 +209,24 @@ describe.skipIf(!liveEngineReady)(
       ).toBe(FIXTURE.productName);
     }
 
-    // Idempotent: the graph is seeded once and reused by later runs.
+    // Idempotent: the graph is seeded once and reused by later runs. The check
+    // and the seed share one transaction, so a failed seed leaves no partial
+    // graph (which the check would otherwise take as "already seeded").
     async function seedFixtureOnce(): Promise<void> {
       const client = postgres(FANOUT_DATABASE_URL as string, { max: 1 });
       try {
         const db = drizzle(client, { schema });
-        const existing = await db
-          .select({ id: productOffering.productOfferingId })
-          .from(productOffering)
-          .where(eq(productOffering.name, FIXTURE.productName));
-        if (existing.length > 0) return;
-        await seedSample5gRatingGraph(db, { ...FIXTURE, cells: fanoutCells() });
+        await db.transaction(async (tx) => {
+          const existing = await tx
+            .select({ id: productOffering.productOfferingId })
+            .from(productOffering)
+            .where(eq(productOffering.name, FIXTURE.productName));
+          if (existing.length > 0) return;
+          await seedSample5gRatingGraph(tx as unknown as Database, {
+            ...FIXTURE,
+            cells: fanoutCells(),
+          });
+        });
       } finally {
         await client.end();
       }
@@ -216,7 +234,10 @@ describe.skipIf(!liveEngineReady)(
 
     // Writes the fixture file under a temp name the trigger ignores, then
     // renames it into place (one step — never a half-written file). The run
-    // number makes both the name (`_vN`) and the bytes (the volumes) new.
+    // number makes the name (`_vN`) new, and the first record's volume IS the
+    // run number, so two runs never share a checksum (prp discards a
+    // byte-identical file of the same file_key as DUPLICATE_BATCH). The other
+    // records keep the 1–9 volume pattern.
     function dropFixtureFile(run: number): string {
       const name = `${FILE_KEY}_v${run}.udr`;
       const rows = fanoutCells().map((cell, i) =>
@@ -225,7 +246,7 @@ describe.skipIf(!liveEngineReady)(
           SAMPLE_5G_COMMERCIAL_UNIT,
           cell.polygonId,
           USAGE_AT,
-          String(((i + run) % 9) + 1),
+          i === 0 ? String(run) : String(((i + run) % 9) + 1),
           cell.district ?? "",
           cell.serviceCode ?? "",
         ].join(","),
@@ -282,7 +303,7 @@ describe.skipIf(!liveEngineReady)(
       }
     }
 
-    it("a 10,000-record file's execution task-run count is bounded by chunk count, not record count", async () => {
+    it("a 25,000-record file's execution task-run count is bounded by chunk count, not record count", async () => {
       await assertDeployedPin();
       await seedFixtureOnce();
 
@@ -299,7 +320,7 @@ describe.skipIf(!liveEngineReady)(
       const bound = fixedFlowTaskCount() + Math.ceil(RECORD_COUNT / CHUNK_SIZE);
       expect(taskRunCount).toBeGreaterThan(0);
       expect(taskRunCount).toBeLessThanOrEqual(bound);
-      // Not ~10,000 — a wide margin, since the real count is single digits
+      // Not ~25,000 — a wide margin, since the real count is single digits
       // (Inv #10: chunking is in-process).
       expect(taskRunCount).toBeLessThan(RECORD_COUNT / 100);
     }, 600_000);

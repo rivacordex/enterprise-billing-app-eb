@@ -57,13 +57,16 @@ function orphanConditions() {
 // the window-scoped orphan reads never see it. Defined ONCE for the list and
 // the count so the checklist number equals what the Exceptions tab sums. The
 // partition bound (`<= the window's first partition`) only prunes the scan; the
-// date predicate decides. An unresolvable subscriber is not attributable to a
-// run, so it is not counted here (it stays an orphan of its own period).
+// date predicate decides. It compares the raw `start_datetime` against
+// `periodStart`'s midnight in the business zone (the same test as "local date
+// < periodStart"), so `udr_rated_subscription_start_idx` can serve it. An
+// unresolvable subscriber is not attributable to a run, so it is not counted
+// here (it stays an orphan of its own period).
 function priorPeriodConditions(window: ExceptionWindow, billRunId: string) {
   return [
     ...orphanConditions(),
     sql`${udrRated.partitionPeriod} <= ${window.partitions[0] ?? window.periodStart}::date`,
-    sql`(${udrRated.startDatetime} AT TIME ZONE ${window.timezone})::date < ${window.periodStart}::date`,
+    sql`${udrRated.startDatetime} < (${window.periodStart}::date::timestamp AT TIME ZONE ${window.timezone})`,
     inArray(
       productInventory.billingAccountId,
       sql`(SELECT ${billRunAccount.refBillingAccountId} FROM ${billRunAccount} WHERE ${billRunAccount.refBillRunId} = ${billRunId})`,
@@ -428,7 +431,8 @@ export const ratedLinesRepository = {
         unit: udrRated.udrUsageUnit,
         ratedPrice: udrRated.udrRatedPrice,
         currency: udrRated.udrCurrency,
-        usageMonth: sql<string | null>`NULL::text`,
+        usagePeriodStart: sql<string | null>`NULL::text`,
+        usagePeriodEnd: sql<string | null>`NULL::text`,
         recordCount: sql<number>`1`,
       })
       .from(udrRated)
@@ -475,14 +479,22 @@ export const ratedLinesRepository = {
 
   // known-issues §28 option 1 — the run accounts' PRIOR-PERIOD usage
   // (`priorPeriodConditions`) for the Exceptions tab, summed per (account,
-  // subscriber, usage type, unit, currency, billing month) so a late file of
+  // subscriber, usage type, unit, currency, billing period) so a late file of
   // thousands of records is a handful of rows. Money and quantity are summed
   // in SQL (numeric), returned as text. Read-only (no `rating.*` write).
+  //
+  // The billing period is the cycle's, not the calendar month
+  // (`partition_period`): a `cycle_day = d` period runs from the d-th to the
+  // day before the next d-th, so the usage's local date is shifted back d-1
+  // days, truncated to its month and shifted forward again. The cycle day is
+  // the run's `periodStart` day (`currentDuePeriod`, cycle_day 1–28).
   async listPriorPeriodForRun(
     db: Database,
     window: ExceptionWindow,
     billRunId: string,
   ): Promise<ExceptionRow[]> {
+    const dayOffset = Number(window.periodStart.slice(8, 10)) - 1;
+    const usagePeriodStart = sql<string>`(date_trunc('month', (${udrRated.startDatetime} AT TIME ZONE ${window.timezone}) - make_interval(days => ${dayOffset}::int)) + make_interval(days => ${dayOffset}::int))::date`;
     return db
       .select({
         kind: sql<ExceptionKind>`'PRIOR_PERIOD'`,
@@ -493,7 +505,11 @@ export const ratedLinesRepository = {
         unit: udrRated.udrUsageUnit,
         ratedPrice: sql<string>`sum(${udrRated.udrRatedPrice})::numeric(18,2)::text`,
         currency: udrRated.udrCurrency,
-        usageMonth: sql<string | null>`${udrRated.partitionPeriod}::text`,
+        usagePeriodStart: sql<string | null>`${usagePeriodStart}::text`, // 9th
+        // Aggregated, so it needs no GROUP BY entry: one value per group.
+        usagePeriodEnd: sql<
+          string | null
+        >`(min(${usagePeriodStart}) + interval '1 month' - interval '1 day')::date::text`,
         recordCount: sql<number>`count(*)::int`,
       })
       .from(udrRated)
@@ -512,12 +528,15 @@ export const ratedLinesRepository = {
         udrRated.udrType,
         udrRated.udrUsageUnit,
         udrRated.udrCurrency,
-        udrRated.partitionPeriod,
+        // By select-list position (9 = `usagePeriodStart`): the expression
+        // carries bound parameters, and Postgres does not match a repeated
+        // expression whose parameters are numbered differently.
+        sql`9`,
       )
       .orderBy(
         billingAccount.name,
         udrRated.udrSubscriptionRefId,
-        udrRated.partitionPeriod,
+        sql`9`,
         udrRated.udrType,
       );
   },

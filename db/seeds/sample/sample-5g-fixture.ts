@@ -364,6 +364,21 @@ export async function insertRanRatecard(
     sourceFile?: string;
   },
 ): Promise<void> {
+  // An empty card would activate with no cells (the single INSERT used to
+  // reject an empty VALUES list; the batched loop below would not).
+  if (opts.rows.length === 0)
+    throw new Error("insertRanRatecard: a ratecard needs at least one row.");
+  // One transaction (a savepoint when `db` is already one) so a failed batch
+  // never leaves an ACTIVE version holding only some of its rows.
+  await db.transaction(async (tx) => {
+    await insertRanRatecardRows(tx as unknown as Database, opts);
+  });
+}
+
+async function insertRanRatecardRows(
+  db: Database,
+  opts: Parameters<typeof insertRanRatecard>[1],
+): Promise<void> {
   const snapshotDate = opts.snapshotDate ?? SAMPLE_5G_START_DATE;
   const [version] = await db
     .insert(ratecardVersion)

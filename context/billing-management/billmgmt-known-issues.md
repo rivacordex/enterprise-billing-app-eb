@@ -1175,8 +1175,24 @@ That usage is now final as "billed" but was never invoiced, and no later run can
 - Pre-approval checklist: a new informational `prior_period_usage` line ("Unbilled usage from earlier periods") with the record and account counts. It never blocks.
 - Operator process: raise an adjustment in billing for the listed usage (ops guide `workflow-management/docs/opsguide-rating-batch.md`, rule 4).
 
-**Still open:**
+**Ownership and scope (owner, 2026-10-19, bm73 code review round 3):**
 
-- **The rows stay `RATED`, so they reappear on every later run of that account**, even after billing has raised the adjustment: there is no way to mark them handled (that would need an app write, e.g. to `BILL_NOTUSED`, a new decision).
+- **Revenue Ops owns these rows.** They will be tracked on a Revenue Ops dashboard/report (not built yet). The Exceptions-tab row and the checklist line are the only in-app view until then.
+- **Revenue Ops clears them before the next run** of the account, so the same rows are not acted on twice.
+- **`EXCLUDED` accounts stay out of their cycle's run** (Inv #26 unchanged): the run bills neither recurring nor usage for that period. Their unclaimed `RATED` usage is handled manually by Revenue Ops.
+
+**Known limitations (accepted for now):**
+
+- **"Earlier period" means dated before this run's `period_start`; it does not check that the earlier period's run is approved.** If that run is still open (`PROCESSED` awaiting a rerun, `CANCELLED` and re-triggerable, or not started), it can still claim the rows. Revenue Ops must confirm the earlier run is approved before adjusting, or the usage is charged twice.
+- **The rows stay `RATED`, so they reappear on every later run of that account** until cleared: the app has no way to mark them handled (that would need an app write, e.g. to `BILL_NOTUSED`, a new decision).
+- **Only accounts in this run's snapshot are counted.** An account in no later run (ceased mid-period and `EXCLUDED`, `SKIPPED` at approval then terminated, or moved to another bill cycle) never gets its leftovers counted on any checklist. They show only as `ORPHAN` on their own period's run.
 - An unresolvable subscriber's earlier-period rows are not counted (not attributable to a run; they stay orphans of their own period's window).
 - Billing the usage itself is still options 2 or 3.
+
+## 29. 🟡 DEFERRED (owner decision, 2026-10-19): the earlier-period and orphan reads scan each run subscriber's whole rating history (bm73 code review, 2026-10-19)
+
+**What:** `countPriorPeriodForRun` / `listPriorPeriodForRun` (known-issues §28) read every past partition of `rating.udr_rated` for the run's subscribers (`partition_period <=` the first window partition, no lower bound), and nearly all of those rows are `BILL_APPROVED`. The date test now compares the raw `start_datetime` with the business-zone midnight, so `udr_rated_subscription_start_idx` serves it as a range per subscriber, but the cost still grows with history.
+
+**Mitigated:** approval no longer runs the informational checks (`zero_total_bills`, `orphan_count`, `prior_period_usage`) under the run lock; it runs the blocking checks only and re-runs the full list just to return a failed checklist (`approve-run.ts`, `runPreApprovalChecks(…, { informational: false })`). The approval page and the Exceptions tab still run these reads.
+
+**Deferred (cross-domain, rating):** a partial index on unclaimed live `RATED` rows, e.g. `(udr_subscription_ref_id, start_datetime) WHERE status = 'RATED' AND billrun_ban_id IS NULL AND is_live`. It is a rating-schema migration, owned by rating, and should be designed together with the Revenue Ops earlier-period dashboard (§28), which reads the same rows.

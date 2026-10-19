@@ -134,6 +134,18 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 
     }
   });
 
+  it("leaves out the informational checks and their reads when asked (approval path)", async () => {
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver", {
+      informational: false,
+    });
+
+    expect(checks).toHaveLength(7);
+    expect(checks.some((c) => c.informational)).toBe(false);
+    expect(mockCountOrphans).not.toHaveBeenCalled();
+    expect(mockCountPriorPeriod).not.toHaveBeenCalled();
+    expect(mockCountZeroTotal).not.toHaveBeenCalled();
+  });
+
   it("[§28] prior_period_usage is informational, counts records and accounts, and never blocks", async () => {
     mockCountPriorPeriod.mockResolvedValue({ records: 3600, accounts: 4 });
 

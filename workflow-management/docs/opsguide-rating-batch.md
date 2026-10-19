@@ -120,21 +120,26 @@ same file key. Rows are never deleted or edited by hand.
        bills them**. The next run of that account lists them on its
        Exceptions tab as **Earlier period** (per month, with the record count
        and value) and counts them on the approval checklist ("Unbilled usage
-       from earlier periods"). Billing raises an adjustment for them (billing
+       from earlier periods"). Revenue Ops handles them manually, by
+       adjustment, and clears them before the account's next run (billing
        known-issues §28). The same applies to usage that is rated after its
        period's run was approved.
      - **The data must change, and the file holds only that account's rows:**
        reload the whole file as the next `_vN` (section 7). Nothing in it is
-       billed, so the guard lets it through.
+       billed, so the guard lets it through. The reloaded rows are still
+       dated in the closed period, so **no run bills them either**: they
+       appear as **Earlier period** on the next run, and Revenue Ops bills
+       the corrected usage by adjustment, as in the case above.
      - **The data must change, and the file also holds other accounts' rows
        that were approved** (`BILL_APPROVED`): a reload of that file is
        refused as `LOAD_BLOCKED_BILLED`, because the guard checks every key
        in the file and supersession works per file key. There is **no
        rating-side partial reload**. Do not deliver the failed account's rows
        under a new file name either: the old rows stay live and the load
-       aborts on the live-row constraint. Bill the released rows as they are
-       and correct the difference in billing (adjustment or credit note), the
-       same as `LOAD_BLOCKED_BILLED`.
+       aborts on the live-row constraint. The released rows stay `RATED` and
+       no run bills them, so Revenue Ops bills the **full corrected** usage by
+       adjustment (not only the difference), using the released rows as the
+       starting point.
      - Check which case you are in with the section 7 step 1 query (any
        `BILL_APPROVED` row in the file key means the last case).
    - `LOAD_BLOCKED_BILLED` (`MAJOR`, already billed): the data is financially

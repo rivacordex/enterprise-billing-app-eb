@@ -318,11 +318,21 @@ export function createRatingPipeline(
   return {
     dirs,
     writeUdr(name, volumes, datetime) {
+      // One volume per cell: a short list would write "undefined" volumes.
+      if (volumes.length !== cells.length) {
+        throw new Error(
+          `writeUdr: ${volumes.length} volumes for ${cells.length} cells`,
+        );
+      }
+      const pad = (n: number) => String(n).padStart(2, "0");
       return writeUdrRows(
         name,
         cells.map((cell, i) => ({
           cell,
-          datetime: datetime ?? `2026-08-14T10:0${i}:00`,
+          // One minute apart from 10:00, so any cell count stays a valid time.
+          datetime:
+            datetime ??
+            `2026-08-14T${pad(10 + Math.floor(i / 60))}:${pad(i % 60)}:00`,
           volume: volumes[i]!,
         })),
       );

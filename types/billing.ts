@@ -406,9 +406,10 @@ export interface UnchargedRow {
 // run's period (rated late, released at approval for a SKIPPED account, or a
 // partial-period exclusion). No run bills it any more, so it is surfaced, never
 // dropped. One row per (account, subscriber, usage type, unit, currency,
-// billing month): `usageMonth` is that month (`YYYY-MM-01`) and `recordCount`
-// the records it sums. `BILL_NOTUSED`/`ORPHAN` rows are one record each
-// (`usageMonth` null, `recordCount` 1).
+// billing period): `usagePeriodStart`/`usagePeriodEnd` bound that period (the
+// cycle's, `YYYY-MM-DD`; a calendar month when cycle_day = 1) and
+// `recordCount` the records it sums. `BILL_NOTUSED`/`ORPHAN` rows are one
+// record each (both period fields null, `recordCount` 1).
 export const EXCEPTION_KINDS = [
   "BILL_NOTUSED",
   "ORPHAN",
@@ -425,7 +426,8 @@ export interface ExceptionRow {
   unit: string;
   ratedPrice: string;
   currency: string;
-  usageMonth: string | null;
+  usagePeriodStart: string | null;
+  usagePeriodEnd: string | null;
   recordCount: number;
 }
 

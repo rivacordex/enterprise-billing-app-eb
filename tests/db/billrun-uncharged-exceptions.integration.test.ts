@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
@@ -17,6 +17,16 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import type { listUncharged as ListUncharged } from "@/services/billing/read/list-uncharged";
 import type { listExceptions as ListExceptions } from "@/services/billing/read/list-exceptions";
 import type { ratedLinesRepository as RatedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
+
+// The business zone the fixtures are written for (the 1 June 00:30 KL row), so
+// the services' window does not depend on the APP_TIMEZONE of the shell.
+vi.mock(
+  "@/services/system-config/app-config-read.service",
+  async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    getAppTimezone: () => "Asia/Kuala_Lumpur",
+  }),
+);
 
 // bm32-spec §Guardrails / Verification checklist (guardrails #29/#32). The
 // DB-gated regression for the redefined Uncharged read + the per-record
@@ -485,7 +495,7 @@ describe.skipIf(!databaseUrl)(
         const exceptions = await listExceptions(runId);
         const prior = exceptions.filter((e) => e.kind === "PRIOR_PERIOD");
         expect(
-          prior.map((p) => [p.accountName, p.usageMonth, p.recordCount]),
+          prior.map((p) => [p.accountName, p.usagePeriodStart, p.recordCount]),
         ).toEqual([
           [billed.name, "2026-04-01", 1],
           [billed.name, "2026-05-01", 2],
@@ -493,7 +503,9 @@ describe.skipIf(!databaseUrl)(
         ]);
         // Summed in SQL: 2 records × 2.000000 GB, 2 × 7.50.
         const may = prior.find(
-          (p) => p.accountName === billed.name && p.usageMonth === "2026-05-01",
+          (p) =>
+            p.accountName === billed.name &&
+            p.usagePeriodStart === "2026-05-01",
         );
         expect(Number(may?.quantity)).toBe(4);
         expect(may?.ratedPrice).toBe("15.00");
@@ -516,6 +528,52 @@ describe.skipIf(!databaseUrl)(
           runId,
         );
         expect(count).toEqual({ records: 4, accounts: 2 });
+      },
+    );
+
+    it(
+      "Exceptions (known-issues §28, cycle_day 15): earlier-period usage is " +
+        "grouped by the cycle's billing period, not the calendar month",
+      async () => {
+        const [cycle15] = await db
+          .insert(billCycle)
+          .values({ name: "BM32 Prior-Period Cycle 15", lastEditedBy: null })
+          .returning({ billCycleId: billCycle.billCycleId });
+        const runId = await newRun(
+          OFF_PERIOD_START,
+          OFF_PERIOD_END,
+          OFF_SCHEDULED,
+          cycle15!.billCycleId,
+        );
+        const acct = await newAccount("PriorCycle15");
+        await scopeAccount(runId, acct.ban, "PROCESSED");
+        await newInventory("PRDINV-BM32-PRIOR-15", acct.ban);
+        const unclaimed = (start: string) =>
+          insertRatedRow({
+            subRef: "PRDINV-BM32-PRIOR-15",
+            status: "RATED",
+            ban: null,
+            start,
+          });
+        // 15 May – 14 Jun: one May and one June record (two calendar months).
+        await unclaimed("2026-05-20T00:00:00.000Z");
+        await unclaimed("2026-06-10T00:00:00.000Z");
+        // 15 Apr – 14 May.
+        await unclaimed("2026-05-10T00:00:00.000Z");
+
+        const prior = (await listExceptions(runId)).filter(
+          (e) => e.kind === "PRIOR_PERIOD",
+        );
+        expect(
+          prior.map((p) => [
+            p.usagePeriodStart,
+            p.usagePeriodEnd,
+            p.recordCount,
+          ]),
+        ).toEqual([
+          ["2026-04-15", "2026-05-14", 1],
+          ["2026-05-15", "2026-06-14", 2],
+        ]);
       },
     );
   },
