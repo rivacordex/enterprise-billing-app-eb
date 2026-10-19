@@ -3,7 +3,7 @@
 Decomposition of the Billing Management (Bill Run) module into build units. This revision (2026-10-15) plans **Invoice Template Phase 3: the bill run uses the BAN's invoice template, and the Standard layout v1 is rewritten**, as units **bm64–bm73**. Units bm01–bm63 are delivered and listed below only as the numbering record. Their full unit text is in `git show a63eebb:context/billing-management/specs/bm00-build-plan.md` and in `specs/bm01`–`bm63`.
 
 **Sources of truth:**
-- `billmgmt-update-overview.md`: the change; success criteria 1–15.
+- `billmgmt-project-overview.md` › Invoice Template Phase 3: the change; success criteria 1–15 with evidence (folded from `billmgmt-update-overview.md` at bm73).
 - `_updatemodule-billing-invoice-template-phase3-billrun-plan.md`: decisions D1–D60.
 - `billmgmt-architecture.md`: Invariants #1–#58, with #51–#58 for this update; the dated _Invoice Template Phase 3 — architecture deltas_ section; P1–P11.
 - `billmgmt-code-standards.md`: the Phase 3 section; guardrail items 57–67.
@@ -49,7 +49,7 @@ Decomposition of the Billing Management (Bill Run) module into build units. This
 
 ---
 
-# Part 5 — Invoice Template Phase 3 (planned, Units 64–73)
+# Part 5 — Invoice Template Phase 3 (delivered, Units 64–73; signed off by bm73, 2026-10-17)
 
 **What changes, in one line:** each BAN's template is resolved once at run start (NULL → Standard → its ACTIVE version), frozen on `bill_run_account`, and used by draft, posting and reprint. The Standard layout v1 is rewritten to the business design. Customer Management is **not** touched (D46), and only the Standard family exists (D45).
 

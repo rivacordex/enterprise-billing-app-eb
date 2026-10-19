@@ -96,6 +96,8 @@ export interface RawInvoiceRenderInput {
     otherChargesSubTotal: string;
     adjustments: string;
     summaryBlocksSum: string;
+    // bm72 (D22) — the last page's Total Amount: Σ per-type Utilised (SQL).
+    utilisedTotal: string;
   };
   run: { billRunId: string; cycleName: string };
   lines: RawInvoiceLine[];
@@ -269,18 +271,27 @@ async function readLines(
 // all in SQL. `missingRated` and `negativeUtilised` feed the binder's
 // fail-loud guards (a NULL `rated_amount` or a negative Utilised never prints,
 // Inv #55). Label = the offering name carried on the line (D27).
+// bm72-spec §Design "The last page" (D22, D30) — `utilisedTotal` is the last
+// page's Total Amount: a SQL `SUM` over the same per-offering Utilised figures
+// (each at its printed `numeric(18,2)` scale), taken as a window over the
+// per-type rows in the same scan, `0.00` with no capacity line.
 async function readCapacitySummary(
   tx: Database,
   customerBillId: string,
   periodPartition: string,
-): Promise<RawInvoiceServiceType[]> {
+): Promise<{ serviceTypes: RawInvoiceServiceType[]; utilisedTotal: string }> {
   const l = customerBillLine;
   const unutilised = sql`SUM(${l.grossAmount} - ${l.ratedAmount})`;
   const utilised = sql`(SUM(${l.netAmount}) - ${unutilised})`;
   // Sort on the printed label, so a type whose lines carry no description
   // sorts by its offering-id fallback rather than last (NULLS LAST).
   const label = sql`COALESCE(min(${l.description}), ${l.refProductOfferingId})`;
-  return tx
+  const scope = and(
+    eq(l.refCustomerBillId, customerBillId),
+    eq(l.periodPartition, periodPartition),
+    CAPACITY_CHARGE,
+  );
+  const rows = await tx
     .select({
       offeringId: l.refProductOfferingId,
       label: sql<string>`${label}`,
@@ -290,17 +301,16 @@ async function readCapacitySummary(
       ratedTotal: sql<string>`COALESCE(SUM(${l.ratedAmount}), 0)::numeric(18,2)::text`,
       missingRated: sql<boolean>`bool_or(${l.ratedAmount} IS NULL)`,
       negativeUtilised: sql<boolean>`COALESCE(${utilised} < 0, false)`,
+      utilisedTotal: sql<string>`(SUM(${utilised}::numeric(18,2)) OVER ())::numeric(18,2)::text`,
     })
     .from(l)
-    .where(
-      and(
-        eq(l.refCustomerBillId, customerBillId),
-        eq(l.periodPartition, periodPartition),
-        CAPACITY_CHARGE,
-      ),
-    )
+    .where(scope)
     .groupBy(l.refProductOfferingId)
     .orderBy(label, asc(l.refProductOfferingId));
+  return {
+    serviceTypes: rows.map(({ utilisedTotal: _total, ...type }) => type),
+    utilisedTotal: rows[0]?.utilisedTotal ?? "0.00",
+  };
 }
 
 // bm70-spec §Design "Data" — the "Other charges" rows: every non-capacity
@@ -491,7 +501,7 @@ export const invoiceRenderInputRepository = {
 
     const [
       lineData,
-      serviceTypes,
+      { serviceTypes, utilisedTotal },
       otherCharges,
       taxItems,
       doc,
@@ -536,6 +546,7 @@ export const invoiceRenderInputRepository = {
         otherChargesSubTotal: lineData.otherChargesSubTotal,
         adjustments: lineData.adjustments,
         summaryBlocksSum: lineData.summaryBlocksSum,
+        utilisedTotal,
       },
       run: { billRunId: header.billRunId, cycleName: header.cycleName },
       lines: lineData.lines,

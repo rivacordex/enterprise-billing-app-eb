@@ -124,8 +124,8 @@ describe("flow template structure (rm06-spec D1, D3-D7 — static)", () => {
   });
 
   it("3. sections hand off by file URI (Kestra internal storage), never a record payload", () => {
-    expect(template).toMatch(/outputs\.prp\.uri/);
-    expect(template).toMatch(/outputs\.rp\.uri/);
+    expect(template).toMatch(/outputs\.prp\.vars\.uri/);
+    expect(template).toMatch(/outputs\.rp\.vars\.uri/);
   });
 
   it("4. concurrency: limit: 1 is declared on the flow", () => {

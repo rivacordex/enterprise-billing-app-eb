@@ -2,9 +2,9 @@
 
 Replaces the rm06/rm07 ``rp`` stub in ``flows/rating-engine-ran-usage.yaml``. RP is the
 second of the three flow sections (``prp`` → ``rp`` → ``rl``): it consumes PRP's
-chunk manifest (``outputs.prp.uri``), resolves the **event-time** price for each
+chunk manifest (``outputs.prp.vars.uri``), resolves the **event-time** price for each
 validated record, snapshots the resolved inputs onto the row, computes the
-``FLAT`` charge, and emits a rated Parquet manifest (``outputs.rp.uri``) for RL
+``FLAT`` charge, and emits a rated Parquet manifest (``outputs.rp.vars.uri``) for RL
 (rm09/rm10, still a stub). It writes nothing to ``rating.*`` — the insert is RL's
 one atomic transaction (Inv #8); RP only reads the seven enumerated tables and
 produces Parquet.
@@ -937,7 +937,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         description="RP — price resolution and snapshot (rm08)"
     )
     parser.add_argument(
-        "--manifest", required=True, help="PRP manifest URI (outputs.prp.uri)"
+        "--manifest", required=True, help="PRP manifest URI (outputs.prp.vars.uri)"
     )
     parser.add_argument("--udr-type", required=True)
     parser.add_argument(
@@ -1001,7 +1001,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.manifest.strip():
         print(
             "RP: --manifest is empty — nothing to rate. Check the prp task's "
-            "outputs.prp.uri handoff.",
+            "outputs.prp.vars.uri handoff.",
             file=sys.stderr,
         )
         return 1
@@ -1038,7 +1038,7 @@ def main(argv: list[str] | None = None) -> int:
             outcome=None,
             prp_manifest=prp_manifest,
         )
-        print(manifest.resolve().as_uri())
+        storage.hand_off(manifest.resolve().as_uri())
         return 0
 
     rated_datetime = datetime.now(timezone.utc)
@@ -1095,7 +1095,7 @@ def main(argv: list[str] | None = None) -> int:
         outcome=outcome,
         prp_manifest=prp_manifest,
     )
-    print(manifest.resolve().as_uri())
+    storage.hand_off(manifest.resolve().as_uri())
     return 0
 
 

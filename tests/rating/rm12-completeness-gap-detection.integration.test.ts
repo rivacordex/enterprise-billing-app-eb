@@ -163,7 +163,9 @@ describe("completeness and gap detection (rm12-spec D1-D6 — static)", () => {
     expect(flowYaml).toMatch(/limit:\s*1/);
     expect(flowYaml).toMatch(/python3 -m runtime\.completeness_check/);
     expect(flowYaml).toMatch(/--config/);
-    expect(flowYaml).toMatch(/kv\('rating_completeness_config'\)/);
+    expect(flowYaml).toMatch(
+      /kv\('rating_completeness_config', errorOnMissing=false\)/,
+    );
   });
 
   it("both the errors and finally handlers report the terminal outcome (code-standards §3.9)", () => {
@@ -415,7 +417,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         execId: "rm12-exec-4",
       });
       expect(out4).toMatch(/0 event\(s\) emitted/);
-    });
+      // Four python runs of the completeness check: ~7 s on a Windows host,
+      // over vitest's 5 s default.
+    }, 60_000);
 
     // -------------------------------------------------------------
     // On-time arrival: no alarm at all.

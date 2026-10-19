@@ -11,7 +11,9 @@ import { captureTemplateStamps } from "@/services/billing/capture-template-stamp
 import { firstOfMonth } from "@/services/billing/derive-periods";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
+import { isBusinessTimezoneAligned } from "@/services/billing/rating-timezone";
 import { scopeAccounts } from "@/services/billing/scope-accounts";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 
 // bm03-spec §Design/§7. The trigger transaction: row-locked double-trigger
 // guard → scope accounts → PROCESSING + gl_event_at/triggered_by →
@@ -50,6 +52,7 @@ export type TriggerRunResult =
   | { ok: false; code: "NOT_OPERABLE" }
   | { ok: false; code: "NO_ELIGIBLE_ACCOUNTS" }
   | { ok: false; code: "PERIOD_CLOSED" }
+  | { ok: false; code: "BUSINESS_TIMEZONE_MISMATCH" }
   | { ok: false; code: "ENGINE_UNREACHABLE" };
 
 // Internal-only signal thrown from inside `db.transaction` so the engine
@@ -63,6 +66,11 @@ export async function triggerRun(
   actorId: string,
   today: string = getBusinessToday(),
 ): Promise<TriggerRunResult> {
+  // APP_TIMEZONE must equal rating's billing zone (rating-timezone.ts), or
+  // the flow's window and as-of dates disagree with the rated month.
+  if (!isBusinessTimezoneAligned()) {
+    return { ok: false, code: "BUSINESS_TIMEZONE_MISMATCH" };
+  }
   try {
     return await db.transaction(async (tx) => {
       const run = await billRunRepository.findByIdForUpdate(tx, billRunId);
@@ -159,6 +167,7 @@ export async function triggerRun(
             ban_ids: banIds,
             attempt,
             gl_event_at: run.scheduledRunDate,
+            business_timezone: getAppTimezone(),
             // bm36-spec §Implementation §4 — the deploy-time/test force-fail
             // toggle (default false → unchanged behaviour). Read only here,
             // never by a UI/action; when true the flow drives the first scoped

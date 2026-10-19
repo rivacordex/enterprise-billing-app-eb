@@ -1,16 +1,13 @@
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
-  mkdtempSync,
-  mkdirSync,
   readFileSync,
   writeFileSync,
   copyFileSync,
   existsSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -23,19 +20,7 @@ import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { appuser } from "@/db/schema/identity";
-import { organization, partyRole } from "@/db/schema/customer";
-import { billCycle } from "@/db/schema/billing/catalogs";
-import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
-import { productOffering, productOfferingPrice } from "@/db/schema/product";
-import {
-  productOrder,
-  productOrderItem,
-  orderItemPriceOverride,
-} from "@/db/schema/ordering";
-import { productInventory } from "@/db/schema/inventory";
 import { udrRated } from "@/db/schema/rating/udr-rated";
-import type { UsageRateComponent } from "@/validation/product/pricing-component.schema";
 import { udrBatch } from "@/db/schema/rating/udr-batch";
 import {
   createRatingPipeline,
@@ -49,6 +34,7 @@ import {
 } from "@/tests/helpers/rating-ran-harness";
 import {
   SAMPLE_5G_COMMERCIAL_UNIT,
+  SAMPLE_5G_CURRENCY,
   SAMPLE_5G_LKP_ROWS,
   SAMPLE_5G_RATECARD_STATE,
   SAMPLE_5G_START_DATE,
@@ -69,11 +55,14 @@ import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 // the non-PROCESSING no-op forward contract.
 //
 // The static describe (no DATABASE_URL) checks the rl flow-YAML contract (the
-// real rl task invoking runtime.rl, the outputs.rp.uri handoff, and — since
+// real rl task invoking runtime.rl, the outputs.rp.vars.uri handoff, and — since
 // rm10 — that the supersede hook is real, not the rm09 `# STUB: rm10` marker)
 // and that rl.py uses COPY, not per-record INSERT. The
-// DB-gated describe shells out to the REAL `python3 -m runtime.prp` -> runtime.rp
-// -> runtime.rl exactly as the flow's three tasks invoke them — a black-box test
+// DB-gated describes shell out to the REAL `python3 -m runtime.prp` -> runtime.rp
+// -> runtime.rl exactly as the flow's three tasks invoke them, through the shared
+// `rating-ran-harness` (the production rm21 7-column `.udr` profile, the
+// `rating-input-file-YYYYMMDDHHMI[_vN].udr` file-key rule, a Sample-5G graph with
+// its ratecard; PER_UNIT rating) — a black-box test
 // of the actual loader, not a TS reimplementation. Requires the harness's
 // absolute python3 (`RATING_PYTHON3` or the fixed system path — never a PATH
 // lookup) with the worker's requirements (psycopg + polars); skipped loudly, like the
@@ -104,40 +93,13 @@ const BOOTSTRAP_ROLES_SQL = join(
 );
 const ENGINE_VERSION = "rm09-test-engine@sha256:deadbeef";
 
-const FEED_PROFILE = JSON.stringify({
-  header: ["DATETIME", "PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE", "USAGE_MBPS"],
-  event_time_column: "DATETIME",
-  event_time_assumed_tz: "UTC",
-  usage_column: "USAGE_MBPS",
-  usage_unit: "MBPS",
-  udr_key_columns: ["PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE"],
-  subscriber_ref: null,
-  interval_seconds: null,
-  future_tolerance_seconds: 300,
-});
-const FILE_KEY_RULE = "^(?P<file_key>RAN_USAGE_\\d{8})(?:_v\\d+)?\\.csv$";
 const NOW = "2026-08-20T00:00:00Z";
-const CURRENCY = "MYR";
+// The Sample-5G price currency (SAMPLE_5G_CURRENCY) and a different account
+// currency for the CURRENCY_MISMATCH case.
+const CURRENCY = SAMPLE_5G_CURRENCY;
 const OTHER_CURRENCY = "USD";
-
-// pm51-spec D6 — component-envelope builder replacing the pre-reshape flat
-// usage price-row literal (same shape `db/seeds/demo/product-demo.ts`'s
-// `buildPriceEnvelope` builds in production).
-function usageRateEnvelope(
-  ratePerUnit: string,
-  unitOfMeasure: "Mbps",
-): UsageRateComponent {
-  return {
-    "@type": "usage_rate",
-    specVersion: 1,
-    plaSpecId: null,
-    priceType: "usage",
-    appliesAt: "rating",
-    basis: "quantity",
-    boundTo: { unitOfMeasure },
-    params: { ratePerUnit, rateCardLookUp: null },
-  };
-}
+// One usage volume per Sample-5G ratecard cell (the rm09 block's clean file).
+const VOLUMES = [100, 55, 30] as const;
 
 // Every row of one Parquet file as JSON — nulls kept, datetimes as UTC ISO
 // strings — so values reach the test byte for byte.
@@ -205,9 +167,18 @@ async function readBatch(db: Database, batchId: string) {
     .where(eq(udrBatch.batchId, batchId));
   return rows[0]!;
 }
+// The billing month of an instant, in rating's config zone (rating.period_of(),
+// Asia/Kuala_Lumpur, X1) — not the UTC month, or a held row at 00:00–07:59
+// +08 on the 1st fails udr_rated_period_matches_check before the guard runs.
 function monthBucket(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+  const [y, m] = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric",
+    month: "2-digit",
+  })
+    .format(new Date(iso))
+    .split("-");
+  return `${y}-${m}-01`;
 }
 // A live udr_rated row a bill run holds, built from a rated Parquet row so
 // udr_key is read back, never reimplemented.
@@ -215,7 +186,7 @@ function heldRowValues(
   src: Record<string, string | null>,
   opts: {
     status: "BILL_DRAFT" | "BILL_APPROVED";
-    rateType: "FLAT" | "PER_UNIT";
+    rateType: "PER_UNIT";
     refBatchId: string;
     sourceFile: string;
     engineVersion: string;
@@ -272,11 +243,11 @@ describe("rl flow wiring + COPY (rm09-spec D1/D4/D8 — static)", () => {
     "utf8",
   );
 
-  it("the rl task invokes the real runtime.rl module, consuming outputs.rp.uri", () => {
+  it("the rl task invokes the real runtime.rl module, consuming outputs.rp.vars.uri", () => {
     expect(template).toMatch(/python3 -m runtime\.rl/);
     const rlBlock = template.slice(template.indexOf("id: rl"));
     expect(rlBlock).toMatch(/python3 -m runtime\.rl/);
-    expect(rlBlock).toMatch(/--manifest "\{\{ outputs\.rp\.uri \}\}"/);
+    expect(rlBlock).toMatch(/--manifest "\{\{ outputs\.rp\.vars\.uri \}\}"/);
     expect(rlBlock).toMatch(/--landing-dir/);
     expect(rlBlock).toMatch(
       /--workflow-execution-id "\{\{ execution\.id \}\}"/,
@@ -462,189 +433,29 @@ describe.skipIf(!pythonReady)(
 );
 
 // ---------------------------------------------------------------------
-// Black-box guarded load — live DB + the real prp/rp/rl modules.
+// Black-box guarded load — live DB + the real prp/rp/rl modules, on the
+// maintained `rating-ran-harness` (the production rm21 7-column `.udr`
+// profile, the `rating-input-file-YYYYMMDDHHMI[_vN].udr` file-key rule and a
+// Sample-5G graph with its ratecard; PER_UNIT rating). Each case seeds its own
+// graph (own MNO): the live-row key (partition_period, udr_key, is_live) holds
+// one live row per cell per month, and writeUdr's rows are all dated
+// 2026-08-14, so cases sharing an MNO would collide with each other's rows.
 // ---------------------------------------------------------------------
 describe.skipIf(!databaseUrl || !pythonReady)(
   "rl guarded transactional load (rm09-spec D1-D9, requires DATABASE_URL and python3+runtime)",
   () => {
     let sql: postgresjs.Sql;
     let db: Database;
-    let dbParams: { host: string; port: string; name: string };
-    let landingDir: string;
-    let logsDir: string;
-    let archiveDir: string;
-    let workDir: string;
-
-    let invA: string; // pinned to OFF1, MYR account
-    let invB: string; // pinned to OFF1, MYR account, usage override
-    let invC: string; // pinned to OFF1 (MYR price) but a USD account -> mismatch
-
-    async function seedProductGraph(): Promise<void> {
-      const userId = crypto.randomUUID();
-      await db.insert(appuser).values({
-        id: userId,
-        userName: "rm09-fixture-user",
-        userEmail: "rm09-fixture@example.invalid",
-        emailVerified: false,
-        authMethod: "LOCAL",
-        status: "ACTIVE",
-      });
-      const [org] = await db
-        .insert(organization)
-        .values({
-          name: "rm09-fixture-org",
-          organizationType: "COMPANY",
-          status: "ACTIVE",
-          lastModifiedBy: userId,
-        })
-        .returning({ organizationId: organization.organizationId });
-      const [pr] = await db
-        .insert(partyRole)
-        .values({ engagedParty: org!.organizationId, lastModifiedBy: userId })
-        .returning({ partyRoleId: partyRole.partyRoleId });
-      const partyRoleId = pr!.partyRoleId;
-      const [bc] = await db
-        .insert(billCycle)
-        .values({ name: "rm09-fixture-cycle", lastEditedBy: userId })
-        .returning({ billCycleId: billCycle.billCycleId });
-      const billCycleId = bc!.billCycleId;
-
-      const makeAccount = async (currency: string): Promise<string> => {
-        const [fa] = await db
-          .insert(financialAccount)
-          .values({
-            name: `rm09-fa-${currency}`,
-            refPartyRoleId: partyRoleId,
-            currency,
-            lastEditedBy: userId,
-          })
-          .returning({
-            financialAccountId: financialAccount.financialAccountId,
-          });
-        const [ban] = await db
-          .insert(billingAccount)
-          .values({
-            name: `rm09-ban-${currency}`,
-            refPartyRoleId: partyRoleId,
-            refFinancialAccountId: fa!.financialAccountId,
-            currency,
-            refBillCycleId: billCycleId,
-            lastEditedBy: userId,
-          })
-          .returning({ billingAccountId: billingAccount.billingAccountId });
-        return ban!.billingAccountId;
-      };
-      const myrAccount = await makeAccount(CURRENCY);
-      const usdAccount = await makeAccount(OTHER_CURRENCY);
-
-      // OFF1 with a usage price in MYR. Inserted DRAFT, priced, then flipped
-      // to ACTIVE — pm36's DRAFT-guard trigger refuses a price write once
-      // the parent offering leaves DRAFT (same pattern as
-      // `db/seeds/demo/product-demo.ts`).
-      const [off1] = await db
-        .insert(productOffering)
-        .values({
-          name: "rm09-OFF1",
-          isBundle: false,
-          isSellable: true,
-          billingOnly: false,
-          lifecycleStatus: "DRAFT",
-          lastEditedBy: userId,
-        })
-        .returning({ productOfferingId: productOffering.productOfferingId });
-      const off1Id = off1!.productOfferingId;
-      // pm51-spec D6 — re-keyed, same rate/currency/start date.
-      await db.insert(productOfferingPrice).values({
-        productOfferingId: off1Id,
-        name: "OFF1 usage",
-        componentType: "usage_rate",
-        priceComponent: usageRateEnvelope("0.0050", "Mbps"),
-        unitOfMeasure: "Mbps",
-        currency: CURRENCY,
-        startDateTime: new Date("2026-01-01T00:00:00Z"),
-      });
-      await db
-        .update(productOffering)
-        .set({ lifecycleStatus: "ACTIVE" })
-        .where(eq(productOffering.productOfferingId, off1Id));
-
-      const makeSubscription = async (
-        acctId: string,
-        withOverride: string | null,
-      ): Promise<string> => {
-        const [order] = await db
-          .insert(productOrder)
-          .values({
-            customerPartyRoleId: partyRoleId,
-            billingAccountId: acctId,
-            status: "COMPLETED",
-            submittedBy: userId,
-            submittedAt: new Date("2026-01-01T00:00:00Z"),
-          })
-          .returning({ productOrderId: productOrder.productOrderId });
-        const [item] = await db
-          .insert(productOrderItem)
-          .values({
-            productOrderId: order!.productOrderId,
-            productOfferingId: off1Id,
-            quantity: 1,
-            startDate: "2026-01-01",
-          })
-          .returning({
-            productOrderItemId: productOrderItem.productOrderItemId,
-          });
-        const itemId = item!.productOrderItemId;
-        if (withOverride !== null) {
-          await db.insert(orderItemPriceOverride).values({
-            productOrderItemId: itemId,
-            priceType: "usage",
-            amount: withOverride,
-            currency: CURRENCY,
-          });
-        }
-        const [inv] = await db
-          .insert(productInventory)
-          .values({
-            productOrderItemId: itemId,
-            customerPartyRoleId: partyRoleId,
-            billingAccountId: acctId,
-            productOfferingId: off1Id,
-            quantity: 1,
-            status: "ACTIVE",
-            startDate: "2026-01-01",
-          })
-          .returning({
-            productInventoryId: productInventory.productInventoryId,
-          });
-        return inv!.productInventoryId;
-      };
-      invA = await makeSubscription(myrAccount, null);
-      invB = await makeSubscription(myrAccount, "0.07");
-      invC = await makeSubscription(usdAccount, null);
-    }
 
     beforeAll(async () => {
       ({ sql, db } = await openMigratedDb());
+      // rating-db-roles.sql grants to app_runtime, which bootstrap-db-roles.sql
+      // creates: run it first so this suite does not depend on an earlier
+      // suite having created the cluster roles (as the rm28 describe below).
+      await runSqlFile(sql, BOOTSTRAP_ROLES_SQL);
       await runSqlFile(sql, RATING_ROLES_SQL);
       await sql.unsafe(`ALTER ROLE rating_runtime WITH PASSWORD '${ROLE_PW}'`);
-      await seedProductGraph();
-
-      const url = new URL(databaseUrl as string);
-      dbParams = {
-        host: url.hostname,
-        port: url.port || "5432",
-        name: url.pathname.replace(/^\//, ""),
-      };
-
-      const root = mkdtempSync(join(tmpdir(), "rm09-rl-"));
-      landingDir = join(root, "landing");
-      logsDir = join(root, "logs");
-      archiveDir = join(root, "archive");
-      workDir = join(root, "work");
-      for (const d of [landingDir, logsDir, archiveDir, workDir]) {
-        mkdirSync(d, { recursive: true });
-      }
-    }, 60_000);
+    }, 120_000);
 
     afterAll(async () => {
       if (!sql) return;
@@ -652,102 +463,41 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       await sql.end();
     });
 
-    const runEnv = () => ({
-      ...process.env,
-      SECRET_RATING_RUNTIME_PASSWORD: ROLE_PW,
-      RATING_DB_HOST: dbParams.host,
-      RATING_DB_PORT: dbParams.port,
-      RATING_DB_NAME: dbParams.name,
-      RATING_DB_USER: "rating_runtime",
-      RATING_LANDING_DIR: landingDir,
-      RATING_LOGS_DIR: logsDir,
-      RATING_ARCHIVE_DIR: archiveDir,
-      RATING_ENGINE_VERSION: ENGINE_VERSION,
-    });
-
-    function runPrp(sourcePath: string, execId: string): string {
-      const out = execFileSync(
-        ratingPython3(),
-        [
-          "-m",
-          "runtime.prp",
-          "--source-file",
-          sourcePath,
-          "--udr-type",
-          "RAN_USAGE",
-          "--profile",
-          FEED_PROFILE,
-          "--file-key-rule",
-          FILE_KEY_RULE,
-          "--reject-threshold",
-          "0.5",
-          "--chunk-size",
-          "10000",
-          "--workflow-execution-id",
-          execId,
-          "--now",
-          NOW,
-          "--work-dir",
-          workDir,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      return out.trim().split("\n").pop() as string;
-    }
-
-    function runRp(manifestUri: string, execId: string): string {
-      const out = execFileSync(
-        ratingPython3(),
-        [
-          "-m",
-          "runtime.rp",
-          "--manifest",
-          manifestUri,
-          "--udr-type",
-          "RAN_USAGE",
-          "--rounding-mode",
-          "HALF_UP",
-          "--subscriber-ref-column",
-          "PUBLIC_KEY",
-          "--workflow-execution-id",
-          execId,
-          "--flow-revision",
-          "42",
-          "--work-dir",
-          workDir,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      return out.trim().split("\n").pop() as string;
-    }
-
-    function runRl(manifestUri: string, execId: string): string {
-      const out = execFileSync(
-        ratingPython3(),
-        [
-          "-m",
-          "runtime.rl",
-          "--manifest",
-          manifestUri,
-          "--udr-type",
-          "RAN_USAGE",
-          "--landing-dir",
-          landingDir,
-          "--workflow-execution-id",
-          execId,
-          "--flow-revision",
-          "42",
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      return out.trim().split("\n").pop() as string;
+    // One Sample-5G graph + its pipeline per case, keyed by `tag`.
+    async function graph(
+      tag: string,
+      accountCurrency?: string,
+    ): Promise<RatingPipeline> {
+      const mno = `MNO-RM09-${tag.toUpperCase()}`;
+      const productName = `Sample 5G Services rm09 ${tag}`;
+      await seedSample5gRatingGraph(db, {
+        tag: `rm09-${tag}`,
+        mno,
+        productName,
+        priceName: `Sample 5G Usage Rate rm09 ${tag}`,
+        cardName: `RATECARD_RM09_${tag.toUpperCase()}`,
+        ...(accountCurrency ? { accountCurrency } : {}),
+      });
+      return createRatingPipeline({
+        databaseUrl: databaseUrl as string,
+        rolePassword: ROLE_PW,
+        engineVersion: ENGINE_VERSION,
+        mno,
+        productName,
+        now: NOW,
+        tmpPrefix: `rm09-${tag}-`,
+      });
     }
 
     // Runs RL expecting a non-zero exit (a refusal / a rolled-back failure),
     // returning the captured stderr for diagnosis.
-    function runRlExpectFail(manifestUri: string, execId: string): string {
+    function runRlExpectFail(
+      p: RatingPipeline,
+      manifestUri: string,
+      execId: string,
+    ): string {
       try {
-        runRl(manifestUri, execId);
+        p.runRl(manifestUri, execId);
         throw new Error("expected RL to exit non-zero, but it succeeded");
       } catch (e) {
         const err = e as { status?: number; stderr?: string; message?: string };
@@ -756,23 +506,12 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       }
     }
 
-    function uriToPath(uri: string): string {
-      return decodeURIComponent(uri.replace(/^file:\/\//, ""));
-    }
-    function readManifest(uri: string): Record<string, unknown> {
-      return JSON.parse(readFileSync(uriToPath(uri), "utf8"));
-    }
-    const readParquetRows = (fileUri: string) =>
-      parquetRows(uriToPath(fileUri));
-
-    function writeCsv(name: string, rows: string[]): string {
-      const header = "DATETIME,PUBLIC_KEY,COMMERCIAL_UNIT,SITE,USAGE_MBPS";
-      const path = join(landingDir, name);
-      writeFileSync(path, [header, ...rows].join("\n") + "\n", "utf8");
-      return path;
-    }
-    function logLinesFor(component: string, execId: string): string[] {
-      const path = join(logsDir, `${component}-${execId}.jsonl`);
+    function logLinesFor(
+      p: RatingPipeline,
+      component: string,
+      execId: string,
+    ): string[] {
+      const path = join(p.dirs.logs, `${component}-${execId}.jsonl`);
       if (!existsSync(path)) return [];
       return readFileSync(path, "utf8")
         .split("\n")
@@ -781,49 +520,61 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     const ratedCount = (batchId: string) => countRated(db, batchId);
     const batchRow = (batchId: string) => readBatch(db, batchId);
 
-    // prp -> rp for one CSV, returning the rp rated-manifest URI + parsed rows.
+    // prp -> rp for the case's clean three-cell `.udr`, returning the rp
+    // rated-manifest URI + parsed rows. `stamp` is the file_key's
+    // YYYYMMDDHHMI.
     function prepRated(
-      suffix: string,
-      rows: string[],
+      p: RatingPipeline,
+      stamp: string,
     ): {
       rpManifestUri: string;
       manifest: Record<string, unknown>;
       rated: Record<string, string | null>[];
-      csvName: string;
+      udrName: string;
     } {
-      const csvName = `RAN_USAGE_${suffix}.csv`;
-      const path = writeCsv(csvName, rows);
-      const prpUri = runPrp(path, `prp-${suffix}`);
-      const rpUri = runRp(prpUri, `rp-${suffix}`);
-      const manifest = readManifest(rpUri);
-      const rated = (manifest.rated_chunk_uris as string[]).flatMap((u) =>
-        readParquetRows(u),
-      );
-      return { rpManifestUri: rpUri, manifest, rated, csvName };
+      const udrName = `rating-input-file-${stamp}.udr`;
+      const path = p.writeUdr(udrName, VOLUMES);
+      const prpUri = p.runPrp(path, `prp-${stamp}`);
+      const rpUri = p.runRp(prpUri, `rp-${stamp}`);
+      const manifest = readHarnessManifest(rpUri);
+      return {
+        rpManifestUri: rpUri,
+        manifest,
+        rated: readRatedRows(rpUri),
+        udrName,
+      };
     }
 
-    // Two resolvable records (invA, invB), SITE keyed per scenario for a unique
-    // natural key. Dated 2026-08-14 (< NOW), so never OUT_OF_RANGE.
-    const cleanRows = (site: string) => [
-      `2026-08-14T10:00:00Z,${invA},CU,${site},100`,
-      `2026-08-14T11:00:00Z,${invB},CU,${site},55`,
-    ];
+    // A live udr_rated row a bill run holds, read straight from the rated
+    // Parquet so udr_key is never reimplemented.
+    const liveCollisionValues = (
+      src: Record<string, string | null>,
+      status: "BILL_DRAFT" | "BILL_APPROVED",
+      sentinel: string,
+      billrunRefId: string,
+    ) =>
+      heldRowValues(src, {
+        status,
+        rateType: "PER_UNIT",
+        refBatchId: sentinel,
+        sourceFile: "prior-run.udr",
+        engineVersion: ENGINE_VERSION,
+        billrunRefId,
+      });
 
     // -----------------------------------------------------------------
     // #14 (clean half) + reconciliation clean + archive-after-commit.
     // -----------------------------------------------------------------
     it("7/14. a clean file loads at RATED, reaches COMPLETE, reconciles, and the raw file is in archive/", async () => {
-      const { rpManifestUri, manifest } = prepRated(
-        "20260101",
-        cleanRows("clean"),
-      );
+      const p = await graph("clean");
+      const { rpManifestUri, manifest, udrName } = prepRated(p, "202608140901");
       const batchId = manifest.batch_id as string;
-      const archiveUri = runRl(rpManifestUri, "rl-clean");
+      const archiveUri = p.runRl(rpManifestUri, "rl-clean");
 
-      expect(await ratedCount(batchId)).toBe(2);
+      expect(await ratedCount(batchId)).toBe(VOLUMES.length);
       const batch = await batchRow(batchId);
       expect(batch.status).toBe("COMPLETE");
-      expect(batch.ratedCount).toBe(2);
+      expect(batch.ratedCount).toBe(VOLUMES.length);
       // Reconciliation: parsed = rated + rejected + discarded (D5).
       expect(batch.parsedCount).toBe(
         (batch.ratedCount ?? 0) +
@@ -842,52 +593,40 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // archive/ and left landing/, and source_file stays the bare SMB name.
       expect(batch.archiveFilePath).toBe(archiveUri);
       expect(batch.archiveFilePath).toMatch(/^file:\/\//);
-      expect(batch.sourceFile).toBe("RAN_USAGE_20260101.csv");
-      expect(existsSync(join(archiveDir, "RAN_USAGE_20260101.csv"))).toBe(true);
-      expect(existsSync(join(landingDir, "RAN_USAGE_20260101.csv"))).toBe(
-        false,
-      );
+      expect(batch.sourceFile).toBe(udrName);
+      expect(existsSync(join(p.dirs.archive, udrName))).toBe(true);
+      expect(existsSync(join(p.dirs.landing, udrName))).toBe(false);
       // BATCH_COMPLETE emitted; severity left for the sweep (§7.2a).
-      const line = JSON.parse(firstLine(logLinesFor("RL", "rl-clean")));
+      const line = JSON.parse(firstLine(logLinesFor(p, "RL", "rl-clean")));
       expect(line.event_code).toBe("BATCH_COMPLETE");
       expect(line.perceived_severity).toBeNull();
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // #8 — the BILL_APPROVED guard.
     // -----------------------------------------------------------------
     it("8. a BILL_APPROVED collision refuses the whole batch: zero rows, REFUSED, LOAD_BLOCKED_BILLED", async () => {
-      const { rpManifestUri, manifest, rated } = prepRated(
-        "20260201",
-        cleanRows("guard"),
+      const p = await graph("guard");
+      const { rpManifestUri, manifest, rated, udrName } = prepRated(
+        p,
+        "202608140902",
       );
       const batchId = manifest.batch_id as string;
       // Pre-insert a live BILL_APPROVED row colliding with one incoming record,
       // read straight from the rated Parquet (no reimplementation of udr_key).
       const collide = rated[0]!;
-      await db.insert(udrRated).values({
-        partitionPeriod: monthBucket(collide.start_datetime as string),
-        udrType: collide.udr_type as string,
-        startDatetime: new Date(collide.start_datetime as string),
-        endDatetime: new Date(collide.end_datetime as string),
-        status: "BILL_APPROVED",
-        udrSubscriptionRefId: collide.udr_subscription_ref_id as string,
-        udrKey: collide.udr_key as string,
-        udrUsageQuantity: collide.udr_usage_quantity as string,
-        udrUsageUnit: collide.udr_usage_unit as string,
-        udrRateType: "FLAT",
-        udrRatedPrice: collide.udr_rated_price as string,
-        udrRatedPriceRaw: collide.udr_rated_price_raw as string,
-        udrRoundingMode: collide.udr_rounding_mode as string,
-        udrCurrency: collide.udr_currency as string,
-        udrRefBatchId: "SENTINEL-APPROVED",
-        udrSourceFile: "prior-invoice.csv",
-        ratingEngineVersion: ENGINE_VERSION,
-        ratingFlowRevision: 1,
-        billrunRefId: "BR-GUARD-001",
-      });
+      await db
+        .insert(udrRated)
+        .values(
+          liveCollisionValues(
+            collide,
+            "BILL_APPROVED",
+            "SENTINEL-APPROVED",
+            "BR-GUARD-001",
+          ),
+        );
 
-      runRlExpectFail(rpManifestUri, "rl-guard");
+      runRlExpectFail(p, rpManifestUri, "rl-guard");
 
       // Zero rows written for THIS batch (the whole batch refused).
       expect(await ratedCount(batchId)).toBe(0);
@@ -895,9 +634,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(batch.status).toBe("REFUSED");
       // The raw file stays in landing/ (never archived on a refusal).
       expect(batch.archiveFilePath).toBeNull();
-      expect(existsSync(join(landingDir, "RAN_USAGE_20260201.csv"))).toBe(true);
+      expect(existsSync(join(p.dirs.landing, udrName))).toBe(true);
       // LOAD_BLOCKED_BILLED names the colliding key + its billrun_ref_id.
-      const line = JSON.parse(firstLine(logLinesFor("RL", "rl-guard")));
+      const line = JSON.parse(firstLine(logLinesFor(p, "RL", "rl-guard")));
       expect(line.event_code).toBe("LOAD_BLOCKED_BILLED");
       const collisions = line.additional_info.collisions as {
         udr_key: string;
@@ -905,32 +644,16 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       }[];
       expect(collisions[0]!.udr_key).toBe(collide.udr_key);
       expect(collisions[0]!.billrun_ref_id).toBe("BR-GUARD-001");
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // bm25 — the BILL_DRAFT (in-flight) guard + billed-precedence.
     // -----------------------------------------------------------------
-    // A live udr_rated row a bill run holds in flight, read straight from the
-    // rated Parquet so udr_key is never reimplemented (matching test #8).
-    const liveCollisionValues = (
-      src: Record<string, string | null>,
-      status: "BILL_DRAFT" | "BILL_APPROVED",
-      sentinel: string,
-      billrunRefId: string,
-    ) =>
-      heldRowValues(src, {
-        status,
-        rateType: "FLAT",
-        refBatchId: sentinel,
-        sourceFile: "prior-run.csv",
-        engineVersion: ENGINE_VERSION,
-        billrunRefId,
-      });
-
     it("bm25. a BILL_DRAFT collision refuses the whole batch: zero rows, REFUSED, LOAD_BLOCKED_INFLIGHT naming the bill run", async () => {
-      const { rpManifestUri, manifest, rated } = prepRated(
-        "20260210",
-        cleanRows("inflight"),
+      const p = await graph("inflight");
+      const { rpManifestUri, manifest, rated, udrName } = prepRated(
+        p,
+        "202608140903",
       );
       const batchId = manifest.batch_id as string;
       // A live BILL_DRAFT row (an in-flight bill run holds the claim) colliding
@@ -947,7 +670,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           ),
         );
 
-      runRlExpectFail(rpManifestUri, "rl-inflight");
+      runRlExpectFail(p, rpManifestUri, "rl-inflight");
 
       // Zero rows written for THIS batch (the whole batch refused).
       expect(await ratedCount(batchId)).toBe(0);
@@ -955,9 +678,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(batch.status).toBe("REFUSED");
       // The raw file stays in landing/ (never archived on a refusal).
       expect(batch.archiveFilePath).toBeNull();
-      expect(existsSync(join(landingDir, "RAN_USAGE_20260210.csv"))).toBe(true);
+      expect(existsSync(join(p.dirs.landing, udrName))).toBe(true);
       // LOAD_BLOCKED_INFLIGHT (MINOR) names the blocking bill_run_id.
-      const line = JSON.parse(firstLine(logLinesFor("RL", "rl-inflight")));
+      const line = JSON.parse(firstLine(logLinesFor(p, "RL", "rl-inflight")));
       expect(line.event_code).toBe("LOAD_BLOCKED_INFLIGHT");
       expect(line.additional_info.blocking_bill_run_ids).toContain(
         "BR-INFLIGHT-042",
@@ -968,13 +691,11 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       }[];
       expect(collisions[0]!.udr_key).toBe(collide.udr_key);
       expect(collisions[0]!.billrun_ref_id).toBe("BR-INFLIGHT-042");
-    });
+    }, 120_000);
 
     it("bm25. a BILL_APPROVED collision takes precedence over a BILL_DRAFT one (billed wins)", async () => {
-      const { rpManifestUri, manifest, rated } = prepRated(
-        "20260220",
-        cleanRows("precedence"),
-      );
+      const p = await graph("precedence");
+      const { rpManifestUri, manifest, rated } = prepRated(p, "202608140904");
       const batchId = manifest.batch_id as string;
       // Both classes present: an approved collision on the first record and an
       // in-flight collision on the second. The billed refusal must win.
@@ -995,31 +716,31 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           ),
         ]);
 
-      runRlExpectFail(rpManifestUri, "rl-precedence");
+      runRlExpectFail(p, rpManifestUri, "rl-precedence");
 
       expect(await ratedCount(batchId)).toBe(0);
       const batch = await batchRow(batchId);
       expect(batch.status).toBe("REFUSED");
-      const line = JSON.parse(firstLine(logLinesFor("RL", "rl-precedence")));
+      const line = JSON.parse(firstLine(logLinesFor(p, "RL", "rl-precedence")));
       expect(line.event_code).toBe("LOAD_BLOCKED_BILLED");
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // CURRENCY_MISMATCH (D3).
     // -----------------------------------------------------------------
     it("5. a resolved currency that differs from the billing account currency refuses the batch (CURRENCY_MISMATCH)", async () => {
-      // invC resolves an MYR price but its billing account is USD -> mismatch.
-      const { rpManifestUri, manifest } = prepRated("20260301", [
-        `2026-08-14T10:00:00Z,${invC},CU,ccy,100`,
-      ]);
+      // The subscription resolves an MYR price but its billing account is USD
+      // -> mismatch.
+      const p = await graph("ccy", OTHER_CURRENCY);
+      const { rpManifestUri, manifest } = prepRated(p, "202608140905");
       const batchId = manifest.batch_id as string;
-      runRlExpectFail(rpManifestUri, "rl-ccy");
+      runRlExpectFail(p, rpManifestUri, "rl-ccy");
 
       expect(await ratedCount(batchId)).toBe(0);
       const batch = await batchRow(batchId);
       expect(batch.status).toBe("REFUSED");
       expect(batch.archiveFilePath).toBeNull();
-      const line = JSON.parse(firstLine(logLinesFor("RL", "rl-ccy")));
+      const line = JSON.parse(firstLine(logLinesFor(p, "RL", "rl-ccy")));
       expect(line.event_code).toBe("CURRENCY_MISMATCH");
       const m = line.additional_info.mismatches[0] as {
         udr_currency: string;
@@ -1027,15 +748,16 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       };
       expect(m.udr_currency).toBe(CURRENCY);
       expect(m.account_currency).toBe(OTHER_CURRENCY);
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // #2/#14 — transaction integrity + mid-transaction failure.
     // -----------------------------------------------------------------
     it("2/14. a live-row collision on insert aborts the whole transaction: zero rows, file left in landing/, batch PROCESSING", async () => {
-      const { rpManifestUri, manifest, rated } = prepRated(
-        "20260401",
-        cleanRows("midtx"),
+      const p = await graph("midtx");
+      const { rpManifestUri, manifest, rated, udrName } = prepRated(
+        p,
+        "202608140906",
       );
       const batchId = manifest.batch_id as string;
       // A live RATED row (NOT BILL_APPROVED, so the guard passes) colliding with
@@ -1052,18 +774,19 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         udrKey: collide.udr_key as string,
         udrUsageQuantity: collide.udr_usage_quantity as string,
         udrUsageUnit: collide.udr_usage_unit as string,
-        udrRateType: "FLAT",
+        udrRateType: "PER_UNIT",
         udrRatedPrice: collide.udr_rated_price as string,
         udrRatedPriceRaw: collide.udr_rated_price_raw as string,
         udrRoundingMode: collide.udr_rounding_mode as string,
         udrCurrency: collide.udr_currency as string,
         udrRefBatchId: "SENTINEL-LIVE",
-        udrSourceFile: "prior-run.csv",
+        udrSourceFile: "prior-run.udr",
         ratingEngineVersion: ENGINE_VERSION,
         ratingFlowRevision: 1,
+        udrResource: collide.udr_resource ?? null,
       });
 
-      runRlExpectFail(rpManifestUri, "rl-midtx");
+      runRlExpectFail(p, rpManifestUri, "rl-midtx");
 
       // Nothing of THIS batch was loaded (the insert rolled back).
       expect(await ratedCount(batchId)).toBe(0);
@@ -1073,14 +796,15 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(batch.status).toBe("PROCESSING");
       expect(batch.archiveFilePath).toBeNull();
       // The raw file is still recoverable in landing/ (Inv #9).
-      expect(existsSync(join(landingDir, "RAN_USAGE_20260401.csv"))).toBe(true);
-    });
+      expect(existsSync(join(p.dirs.landing, udrName))).toBe(true);
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // #10 — reconciliation imbalance.
     // -----------------------------------------------------------------
     it("10. a deliberate count imbalance ends the batch FAILED with RECON_IMBALANCE (zero rows)", async () => {
-      const { manifest } = prepRated("20260501", cleanRows("recon"));
+      const p = await graph("recon");
+      const { manifest } = prepRated(p, "202608140907");
       const batchId = manifest.batch_id as string;
       // Corrupt the manifest's parsed count so parsed != rated + rejected +
       // discarded, then feed the tampered manifest to RL.
@@ -1088,33 +812,34 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         ...manifest,
         prp_parsed_count: (manifest.rated_count as number) + 5,
       };
-      const tamperedPath = join(workDir, `${batchId}-tampered-manifest.json`);
+      const tamperedPath = join(
+        p.dirs.work,
+        `${batchId}-tampered-manifest.json`,
+      );
       writeFileSync(tamperedPath, JSON.stringify(tampered), "utf8");
-      const tamperedUri = `file://${tamperedPath}`;
+      const tamperedUri = pathToFileURL(tamperedPath).href;
 
-      runRlExpectFail(tamperedUri, "rl-recon");
+      runRlExpectFail(p, tamperedUri, "rl-recon");
 
       // The load rolled back — zero rows — and the batch ends FAILED.
       expect(await ratedCount(batchId)).toBe(0);
       const batch = await batchRow(batchId);
       expect(batch.status).toBe("FAILED");
       expect(batch.archiveFilePath).toBeNull();
-      const line = JSON.parse(firstLine(logLinesFor("RL", "rl-recon")));
+      const line = JSON.parse(firstLine(logLinesFor(p, "RL", "rl-recon")));
       expect(line.event_code).toBe("RECON_IMBALANCE");
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // #14 (recovery) — archive-after-commit is recoverable; a re-run
     // re-attempts the archive only, never re-loads.
     // -----------------------------------------------------------------
     it("9. a committed-but-unarchived batch recovers on re-run: archive only, never a re-load", async () => {
-      const { rpManifestUri, manifest } = prepRated(
-        "20260601",
-        cleanRows("recover"),
-      );
+      const p = await graph("recover");
+      const { rpManifestUri, manifest, udrName } = prepRated(p, "202608140908");
       const batchId = manifest.batch_id as string;
-      runRl(rpManifestUri, "rl-recover-1");
-      expect(await ratedCount(batchId)).toBe(2);
+      p.runRl(rpManifestUri, "rl-recover-1");
+      expect(await ratedCount(batchId)).toBe(VOLUMES.length);
 
       // Simulate a worker killed AFTER commit but BEFORE archive completed:
       // the rows are committed, archive_file_path is NULL, and the raw file is
@@ -1124,48 +849,51 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         .set({ archiveFilePath: null })
         .where(eq(udrBatch.batchId, batchId));
       copyFileSync(
-        join(archiveDir, "RAN_USAGE_20260601.csv"),
-        join(landingDir, "RAN_USAGE_20260601.csv"),
+        join(p.dirs.archive, udrName),
+        join(p.dirs.landing, udrName),
       );
 
       // Re-run RL. It must NOT re-load (that would abort on the live-row
       // constraint) — it re-attempts the archive only (D6/D9).
-      const archiveUri = runRl(rpManifestUri, "rl-recover-2");
-      expect(await ratedCount(batchId)).toBe(2); // unchanged — no re-load
+      const archiveUri = p.runRl(rpManifestUri, "rl-recover-2");
+      expect(await ratedCount(batchId)).toBe(VOLUMES.length); // no re-load
       const batch = await batchRow(batchId);
       expect(batch.status).toBe("COMPLETE");
       expect(batch.archiveFilePath).toBe(archiveUri);
-      expect(existsSync(join(landingDir, "RAN_USAGE_20260601.csv"))).toBe(
-        false,
-      );
-    });
+      expect(existsSync(join(p.dirs.landing, udrName))).toBe(false);
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // Forward contract — a non-PROCESSING RP manifest is a no-op.
     // -----------------------------------------------------------------
     it("rl no-ops on a non-PROCESSING manifest (a DISCARDED redelivery), loading nothing", async () => {
+      const p = await graph("noop");
       // A byte-identical redelivery -> PRP DISCARDED -> RP passes it through.
-      const csv = [`2026-08-14T10:00:00Z,${invA},CU,noop,100`];
-      writeCsv("RAN_USAGE_20260701.csv", csv);
-      runPrp(join(landingDir, "RAN_USAGE_20260701.csv"), "prp-noop-1");
-      const dupPath = writeCsv("RAN_USAGE_20260701_v9.csv", csv);
-      const dupPrpUri = runPrp(dupPath, "prp-noop-2");
-      const dupRpUri = runRp(dupPrpUri, "rp-noop");
-      expect(readManifest(dupRpUri).status).toBe("DISCARDED");
+      p.runPrp(
+        p.writeUdr("rating-input-file-202608140909.udr", VOLUMES),
+        "prp-noop-1",
+      );
+      const dupPath = p.writeUdr(
+        "rating-input-file-202608140909_v9.udr",
+        VOLUMES,
+      );
+      const dupPrpUri = p.runPrp(dupPath, "prp-noop-2");
+      const dupRpUri = p.runRp(dupPrpUri, "rp-noop");
+      expect(readHarnessManifest(dupRpUri).status).toBe("DISCARDED");
 
       // RL consumes it and no-ops: exit 0, no rows, no archive, no RL log line.
       const before = await db
         .select({ n: dsql<number>`count(*)::int` })
         .from(udrRated);
-      runRl(dupRpUri, "rl-noop");
+      p.runRl(dupRpUri, "rl-noop");
       const after = await db
         .select({ n: dsql<number>`count(*)::int` })
         .from(udrRated);
       // (No batch_id to filter on for a DISCARDED manifest; assert the DISCARDED
       // redelivery added nothing under its varied name in landing.)
       expect(after[0]!.n).toBe(before[0]!.n);
-      expect(logLinesFor("RL", "rl-noop")).toHaveLength(0);
-    });
+      expect(logLinesFor(p, "RL", "rl-noop")).toHaveLength(0);
+    }, 120_000);
   },
 );
 
@@ -1174,12 +902,10 @@ describe.skipIf(!databaseUrl || !pythonReady)(
 // and the live-row constraint all work on raw keys (Inv 27, 28; R4, R5).
 //
 // Runs on the maintained `rating-ran-harness` (the production 7-column profile
-// and the Sample-5G graph with its ratecard), not the block above: that block
-// still invokes PRP with the pre-rm21 5-column CLI and seeds no ratecard, so it
-// cannot produce a udr_resource (its failures are a recorded baseline, billing
-// known-issues §21). Each case seeds its own graph (own MNO), because the
-// live-row key (partition_period, udr_key, is_live) holds one live row per cell
-// per month and writeUdr's rows are all dated 2026-08-14.
+// and the Sample-5G graph with its ratecard), like the rm09 block above. Each
+// case seeds its own graph (own MNO), because the live-row key
+// (partition_period, udr_key, is_live) holds one live row per cell per month
+// and writeUdr's rows are all dated 2026-08-14.
 // ---------------------------------------------------------------------
 const RM28_ROLE_PW = "rm28-test-only-pw";
 const RM28_ENGINE_VERSION = "rm28-test-engine@sha256:deadbeef";

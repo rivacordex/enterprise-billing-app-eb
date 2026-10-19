@@ -32,8 +32,14 @@ vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
     countZeroTotalPostable: vi.fn(),
   },
 }));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("Asia/Kuala_Lumpur"),
+}));
 vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
-  ratedLinesRepository: { countOrphansForWindow: vi.fn() },
+  ratedLinesRepository: {
+    countOrphansForWindow: vi.fn(),
+    countPriorPeriodForRun: vi.fn(),
+  },
 }));
 
 import { accountingPeriodRepository } from "@/db/repositories/accounts/accounting-period.repository";
@@ -72,6 +78,9 @@ const mockListRejectedPending = vi.mocked(
   billRunAccountStageRepository.listRejectedPendingForRun,
 );
 const mockCountOrphans = vi.mocked(ratedLinesRepository.countOrphansForWindow);
+const mockCountPriorPeriod = vi.mocked(
+  ratedLinesRepository.countPriorPeriodForRun,
+);
 
 const dbStub = {} as never;
 
@@ -109,19 +118,52 @@ beforeEach(() => {
   ] as never);
   mockListRejectedPending.mockResolvedValue([]); // no rejected accounts by default
   mockCountOrphans.mockResolvedValue(0); // no orphans by default
+  mockCountPriorPeriod.mockResolvedValue({ records: 0, accounts: 0 });
   mockCountZeroTotal.mockResolvedValue(0); // no zero-total bills by default
   mockCountMissingTemplate.mockResolvedValue(0); // every account captured
 });
 
 describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 7th, 2026-09-17 an 8th)", () => {
-  it("returns all nine checks passing on a clean run", async () => {
+  it("returns all ten checks passing on a clean run", async () => {
     const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
 
-    expect(checks).toHaveLength(9);
+    expect(checks).toHaveLength(10);
     for (const c of checks) {
       expect(c.pass).toBe(true);
       expect(c.remediation).toBeNull();
     }
+  });
+
+  it("leaves out the informational checks and their reads when asked (approval path)", async () => {
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver", {
+      informational: false,
+    });
+
+    expect(checks).toHaveLength(7);
+    expect(checks.some((c) => c.informational)).toBe(false);
+    expect(mockCountOrphans).not.toHaveBeenCalled();
+    expect(mockCountPriorPeriod).not.toHaveBeenCalled();
+    expect(mockCountZeroTotal).not.toHaveBeenCalled();
+  });
+
+  it("[§28] prior_period_usage is informational, counts records and accounts, and never blocks", async () => {
+    mockCountPriorPeriod.mockResolvedValue({ records: 3600, accounts: 4 });
+
+    const checks = await runPreApprovalChecks(dbStub, run(), "user-approver");
+
+    expect(byKey(checks, "prior_period_usage")).toMatchObject({
+      check: "prior_period_usage",
+      pass: true,
+      informational: true,
+      remediation: expect.stringContaining(
+        "3600 usage records from earlier periods on 4 accounts",
+      ),
+    });
+    expect(mockCountPriorPeriod).toHaveBeenCalledWith(
+      dbStub,
+      expect.objectContaining({ timezone: "Asia/Kuala_Lumpur" }),
+      "BRN00000001",
+    );
   });
 
   it("[bm32] orphan_count is informational, always passes, and never blocks", async () => {
@@ -136,6 +178,11 @@ describe("runPreApprovalChecks (bm10-spec §Design/§1, bm17 adds a 6th, bm32 a 
       informational: true,
       remediation: expect.stringContaining("3 orphaned usage records"),
     });
+    // The window dates usage in the business time zone.
+    expect(mockCountOrphans).toHaveBeenCalledWith(
+      dbStub,
+      expect.objectContaining({ timezone: "Asia/Kuala_Lumpur" }),
+    );
   });
 
   it("[bm32] orphan_count carries a null remediation when there are no orphans", async () => {

@@ -68,6 +68,7 @@ Create `CREATE TEMP TABLE _bm42_capacity ON COMMIT DROP AS …` immediately afte
 - `offering_name` = `product.product_offering.name` (→ line `description`, TC20);
 - `step_count` = `jsonb_array_length(steps)` (0 when NULL);
 - `subscription_count` = COUNT of ACTIVE `product_inventory` rows for this `(account, offering family)` — for the `CAPACITY_MULTIPLE_SUBSCRIPTIONS` guard.
+  - **Amended 2026-10-18 (bm73 code review, owner decision):** "ACTIVE" here, in the capacity as-of pruning and in verification's re-resolution means ACTIVE **and overlapping the period** (`start_date <= period_end`, `end_date` unset or `>= period_start`; verification uses the stored bill period). A subscription ordered ahead or already ended is not counted or billed. Same rule as bm29's recurring selection.
 
 **Commitment and motivation are independent add-ons (TC36)** — the formula computes `topUp` (needs `target`) and the bands (need `steps`) independently; a missing component contributes zero to its term, so all three shapes (commitment-only / motivation-only / both) are first-class.
 

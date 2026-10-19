@@ -5,7 +5,7 @@ import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-acc
 import { billRunAccountStageRepository } from "@/db/repositories/billing/bill-run-account-stage.repository";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { ratedLinesRepository } from "@/db/repositories/billing/rated-lines.repository";
-import { periodPartitions } from "@/services/billing/derive-periods";
+import { exceptionWindowForRun } from "@/services/billing/exception-window";
 import type { Database } from "@/db/client";
 import type { BillRun } from "@/db/schema/billing/bill-run";
 import { TRIGGER_EVENT_TYPES } from "@/types/billing";
@@ -289,17 +289,17 @@ async function checkTemplateVersionsCaptured(
 // same window (the ≤2 UTC-month partitions the run spans + the `start_datetime`
 // window), so the count equals what the operator sees there even for a
 // `cycle_day != 1` run. The count is surfaced so an operator sees it, but a run
-// bills fine with orphans present: the next run claims them once the inventory is
-// fixed (Inv #25).
+// bills fine with orphans present (Inv #25). No later run claims them: once
+// the period is closed, a fixed orphan of a run account surfaces on the next
+// run as PRIOR_PERIOD (`prior_period_usage`, known-issues §28).
 async function checkOrphanCount(
   dbOrTx: Database,
   run: BillRun,
 ): Promise<PreApprovalCheck> {
-  const count = await ratedLinesRepository.countOrphansForWindow(dbOrTx, {
-    partitions: periodPartitions(run.periodStart, run.periodEnd),
-    periodStart: run.periodStart,
-    periodEnd: run.periodEnd,
-  });
+  const count = await ratedLinesRepository.countOrphansForWindow(
+    dbOrTx,
+    exceptionWindowForRun(run),
+  );
   return {
     check: "orphan_count",
     pass: true,
@@ -311,11 +311,47 @@ async function checkOrphanCount(
   };
 }
 
+// known-issues §28 option 1 (owner decision, 2026-10-19) — the run accounts'
+// unbilled usage from EARLIER periods. INFORMATIONAL, never blocking (same
+// contract as `orphan_count`). Since Validation + Collection are scoped to the
+// period (bm73 review), no run bills a RATED record dated before it: usage
+// rated late, rows released at approval for a SKIPPED account (§27), or a
+// partial-period exclusion. It is counted over the SAME predicate as the
+// Exceptions tab's PRIOR_PERIOD rows, so the approver sees it and Revenue Ops
+// raises an adjustment (ops guide, rule 4).
+async function checkPriorPeriodUsage(
+  dbOrTx: Database,
+  run: BillRun,
+): Promise<PreApprovalCheck> {
+  const { records, accounts } =
+    await ratedLinesRepository.countPriorPeriodForRun(
+      dbOrTx,
+      exceptionWindowForRun(run),
+      run.billRunId,
+    );
+  return {
+    check: "prior_period_usage",
+    pass: true,
+    informational: true,
+    remediation:
+      records > 0
+        ? `${records} usage record${records === 1 ? "" : "s"} from earlier periods on ${accounts} account${accounts === 1 ? "" : "s"} will not be billed by any run — Revenue Ops raises an adjustment (see Exceptions); informational, does not block approval`
+        : null,
+  };
+}
+
+// `informational: false` leaves out the informational checks
+// (`zero_total_bills`, `orphan_count`, `prior_period_usage`): they never decide
+// approval, and the last two scan the run accounts' rating history, so
+// `approveRun` skips them while it holds the run lock (bm73 review
+// 2026-10-19). The preview and a failed approval still show the full list.
 export async function runPreApprovalChecks(
   dbOrTx: Database,
   run: BillRun,
   approverId: string,
+  options: { informational?: boolean } = {},
 ): Promise<PreApprovalCheck[]> {
+  const informational = options.informational ?? true;
   const [
     periodOpen,
     glMappings,
@@ -326,6 +362,7 @@ export async function runPreApprovalChecks(
     templateVersionsCaptured,
     orphanCount,
     zeroTotalBills,
+    priorPeriodUsage,
   ] = await Promise.all([
     checkPeriodOpen(dbOrTx, run),
     checkGlMappingsResolvable(dbOrTx, run),
@@ -334,8 +371,9 @@ export async function runPreApprovalChecks(
     checkAccountsTerminal(dbOrTx, run),
     checkNoRejectedPending(dbOrTx, run),
     checkTemplateVersionsCaptured(dbOrTx, run),
-    checkOrphanCount(dbOrTx, run),
-    checkZeroTotalBills(dbOrTx, run),
+    informational ? checkOrphanCount(dbOrTx, run) : null,
+    informational ? checkZeroTotalBills(dbOrTx, run) : null,
+    informational ? checkPriorPeriodUsage(dbOrTx, run) : null,
   ]);
 
   return [
@@ -348,5 +386,6 @@ export async function runPreApprovalChecks(
     templateVersionsCaptured,
     orphanCount,
     zeroTotalBills,
-  ];
+    priorPeriodUsage,
+  ].filter((check): check is PreApprovalCheck => check !== null);
 }

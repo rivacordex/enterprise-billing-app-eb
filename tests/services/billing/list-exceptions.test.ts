@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // bm32-spec §Design/§Implementation §2. The per-record exception surface read:
-// resolves the run's WINDOW (the ≤2 UTC-month partitions it spans + the
-// start/end dates) and returns the repository's BILL_NOTUSED + orphan rows
+// resolves the run's WINDOW (the ≤2 month partitions it spans, the
+// start/end dates and the business time zone) and returns the repository's BILL_NOTUSED + orphan rows
 // verbatim. An unknown run yields an empty list rather than throwing.
 
 vi.mock("@/db/client", () => ({ db: {} }));
@@ -10,7 +10,13 @@ vi.mock("@/db/repositories/billing/bill-run.repository", () => ({
   billRunRepository: { findById: vi.fn() },
 }));
 vi.mock("@/db/repositories/billing/rated-lines.repository", () => ({
-  ratedLinesRepository: { listExceptionsForWindow: vi.fn() },
+  ratedLinesRepository: {
+    listExceptionsForWindow: vi.fn(),
+    listPriorPeriodForRun: vi.fn(),
+  },
+}));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("Asia/Kuala_Lumpur"),
 }));
 
 import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
@@ -21,9 +27,13 @@ const mockFindById = vi.mocked(billRunRepository.findById);
 const mockListExceptions = vi.mocked(
   ratedLinesRepository.listExceptionsForWindow,
 );
+const mockListPriorPeriod = vi.mocked(
+  ratedLinesRepository.listPriorPeriodForRun,
+);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockListPriorPeriod.mockResolvedValue([]);
 });
 
 describe("listExceptions (bm32-spec §2)", () => {
@@ -41,6 +51,7 @@ describe("listExceptions (bm32-spec §2)", () => {
       partitions: ["2026-07-01"],
       periodStart: "2026-07-01",
       periodEnd: "2026-07-31",
+      timezone: "Asia/Kuala_Lumpur",
     });
   });
 
@@ -61,6 +72,7 @@ describe("listExceptions (bm32-spec §2)", () => {
       partitions: ["2026-07-01", "2026-08-01"],
       periodStart: "2026-07-15",
       periodEnd: "2026-08-14",
+      timezone: "Asia/Kuala_Lumpur",
     });
   });
 
@@ -80,6 +92,9 @@ describe("listExceptions (bm32-spec §2)", () => {
         unit: "GB",
         ratedPrice: "5.00",
         currency: "MYR",
+        usagePeriodStart: null,
+        usagePeriodEnd: null,
+        recordCount: 1,
       },
       {
         kind: "ORPHAN" as const,
@@ -90,11 +105,60 @@ describe("listExceptions (bm32-spec §2)", () => {
         unit: "GB",
         ratedPrice: "1.00",
         currency: "MYR",
+        usagePeriodStart: null,
+        usagePeriodEnd: null,
+        recordCount: 1,
       },
     ];
     mockListExceptions.mockResolvedValue(rows);
 
     expect(await listExceptions("BRN00000001")).toEqual(rows);
+  });
+
+  it("appends the run accounts' earlier-period usage after the in-window rows (known-issues §28)", async () => {
+    mockFindById.mockResolvedValue({
+      billRunId: "BRN00000002",
+      periodStart: "2026-10-01",
+      periodEnd: "2026-10-31",
+    } as never);
+    const orphan = {
+      kind: "ORPHAN" as const,
+      subscriberRef: "PRDINV99999999",
+      accountName: null,
+      udrType: "RAN_USAGE",
+      quantity: "1.000000",
+      unit: "GB",
+      ratedPrice: "1.00",
+      currency: "MYR",
+      usagePeriodStart: null,
+      usagePeriodEnd: null,
+      recordCount: 1,
+    };
+    const prior = {
+      ...orphan,
+      kind: "PRIOR_PERIOD" as const,
+      subscriberRef: "PRDINV00000005",
+      accountName: "Acme Sdn Bhd",
+      quantity: "300.000000",
+      ratedPrice: "1500.00",
+      usagePeriodStart: "2026-09-01",
+      usagePeriodEnd: "2026-09-30",
+      recordCount: 3,
+    };
+    mockListExceptions.mockResolvedValue([orphan]);
+    mockListPriorPeriod.mockResolvedValue([prior]);
+
+    expect(await listExceptions("BRN00000002")).toEqual([orphan, prior]);
+    expect(mockListPriorPeriod).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        partitions: ["2026-10-01"],
+        periodStart: "2026-10-01",
+        periodEnd: "2026-10-31",
+        timezone: "Asia/Kuala_Lumpur",
+      },
+      "BRN00000002",
+    );
   });
 
   it("returns an empty list for an unknown run (no throw)", async () => {

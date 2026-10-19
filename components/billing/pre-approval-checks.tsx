@@ -24,6 +24,7 @@ const CHECK_LABELS: Record<PreApprovalCheckKey, string> = {
   template_versions_captured: "Every account has an invoice template version",
   orphan_count: "Orphaned usage records",
   zero_total_bills: "Zero-total bills",
+  prior_period_usage: "Unbilled usage from earlier periods",
 };
 
 export interface PreApprovalChecksProps {

@@ -889,6 +889,14 @@ generated v1 is now produced by the generator from that layout
 byte-identical whole document; `generate-parity.test.ts`'s former `it.fails`
 case is now a plain passing test. The text below is the original finding.
 
+**Re-checked against the pinned v1 (bm73, 2026-10-17):** bm71 removed the
+usage annex and its CSS outright, and bm72 regenerated v1 for the last time
+and pinned it (`tests/guardrails/invoice-template-v1-pin.test.ts`). The
+generator's output from the pinned layout is still identical to the stored
+generated v1 (`generate-parity.test.ts`, green in the bm73 unit run), and the
+Total Amount page and footnote CSS live in `shell.hbs`, so a generated version
+can no longer render unstyled. Closed.
+
 **Where:** `db/seeds/invoice-templates/INVTPL-STD-A4/v1/shell.hbs` (layout
 BTV00000001, seeded immutably by bm50) and the hand-written generated v1
 `db/seeds/invoice-templates/generated/INVOICE/v1/invoice.hbs` (BTV00000002).
@@ -1102,3 +1110,89 @@ recorded as deferred and is now fixed:
 
 Kept as specified: the audit `templateStamps` stays one entry per BAN (D35; the
 review found it negligible at today's run sizes).
+
+## 25. 🟡 bm72 code review (xhigh, 084944b, 2026-10-17): fixed items and what stays open
+
+Fixed (progress tracker, bm72 notes): the stuck preview while a line is invalid, the missing busy state on footnote edits, the untrimmed counter, the loud failure for a stored structure without `footnote`, the family-scoped `?version=`, the post-save remount that closed an open Activate dialog, the second capacity scan, the repeated structure parse, the import grouping and the duplicated footnote literals.
+
+Kept, by owner decision or by an existing rule:
+
+- **25a. 🟡 OPEN: the Activate dialog's footnote diff is by position (spec).** Deleting line 1 of two reads as "line 1: A → B" plus "line 2 removed", not "line 1 removed". The bm72 spec asks for position-based lines. A later unit can match lines (LCS) and print a removed line's text.
+- **25b. 🟢 Kept: `totals.totalAmount` = Σ Utilised (spec, v1 pinned).** It is not the bill total. The placeholder catalog and `bind.ts` now say a CSV column map or a later layout wanting the invoice total reads `totals.amountDue`.
+- **25c. 🟢 Kept: the wrapped resolver in `InvoiceStructureForm`.** Code-standards Part 2 Next.js rule 2 (the bm72 correction) records it, following the company-profile form's precedent.
+- **25d. 🟡 OPEN, outside bm72: the company-profile form has the same remount race.** `company-profile/page.tsx` keys `CompanyProfileEditForm` on `${shown.version}:${draft?.token}`, so the refresh after a save can still close its Activate dialog. The fix is the same: adopt a server state the form does not hold, instead of remounting. Owner: a company-profile (bm61) follow-up.
+- **25e. 🟢 Note: the render path is not changed for a stale structure.** On a DB that predates bm72's `0046` rewrite, `loadGenerated` already refuses the reseeded v1 blobs with `TEMPLATE_CHECKSUM_MISMATCH`, and old blobs never read `footnote`. The page read now fails loudly (`STRUCTURE_INVALID`). The fix for both is the bm64 reset.
+
+## 26. 🟡 OPEN: the draft PRO-FORMA preview times out on large invoices (bm73 manual run, 2026-10-18)
+
+**Seen:** on the bm73 manual run (`BRN00000001`, 4 BANs × 900 polygons, each invoice 34 pages), opening a draft showed "The draft invoice took too long to render. Please try again." Approval, posting and the final renders were unaffected (posting rendered all 4 final PDFs in about 12 s in total).
+
+**Why:**
+
+- The 25 s limit is client-side only (`components/billing/invoice-preview-modal.tsx`, `RENDER_TIMEOUT_MS`). The browser aborts its fetch, but the route (`app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/route.ts`) ignores the request's abort signal, so the server keeps rendering, holds one of the two render permits (`render-invoice.ts`, `MAX_CONCURRENT_RENDERS = 2`) and then throws the PDF away (draft previews are not stored).
+- Each Retry starts a new render from scratch and can queue behind the abandoned ones, so retrying quickly makes a timeout more likely.
+- Seen on `next dev` (on-demand route compilation, a ~1.1 GB dev-server process, page loads already 30–60 s). Not yet measured on a production build, and not split between building the invoice and the Chromium PDF.
+
+**Options for a later unit:** measure first (bind vs PDF, dev vs `next build`); then any of raising the client limit for large invoices, passing the request's abort signal through to free the permit, or caching the draft PDF per (run, BAN, attempt).
+
+## 27. 🟢 RESOLVED (2026-10-18): approving a run marked a failed account's claimed usage `BILL_APPROVED` without billing it (bm73 code review)
+
+**Seen (code reading, confirmed):** an account can fail HARD **after** Collection claimed its rows (e.g. `CAPACITY_RATE_MISMATCH` at aggregation, `RECONCILIATION_MISMATCH` at verification). It ends `PROCESSING_FAILED` with its rows still `BILL_DRAFT`. Approving the run then:
+
+- marks the account `SKIPPED` (`approve-run.ts` step 4), so it gets no bill and no invoice; and
+- flips **every** `BILL_DRAFT` row of the run to `BILL_APPROVED` (`udrStatusRepository.markApproved`, scoped by run only), including the skipped account's rows.
+
+That usage is now final as "billed" but was never invoiced, and no later run can claim it (Collection claims `RATED` only). A corrected reload is refused `LOAD_BLOCKED_BILLED`.
+
+**No release path before approval:** reject applies only to `PROCESSED` accounts, cancel only to a stalled `PROCESSING` run, and a rerun claims the rows again.
+
+**Against the design:** Inv #19 says a claim is released whenever its attempt is abandoned (reject, cancel, rerun). Skipping an account at approval abandons its attempt but does not release.
+
+**Fixed (owner decision, 2026-10-18):** in the approve transaction, `markSkippedForRun` now returns the skipped accounts and `udrStatusRepository.releaseSkipped` returns their `BILL_DRAFT` rows to `RATED` (claim columns cleared; an empty list is a no-op) **before** `markApproved`. The usage is re-claimable by a later run. Inv #19 now lists "skipped at approval". Tests: `approve-run.service.test.ts` (release before approve, in order), `billing-e2e-happy-path.integration.test.ts` (a failed account's two claimed rows end `RATED`, unclaimed).
+
+## 28. 🟡 PARTLY RESOLVED (surfaced, option 1, 2026-10-19): usage left `RATED` after its period's run is never billed (bm73 code review, 2026-10-18)
+
+**Since:** the bm73 review fix that scopes Validation and Collection to the run's period (bm27 amendment). Before it, such rows failed the next run's accounts HARD (`WINDOW_COVERAGE`) every month, so they were visible but still never billed.
+
+**Which rows:** `RATED` usage dated in a period whose run is already approved:
+
+- usage rated late, after its period's run collected;
+- rows released to `RATED` at approval for a `SKIPPED` account (known-issues §27 fix);
+- a partial-period account's usage for the month it was `EXCLUDED` (by design today, O-TC7, §17).
+
+**Why it is lost:** a run claims only usage dated inside its own period, the `(cycle, period_start)` run is unique and closed once approved, and the exception surface / orphan count (`rated-lines.repository.ts`, pre-approval `orphan_count`) only look inside the run's window. Nothing reports these rows.
+
+**Options (owner decision pending):**
+
+1. **Surface only:** an informational pre-approval check (and Exceptions-tab row) counting the run's in-scope accounts' `RATED` usage dated before `period_start`, plus an operator process (adjustment / credit note in billing).
+2. **Catch-up:** Collection also claims an account's prior-period `RATED` rows into the next run, shown as a separate "prior period" line (changes the bm27/bm28 grain and the invoice).
+3. **Off-cycle run:** use the existing `offCycle` `run_type` to bill a closed period's leftovers (no UI or trigger path exists yet).
+
+**Decision (owner, 2026-10-19): option 1 — surface it.** Built:
+
+- `ratedLinesRepository.listPriorPeriodForRun` / `countPriorPeriodForRun` over one shared predicate (`priorPeriodConditions`): live, unclaimed `RATED` `RAN_USAGE` rows dated (business zone) before `period_start`, whose subscriber resolves to an account in the run's snapshot (any status, so `EXCLUDED` partial-period months show too).
+- Exceptions tab: a new `PRIOR_PERIOD` kind ("Earlier period"), one row per account, subscriber, usage type, unit, currency and billing month, with the month, the record count and SQL-summed quantity and value.
+- Pre-approval checklist: a new informational `prior_period_usage` line ("Unbilled usage from earlier periods") with the record and account counts. It never blocks.
+- Operator process: raise an adjustment in billing for the listed usage (ops guide `workflow-management/docs/opsguide-rating-batch.md`, rule 4).
+
+**Ownership and scope (owner, 2026-10-19, bm73 code review round 3):**
+
+- **Revenue Ops owns these rows.** They will be tracked on a Revenue Ops dashboard/report (not built yet). The Exceptions-tab row and the checklist line are the only in-app view until then.
+- **Revenue Ops clears them before the next run** of the account, so the same rows are not acted on twice.
+- **`EXCLUDED` accounts stay out of their cycle's run** (Inv #26 unchanged): the run bills neither recurring nor usage for that period. Their unclaimed `RATED` usage is handled manually by Revenue Ops.
+
+**Known limitations (accepted for now):**
+
+- **"Earlier period" means dated before this run's `period_start`; it does not check that the earlier period's run is approved.** If that run is still open (`PROCESSED` awaiting a rerun, `CANCELLED` and re-triggerable, or not started), it can still claim the rows. Revenue Ops must confirm the earlier run is approved before adjusting, or the usage is charged twice.
+- **The rows stay `RATED`, so they reappear on every later run of that account** until cleared: the app has no way to mark them handled (that would need an app write, e.g. to `BILL_NOTUSED`, a new decision).
+- **Only accounts in this run's snapshot are counted.** An account in no later run (ceased mid-period and `EXCLUDED`, `SKIPPED` at approval then terminated, or moved to another bill cycle) never gets its leftovers counted on any checklist. They show only as `ORPHAN` on their own period's run.
+- An unresolvable subscriber's earlier-period rows are not counted (not attributable to a run; they stay orphans of their own period's window).
+- Billing the usage itself is still options 2 or 3.
+
+## 29. 🟡 DEFERRED (owner decision, 2026-10-19): the earlier-period and orphan reads scan each run subscriber's whole rating history (bm73 code review, 2026-10-19)
+
+**What:** `countPriorPeriodForRun` / `listPriorPeriodForRun` (known-issues §28) read every past partition of `rating.udr_rated` for the run's subscribers (`partition_period <=` the first window partition, no lower bound), and nearly all of those rows are `BILL_APPROVED`. The date test now compares the raw `start_datetime` with the business-zone midnight, so `udr_rated_subscription_start_idx` serves it as a range per subscriber, but the cost still grows with history.
+
+**Mitigated:** approval no longer runs the informational checks (`zero_total_bills`, `orphan_count`, `prior_period_usage`) under the run lock; it runs the blocking checks only and re-runs the full list just to return a failed checklist (`approve-run.ts`, `runPreApprovalChecks(…, { informational: false })`). The approval page and the Exceptions tab still run these reads.
+
+**Deferred (cross-domain, rating):** a partial index on unclaimed live `RATED` rows, e.g. `(udr_subscription_ref_id, start_datetime) WHERE status = 'RATED' AND billrun_ban_id IS NULL AND is_live`. It is a rating-schema migration, owned by rating, and should be designed together with the Revenue Ops earlier-period dashboard (§28), which reads the same rows.

@@ -94,6 +94,34 @@ describe("getInvoiceTemplatePageData: the Standard family (bm66)", () => {
     expect(data.standardFamilyId).toBe("BTF00000001");
   });
 
+  it("ignores ?version= naming another family's version, so the Standard heading stays true", async () => {
+    repo.findById.mockResolvedValue({
+      ...SEEDED_GENERATED_ROW,
+      billTemplateVersionId: "BTV00000009",
+      refBillTemplateFamilyId: "BTF00000002",
+    });
+    const data = await getInvoiceTemplatePageData("BTV00000009", {
+      canEdit: false,
+    });
+    expect(data.shown.billTemplateVersionId).toBe("BTV00000002");
+  });
+
+  it("a stored structure from before bm72 (no footnote) throws TEMPLATE_VERSION_NOT_FOUND / STRUCTURE_INVALID, never a TypeError in the form", async () => {
+    repo.findDefault.mockResolvedValue({
+      ...SEEDED_GENERATED_ROW,
+      structure: {
+        sections: { payment: true, notes: true },
+        columns: {},
+      } as never,
+    });
+    await expect(
+      getInvoiceTemplatePageData(undefined, { canEdit: false }),
+    ).rejects.toMatchObject({
+      code: "TEMPLATE_VERSION_NOT_FOUND",
+      detail: { reason: "STRUCTURE_INVALID", versionId: "BTV00000002" },
+    });
+  });
+
   it("a missing default family (corrupted catalog) throws TEMPLATE_VERSION_NOT_FOUND, never a blank page", async () => {
     familyRepo.findDefault.mockResolvedValue(null);
     await expect(

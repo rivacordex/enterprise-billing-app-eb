@@ -44,6 +44,9 @@ vi.mock("@/db/repositories/audit.repository", () => ({
 vi.mock("@/services/billing/engine-registry", () => ({
   engineRegistry: { trigger: vi.fn() },
 }));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("Asia/Kuala_Lumpur"),
+}));
 vi.mock("@/services/billing/capture-template-stamps", () => ({
   captureTemplateStamps: vi.fn(),
 }));
@@ -56,6 +59,7 @@ import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import { rerunRun } from "@/services/billing/rerun-run";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 import type { RerunRunParams } from "@/services/billing/rerun-run";
 
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
@@ -127,6 +131,17 @@ beforeEach(() => {
 });
 
 describe("rerunRun (bm08-spec §Design/§1)", () => {
+  it("returns BUSINESS_TIMEZONE_MISMATCH and touches nothing when APP_TIMEZONE is not rating's zone", async () => {
+    vi.mocked(getAppTimezone).mockReturnValueOnce("UTC");
+
+    const result = await rerunRun(params(), "user-1");
+
+    expect(result).toEqual({ ok: false, code: "BUSINESS_TIMEZONE_MISMATCH" });
+    expect(mockFindByIdForUpdate).not.toHaveBeenCalled();
+    expect(mockInsertAuditEvent).not.toHaveBeenCalled();
+    expect(mockTrigger).not.toHaveBeenCalled();
+  });
+
   it("[CRITICAL] writes the BILL_RUN_RERUN audit row (prior totals + reason) BEFORE re-triggering the engine", async () => {
     const result = await rerunRun(params(), "user-1");
 
@@ -185,7 +200,11 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
     expect(mockTrigger).toHaveBeenCalledWith(
       "billrun",
       "bill_run_processing",
-      expect.objectContaining({ ban_ids: ["BAN00000001"], attempt: 2 }),
+      expect.objectContaining({
+        ban_ids: ["BAN00000001"],
+        attempt: 2,
+        business_timezone: "Asia/Kuala_Lumpur",
+      }),
     );
   });
 

@@ -1,5 +1,6 @@
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
 import type { InvoiceRenderInput } from "@/types/billing";
+import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 
 // Shared DB-free render-input fixtures, so each suite states only what it
 // changes (Sonar duplication: bm70 widened every suite's own copy). Each call
@@ -79,6 +80,8 @@ export function rawInvoiceRenderInputFixture(
       otherChargesSubTotal: "150.00",
       adjustments: "0.00",
       summaryBlocksSum: "150.00",
+      // No capacity line, so Total Amount (Σ Utilised) is 0.00.
+      utilisedTotal: "0.00",
     },
     run: { billRunId: "BRN00000042", cycleName: "Enterprise Monthly" },
     lines: [{ ...RECURRING_LINE }, { ...USAGE_LINE }],
@@ -162,6 +165,7 @@ export function invoiceRenderInputFixture(
     taxRateLabel: "0",
     serviceTypes: [],
     otherCharges: [],
+    footnote: [...SEEDED_FOOTNOTE],
     isDraft: false,
     locale: "en-MY",
     timezone: "UTC",

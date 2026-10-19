@@ -364,6 +364,21 @@ export async function insertRanRatecard(
     sourceFile?: string;
   },
 ): Promise<void> {
+  // An empty card would activate with no cells (the single INSERT used to
+  // reject an empty VALUES list; the batched loop below would not).
+  if (opts.rows.length === 0)
+    throw new Error("insertRanRatecard: a ratecard needs at least one row.");
+  // One transaction (a savepoint when `db` is already one) so a failed batch
+  // never leaves an ACTIVE version holding only some of its rows.
+  await db.transaction(async (tx) => {
+    await insertRanRatecardRows(tx as unknown as Database, opts);
+  });
+}
+
+async function insertRanRatecardRows(
+  db: Database,
+  opts: Parameters<typeof insertRanRatecard>[1],
+): Promise<void> {
   const snapshotDate = opts.snapshotDate ?? SAMPLE_5G_START_DATE;
   const [version] = await db
     .insert(ratecardVersion)
@@ -385,20 +400,28 @@ export async function insertRanRatecard(
   if (!version)
     throw new Error("insertRanRatecard: ratecard_version returned no row.");
 
-  await db.insert(ratecardRanUsageLkp).values(
-    opts.rows.map((row) => ({
-      ratecardVersionId: version.ratecardVersionId,
-      mnoPublicKey: opts.mnoPublicKey,
-      commercialUnitPublicKey:
-        opts.commercialUnitPublicKey ?? SAMPLE_5G_COMMERCIAL_UNIT,
-      polygonId: row.polygonId,
-      polygonStartDate: snapshotDate,
-      polygonEndDate: null,
-      state: opts.state === undefined ? SAMPLE_5G_RATECARD_STATE : opts.state,
-      district: row.district,
-      lkpSubscriberRefId: opts.lkpSubscriberRefId,
-      serviceCode: row.serviceCode,
-      ratePerUnit: null,
-    })),
-  );
+  const values = opts.rows.map((row) => ({
+    ratecardVersionId: version.ratecardVersionId,
+    mnoPublicKey: opts.mnoPublicKey,
+    commercialUnitPublicKey:
+      opts.commercialUnitPublicKey ?? SAMPLE_5G_COMMERCIAL_UNIT,
+    polygonId: row.polygonId,
+    polygonStartDate: snapshotDate,
+    polygonEndDate: null,
+    state: opts.state === undefined ? SAMPLE_5G_RATECARD_STATE : opts.state,
+    district: row.district,
+    lkpSubscriberRefId: opts.lkpSubscriberRefId,
+    serviceCode: row.serviceCode,
+    ratePerUnit: null,
+  }));
+  // Batched: one INSERT binds 11 parameters per row and Postgres caps a
+  // statement at 65,535, so a large card (e.g. rm13's 10,000-cell fan-out
+  // fixture) is written in slices.
+  for (let i = 0; i < values.length; i += LKP_INSERT_BATCH) {
+    await db
+      .insert(ratecardRanUsageLkp)
+      .values(values.slice(i, i + LKP_INSERT_BATCH));
+  }
 }
+
+const LKP_INSERT_BATCH = 2_000;

@@ -51,13 +51,15 @@ import type { SaveProfileDraftInput } from "@/validation/billing/invoice-profile
 //     after the activation to capture v3;
 //   * the NEXT posting (account C) stamps profile v2.
 //
-// The two real versions differ in structure (v2 shows Notes & terms, v3 hides
-// it), so the rendered HTML shows which version ran (`sec--notes`). `.integration.test.ts` (not the
+// The two real versions differ in their footnote (bm72: v2 prints FOOTNOTE_V2,
+// v3 prints FOOTNOTE_V3), so the rendered HTML shows which version ran. `.integration.test.ts` (not the
 // spec's `.test.ts`): it drops schemas, so it runs under the destructive-DB
 // preflight (bm50/bm53 precedent). Requires DATABASE_URL +
 // BILLRUN_BLOB_CONNECTION_STRING (Azurite) + Playwright Chromium.
 const databaseUrl = process.env.DATABASE_URL;
 const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
+const FOOTNOTE_V2 = "Pin test footnote v2";
+const FOOTNOTE_V3 = "Pin test footnote v3";
 
 const RUN = "BRN-BM54-G46";
 const RUN_DRAFT = "BRN-BM54-G46-DRAFT";
@@ -120,17 +122,15 @@ describe.skipIf(!databaseUrl || !blobConnection)(
 
     // A real activation: save the working draft, then activate it.
     async function activateGenerated(
-      notesShown: boolean,
+      footnoteLine: string,
       note: string,
     ): Promise<{ versionId: string; versionNo: number }> {
       const structure = {
-        sections: {
-          ...Object.fromEntries(
-            INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
-          ),
-          notes: notesShown,
-        },
+        sections: Object.fromEntries(
+          INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
+        ),
         columns: {},
+        footnote: [footnoteLine],
       } as Parameters<typeof saveTemplateDraft>[0]["structure"];
       const saved = await saveTemplateDraft(
         { structure, expectedDraftToken: null },
@@ -240,7 +240,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         "pin test profile v1",
       );
       expect(profileV1.version).toBe(1);
-      ({ versionId: v2Id } = await activateGenerated(true, "pin test v2"));
+      ({ versionId: v2Id } = await activateGenerated(
+        FOOTNOTE_V2,
+        "pin test v2",
+      ));
 
       // 1. The run starts: the fixture captures A's and its twin's stamps
       // (generated v2, profile v1) with the real capture service (bm65).
@@ -254,7 +257,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       // 2. Mid-run, before posting: bm58 a REAL activation retires v2 and
       // promotes v3; bm61 a REAL profile activation retires profile v1 and
       // promotes v2 (new name, new bank account, new logo).
-      ({ versionId: v3Id } = await activateGenerated(false, "pin test v3"));
+      ({ versionId: v3Id } = await activateGenerated(
+        FOOTNOTE_V3,
+        "pin test v3",
+      ));
       const profileV2 = await activateProfileVersion(
         { ...profileRows(COMPANY_V2), bank_account_no: ACCOUNT_V2 },
         LOGO_V2,
@@ -350,7 +356,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       const storedBefore = await getStoredInvoice(RUN, banA);
       expect(storedBefore.pdf.subarray(0, 4).toString()).toBe("%PDF");
       // The stored PDF is produced by the final render, which resolves the
-      // bill's stamps: v2 (Notes shown) and profile v1's issuer block.
+      // bill's stamps: v2 (its footnote) and profile v1's issuer block.
       const final = await buildInvoiceHtml({
         runId: RUN,
         banId: banA,
@@ -363,7 +369,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       });
       expect(final.resolved.generated.billTemplateVersionId).toBe(v2Id);
       expect(final.resolved.profileVersion).toBe(1);
-      expect(final.html).toContain("sec--notes");
+      expect(final.html).toContain(FOOTNOTE_V2);
       expect(final.html).toContain(COMPANY_V1);
       expect(final.html).not.toContain(COMPANY_V2);
 
@@ -401,7 +407,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       });
       expect(final.resolved.generated.billTemplateVersionId).toBe(v2Id);
       expect(final.resolved.profileVersion).toBe(1);
-      expect(final.html).toContain("sec--notes");
+      expect(final.html).toContain(FOOTNOTE_V2);
       expect(final.html).toContain(COMPANY_V1);
       expect(final.html).not.toContain(COMPANY_V2);
 
@@ -426,7 +432,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       });
       expect(draft.resolved.generated.billTemplateVersionId).toBe(v3Id);
       expect(draft.resolved.profileVersion).toBe(2);
-      expect(draft.html).not.toContain("sec--notes");
+      expect(draft.html).toContain(FOOTNOTE_V3);
+      expect(draft.html).not.toContain(FOOTNOTE_V2);
       expect(draft.html).toContain(COMPANY_V2);
       expect(draft.html).toContain(ACCOUNT_V2);
       expect(draft.html).not.toContain(COMPANY_V1);

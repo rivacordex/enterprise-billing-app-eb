@@ -26,6 +26,10 @@ export interface ProcessingTriggerPayload {
   ban_ids: string[];
   attempt: number;
   gl_event_at: string;
+  // The business time zone (`getAppTimezone()`, APP_TIMEZONE) the flow makes
+  // every calendar-date decision in — the usage window check and the price
+  // as-of date — so it agrees with `rating.period_of()`'s billing month.
+  business_timezone: string;
   // bm36-spec §Implementation §4 — the deploy-time/test force-fail toggle,
   // threaded from `billRunProcessingForceFail` by `trigger-run.ts` ONLY (mirrors
   // `DistributionTargetInput.force_fail`). Optional because `trigger-run.ts` is

@@ -51,6 +51,9 @@ vi.mock("@/services/billing/scope-accounts", () => ({
 vi.mock("@/services/billing/engine-registry", () => ({
   engineRegistry: { trigger: vi.fn() },
 }));
+vi.mock("@/services/system-config/app-config-read.service", () => ({
+  getAppTimezone: vi.fn().mockReturnValue("Asia/Kuala_Lumpur"),
+}));
 vi.mock("@/services/billing/capture-template-stamps", () => ({
   captureTemplateStamps: vi.fn(),
 }));
@@ -65,6 +68,7 @@ import { scopeAccounts } from "@/services/billing/scope-accounts";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import { triggerRun } from "@/services/billing/trigger-run";
+import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 
 const mockFindByIdForUpdate = vi.mocked(billRunRepository.findByIdForUpdate);
 const mockMarkProcessing = vi.mocked(billRunRepository.markProcessing);
@@ -166,6 +170,8 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
       ban_ids: ["BAN00000001"],
       attempt: 1,
       gl_event_at: "2026-08-01",
+      // The business zone the flow dates usage and prices in (getAppTimezone()).
+      business_timezone: "Asia/Kuala_Lumpur",
       // bm36 — force-fail toggle threaded from billRunProcessingForceFail
       // (default false; env unset in the test).
       force_fail: false,
@@ -241,6 +247,17 @@ describe("triggerRun (bm03-spec §Design/§7)", () => {
     const result = await triggerRun("BRN00000001", "user-1", TODAY);
 
     expect(result).toEqual({ ok: false, code: "NOT_OPERABLE" });
+  });
+
+  it("returns BUSINESS_TIMEZONE_MISMATCH and touches nothing when APP_TIMEZONE is not rating's zone", async () => {
+    vi.mocked(getAppTimezone).mockReturnValueOnce("UTC");
+
+    const result = await triggerRun("BRN00000001", "user-1", TODAY);
+
+    expect(result).toEqual({ ok: false, code: "BUSINESS_TIMEZONE_MISMATCH" });
+    expect(mockFindByIdForUpdate).not.toHaveBeenCalled();
+    expect(mockInsertSnapshot).not.toHaveBeenCalled();
+    expect(mockTrigger).not.toHaveBeenCalled();
   });
 
   it("returns NO_ELIGIBLE_ACCOUNTS and writes no snapshot when nothing is PENDING", async () => {

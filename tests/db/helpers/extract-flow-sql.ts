@@ -357,13 +357,57 @@ async function runHeredocStatements(
 // import path (bm40-spec §Implementation §2).
 // ---------------------------------------------------------------------------
 
+export interface ValidationParams {
+  ban: string;
+  periodStart: string;
+  periodEnd: string;
+  // See AggregateParams.businessTimezone.
+  businessTimezone?: string;
+}
+
+// The flow's REAL Validation stage (the currency assertion over the period's
+// rows). It writes nothing; a HARD CURRENCY_MISMATCH is the DO block's RAISE
+// EXCEPTION, surfaced as a rejected promise carrying the server's own message
+// text. Zero claimable rows, or rows only from other months, resolve.
+export async function runValidation(
+  sql: postgresjs.Sql,
+  { ban, periodStart, periodEnd, businessTimezone }: ValidationParams,
+): Promise<void> {
+  const heredoc = extractStageHeredoc("validation");
+  const values: Record<string, string> = {
+    ban,
+    period_start: periodStart,
+    period_end: periodEnd,
+    tz: businessTimezone ?? "UTC",
+  };
+  await sql.begin((tx) => runHeredocStatements(tx, heredoc, values));
+}
+
 // bm63-spec §Design D1 — the flow's REAL Collection claim (correlation through
 // `inventory.product_inventory`, RATED → BILL_DRAFT), so a journey on the
 // `_SAMPLE_` `ci` seed claims exactly what the deployed flow would. Returns
 // nothing; read the claimed rows back if the count matters.
+export interface CollectionParams {
+  runId: string;
+  ban: string;
+  attempt: number;
+  // The claim takes only the period's rows (Validation's window scope).
+  periodStart: string;
+  periodEnd: string;
+  // See AggregateParams.businessTimezone.
+  businessTimezone?: string;
+}
+
 export async function runCollection(
   sql: postgresjs.Sql,
-  { runId, ban, attempt }: { runId: string; ban: string; attempt: number },
+  {
+    runId,
+    ban,
+    attempt,
+    periodStart,
+    periodEnd,
+    businessTimezone,
+  }: CollectionParams,
 ): Promise<void> {
   const heredoc = stripExplicitTransactionBounds(
     extractStageHeredoc("collection"),
@@ -372,6 +416,9 @@ export async function runCollection(
     run: runId,
     ban,
     attempt: String(attempt),
+    period_start: periodStart,
+    period_end: periodEnd,
+    tz: businessTimezone ?? "UTC",
   };
   await sql.begin((tx) => runHeredocStatements(tx, heredoc, values));
 }
@@ -394,6 +441,10 @@ export interface AggregateParams {
   // every pre-bm43 caller is unaffected; a gate test overrides it to false
   // to exercise the WARN-and-bill-Model-1 path.
   capacityRateMatching?: boolean;
+  // The flow's `business_timezone` input (default "UTC", mirroring the flow's
+  // own `defaults: "UTC"`) — the zone the price as-of dates are taken in.
+  // Optional so every existing caller is unaffected.
+  businessTimezone?: string;
 }
 
 export async function runAggregation(
@@ -407,6 +458,7 @@ export async function runAggregation(
     glEventAt,
     capacityMaxBands,
     capacityRateMatching,
+    businessTimezone,
   }: AggregateParams,
 ): Promise<void> {
   const heredoc = stripExplicitTransactionBounds(
@@ -418,6 +470,7 @@ export async function runAggregation(
     attempt: String(attempt),
     period_start: periodStart,
     period_end: periodEnd,
+    tz: businessTimezone ?? "UTC",
     gl_event_at: glEventAt,
     capacity_max_bands: String(capacityMaxBands ?? 1),
     capacity_rate_matching: String(capacityRateMatching ?? true),
@@ -431,6 +484,8 @@ export interface VerificationParams {
   attempt: number;
   // bm43-spec §Implementation §1 — see AggregateParams.capacityRateMatching.
   capacityRateMatching?: boolean;
+  // See AggregateParams.businessTimezone.
+  businessTimezone?: string;
 }
 
 export interface VerificationOutcome {
@@ -441,7 +496,13 @@ export interface VerificationOutcome {
 
 export async function runVerification(
   sql: postgresjs.Sql,
-  { runId, ban, attempt, capacityRateMatching }: VerificationParams,
+  {
+    runId,
+    ban,
+    attempt,
+    capacityRateMatching,
+    businessTimezone,
+  }: VerificationParams,
 ): Promise<VerificationOutcome> {
   const heredoc = stripExplicitTransactionBounds(
     extractStageHeredoc("verification"),
@@ -450,6 +511,7 @@ export async function runVerification(
     run: runId,
     ban,
     attempt: String(attempt),
+    tz: businessTimezone ?? "UTC",
     capacity_rate_matching: String(capacityRateMatching ?? true),
   };
   // Runs the flow's OWN statements verbatim: the `SELECT set_config(...)`

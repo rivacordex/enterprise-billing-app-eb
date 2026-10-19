@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -7,6 +10,7 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
+import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-template-structure.schema";
 
 // bm50-spec §Design D1/D2/D4/D7, Tests — the invoice template catalog on a
 // fresh DB: seed rows, the CHECK family, the three partial unique indexes, the
@@ -22,6 +26,7 @@ const GEN_STRUCTURE = JSON.stringify({
     INVOICE_OPTIONAL_SECTION_KEYS.map((k) => [k, true]),
   ),
   columns: {},
+  footnote: ["Calculations are done in Mbps"],
 });
 
 describe.skipIf(!databaseUrl)(
@@ -189,6 +194,32 @@ describe.skipIf(!databaseUrl)(
       );
       expect(row!.structure.columns).toEqual({});
       expect(Object.values(row!.structure.sections).every(Boolean)).toBe(true);
+    });
+
+    it("bm72 — the seeded structure (row and structure.json) parses with the structure schema (general §6.17)", async () => {
+      const [row] = await sql<{ structure: unknown }[]>`
+        SELECT structure FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
+      const fromRow = invoiceTemplateStructureSchema.parse(row!.structure);
+      const fromFile = invoiceTemplateStructureSchema.parse(
+        JSON.parse(
+          readFileSync(
+            path.join(
+              process.cwd(),
+              "db/seeds/invoice-templates/generated/INVOICE/v1/structure.json",
+            ),
+            "utf-8",
+          ),
+        ),
+      );
+      expect(fromRow).toEqual(fromFile);
+      expect(fromRow).toEqual({
+        sections: { payment: true },
+        columns: {},
+        footnote: [
+          "Calculations are done in Mbps",
+          "This invoice is billed exclusive of Universal Service Provision (USP)",
+        ],
+      });
     });
 
     it("bm64 — refuses a generated version without a family (btv_generated_has_family)", async () => {

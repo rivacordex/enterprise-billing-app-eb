@@ -16,8 +16,7 @@
     "taxSummary": { "mandatory": true },
     "amountDue": { "mandatory": true },
     "payment": { "mandatory": false },
-    "chargeDetails": { "mandatory": true },
-    "notes": { "mandatory": false }
+    "chargeDetails": { "mandatory": true }
   },
   "fixedColumns": ["Polygon Start Date", "Polygon Name", "Capacity (Mbps)", "Rate/Mbps (MYR)", "Utilised Capacity Charges (MYR)"],
   "columns": {},

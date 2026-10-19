@@ -39,6 +39,29 @@ describe("isPartialPeriod (bm03-spec §Design)", () => {
     ).toBe(false);
   });
 
+  it("still excludes a subscription that starts on period_end (mid-period, inclusive upper bound)", () => {
+    expect(
+      isPartialPeriod({
+        ...WINDOW,
+        subscriptions: [{ startDate: "2026-07-31", endDate: null }],
+        transitions: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores a subscription that only starts after the window ended", () => {
+    expect(
+      isPartialPeriod({
+        ...WINDOW,
+        subscriptions: [
+          { startDate: "2026-01-01", endDate: null },
+          { startDate: "2026-08-15", endDate: "2026-08-15" },
+        ],
+        transitions: [],
+      }),
+    ).toBe(false);
+  });
+
   it("excludes a subscription that ceased strictly before period_end", () => {
     expect(
       isPartialPeriod({

@@ -168,8 +168,11 @@ describe("prp flow wiring (rm21-spec §6 — static)", () => {
 
   it("the prp task invokes the real runtime.prp module and hands off a manifest URI", () => {
     expect(template).toMatch(/python3 -m runtime\.prp/);
-    expect(template).toMatch(/--source-file "\{\{ trigger\.uri \}\}"/);
-    expect(template).toMatch(/outputs\.prp\.uri/);
+    // plugin-fs 2.11.1 emits a file LIST (confirmed at the first live run).
+    expect(template).toMatch(
+      /--source-file "\{\{ trigger\.files\[0\]\.localPath \}\}"/,
+    );
+    expect(template).toMatch(/outputs\.prp\.vars\.uri/);
     // The prp section carries no rate maths / insert (that is rp/rl's) — it is a
     // module invocation, not inline python.
     const prpBlock = template.slice(
@@ -201,6 +204,10 @@ describe("prp flow wiring (rm21-spec §6 — static)", () => {
     expect(triggersBlock).toMatch(/id: landing-file/);
     expect(triggersBlock).toMatch(/fs\.local\.Trigger/);
     expect(triggersBlock).toMatch(/action:\s*NONE/);
+    // One file per execution (prp binds files[0]); usage files only.
+    expect(triggersBlock).toMatch(/maxFiles:\s*1\b/);
+    expect(triggersBlock).toMatch(/on:\s*CREATE\s*\n/);
+    expect(triggersBlock).toMatch(/regExp:.*rating-input-file-/);
     expect(triggersBlock).not.toMatch(
       /type:\s*io\.kestra\.plugin\.core\.trigger\.Webhook/,
     );
@@ -230,7 +237,11 @@ describe("prp flow wiring (rm21-spec §6 — static)", () => {
     expect(vars).not.toMatch(/subscriber_ref_column:/);
     // Chunk size is performance-only → the namespace KV store, NOT a variable.
     expect(vars).not.toMatch(/chunk_size/);
-    expect(template).toMatch(/kv\('rating_ran_usage_chunk_size'\)/);
+    // errorOnMissing=false: kv() throws on a missing key since Kestra 0.22, so
+    // the `?? 10000` default is only reached with it (first live run).
+    expect(template).toMatch(
+      /kv\('rating_ran_usage_chunk_size', errorOnMissing=false\) \?\? 10000/,
+    );
   });
 
   it("rp reads the stamped product_inventory_id column, not the retired var (rm21 §6)", () => {

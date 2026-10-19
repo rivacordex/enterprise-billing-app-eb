@@ -8,12 +8,12 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 
 **Invoice Template delta (minimal, 2026-10-07):** **no** new app color, type, radius or shadow token, and still **no AI**. Four UI touches: (1) two new Administration › Invoice Settings screens (Company profile, Invoice template) mapped onto existing families in **§10**, including the new `TemplateVersionStatusBadge`; (2) **Activate** on those screens takes the existing Deep Petrol featured accent (§7); (3) the invoice **document** gets its own print palette and typography, which sit **outside** the app token system and use shared hex values only as fixed layout CSS (§10c); (4) the PDF gains a "Page X of Y" footer, and the draft watermark stays `position:fixed` (§6c). Sources: `billmgmt-update-overview.md` Part 2, `billmgmt-architecture.md` › Invoice Template deltas, `billmgmt-code-standards.md` › Invoice Template deltas.
 
-**Invoice Template Phase 3 delta (minimal, 2026-10-15; planned, not built):** **no** new app color, type, radius, shadow or accent token, still **no AI**, and the Deep Petrol CTA (§7) is unchanged. Three UI touches:
+**Invoice Template Phase 3 delta (minimal, 2026-10-15; delivered bm64–bm72, signed off by bm73 on 2026-10-17):** **no** new app color, type, radius, shadow or accent token, still **no AI**, and the Deep Petrol CTA (§7) is unchanged. Three UI touches:
 1. The Invoice template editor keeps one section toggle (**Payment information**) and gains **Footnote** lines; every other toggle is removed (D56, §10b).
 2. The rewritten layout v1 replaces the Usage annex with per-type, per-State-District detail pages and a Total Amount page. It reuses the §10c `--inv-*` print palette and adds **no** layout variable (§10d).
 3. New park/skip reasons surface on existing surfaces with existing families (§10d).
 
-Sources: `billmgmt-update-overview.md`, `billmgmt-architecture.md` › Invoice Template Phase 3 deltas, `billmgmt-code-standards.md` › Invoice Template Phase 3 deltas.
+Sources: `billmgmt-project-overview.md` › Invoice Template Phase 3 (folded from the update overview at bm73), `billmgmt-architecture.md` › Invoice Template Phase 3 deltas, `billmgmt-code-standards.md` › Invoice Template Phase 3 deltas.
 
 **Rendering rule (shared §8):** every badge/pill renders the dark `-fg` text on the light `-bg` tint (never white-on-tint) and always pairs color with an icon **and** label, so meaning never depends on colour alone. Match the component names in `billmgmt-code-standards.md` §4.
 
@@ -259,6 +259,14 @@ One badge serves both template and company-profile versions (code-standards › 
 | **Phase 3:** footnote in READ view                        | The lines render as plain text in a list, with no inputs |
 | **Phase 3:** Activate dialog summary                      | Lists `+ Payment information shown` / `− Payment information hidden` and `Footnote: "old" → "new"` per changed line (mono quotes), or "No change in structure." |
 
+**Phase 3 rows confirmed as built (bm72).**
+- **Heading.** "Invoice template — Standard (default)": the family name comes from the page data, and "(default)" is in `--text-muted`. The version number (`v{n}`, mono) and the status badge follow it.
+- **Toggles.** Payment information is the only checkbox, and the locked mandatory rows are unchanged.
+- **Footnote field.** A `<fieldset>` with the legend "Footnote" and the hint. Each line has a `<Label>` "Line N", an `Input` (`rounded-sm`) and an `n/200` counter that turns Danger `-fg` (`--color-danger-700`) past 200. The ghost `X` button (`aria-label="Remove line N"`) is hidden at one line, and the outline **Add line** (`Plus`) is hidden at five. The schema's messages show under the line (`role="alert"`, Danger `-fg`), and the input carries `aria-invalid`.
+- **READ view.** A `<ul aria-label="Footnote lines">`.
+- **Activate dialog.** Each footnote change reads `Footnote line N: "old" → "new"`, `Footnote line N added: "…"` or `Footnote line N removed`, with the values in mono quotes (`StructureChangeSummary`, `activate-version-dialog.tsx`). This is the row's per-line wording, with the line number.
+- **Preview.** It does not refresh while a line is invalid; the last good preview stays.
+
 **Confirmed as built (bm55).** The preview service appends one
 `<style data-preview="true">` to the rendered document. It is never part of a
 stored file. On "Show placeholders" it adds
@@ -384,7 +392,7 @@ The invoice is print CSS in the layout's `shell.hbs` (code-standards › Invoice
 
 Weights stay at 400 and 600 only (shared §5). The CSV output has no styling.
 
-### 10d. Invoice document — Standard layout v1 rewrite (Invoice Template Phase 3, planned)
+### 10d. Invoice document — Standard layout v1 rewrite (Invoice Template Phase 3, delivered bm70–bm72)
 
 Print CSS in the rewritten v1 `shell.hbs` and partials. It uses the §10c `--inv-*` variables **only** and adds no new one. The business mockup (`mockup-invoice-layout-v2.html`) sets the arrangement, **not** the tokens: its `#12355B` is sample brand data (the admin's `--inv-brand` replaces it), and its weight 700 maps to 600.
 
@@ -412,6 +420,8 @@ Print CSS in the rewritten v1 `shell.hbs` and partials. It uses the §10c `--inv
 **As built (bm70), page 1:** the title, supplier block (D102), recipient line, type-of-service blocks, "Other charges", Total charges · Adjustments · Tax @ x% and the Grand Total rows above are confirmed in the rewritten v1 (`.svc-block`, `.svc-heading`, `.svc-row`, `.svc-total`, `.other-charges`, `.totals-row`, `.grand-total-panel`). The panel's left rule is 3px `--inv-accent`. The identification block also prints the due date (D60 table row 2). The detail-page, Total Amount, footnote and right-aligned footer rows are bm71/bm72.
 
 **As built (bm71), detail pages:** `chargeDetails` holds one `<section class="detail-type" style="break-before: page">` per type of service (`.detail-heading`, `.access-seeker`), then one `table.detail-group` per State-District group whose `thead` carries the `tr.group-label` row and the `tr.col-head` row, and a `tr.subtotal` Sub Total row. `tr { break-inside: avoid }`, `.detail-group { break-inside: auto }`, `thead { display: table-header-group }`; Polygon Name uses `.mono`. A type with no claimed row prints its heading and "No utilised capacity this period." (`.no-usage`, `--inv-muted`). The rate column uses `money` (2 decimals, read at 2 decimals in SQL), so it prints as "RM 100.00" like the amount column. The footer's "Page X of Y" span is `text-align: right` (it already sat last in the footer's flex row). The Total Amount page and footnote rows are bm72.
+
+**As built (bm72), last page:** `chargeDetails` ends with `<section class="total-amount-page" style="break-before: page">`. It holds the `.detail-heading` "Summary of Utilised Capacity Charges", then `.total-amount` ("Total Amount" and `{{money totals.totalAmount}}` in a right-aligned tabular-nums `.num`): 12pt/16pt 600 `--inv-ink` with a 1px `--inv-line` top rule, outside `.grand-total-panel` and with no `--inv-soft`/`--inv-accent`. Last comes `.footnote`, one `<p>` per line at 8pt/11pt 400 `--inv-muted`, omitted when there are no lines. There is no per-type breakdown (D60), and the page prints "RM 0.00" when the bill has no capacity line. The "Notes & terms" section is gone.
 
 No colour signals sign or status on the invoice. Unutilised is a normal amount, not a warning. A negative Utilised can never print (Inv #55). The draft watermark (§6c, `--inv-watermark`) is unchanged.
 

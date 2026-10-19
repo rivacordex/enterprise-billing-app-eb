@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -13,23 +13,47 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
+import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { appuser } from "@/db/schema/identity";
-import { organization, partyRole } from "@/db/schema/customer";
-import { billCycle } from "@/db/schema/billing/catalogs";
-import { financialAccount, billingAccount } from "@/db/schema/billing/accounts";
-import { productOffering, productOfferingPrice } from "@/db/schema/product";
 import {
-  productOrder,
-  productOrderItem,
-  orderItemPriceOverride,
-} from "@/db/schema/ordering";
+  productOffering,
+  productOfferingPrice,
+  productSpecifications,
+  ratecardRanUsageLkp,
+  ratecardVersion,
+} from "@/db/schema/product";
+import { orderItemPriceOverride } from "@/db/schema/ordering";
 import { productInventory } from "@/db/schema/inventory";
 import type {
   UsageRateComponent,
   FlatFeeComponent,
   CapacityMotivationComponent,
 } from "@/validation/product/pricing-component.schema";
+import { productSpecCharacteristicsSchema } from "@/validation/product/product-spec-characteristics.schema";
+import {
+  insertRanBillCycle,
+  insertRanBillingAccount,
+  insertRanCustomer,
+  insertRanRatecard,
+  insertRanSubscription,
+  SAMPLE_5G_COMMERCIAL_UNIT,
+  SAMPLE_5G_LKP_ROWS,
+  SAMPLE_5G_RATECARD_STATE,
+  SAMPLE_5G_START_DATE,
+  type RanLkpRow,
+} from "@/db/seeds/sample/sample-5g-fixture";
+import {
+  createRatingPipeline,
+  dropModuleSchemas,
+  pythonRuntimeReady,
+  RATING_WORKER_DIR,
+  ratingPython3,
+  readManifest,
+  runSqlFile,
+  seedSample5gRatingGraph,
+  type RatingPipeline,
+  type UdrRow,
+} from "@/tests/helpers/rating-ran-harness";
 
 // rm08-spec §Verification checklist + code-standards §10 test #13 (OWNED by rm08):
 //   #13 Price snapshot reproducibility — a record rated, then re-rated after the
@@ -42,34 +66,25 @@ import type {
 // card-driven refusal (#12, rm19), one query per chunk (#13/#14).
 //
 // The static describe (no DATABASE_URL) checks the flow-YAML contract rm08 adds
-// (the real rp task invoking runtime.rp, the outputs.prp.uri -> outputs.rp.uri
-// handoff, the rounding_mode + subscriber_ref_column flow variables). The
-// DB-gated describe shells out to the REAL `python3 -m runtime.prp` then
-// `python3 -m runtime.rp` exactly as the flow's two tasks invoke them — a
-// black-box test of the actual processors, not a TS reimplementation. Requires
-// `python3` on PATH with the worker's requirements (psycopg + polars); skipped
-// loudly, like the DATABASE_URL gate, when unavailable — same posture as the
-// rm06/rm07 suites (see ratemgmt-progress-tracker.md: not run in a session
-// without a live test Postgres + the worker deps).
+// (the real rp task invoking runtime.rp, the outputs.prp.vars.uri -> outputs.rp.vars.uri
+// handoff, the rounding_mode flow variable). The DB-gated describe shells out to
+// the REAL `python3 -m runtime.prp` then `python3 -m runtime.rp` exactly as the
+// flow's two tasks invoke them — a black-box test of the actual processors, not
+// a TS reimplementation — through the shared `rating-ran-harness`: the
+// production rm21 7-column `.udr` profile, the
+// `rating-input-file-YYYYMMDDHHMI[_vN].udr` file-key rule, and offerings that
+// carry the udrType/productCardLookUp specs + an ACTIVE ratecard. Since rm21 the
+// subscriber is resolved by PRP (MNO -> party_role -> RAN_USAGE subscription ->
+// product_inventory_id), one subscription per MNO, so each subscription below
+// has its own MNO and ratecard cells; an unresolvable MNO is a PRP whole-batch
+// hard-stop (UNKNOWN_SUBSCRIBER, rm07's suite), so RP's LOOKUP_MISS is driven by
+// a resolvable subscriber whose record has no effective usage price. Requires the
+// harness's absolute python3 (`RATING_PYTHON3` or the fixed system path) with
+// the worker's requirements (psycopg + polars); skipped loudly, like the
+// DATABASE_URL gate, when unavailable — same posture as the rm06/rm07 suites
+// (see ratemgmt-progress-tracker.md: not run in a session without a live test
+// Postgres + the worker deps).
 const databaseUrl = process.env.DATABASE_URL;
-const workerDir = join(
-  process.cwd(),
-  "workflow-management",
-  "worker",
-  "workflow-engine",
-);
-
-function pythonRuntimeReady(): boolean {
-  try {
-    execFileSync("python3", ["-c", "import runtime, polars, psycopg"], {
-      cwd: workerDir,
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
 const pythonReady = pythonRuntimeReady();
 
 const ROLE_PW = "rm08-test-only-pw";
@@ -78,24 +93,10 @@ const RATING_ROLES_SQL = join(
   "db/bootstrap/rating-db-roles.sql",
 );
 const ENGINE_VERSION = "rm08-test-engine@sha256:deadbeef";
-
-// The feed profile the flow ships for RAN_USAGE — kept identical here so PRP
-// produces the real production chunk shape (key__PUBLIC_KEY etc.).
-const FEED_PROFILE = JSON.stringify({
-  header: ["DATETIME", "PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE", "USAGE_MBPS"],
-  event_time_column: "DATETIME",
-  event_time_assumed_tz: "UTC",
-  usage_column: "USAGE_MBPS",
-  usage_unit: "MBPS",
-  udr_key_columns: ["PUBLIC_KEY", "COMMERCIAL_UNIT", "SITE"],
-  subscriber_ref: null,
-  interval_seconds: null,
-  future_tolerance_seconds: 300,
-});
-const FILE_KEY_RULE = "^(?P<file_key>RAN_USAGE_\\d{8})(?:_v\\d+)?\\.csv$";
 // A fixed reference instant so OUT_OF_RANGE never depends on wall-clock time.
 const NOW = "2026-08-20T00:00:00Z";
 const CURRENCY = "MYR";
+const FLOW_REVISION = 42;
 
 // rm17 shared golden parity fixtures — rm19 loads the SAME file the Zod
 // udr-rate-detail schema test consumes, so RP's PER_UNIT emission cannot drift
@@ -174,17 +175,6 @@ function capacityMotivationEnvelope(
   };
 }
 
-function statements(path: string): string[] {
-  return readFileSync(path, "utf8")
-    .split("--> statement-breakpoint")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-async function runSqlFile(client: postgresjs.Sql, path: string): Promise<void> {
-  for (const statement of statements(path)) {
-    await client.unsafe(statement);
-  }
-}
 function firstLine(lines: readonly string[]): string {
   const line = lines.at(0);
   if (line === undefined) throw new Error("expected at least one log line");
@@ -208,9 +198,9 @@ describe("rp flow wiring (rm08-spec D1/D5/D7/D11 — static)", () => {
 
   it("the rp task invokes the real runtime.rp module and hands prp -> rp -> rl by file URI", () => {
     expect(template).toMatch(/python3 -m runtime\.rp/);
-    expect(template).toMatch(/--manifest "\{\{ outputs\.prp\.uri \}\}"/);
+    expect(template).toMatch(/--manifest "\{\{ outputs\.prp\.vars\.uri \}\}"/);
     // rp emits its own URI, consumed by the rl stub.
-    expect(template).toMatch(/outputs\.rp\.uri/);
+    expect(template).toMatch(/outputs\.rp\.vars\.uri/);
     // The rp section is a module invocation, not inline python, and carries no
     // rate maths / DB insert (that is rl's, Inv #8).
     const rpBlock = template.slice(
@@ -242,11 +232,11 @@ describe("rp flow wiring (rm08-spec D1/D5/D7/D11 — static)", () => {
 
   it("the rl task consumes rp's URI, invokes runtime.rl, and documents supersession + non-PROCESSING no-op", () => {
     // Updated by rm09 (cross-unit-test precedent): rl is now the REAL loader, not
-    // a stub. It still consumes outputs.rp.uri and no-ops on a non-PROCESSING
+    // a stub. It still consumes outputs.rp.vars.uri and no-ops on a non-PROCESSING
     // status. Updated again by rm10 (same precedent): the supersede-hook inside
     // its transaction is now real too — the `# STUB: rm10` marker is gone.
     const rlBlock = template.slice(template.indexOf("id: rl"));
-    expect(rlBlock).toMatch(/outputs\.rp\.uri/);
+    expect(rlBlock).toMatch(/outputs\.rp\.vars\.uri/);
     expect(rlBlock).toMatch(/python3 -m runtime\.rl/);
     expect(rlBlock).not.toMatch(/# STUB: rm10/);
     expect(rlBlock).toMatch(/supersede/i);
@@ -255,357 +245,357 @@ describe("rp flow wiring (rm08-spec D1/D5/D7/D11 — static)", () => {
 });
 
 // ---------------------------------------------------------------------
-// Black-box resolve + snapshot + FLAT — live DB + the real prp/rp modules.
+// Black-box resolve + snapshot + PER_UNIT — live DB + the real prp/rp modules.
 // ---------------------------------------------------------------------
+type PriceRow = Omit<
+  typeof productOfferingPrice.$inferInsert,
+  "productOfferingId" | "currency"
+>;
+
+// The three Sample-5G cells and the subscription MNOs this suite rates.
+const [CELL_0, CELL_1, CELL_2] = SAMPLE_5G_LKP_ROWS as [
+  RanLkpRow,
+  RanLkpRow,
+  RanLkpRow,
+];
+const MNO_A = "MNO-RM08-A"; // OFF1, no usage override
+const MNO_B = "MNO-RM08-B"; // OFF1, with a usage override
+const MNO_C = "MNO-RM08-C"; // OFF3 (flat_fee + capacity_motivation, no usage_rate)
+const MNO_D = "MNO-RM08-D"; // OFF4 (usage_rate 100 — the PER_UNIT R1 canonical)
+const MNO_E = "MNO-RM08-E"; // OFF5 (card-driven usage_rate)
+const OFF1_NAME = "rm08-OFF1";
+const OFF1_CARD = "RATECARD_RM08_OFF1";
+
 describe.skipIf(!databaseUrl || !pythonReady)(
   "rp price resolution and snapshot (rm08-spec D1-D11, requires DATABASE_URL and python3+runtime)",
   () => {
     let sql: postgresjs.Sql;
     let db: Database;
-    let dbParams: { host: string; port: string; name: string };
-    let landingDir: string;
-    let logsDir: string;
-    let workDir: string;
+    let actorId: string;
 
     // Fixture ids resolved at seed time (never hardcoded).
     let invA: string; // pinned to OFF1, no usage override
     let invB: string; // pinned to OFF1, with a usage override
-    let invC: string; // pinned to OFF3 (flat_fee + capacity_motivation, no usage_rate)
-    let invD: string; // pinned to OFF4 (usage_rate 100 — the PER_UNIT R1 canonical)
-    let invE: string; // pinned to OFF5 (card-driven usage_rate — CARD_DRIVEN_RATING_UNSUPPORTED)
     let off1Id: string;
-    let priceP1Id: string; // OFF1 usage @ 2026-01-01, amount 0.0035
+    let priceP1Id: string; // OFF1 usage @ 2026-02-01, amount 0.0035
     let priceP2Id: string; // OFF1 usage @ 2026-08-01, amount 0.0050
 
-    const dropAll = async (client: postgresjs.Sql) => {
-      for (const s of [
-        "inventory",
-        "ordering",
-        "billing",
-        "customer",
-        "product",
-        "rating",
-        "core",
-        "drizzle",
-        "partman",
-      ]) {
-        await client.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-      }
-    };
+    // One pipeline per pinned offering (PRP pins ONE subscription_product_name).
+    let p1: RatingPipeline; // OFF1 — MNO A + MNO B
+    let p3: RatingPipeline; // OFF3 — MNO C
+    let p4: RatingPipeline; // OFF4 — MNO D
+    let p5: RatingPipeline; // OFF5 — MNO E
 
-    // Build the minimal product/ordering/inventory graph rm08 resolves against:
-    // a subscription pinned to OFF1 with a DATED usage-price chain (P1 -> P2) and
-    // an OVERRIDE on a second subscription, plus a decoy OFF2 (a branched newer
-    // offering with a different usage price) to prove a record pinned to OFF1
-    // never gets OFF2's price (#2). Inserted as the superuser test connection;
-    // rp reads them as rating_runtime.
-    async function seedProductGraph(): Promise<void> {
-      const userId = crypto.randomUUID();
-      await db.insert(appuser).values({
-        id: userId,
-        userName: "rm08-fixture-user",
-        userEmail: "rm08-fixture@example.invalid",
-        emailVerified: false,
-        authMethod: "LOCAL",
-        status: "ACTIVE",
-      });
-      const [org] = await db
-        .insert(organization)
-        .values({
-          name: "rm08-fixture-org",
-          organizationType: "COMPANY",
-          status: "ACTIVE",
-          lastModifiedBy: userId,
-        })
-        .returning({ organizationId: organization.organizationId });
-      const [pr] = await db
-        .insert(partyRole)
-        .values({ engagedParty: org!.organizationId, lastModifiedBy: userId })
-        .returning({ partyRoleId: partyRole.partyRoleId });
-      const partyRoleId = pr!.partyRoleId;
-      const [fa] = await db
-        .insert(financialAccount)
-        .values({
-          name: "rm08-fixture-fa",
-          refPartyRoleId: partyRoleId,
-          currency: CURRENCY,
-          lastEditedBy: userId,
-        })
-        .returning({ financialAccountId: financialAccount.financialAccountId });
-      const [bc] = await db
-        .insert(billCycle)
-        .values({ name: "rm08-fixture-cycle", lastEditedBy: userId })
-        .returning({ billCycleId: billCycle.billCycleId });
-      const [ban] = await db
-        .insert(billingAccount)
-        .values({
-          name: "rm08-fixture-ban",
-          refPartyRoleId: partyRoleId,
-          refFinancialAccountId: fa!.financialAccountId,
-          currency: CURRENCY,
-          refBillCycleId: bc!.billCycleId,
-          lastEditedBy: userId,
-        })
-        .returning({ billingAccountId: billingAccount.billingAccountId });
-      const billingAccountId = ban!.billingAccountId;
-
-      // The PINNED offering (OFF1) with a two-row usage price chain. Inserted
-      // DRAFT, priced, then flipped to ACTIVE (pm36's DRAFT-guard trigger
-      // refuses a price write once the parent offering leaves DRAFT — the
-      // same insert-then-activate pattern `db/seeds/demo/product-demo.ts`
-      // uses; pm51-spec D6 re-keys only the price shape, but no shape of
-      // price row is insertable into an ACTIVE offering at all).
-      const [off1] = await db
+    // A RAN_USAGE offering carrying the rm21 specs (udrType, single-sub,
+    // productCardLookUp) and the given price rows: inserted DRAFT, priced, then
+    // flipped to ACTIVE (pm36's DRAFT-guard trigger refuses a price write once
+    // the parent offering leaves DRAFT — the same insert-then-activate pattern
+    // the Sample-5G fixture builder uses).
+    async function insertOffering(
+      name: string,
+      cardName: string,
+      prices: readonly PriceRow[],
+    ): Promise<{ offeringId: string; priceIds: string[] }> {
+      const [offering] = await db
         .insert(productOffering)
         .values({
-          name: "rm08-OFF1",
+          name,
           isBundle: false,
           isSellable: true,
           billingOnly: false,
           lifecycleStatus: "DRAFT",
-          lastEditedBy: userId,
+          lastEditedBy: actorId,
         })
         .returning({ productOfferingId: productOffering.productOfferingId });
-      off1Id = off1!.productOfferingId;
-      // pm51-spec D6 — re-keyed to a usage_rate component, same rates,
-      // currency and start dates as the pre-reshape flat usage prices.
-      const [p1] = await db
-        .insert(productOfferingPrice)
-        .values({
-          productOfferingId: off1Id,
+      const offeringId = offering!.productOfferingId;
+      const characteristics = productSpecCharacteristicsSchema.parse({});
+      await db.insert(productSpecifications).values(
+        [
+          ["udrType", "RAN_USAGE", true],
+          ["singleSubInstPerCust", "true", false],
+          ["productCardLookUp", cardName, false],
+        ].map(([specName, defaultValue, isDefault]) => ({
+          refProductOfferingId: offeringId,
+          name: specName as string,
+          isMandatory: true,
+          isDefault: isDefault as boolean,
+          defaultValue: defaultValue as string,
+          productSpecCharacteristics: characteristics,
+        })),
+      );
+      const priceIds: string[] = [];
+      for (const price of prices) {
+        const [row] = await db
+          .insert(productOfferingPrice)
+          .values({
+            ...price,
+            productOfferingId: offeringId,
+            currency: CURRENCY,
+          })
+          .returning({
+            productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
+          });
+        priceIds.push(row!.productOfferingPriceId);
+      }
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, offeringId));
+      return { offeringId, priceIds };
+    }
+
+    // A customer whose party_role carries `mno`, its MYR billing account and one
+    // RAN_USAGE subscription pinned to `offeringId` (+ an optional usage
+    // override on the order item), via the shared Sample-5G builders.
+    async function insertSubscriber(
+      tag: string,
+      mno: string,
+      offeringId: string,
+      usageOverride: string | null = null,
+    ): Promise<{ partyRoleId: string; inventoryId: string }> {
+      const partyRoleId = await insertRanCustomer(db, {
+        organizationName: `rm08-${tag}-org`,
+        registrationNumber: `_SAMPLE_-RM08-${tag.toUpperCase()}`,
+        partyRoleSpecification: { mnoPublicKey1: mno },
+        actorId,
+      });
+      const billCycleId = await insertRanBillCycle(db, {
+        name: `rm08-${tag}-cycle`,
+        description: `rm08 ${tag} fixture bill cycle`,
+        actorId,
+      });
+      const billingAccountId = await insertRanBillingAccount(db, {
+        financialAccountName: `rm08-${tag}-fa`,
+        billingAccountName: `rm08-${tag}-ban`,
+        partyRoleId,
+        billCycleId,
+        actorId,
+        currency: CURRENCY,
+      });
+      const inventoryId = await insertRanSubscription(db, {
+        partyRoleId,
+        billingAccountId,
+        offeringId,
+        actorId,
+        reason: `rm08 ${tag} fixture`,
+      });
+      if (usageOverride !== null) {
+        const [inv] = await db
+          .select({ itemId: productInventory.productOrderItemId })
+          .from(productInventory)
+          .where(eq(productInventory.productInventoryId, inventoryId));
+        await db.insert(orderItemPriceOverride).values({
+          productOrderItemId: inv!.itemId,
+          priceType: "usage",
+          amount: usageOverride,
+          currency: CURRENCY,
+        });
+      }
+      return { partyRoleId, inventoryId };
+    }
+
+    // Adds `mno`'s cells (subscriber ref `partyRoleId`) to an existing ACTIVE
+    // ratecard — a card may carry several MNOs' cells.
+    async function addRatecardCells(
+      cardName: string,
+      mno: string,
+      partyRoleId: string,
+      cells: readonly RanLkpRow[],
+    ): Promise<void> {
+      const [version] = await db
+        .select({ id: ratecardVersion.ratecardVersionId })
+        .from(ratecardVersion)
+        .where(eq(ratecardVersion.cardName, cardName));
+      await db.insert(ratecardRanUsageLkp).values(
+        cells.map((cell) => ({
+          ratecardVersionId: version!.id,
+          mnoPublicKey: mno,
+          commercialUnitPublicKey: SAMPLE_5G_COMMERCIAL_UNIT,
+          polygonId: cell.polygonId,
+          polygonStartDate: SAMPLE_5G_START_DATE,
+          polygonEndDate: null,
+          state: SAMPLE_5G_RATECARD_STATE,
+          district: cell.district,
+          lkpSubscriberRefId: partyRoleId,
+          serviceCode: cell.serviceCode,
+          ratePerUnit: null,
+        })),
+      );
+      await sql`UPDATE product.ratecard_version SET row_count = row_count + ${cells.length}
+                 WHERE ratecard_version_id = ${version!.id}`;
+    }
+
+    const pipeline = (
+      tag: string,
+      mno: string,
+      productName: string,
+      cells: readonly RanLkpRow[] = [CELL_0],
+    ) =>
+      createRatingPipeline({
+        databaseUrl: databaseUrl as string,
+        rolePassword: ROLE_PW,
+        engineVersion: ENGINE_VERSION,
+        mno,
+        productName,
+        now: NOW,
+        tmpPrefix: `rm08-${tag}-`,
+        cells,
+        flowRevision: FLOW_REVISION,
+      });
+
+    // Build the product/ordering/inventory graph rm08 resolves against: two
+    // subscriptions pinned to OFF1 (a DATED usage-price chain P1 -> P2), one of
+    // them with a usage OVERRIDE, plus a decoy OFF2 (a different offering with a
+    // very different usage price) to prove a record pinned to OFF1 never gets
+    // OFF2's price (#2). Inserted as the superuser test connection; prp/rp read
+    // them as rating_runtime.
+    async function seedProductGraph(): Promise<void> {
+      actorId = await getOrCreateAppUser(
+        db,
+        "rm08-fixture-user",
+        "rm08-fixture@example.invalid",
+      );
+
+      // The PINNED offering (OFF1) with a two-row usage price chain. P1 starts
+      // 2026-02-01 (one month after the subscriptions start), so a record dated
+      // in January resolves its subscriber but no usage price — RP's
+      // LOOKUP_MISS (D3).
+      const off1 = await insertOffering(OFF1_NAME, OFF1_CARD, [
+        {
           name: "OFF1 usage P1",
           componentType: "usage_rate",
           priceComponent: usageRateEnvelope("0.0035", "Mbps"),
           unitOfMeasure: "Mbps",
-          currency: CURRENCY,
-          startDateTime: new Date("2026-01-01T00:00:00Z"),
-        })
-        .returning({
-          productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
-        });
-      priceP1Id = p1!.productOfferingPriceId;
-      const [p2] = await db
-        .insert(productOfferingPrice)
-        .values({
-          productOfferingId: off1Id,
+          startDateTime: new Date("2026-02-01T00:00:00Z"),
+        },
+        {
           name: "OFF1 usage P2",
           componentType: "usage_rate",
           priceComponent: usageRateEnvelope("0.0050", "Mbps"),
           unitOfMeasure: "Mbps",
-          currency: CURRENCY,
           startDateTime: new Date("2026-08-01T00:00:00Z"),
-        })
-        .returning({
-          productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
-        });
-      priceP2Id = p2!.productOfferingPriceId;
-      await db
-        .update(productOffering)
-        .set({ lifecycleStatus: "ACTIVE" })
-        .where(eq(productOffering.productOfferingId, off1Id));
+        },
+      ]);
+      off1Id = off1.offeringId;
+      [priceP1Id, priceP2Id] = off1.priceIds as [string, string];
 
-      // A decoy branched offering (OFF2) with a very different usage price. The
-      // order items are pinned to OFF1, so this must NEVER be resolved (#2).
-      const [off2] = await db
-        .insert(productOffering)
-        .values({
-          name: "rm08-OFF2",
-          isBundle: false,
-          isSellable: true,
-          billingOnly: false,
-          lifecycleStatus: "DRAFT",
-          version: 2,
-          lastEditedBy: userId,
-        })
-        .returning({ productOfferingId: productOffering.productOfferingId });
-      const off2Id = off2!.productOfferingId;
-      await db.insert(productOfferingPrice).values({
-        productOfferingId: off2Id,
-        name: "OFF2 usage decoy",
-        componentType: "usage_rate",
-        priceComponent: usageRateEnvelope("9.9999", "Mbps"),
-        unitOfMeasure: "Mbps",
-        currency: CURRENCY,
-        startDateTime: new Date("2026-01-01T00:00:00Z"),
-      });
-      await db
-        .update(productOffering)
-        .set({ lifecycleStatus: "ACTIVE" })
-        .where(eq(productOffering.productOfferingId, off2Id));
+      // A decoy offering (OFF2) with a very different usage price. The order
+      // items are pinned to OFF1, so this must NEVER be resolved (#2).
+      await insertOffering("rm08-OFF2", "RATECARD_RM08_OFF2", [
+        {
+          name: "OFF2 usage decoy",
+          componentType: "usage_rate",
+          priceComponent: usageRateEnvelope("9.9999", "Mbps"),
+          unitOfMeasure: "Mbps",
+          startDateTime: new Date("2026-01-01T00:00:00Z"),
+        },
+      ]);
 
       // pm51-spec D4/I3 — an offering with only a flat_fee + capacity
       // modifiers, no usage_rate at all. A usage record against it must
       // still LOOKUP_MISS: the old "unratable price" NULL-amount path is
       // gone (a usage_rate's ratePerUnit is NOT NULL by CHECK), so this
       // proves the miss now comes purely from the join finding no row.
-      const [off3] = await db
-        .insert(productOffering)
-        .values({
-          name: "rm08-OFF3",
-          isBundle: false,
-          isSellable: true,
-          billingOnly: false,
-          lifecycleStatus: "DRAFT",
-          version: 3,
-          lastEditedBy: userId,
-        })
-        .returning({ productOfferingId: productOffering.productOfferingId });
-      const off3Id = off3!.productOfferingId;
-      await db.insert(productOfferingPrice).values([
-        {
-          productOfferingId: off3Id,
-          name: "OFF3 flat fee",
-          componentType: "flat_fee",
-          priceComponent: flatFeeEnvelope("10.00"),
-          recurringChargePeriodLength: 1,
-          recurringChargePeriodType: "months",
-          currency: CURRENCY,
-          startDateTime: new Date("2026-01-01T00:00:00Z"),
-        },
-        {
-          productOfferingId: off3Id,
-          name: "OFF3 motivation",
-          componentType: "capacity_motivation",
-          priceComponent: capacityMotivationEnvelope("Mbps"),
-          unitOfMeasure: "Mbps",
-          currency: CURRENCY,
-          startDateTime: new Date("2026-01-01T00:00:00Z"),
-        },
-      ]);
-      await db
-        .update(productOffering)
-        .set({ lifecycleStatus: "ACTIVE" })
-        .where(eq(productOffering.productOfferingId, off3Id));
+      const { offeringId: off3Id } = await insertOffering(
+        "rm08-OFF3",
+        "RATECARD_RM08_OFF3",
+        [
+          {
+            name: "OFF3 flat fee",
+            componentType: "flat_fee",
+            priceComponent: flatFeeEnvelope("10.00"),
+            recurringChargePeriodLength: 1,
+            recurringChargePeriodType: "months",
+            startDateTime: new Date("2026-01-01T00:00:00Z"),
+          },
+          {
+            name: "OFF3 motivation",
+            componentType: "capacity_motivation",
+            priceComponent: capacityMotivationEnvelope("Mbps"),
+            unitOfMeasure: "Mbps",
+            startDateTime: new Date("2026-01-01T00:00:00Z"),
+          },
+        ],
+      );
 
-      // rm19 — OFF4: a plain scalar usage_rate at exactly 100 (plaSpecId null),
-      // the PER_UNIT R1 canonical (100 × 20 = 2000). OFF5: a card-driven
-      // usage_rate (rateCardLookUp set, plaSpecId PLA_USAGE_RATE) RP must refuse
-      // with CARD_DRIVEN_RATING_UNSUPPORTED (Inv. #42 — no rate-card resolution).
-      const [off4] = await db
-        .insert(productOffering)
-        .values({
-          name: "rm08-OFF4",
-          isBundle: false,
-          isSellable: true,
-          billingOnly: false,
-          lifecycleStatus: "DRAFT",
-          version: 4,
-          lastEditedBy: userId,
-        })
-        .returning({ productOfferingId: productOffering.productOfferingId });
-      const off4Id = off4!.productOfferingId;
-      await db.insert(productOfferingPrice).values({
-        productOfferingId: off4Id,
-        name: "OFF4 usage @100",
-        componentType: "usage_rate",
-        priceComponent: usageRateEnvelope("100", "Mbps"),
-        unitOfMeasure: "Mbps",
-        currency: CURRENCY,
-        startDateTime: new Date("2026-01-01T00:00:00Z"),
-      });
-      await db
-        .update(productOffering)
-        .set({ lifecycleStatus: "ACTIVE" })
-        .where(eq(productOffering.productOfferingId, off4Id));
-
-      const [off5] = await db
-        .insert(productOffering)
-        .values({
-          name: "rm08-OFF5",
-          isBundle: false,
-          isSellable: true,
-          billingOnly: false,
-          lifecycleStatus: "DRAFT",
-          version: 5,
-          lastEditedBy: userId,
-        })
-        .returning({ productOfferingId: productOffering.productOfferingId });
-      const off5Id = off5!.productOfferingId;
-      await db.insert(productOfferingPrice).values({
-        productOfferingId: off5Id,
-        name: "OFF5 card-driven usage",
-        componentType: "usage_rate",
-        priceComponent: cardDrivenUsageRateEnvelope(
-          "5.00",
-          "Mbps",
-          "RAN_USAGE_CARD",
-        ),
-        unitOfMeasure: "Mbps",
-        currency: CURRENCY,
-        startDateTime: new Date("2026-01-01T00:00:00Z"),
-      });
-      await db
-        .update(productOffering)
-        .set({ lifecycleStatus: "ACTIVE" })
-        .where(eq(productOffering.productOfferingId, off5Id));
+      // rm19 — OFF5: a card-driven usage_rate (rateCardLookUp set, plaSpecId
+      // PLA_USAGE_RATE) RP must refuse with CARD_DRIVEN_RATING_UNSUPPORTED
+      // (Inv. #42 — no rate-card resolution).
+      const { offeringId: off5Id } = await insertOffering(
+        "rm08-OFF5",
+        "RATECARD_RM08_OFF5",
+        [
+          {
+            name: "OFF5 card-driven usage",
+            componentType: "usage_rate",
+            priceComponent: cardDrivenUsageRateEnvelope(
+              "5.00",
+              "Mbps",
+              "RAN_USAGE_CARD",
+            ),
+            unitOfMeasure: "Mbps",
+            startDateTime: new Date("2026-01-01T00:00:00Z"),
+          },
+        ],
+      );
 
       // Subscriptions: A/B pinned to OFF1 (no override / usage override); C
-      // pinned to OFF3 (D4's no-usage_rate LOOKUP_MISS case); D pinned to OFF4
-      // (PER_UNIT R1); E pinned to OFF5 (card-driven refusal).
-      const makeSubscription = async (
-        withOverride: string | null,
-        offeringId: string = off1Id,
-      ): Promise<string> => {
-        const [order] = await db
-          .insert(productOrder)
-          .values({
-            customerPartyRoleId: partyRoleId,
-            billingAccountId,
-            status: "COMPLETED",
-            submittedBy: userId,
-            submittedAt: new Date("2026-01-01T00:00:00Z"),
-          })
-          .returning({ productOrderId: productOrder.productOrderId });
-        const [item] = await db
-          .insert(productOrderItem)
-          .values({
-            productOrderId: order!.productOrderId,
-            productOfferingId: offeringId,
-            quantity: 1,
-            startDate: "2026-01-01",
-          })
-          .returning({
-            productOrderItemId: productOrderItem.productOrderItemId,
-          });
-        const itemId = item!.productOrderItemId;
-        if (withOverride !== null) {
-          await db.insert(orderItemPriceOverride).values({
-            productOrderItemId: itemId,
-            priceType: "usage",
-            amount: withOverride,
-            currency: CURRENCY,
-          });
-        }
-        const [inv] = await db
-          .insert(productInventory)
-          .values({
-            productOrderItemId: itemId,
-            customerPartyRoleId: partyRoleId,
-            billingAccountId,
-            productOfferingId: offeringId,
-            quantity: 1,
-            status: "ACTIVE",
-            startDate: "2026-01-01",
-          })
-          .returning({
-            productInventoryId: productInventory.productInventoryId,
-          });
-        return inv!.productInventoryId;
-      };
-      invA = await makeSubscription(null);
-      // The override table is numeric(12,2), so an override is inherently 2 dp
-      // (unlike the sub-cent catalog amount). 0.07 is distinct from either
-      // catalog price (0.0035 / 0.0050), proving COALESCE(override, catalog).
-      invB = await makeSubscription("0.07"); // usage override 0.07
-      invC = await makeSubscription(null, off3Id);
-      invD = await makeSubscription(null, off4Id); // rm19 PER_UNIT R1 canonical
-      invE = await makeSubscription(null, off5Id); // rm19 card-driven refusal
+      // pinned to OFF3 (D4's no-usage_rate LOOKUP_MISS case); E pinned to OFF5
+      // (card-driven refusal). The override table is numeric(12,2), so an
+      // override is inherently 2 dp (unlike the sub-cent catalog amount). 0.07
+      // is distinct from either catalog price (0.0035 / 0.0050), proving
+      // COALESCE(override, catalog).
+      const a = await insertSubscriber("a", MNO_A, off1Id);
+      const b = await insertSubscriber("b", MNO_B, off1Id, "0.07");
+      const c = await insertSubscriber("c", MNO_C, off3Id);
+      const e = await insertSubscriber("e", MNO_E, off5Id);
+      invA = a.inventoryId;
+      invB = b.inventoryId;
+
+      // OFF1's card: MNO A's three cells + MNO B's one (every cell must be in
+      // the feed under HARD_STOP coverage, rm21 §5).
+      await insertRanRatecard(db, {
+        cardName: OFF1_CARD,
+        mnoPublicKey: MNO_A,
+        lkpSubscriberRefId: a.partyRoleId,
+        rows: [CELL_0, CELL_1, CELL_2],
+        actorId,
+      });
+      await addRatecardCells(OFF1_CARD, MNO_B, b.partyRoleId, [CELL_0]);
+      for (const [card, mno, partyRoleId] of [
+        ["RATECARD_RM08_OFF3", MNO_C, c.partyRoleId],
+        ["RATECARD_RM08_OFF5", MNO_E, e.partyRoleId],
+      ] as const) {
+        await insertRanRatecard(db, {
+          cardName: card,
+          mnoPublicKey: mno,
+          lkpSubscriberRefId: partyRoleId,
+          rows: [CELL_0],
+          actorId,
+        });
+      }
+
+      // rm19 — OFF4: the Sample-5G graph, a plain scalar usage_rate at exactly
+      // 100 (plaSpecId null), the PER_UNIT R1 canonical (100 × 20 = 2000).
+      await seedSample5gRatingGraph(db, {
+        tag: "rm08-d",
+        mno: MNO_D,
+        productName: "rm08-OFF4",
+        priceName: "OFF4 usage @100",
+        cardName: "RATECARD_RM08_OFF4",
+        cells: [CELL_0],
+      });
+
+      p1 = pipeline("off1", MNO_A, OFF1_NAME);
+      p3 = pipeline("off3", MNO_C, "rm08-OFF3");
+      p4 = pipeline("off4", MNO_D, "rm08-OFF4");
+      p5 = pipeline("off5", MNO_E, "rm08-OFF5");
     }
 
     beforeAll(async () => {
       assertTestDatabaseUrl(databaseUrl as string);
       sql = postgres(databaseUrl as string, { max: 1 });
-      await dropAll(sql);
+      await dropModuleSchemas(sql);
       db = drizzle(sql, { schema });
       await migrate(db, {
         migrationsFolder: "./db/migrations",
@@ -615,172 +605,90 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       await runSqlFile(sql, RATING_ROLES_SQL);
       await sql.unsafe(`ALTER ROLE rating_runtime WITH PASSWORD '${ROLE_PW}'`);
       await seedProductGraph();
-
-      const url = new URL(databaseUrl as string);
-      dbParams = {
-        host: url.hostname,
-        port: url.port || "5432",
-        name: url.pathname.replace(/^\//, ""),
-      };
-
-      const root = mkdtempSync(join(tmpdir(), "rm08-rp-"));
-      landingDir = join(root, "landing");
-      logsDir = join(root, "logs");
-      workDir = join(root, "work");
-      for (const d of [landingDir, logsDir, workDir]) {
-        mkdirSync(d, { recursive: true });
-      }
     }, 60_000);
 
     afterAll(async () => {
       if (!sql) return;
-      await dropAll(sql);
+      await dropModuleSchemas(sql);
       await sql.end();
     });
 
-    const runEnv = () => ({
-      ...process.env,
-      SECRET_RATING_RUNTIME_PASSWORD: ROLE_PW,
-      RATING_DB_HOST: dbParams.host,
-      RATING_DB_PORT: dbParams.port,
-      RATING_DB_NAME: dbParams.name,
-      RATING_DB_USER: "rating_runtime",
-      RATING_LOGS_DIR: logsDir,
-      RATING_ENGINE_VERSION: ENGINE_VERSION,
-    });
-
-    // Runs the real PRP, returning the manifest URI (its outputs.prp.uri).
-    function runPrp(sourcePath: string, execId: string): string {
-      const out = execFileSync(
-        "python3",
-        [
-          "-m",
-          "runtime.prp",
-          "--source-file",
-          sourcePath,
-          "--udr-type",
-          "RAN_USAGE",
-          "--profile",
-          FEED_PROFILE,
-          "--file-key-rule",
-          FILE_KEY_RULE,
-          "--reject-threshold",
-          "0.5",
-          "--chunk-size",
-          "10000",
-          "--workflow-execution-id",
-          execId,
-          "--now",
-          NOW,
-          "--work-dir",
-          workDir,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      return out.trim().split("\n").pop() as string;
-    }
-
-    // Runs the real RP against a PRP manifest, returning rp's manifest URI.
-    function runRp(
-      manifestUri: string,
-      execId: string,
-      roundingMode = "HALF_UP",
-    ): string {
-      const out = execFileSync(
-        "python3",
-        [
-          "-m",
-          "runtime.rp",
-          "--manifest",
-          manifestUri,
-          "--udr-type",
-          "RAN_USAGE",
-          "--rounding-mode",
-          roundingMode,
-          "--subscriber-ref-column",
-          "PUBLIC_KEY",
-          "--workflow-execution-id",
-          execId,
-          "--flow-revision",
-          "42",
-          "--work-dir",
-          workDir,
-        ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
-      );
-      return out.trim().split("\n").pop() as string;
-    }
-
-    function uriToPath(uri: string): string {
-      return decodeURIComponent(uri.replace(/^file:\/\//, ""));
-    }
-    function readManifest(uri: string): Record<string, unknown> {
-      return JSON.parse(readFileSync(uriToPath(uri), "utf8"));
-    }
     // Reads a rated Parquet chunk back as rows of stringified values (safe JSON),
     // via the same python+polars the worker uses — not a TS parquet reader.
     function readParquetRows(fileUri: string): Record<string, string | null>[] {
-      const path = uriToPath(fileUri);
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         [
           "-c",
           "import sys, json, polars as pl\n" +
             "df = pl.read_parquet(sys.argv[1])\n" +
             "print(json.dumps([{k:(str(v) if v is not None else None) for k,v in r.items()} for r in df.iter_rows(named=True)]))",
-          path,
+          fileURLToPath(fileUri),
         ],
-        { cwd: workerDir, encoding: "utf8", env: runEnv() },
+        { cwd: RATING_WORKER_DIR, encoding: "utf8" },
       );
       return JSON.parse(out);
     }
-
-    function writeCsv(name: string, rows: string[]): string {
-      const header = "DATETIME,PUBLIC_KEY,COMMERCIAL_UNIT,SITE,USAGE_MBPS";
-      const path = join(landingDir, name);
-      writeFileSync(path, [header, ...rows].join("\n") + "\n", "utf8");
-      return path;
+    function ratedRows(
+      manifest: Record<string, unknown>,
+    ): Record<string, string | null>[] {
+      return (manifest.rated_chunk_uris as string[]).flatMap((u) =>
+        readParquetRows(u),
+      );
     }
-    function logLinesFor(component: string, execId: string): string[] {
-      const path = join(logsDir, `${component}-${execId}.jsonl`);
+
+    function logLinesFor(
+      p: RatingPipeline,
+      component: string,
+      execId: string,
+    ): string[] {
+      const path = join(p.dirs.logs, `${component}-${execId}.jsonl`);
+      if (!existsSync(path)) return [];
       return readFileSync(path, "utf8")
         .split("\n")
         .filter((l) => l.trim().length > 0);
     }
 
+    // The five-record OFF1 fixture. `.udr` datetimes are naive config-TZ
+    // (Asia/Kuala_Lumpur, +08) instants; the UTC instant is in each comment.
+    // Row order (PER_UNIT = rate × quantity, rm19):
+    //   1 A/P2   0.0050 × 100 = 0.500000            (2026-08-14T10:00Z)
+    //   2 A/P1   0.0035 ×   7 = 0.024500            (2026-03-01T00:00Z)
+    //   3 A/boundary=P2 0.0050 × 1 = 0.005000       (2026-08-01T00:00Z, the
+    //     rounding-mode discriminator)
+    //   4 B/override    0.07   ×  55 = 3.850000     (2026-08-14T11:00Z)
+    //   5 A/no price yet (before P1) -> LOOKUP_MISS (2026-01-15T00:00Z)
+    // Rows 1/5 share A's cell 0 in different billing months (not a
+    // DUPLICATE_IN_FILE); row 4 is MNO B's own cell 0.
+    const FIXTURE_ROWS: readonly UdrRow[] = [
+      { cell: CELL_0, datetime: "2026-08-14T18:00:00", volume: 100 },
+      { cell: CELL_1, datetime: "2026-03-01T08:00:00", volume: 7 },
+      { cell: CELL_2, datetime: "2026-08-01T08:00:00", volume: 1 },
+      { cell: CELL_0, datetime: "2026-08-14T19:00:00", volume: 55, mno: MNO_B },
+      { cell: CELL_0, datetime: "2026-01-15T08:00:00", volume: 9 },
+    ];
+    const MISS_START = "2026-01-15";
+
     // Rate the five-record fixture once and return the flattened rated rows +
-    // the rp manifest, so multiple assertions share one run.
+    // the rp manifest, so multiple assertions share one run. `stamp` is the
+    // file_key's YYYYMMDDHHMI (a fresh file_key per run).
     function rateFixture(
-      fileSuffix: string,
+      stamp: string,
       roundingMode = "HALF_UP",
     ): {
       rows: Record<string, string | null>[];
       manifest: Record<string, unknown>;
       rpExecId: string;
     } {
-      // Row order (PER_UNIT = rate × quantity, rm19):
-      //   1 A/P2   0.0050 × 100 = 0.500000
-      //   2 A/P1   0.0035 ×   7 = 0.024500
-      //   3 A/boundary=P2 0.0050 × 1 = 0.005000 (the rounding-mode discriminator)
-      //   4 B/override    0.07   ×  55 = 3.850000
-      //   5 bogus/miss
-      const csvRows = [
-        `2026-08-14T10:00:00Z,${invA},CU,S,100`, // -> P2 0.0050 × 100
-        `2026-03-01T00:00:00Z,${invA},CU,S,7`, // -> P1 0.0035 × 7
-        `2026-08-01T00:00:00Z,${invA},CU,S,1`, // boundary -> NEW P2 0.0050 × 1 = 0.005
-        `2026-08-14T11:00:00Z,${invB},CU,S,55`, // -> override 0.07 × 55
-        `2026-08-14T12:00:00Z,BOGUS-INVENTORY,CU,S,9`, // -> LOOKUP_MISS
-      ];
-      const path = writeCsv(`RAN_USAGE_${fileSuffix}.csv`, csvRows);
-      const prpExecId = `prp-${fileSuffix}`;
-      const rpExecId = `rp-${fileSuffix}`;
-      const prpManifestUri = runPrp(path, prpExecId);
-      const rpManifestUri = runRp(prpManifestUri, rpExecId, roundingMode);
-      const manifest = readManifest(rpManifestUri);
-      const rows = (manifest.rated_chunk_uris as string[]).flatMap((u) =>
-        readParquetRows(u),
+      const path = p1.writeUdrRows(
+        `rating-input-file-${stamp}.udr`,
+        FIXTURE_ROWS,
       );
-      return { rows, manifest, rpExecId };
+      const rpExecId = `rp-${stamp}`;
+      const prpManifestUri = p1.runPrp(path, `prp-${stamp}`);
+      const rpManifestUri = p1.runRp(prpManifestUri, rpExecId, roundingMode);
+      const manifest = readManifest(rpManifestUri);
+      return { rows: ratedRows(manifest), manifest, rpExecId };
     }
     const byKey = (
       rows: Record<string, string | null>[],
@@ -797,13 +705,13 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     // As-of correctness (D1, D2): pinned version, [start,end) boundary, override.
     // -----------------------------------------------------------------
     it("2/4/6. resolves the pinned-version price as-of start_datetime, applies the override, multiplies quantity (PER_UNIT)", () => {
-      const { rows, manifest } = rateFixture("20260814");
+      const { rows, manifest } = rateFixture("202608140001");
       expect(manifest.status).toBe("PROCESSING");
-      // 4 of 5 resolve; the bogus subscriber is a LOOKUP_MISS.
+      // 4 of 5 resolve; the record with no effective price is a LOOKUP_MISS.
       expect(manifest.rated_count).toBe(4);
       expect(manifest.lookup_miss_count).toBe(1);
 
-      // Row 1 (A, 2026-08-14) -> P2 0.0050. PER_UNIT multiplies USAGE_MBPS=100:
+      // Row 1 (A, 2026-08-14) -> P2 0.0050. PER_UNIT multiplies usage_volume=100:
       // the charge is rate × quantity = 0.0050 × 100 = 0.500000 (#6, rm19).
       const r1 = byKey(rows, invA, "2026-08-14");
       expect(r1?.udr_rate_type).toBe("PER_UNIT");
@@ -829,19 +737,19 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(r4?.udr_rated_price_raw).toBe("3.850000");
       expect(r4?.udr_rated_price).toBe("3.85");
       expect(r4?.udr_price_override_ref).not.toBeNull();
-    });
+    }, 120_000);
 
     it("3. a record dead on a price boundary resolves to the NEW price ([start,end), matching isEffectiveNow)", () => {
-      const { rows } = rateFixture("20260815");
+      const { rows } = rateFixture("202608140002");
       // Row 3 is exactly 2026-08-01T00:00:00Z, P2's start_date_time -> P2 (new).
       const r3 = byKey(rows, invA, "2026-08-01");
       expect(r3?.udr_usage_rate).toBe("0.005000");
       expect(r3?.udr_price_ref).toBe(priceP2Id);
-    });
+    }, 120_000);
 
     it("pm51-spec D5 — a capacity_motivation dated between two usage_rate rows changes nothing", async () => {
       // Insert a capacity_motivation on OFF1's same unit, dated between P1
-      // (2026-01-01) and P2 (2026-08-01). If the window's PARTITION BY
+      // (2026-02-01) and P2 (2026-08-01). If the window's PARTITION BY
       // omitted unit_of_measure, or a filter/partition gap let a
       // non-usage_rate row leak into the usage_rate lane, this could
       // truncate P1's eff_to or otherwise shift resolution — it must not.
@@ -868,7 +776,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         .set({ lifecycleStatus: "ACTIVE" })
         .where(eq(productOffering.productOfferingId, off1Id));
 
-      const { rows } = rateFixture("20260825b");
+      const { rows } = rateFixture("202608140003");
       // Same rows, same price refs as test "2/4/6" above — byte-identical.
       const r1 = byKey(rows, invA, "2026-08-14");
       expect(r1?.udr_usage_rate).toBe("0.005000");
@@ -876,19 +784,19 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const r2 = byKey(rows, invA, "2026-03-01");
       expect(r2?.udr_usage_rate).toBe("0.003500");
       expect(r2?.udr_price_ref).toBe(priceP1Id);
-    });
+    }, 120_000);
 
     it("5. udr_currency comes from the resolved price row", () => {
-      const { rows } = rateFixture("20260816");
+      const { rows } = rateFixture("202608140004");
       expect(rows.length).toBeGreaterThan(0); // guard against a vacuous pass on []
       for (const r of rows) expect(r.udr_currency).toBe(CURRENCY);
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // Money + rounding (D5, D7, D8).
     // -----------------------------------------------------------------
     it("6/8. stores BOTH raw (18,6) and rounded (18,2); a sub-cent amount survives in _raw and rounds correctly", () => {
-      const { rows } = rateFixture("20260817");
+      const { rows } = rateFixture("202608140005");
       const r2 = byKey(rows, invA, "2026-03-01"); // 0.0035 × 7 = 0.024500
       // The sub-cent product survives in _raw at full precision (numeric(18,6))
       // and rounds once to numeric(18,2): HALF_UP(0.024500) = 0.02.
@@ -901,23 +809,23 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         expect(r.udr_rated_price).toMatch(/^\d+\.\d{2}$/);
         expect(r.udr_rounding_mode).toBe("HALF_UP");
       }
-    });
+    }, 120_000);
 
     it("7. the per-record rounding method is applied once from the raw (HALF_UP vs HALF_EVEN vs TRUNCATE)", () => {
       // Row 3 is P2 0.0050 × 1 = 0.005000; three modes from the SAME raw:
       // HALF_UP -> 0.01, HALF_EVEN -> 0.00 (round to even), TRUNCATE -> 0.00.
       const up = byKey(
-        rateFixture("20260818", "HALF_UP").rows,
+        rateFixture("202608140006", "HALF_UP").rows,
         invA,
         "2026-08-01",
       );
       const even = byKey(
-        rateFixture("20260819", "HALF_EVEN").rows,
+        rateFixture("202608140007", "HALF_EVEN").rows,
         invA,
         "2026-08-01",
       );
       const trunc = byKey(
-        rateFixture("20260820", "TRUNCATE").rows,
+        rateFixture("202608140008", "TRUNCATE").rows,
         invA,
         "2026-08-01",
       );
@@ -931,13 +839,13 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       expect(up?.udr_rated_price_raw).toBe("0.005000");
       expect(even?.udr_rated_price_raw).toBe("0.005000");
       expect(trunc?.udr_rated_price_raw).toBe("0.005000");
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // Snapshot, stamps, scope (D4, D6, D10, D5).
     // -----------------------------------------------------------------
     it("6/9/10/12. every rated row carries the full snapshot, the version stamps, the product unit, and a PER_UNIT rate detail", () => {
-      const { rows } = rateFixture("20260821");
+      const { rows } = rateFixture("202608140009");
       expect(rows.length).toBeGreaterThan(0); // guard against a vacuous pass on []
       for (const r of rows) {
         // Snapshot columns (D4) populated on every rated row (#9).
@@ -947,10 +855,10 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         expect(r.udr_rounding_mode).not.toBeNull();
         // Version stamps (D10/Inv #12) (#10).
         expect(r.rating_engine_version).toBe(ENGINE_VERSION);
-        expect(r.rating_flow_revision).toBe("42");
+        expect(r.rating_flow_revision).toBe(String(FLOW_REVISION));
         expect(r.rated_datetime).not.toBeNull();
-        // rm19 §6 — udr_usage_unit is the product's catalog unit ("Mbps"), never
-        // the feed token ("MBPS").
+        // rm19 §6 — udr_usage_unit is the product's catalog unit ("Mbps"); the
+        // rm21 feed carries no unit at all.
         expect(r.udr_usage_unit).toBe("Mbps");
         // Rate-type derivation (#12, rm19): every fixture row is a plain-scalar
         // usage_rate -> PER_UNIT; the detail carries exactly the four PER_UNIT
@@ -968,50 +876,63 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         expect(detail.quantity).toBe(r.udr_usage_quantity);
         expect(detail.amountRaw).toBe(r.udr_rated_price_raw);
       }
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // LOOKUP_MISS (D3) — one summarised line, record not rated.
     // -----------------------------------------------------------------
-    it("11. an unresolved subscriber raises LOOKUP_MISS (one summarised line) and is not rated", () => {
-      const { rows, manifest, rpExecId } = rateFixture("20260822");
-      // The bogus subscriber is absent from the rated output (not fabricated).
+    it("11. a record whose subscriber resolves but whose price does not (before the lane's first effective price) raises LOOKUP_MISS (one summarised line) and is not rated", () => {
+      const { rows, manifest, rpExecId } = rateFixture("202608140010");
+      // The unpriced record is absent from the rated output (not fabricated).
       expect(
-        rows.some((r) => r.udr_subscription_ref_id === "BOGUS-INVENTORY"),
+        rows.some((r) => (r.start_datetime ?? "").startsWith(MISS_START)),
       ).toBe(false);
       expect(manifest.lookup_miss_count).toBe(1);
       // Exactly ONE summarised process_log line for the miss (Inv #11), not one
       // per missed record.
-      const lines = logLinesFor("RP", rpExecId);
+      const lines = logLinesFor(p1, "RP", rpExecId);
       expect(lines).toHaveLength(1);
       const parsed = JSON.parse(firstLine(lines));
       expect(parsed.event_code).toBe("LOOKUP_MISS");
       expect(parsed.component).toBe("RP");
       // Severity is left for the sweep to resolve from event_catalog (§7.2a).
       expect(parsed.perceived_severity).toBeNull();
-    });
+    }, 120_000);
 
     it("pm51-spec D4 — an offering with only a flat_fee + capacity modifiers (no usage_rate) yields LOOKUP_MISS", () => {
-      const csv = [`2026-08-14T10:00:00Z,${invC},CU,S,42`];
-      const path = writeCsv("RAN_USAGE_20260829.csv", csv);
-      const prpManifestUri = runPrp(path, "prp-nousagerate");
+      const path = p3.writeUdr("rating-input-file-202608290000.udr", [42]);
+      const prpManifestUri = p3.runPrp(path, "prp-nousagerate");
       const rpExecId = "rp-nousagerate";
-      const rpManifestUri = runRp(prpManifestUri, rpExecId);
+      const rpManifestUri = p3.runRp(prpManifestUri, rpExecId);
       const manifest = readManifest(rpManifestUri);
       expect(manifest.rated_count).toBe(0);
       expect(manifest.lookup_miss_count).toBe(1);
       // One summarised process_log line (Inv #11), same shape as the other
-      // LOOKUP_MISS cause below.
-      const lines = logLinesFor("RP", rpExecId);
+      // LOOKUP_MISS cause above.
+      const lines = logLinesFor(p3, "RP", rpExecId);
       expect(lines).toHaveLength(1);
       expect(JSON.parse(firstLine(lines)).event_code).toBe("LOOKUP_MISS");
-    });
+    }, 120_000);
+
+    // Rewrites P2's ratePerUnit in place, with OFF1 flipped to DRAFT for the
+    // write (pm36's DRAFT-guard) and re-activated straight after.
+    async function setOff1RatePerUnit(rate: string): Promise<void> {
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "DRAFT" })
+        .where(eq(productOffering.productOfferingId, off1Id));
+      await sql`UPDATE product.product_offering_price SET price_component = jsonb_set(price_component, '{params,ratePerUnit}', to_jsonb(${rate}::text)) WHERE product_offering_price_id = ${priceP2Id}`;
+      await db
+        .update(productOffering)
+        .set({ lifecycleStatus: "ACTIVE" })
+        .where(eq(productOffering.productOfferingId, off1Id));
+    }
 
     // -----------------------------------------------------------------
     // #13 — price snapshot reproducibility (the headline).
     // -----------------------------------------------------------------
     it("13. re-rating after the catalog price AND the override change reproduces the original amount from the snapshot", async () => {
-      const { rows } = rateFixture("20260823");
+      const { rows } = rateFixture("202608140011");
       const r1 = byKey(rows, invA, "2026-08-14");
       const r4 = byKey(rows, invB, "2026-08-14");
       const originalRate1 = r1?.udr_usage_rate;
@@ -1022,8 +943,10 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // mutation #13 guards against. (product_offering_price is insert-only in
       // the app, but the test mutates it directly to simulate the passage of
       // time / a catalog correction.) pm51-spec D6 — the envelope's
-      // `params.ratePerUnit` replaces the dropped `amount` column.
-      await sql`UPDATE product.product_offering_price SET price_component = jsonb_set(price_component, '{params,ratePerUnit}', '"0.9999"') WHERE product_offering_price_id = ${priceP2Id}`;
+      // `params.ratePerUnit` replaces the dropped `amount` column. OFF1 is
+      // ACTIVE, so pm36's DRAFT-guard trigger refuses the price write unless
+      // OFF1 is flipped back to DRAFT around it (the D5 test's bypass).
+      await setOff1RatePerUnit("0.9999");
       await sql`UPDATE ordering.order_item_price_override SET amount = '0.55' WHERE price_type = 'usage'`;
 
       // The already-rated row's snapshotted inputs are unchanged, and the amount
@@ -1036,36 +959,31 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // Re-running rp now (a re-resolve) would pick up the changed catalog — this
       // is why the snapshot is mandatory (D4): the DURABLE snapshot on the row,
       // read back by RL, is what reproduces the charge, never a re-resolution.
-      const { rows: reResolved } = rateFixture("20260824");
+      const { rows: reResolved } = rateFixture("202608140012");
       const again = byKey(reResolved, invA, "2026-08-14");
       expect(again?.udr_usage_rate).toBe("0.999900"); // proves a re-resolve DIVERGES
       // ...so the snapshot (0.005000), not the re-resolve (0.999900), is the record
       // of truth for the original charge.
 
       // Restore for any later assertions in this file.
-      await sql`UPDATE product.product_offering_price SET price_component = jsonb_set(price_component, '{params,ratePerUnit}', '"0.0050"') WHERE product_offering_price_id = ${priceP2Id}`;
+      await setOff1RatePerUnit("0.0050");
       await sql`UPDATE ordering.order_item_price_override SET amount = '0.07' WHERE price_type = 'usage'`;
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // rm19 — PER_UNIT R1 canonical + the card-driven refusal.
     // -----------------------------------------------------------------
     it("R1 (rm19 §7) — PER_UNIT: ratePerUnit 100 × volume 20 = 2000, detail mirrors the Zod golden fixture, unit from the product", () => {
-      const path = writeCsv("RAN_USAGE_20260902.csv", [
-        `2026-08-14T10:00:00Z,${invD},CU,S,20`,
-      ]);
-      const prpManifestUri = runPrp(path, "prp-perunit-r1");
-      const rpManifestUri = runRp(prpManifestUri, "rp-perunit-r1");
+      const path = p4.writeUdr("rating-input-file-202609020000.udr", [20]);
+      const prpManifestUri = p4.runPrp(path, "prp-perunit-r1");
+      const rpManifestUri = p4.runRp(prpManifestUri, "rp-perunit-r1");
       const manifest = readManifest(rpManifestUri);
       expect(manifest.rated_count).toBe(1);
-      const rows = (manifest.rated_chunk_uris as string[]).flatMap((u) =>
-        readParquetRows(u),
-      );
-      const r = rows.at(0);
+      const r = ratedRows(manifest).at(0);
       expect(r?.udr_rate_type).toBe("PER_UNIT");
       expect(r?.udr_rated_price_raw).toBe("2000.000000");
       expect(r?.udr_rated_price).toBe("2000.00");
-      expect(r?.udr_usage_unit).toBe("Mbps"); // the product's unit, not "MBPS"
+      expect(r?.udr_usage_unit).toBe("Mbps"); // the product's unit
       const expectedDetail = {
         rateType: "PER_UNIT",
         ratePerUnit: "100.000000",
@@ -1076,19 +994,17 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // Python-vs-Zod parity (#4): RP emits exactly a value the SHARED golden
       // fixture (the rm17 Zod schema test's own data) declares valid.
       expect(UDR_RATE_DETAIL_GOLDEN.valid).toContainEqual(expectedDetail);
-    });
+    }, 120_000);
 
     it("rm19 — a card-driven usage_rate (plaSpecId=PLA_USAGE_RATE) fails loudly with CARD_DRIVEN_RATING_UNSUPPORTED and rates no row", () => {
-      const path = writeCsv("RAN_USAGE_20260903.csv", [
-        `2026-08-14T10:00:00Z,${invE},CU,S,10`,
-      ]);
-      const prpManifestUri = runPrp(path, "prp-carddriven");
+      const path = p5.writeUdr("rating-input-file-202609030000.udr", [10]);
+      const prpManifestUri = p5.runPrp(path, "prp-carddriven");
       // RP must refuse (no rate-card resolution, Inv. #42): a non-zero exit with
       // the rm18 event code, no rated manifest, no rated chunk.
       let stderr = "";
       let threw = false;
       try {
-        runRp(prpManifestUri, "rp-carddriven");
+        p5.runRp(prpManifestUri, "rp-carddriven");
       } catch (err) {
         threw = true;
         const e = err as { stderr?: string; message?: string };
@@ -1099,12 +1015,12 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // #6 (rm19) — the failure is also emitted as ONE structured process_log line
       // (rm18 event code, component RP) so the sweep raises it as an alarm, not just
       // a stderr print. Same shape as the LOOKUP_MISS line asserted above.
-      const lines = logLinesFor("RP", "rp-carddriven");
+      const lines = logLinesFor(p5, "RP", "rp-carddriven");
       expect(lines).toHaveLength(1);
       expect(JSON.parse(firstLine(lines)).event_code).toBe(
         "CARD_DRIVEN_RATING_UNSUPPORTED",
       );
-    });
+    }, 120_000);
 
     // -----------------------------------------------------------------
     // Forward contract — a non-PROCESSING PRP manifest is a no-op (rm07/rm08).
@@ -1112,19 +1028,23 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     it("rp no-ops on a non-PROCESSING PRP manifest (a DISCARDED redelivery), passing the status through", () => {
       // A byte-identical redelivery of an already-claimed file -> DUPLICATE_BATCH,
       // PRP emits a DISCARDED manifest.
-      const csv = [`2026-08-14T10:00:00Z,${invA},CU,S,100`];
-      writeCsv("RAN_USAGE_20260830.csv", csv); // run 1 claims it
-      runPrp(join(landingDir, "RAN_USAGE_20260830.csv"), "prp-dup-1");
+      p4.runPrp(
+        p4.writeUdr("rating-input-file-202608300000.udr", [100]), // run 1 claims it
+        "prp-dup-1",
+      );
       // Redeliver the exact bytes under a varied name -> DUPLICATE_BATCH.
-      const dupPath = writeCsv("RAN_USAGE_20260830_v9.csv", csv);
-      const dupManifestUri = runPrp(dupPath, "prp-dup-2");
+      const dupPath = p4.writeUdr(
+        "rating-input-file-202608300000_v9.udr",
+        [100],
+      );
+      const dupManifestUri = p4.runPrp(dupPath, "prp-dup-2");
       expect(readManifest(dupManifestUri).status).toBe("DISCARDED");
       // rp consumes it and no-ops: status passthrough, no rated chunks, exit 0.
-      const rpManifestUri = runRp(dupManifestUri, "rp-dup");
+      const rpManifestUri = p4.runRp(dupManifestUri, "rp-dup");
       const rpManifest = readManifest(rpManifestUri);
       expect(rpManifest.status).toBe("DISCARDED");
       expect(rpManifest.rated_count).toBe(0);
       expect(rpManifest.rated_chunk_uris).toEqual([]);
-    });
+    }, 120_000);
   },
 );

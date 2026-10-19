@@ -163,9 +163,9 @@ describe("invoice layout lint (Styling rule 3)", () => {
   const files = hbsFiles(SEED_DIR);
 
   it("finds the seeded layout and generated templates", () => {
-    // Layout v1: shell + footer + 9 partials; generated v1: invoice + footer.
-    // bm71 deleted partials/usageAnnex.hbs (14 → 13).
-    expect(files.length).toBeGreaterThanOrEqual(13);
+    // Layout v1: shell + footer + 8 partials; generated v1: invoice + footer.
+    // bm71 deleted partials/usageAnnex.hbs (14 → 13); bm72 notes.hbs (→ 12).
+    expect(files.length).toBeGreaterThanOrEqual(12);
   });
 
   it.each(files.map((f) => [relative(REPO_ROOT, f).split("\\").join("/"), f]))(

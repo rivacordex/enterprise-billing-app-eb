@@ -34,6 +34,10 @@ inputs:
   - { id: ban_ids, type: JSON } # accounts scoped app-side at trigger (bm03)
   - { id: attempt, type: INT } # app-assigned; the idempotency key component
   - { id: gl_event_at, type: STRING }
+  # The business time zone (IANA, the app's APP_TIMEZONE): every calendar-date
+  # decision (window coverage, price as-of) is made in it, matching
+  # rating.period_of()'s billing month (rating X1). Default UTC.
+  - { id: business_timezone, type: STRING }
   # bm42: the single-band production guard (default 1). The capacity SQL is
   # N-band; raising this enables multi-step motivation later as a config
   # change, never a pricing-SQL edit (TC52).
@@ -73,8 +77,12 @@ tasks:
         #   Validation never re-runs that join (heaviest in the pipeline, Inv #24).
         #   - Currency: a correlated row with udr_currency <> account_currency ->
         #     signal FAILED, HARD finding CURRENCY_MISMATCH (the _CURRENCY_SQL check).
-        #   - Window coverage: a correlated row whose start_datetime is outside
-        #     [period_start, period_end] -> HARD finding WINDOW_COVERAGE.
+        #   - Window scope: only correlated rows whose start_datetime, as a date in
+        #     business_timezone, is inside [period_start, period_end] are checked
+        #     and claimed. A row from another month stays RATED and untouched
+        #     (like an orphan, Inv #25) for the run of its own period; it is
+        #     counted, not failed. (bm73 review, 2026-10-18: the old HARD
+        #     WINDOW_COVERAGE failed an account every month on leftover usage.)
         #   - Zero-claimable: NO correlated rows for the account -> signal DONE
         #     (a zero-charge exception, NOT an error); Collection claims nothing,
         #     Aggregation writes no usage line (recurring may still bill it, bm29).
@@ -96,6 +104,7 @@ tasks:
         #   product_inventory (or to an out-of-scope account) is NOT in `correlated`,
         #   so it is left at RATED, unclaimed and UNTOUCHED — never filtered out
         #   silently, never failing the account (it becomes bm32's orphan surface).
+        #   The claim takes the period's rows only (Validation's window scope).
       # --- aggregation (writes billing.customer_bill + customer_bill_line as billrun_runtime) ---
       - id: aggregation
         # REAL (bm28): group the account's claimed BILL_DRAFT usage into
@@ -134,6 +143,10 @@ tasks:
         #   the account's subscriptions of that offering. subtotal = SUM(net_amount)
         #   now spans BOTH sources; line_no is a single deterministic sequence over
         #   the shared grouping_key across USAGE + RECURRING (Inv #21).
+        #   - "ACTIVE subscription" here and in the capacity resolution below
+        #     means ACTIVE and overlapping the period (start_date <= period_end,
+        #     end_date unset or >= period_start). One ordered ahead or already
+        #     ended is not billed for this period (bm73 review, 2026-10-18).
         #   - Applies ONLY to a subscription whose offering INTENDS a recurring
         #     charge (a component_type='flat_fee' product_offering_price row whose
         #     envelope price_component->>'priceType' = 'recurring' exists, or an

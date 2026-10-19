@@ -1414,7 +1414,7 @@ def write_manifest(
 ) -> Path:
     """Write the RP handoff manifest (D5/D7): the batch identity, its status and
     the ordered chunk URIs. A single file URI is printed as the task output
-    (``outputs.prp.uri``). RP/RL no-op on a non-``PROCESSING`` status."""
+    (``outputs.prp.vars.uri``). RP/RL no-op on a non-``PROCESSING`` status."""
     manifest = {
         "batch_id": batch_id,
         "udr_type": udr_type,
@@ -1640,7 +1640,7 @@ def main(argv: list[str] | None = None) -> int:
                 chunk_paths=[],
                 chunk_size=args.chunk_size,
             )
-            print(manifest.resolve().as_uri())
+            storage.hand_off(manifest.resolve().as_uri())
             return 0
 
         # 2a. Per-batch extracts (rm21 §1), resolved BEFORE the claim so a
@@ -1691,7 +1691,7 @@ def main(argv: list[str] | None = None) -> int:
                 chunk_paths=[],
                 chunk_size=args.chunk_size,
             )
-            print(manifest.resolve().as_uri())
+            storage.hand_off(manifest.resolve().as_uri())
             return 0
         batch_id, batch_run_num = claim
         work_dir = _work_dir(args.work_dir, batch_id)
@@ -1840,7 +1840,7 @@ def main(argv: list[str] | None = None) -> int:
         chunk_paths=outcome.chunk_paths,
         chunk_size=args.chunk_size,
     )
-    print(manifest.resolve().as_uri())
+    storage.hand_off(manifest.resolve().as_uri())
     return 0
 
 

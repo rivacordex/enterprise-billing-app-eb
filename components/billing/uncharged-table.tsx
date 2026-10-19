@@ -9,10 +9,13 @@
 //      Transactions for recovery via a manual DBN/ADJ.
 //   2. Exceptions — the per-record surface (`BILL_NOTUSED` rows + orphans,
 //      Inv #25/D32): one row per record, an unresolvable orphan shown by its
-//      subscriber ref (NULL account). Info family (`--color-info-*`), distinct
-//      from the Errors tab's danger accent.
-// EXCLUDED accounts appear in NEITHER (Inv #26) — visible only via their status
-// badge on the Workflow timeline. Server component (native tables + `<Link>`);
+//      subscriber ref (NULL account). Plus (known-issues §28) PRIOR_PERIOD rows:
+//      a run account's unbilled usage from an earlier billing period, summed
+//      per period (`recordCount` records each). Info family
+//      (`--color-info-*`), distinct from the Errors tab's danger accent.
+// An account EXCLUDED from this run appears in NEITHER (Inv #26) — visible
+// only via its status badge on the Workflow timeline; its excluded month's
+// usage shows as PRIOR_PERIOD on a later run that includes it. Server component (native tables + `<Link>`);
 // zero rows in each section is a positive empty state, not a blank tab.
 
 import { ArrowUpRight, CircleCheck } from "lucide-react";
@@ -164,6 +167,22 @@ function UnchargedAccountsSection({
   );
 }
 
+const EXCEPTION_LABELS: Record<ExceptionRow["kind"], string> = {
+  BILL_NOTUSED: "Not used",
+  ORPHAN: "Orphan",
+  PRIOR_PERIOD: "Earlier period",
+};
+
+// A billing period → its label. A calendar-month period (`YYYY-MM-01`) is
+// "Sep 2026" (the `long` calendar date minus its day); a `cycle_day != 1`
+// period is its range, "15 Aug 2026 – 14 Sep 2026".
+function formatUsagePeriod(start: string, end: string | null): string {
+  if (start.endsWith("-01") || !end) {
+    return formatCalendarDate(start).replace(/^\d{2} /, "");
+  }
+  return `${formatCalendarDate(start)} – ${formatCalendarDate(end)}`;
+}
+
 function ExceptionsSection({
   exceptions,
   locale,
@@ -171,14 +190,16 @@ function ExceptionsSection({
   exceptions: ExceptionRow[];
   locale: string;
 }): React.JSX.Element {
+  // The adjustment guidance applies only to earlier-period rows (§28).
+  const hasPriorPeriod = exceptions.some((e) => e.kind === "PRIOR_PERIOD");
   return (
     <section className="space-y-3">
       <div>
         <h2 className="text-body font-semibold text-foreground">Exceptions</h2>
         <p className="text-body-sm text-muted-foreground">
           {exceptions.length === 0
-            ? "No per-record exceptions this run — no not-used usage and no orphaned records."
-            : `${exceptions.length} per-record exception${exceptions.length === 1 ? "" : "s"} — informational; these records are not on any bill.`}
+            ? "No per-record exceptions this run — no not-used usage, no orphaned records and no unbilled usage from earlier periods."
+            : `${exceptions.length} exception${exceptions.length === 1 ? "" : "s"} — informational; these records are not on any bill.${hasPriorPeriod ? " Earlier-period usage will not be billed by any run: Revenue Ops raises an adjustment." : ""}`}
         </p>
       </div>
 
@@ -224,11 +245,15 @@ function ExceptionsSection({
                   className="border-b border-[color:var(--border-subtle)] hover:bg-[color:var(--color-neutral-50)]"
                 >
                   <td className="px-4 py-3 align-top">
-                    <InfoBadge
-                      label={
-                        row.kind === "BILL_NOTUSED" ? "Not used" : "Orphan"
-                      }
-                    />
+                    <InfoBadge label={EXCEPTION_LABELS[row.kind]} />
+                    {row.usagePeriodStart ? (
+                      <div className="mt-1 text-muted-foreground">
+                        {formatUsagePeriod(
+                          row.usagePeriodStart,
+                          row.usagePeriodEnd,
+                        )}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 align-top">
                     {row.accountName ? (
@@ -249,6 +274,11 @@ function ExceptionsSection({
                   </td>
                   <td className="px-4 py-3 text-right align-top whitespace-nowrap text-muted-foreground tabular-nums">
                     {row.quantity} {row.unit}
+                    {row.recordCount > 1 ? (
+                      <div className="text-muted-foreground">
+                        {row.recordCount} records
+                      </div>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 text-right align-top whitespace-nowrap text-muted-foreground tabular-nums">
                     {formatCurrency(row.ratedPrice, row.currency, locale)}

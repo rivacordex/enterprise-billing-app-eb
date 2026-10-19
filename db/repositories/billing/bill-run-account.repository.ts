@@ -345,9 +345,10 @@ export const billRunAccountRepository = {
   // `PROCESSING_FAILED`/`EXCLUDED` account in the run is recorded `SKIPPED`
   // (no charges, no bill, no invoice number consumed). Scoped strictly to the
   // run; every other account (only `PROCESSED` remains, by the "all accounts
-  // terminal" precondition) is left untouched. Returns the count for the
-  // audit event / confirm-panel display.
-  async markSkippedForRun(tx: Database, billRunId: string): Promise<number> {
+  // terminal" precondition) is left untouched. Returns the skipped accounts'
+  // billing account ids: the count goes to the audit event / confirm-panel
+  // display, and approve releases those accounts' claimed usage (Inv #19).
+  async markSkippedForRun(tx: Database, billRunId: string): Promise<string[]> {
     const rows = await tx
       .update(billRunAccount)
       .set({ status: "SKIPPED", lastProcessedAt: new Date() })
@@ -357,8 +358,8 @@ export const billRunAccountRepository = {
           inArray(billRunAccount.status, ["PROCESSING_FAILED", "EXCLUDED"]),
         ),
       )
-      .returning({ billRunAccountId: billRunAccount.billRunAccountId });
-    return rows.length;
+      .returning({ billingAccountId: billRunAccount.refBillingAccountId });
+    return rows.map((r) => r.billingAccountId);
   },
 
   // bm11-spec §Visual — the `PostingProgressView` read: every postable

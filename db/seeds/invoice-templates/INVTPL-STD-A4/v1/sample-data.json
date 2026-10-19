@@ -72,7 +72,7 @@
     "discountTotal": "50000.00",
     "subtotalExclTax": "260000.00",
     "taxTotal": "0.00",
-    "totalAmount": "260000.00",
+    "totalAmount": "150000.00",
     "amountDue": "260000.00",
     "totalCharges": "260000.00",
     "adjustments": "0.00",
@@ -137,6 +137,10 @@
       "description": "Enterprise Fibre 1Gbps",
       "amount": "10000.00"
     }
+  ],
+  "footnote": [
+    "Calculations are done in Mbps",
+    "This invoice is billed exclusive of Universal Service Provision (USP)"
   ],
   "isDraft": false,
   "locale": "en-MY",

@@ -10,13 +10,15 @@ import type { PreApprovalCheck } from "@/types/billing";
 // bm10-spec §Design/§Implementation §1. The approve transaction — the
 // four-eyes money gate. One `db.transaction`:
 //   1. `SELECT … FOR UPDATE` the run → guard `status = 'PROCESSED'`.
-//   2. Run all five pre-approval checks (fail → typed result, no state
+//   2. Run the blocking pre-approval checks (fail → typed result, no state
 //      change). Four-eyes gets its own result code (`FOUR_EYES_VIOLATION`,
 //      backed by the DB CHECK too); the other four bucket under
 //      `CHECKS_FAILED`.
 //   3. Stamp `approved_by`/`approved_at`/the immutable `total_amount` (the
 //      SQL sum of the postable — non-SKIPPED — bills).
-//   4. Mark every `PROCESSING_FAILED`/`EXCLUDED` account `SKIPPED`.
+//   4. Mark every `PROCESSING_FAILED`/`EXCLUDED` account `SKIPPED`, and
+//      release the skipped accounts' claimed rows back to `RATED` (Inv #19:
+//      their attempt is abandoned; known-issues §27).
 //   5. Flip the run `PROCESSED → APPROVED`.
 //   6. `insertAuditEvent(BILL_RUN_APPROVED)`.
 // Posting (`APPROVED → POSTING → INVOICED`) is bm11 — this stops at APPROVED.
@@ -41,7 +43,11 @@ export async function approveRun(
       return { ok: false, code: "NOT_APPROVABLE" } as const;
     }
 
-    const checks = await runPreApprovalChecks(tx, run, actorId);
+    // Blocking checks only: the informational ones never gate approval, so
+    // they are not read under the run lock (added back below on failure).
+    const checks = await runPreApprovalChecks(tx, run, actorId, {
+      informational: false,
+    });
     const fourEyes = checks.find((c) => c.check === "four_eyes");
     if (fourEyes && !fourEyes.pass) {
       return { ok: false, code: "FOUR_EYES_VIOLATION" } as const;
@@ -53,8 +59,13 @@ export async function approveRun(
     if (failing.length > 0) {
       // Return the COMPLETE re-check result (not just the failing subset) so the
       // panel can replace its checklist wholesale — a check that was failing at
-      // page-load but now passes is cleared rather than left stale.
-      return { ok: false, code: "CHECKS_FAILED", checks } as const;
+      // page-load but now passes is cleared rather than left stale. Rare and
+      // write-free, so it re-runs the full list, informational lines included.
+      return {
+        ok: false,
+        code: "CHECKS_FAILED",
+        checks: await runPreApprovalChecks(tx, run, actorId),
+      } as const;
     }
 
     // Single-currency-per-cycle is a v1 invariant, but `sumPostableTotalForRun`
@@ -73,10 +84,16 @@ export async function approveRun(
       tx,
       run.billRunId,
     );
-    const skippedCount = await billRunAccountRepository.markSkippedForRun(
+    const skippedBanIds = await billRunAccountRepository.markSkippedForRun(
       tx,
       run.billRunId,
     );
+    const skippedCount = skippedBanIds.length;
+    // A skipped account gets no bill, so its claimed usage (an account that
+    // failed after Collection) goes back to RATED for a later run — before
+    // markApproved below flips the run's remaining BILL_DRAFT rows. Without
+    // this, never-invoiced usage became BILL_APPROVED (known-issues §27).
+    await udrStatusRepository.releaseSkipped(tx, run.billRunId, skippedBanIds);
     const approved = await billRunRepository.approve(tx, run.billRunId, {
       approvedBy: actorId,
       totalAmount,

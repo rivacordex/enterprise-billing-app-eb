@@ -21,4 +21,10 @@
     {{else}}<p class="no-usage">No utilised capacity this period.</p>{{/if}}
   </section>
   {{/each}}
+  {{!-- the last page: Σ Utilised, never the amount due (D22, D30, P10) --}}
+  <section class="total-amount-page" style="break-before: page">
+    <h2 class="detail-heading">Summary of Utilised Capacity Charges</h2>
+    <div class="total-amount"><span>Total Amount</span><span class="num">{{money totals.totalAmount}}</span></div>
+    {{#if footnote.length}}<div class="footnote">{{#each footnote}}<p>{{this}}</p>{{/each}}</div>{{/if}}
+  </section>
 </section>
