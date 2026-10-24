@@ -72,7 +72,7 @@ describe("pm67 demo rate-card seed — boundaries (D7, I2, I3.9)", () => {
     const productDemo = read(PRODUCT_DEMO);
     // product-demo exports the seed and the single tracked card name (D-A5).
     expect(productDemo).toMatch(/export\s+async\s+function\s+seedRateCardDemo/);
-    expect(productDemo).toMatch(/RAN_USAGE_CARD_NAME\s*=\s*"RAN_USAGE"/);
+    expect(productDemo).toMatch(/RAN_USAGE_CARD_NAME\s*=\s*"RATECARD_RAN_USAGE_LKP"/);
     // It calls the REAL services (D2), not a hand-set status write.
     expect(productDemo).toContain("uploadRatecardVersion");
     expect(productDemo).toContain("activateRatecardVersion");
