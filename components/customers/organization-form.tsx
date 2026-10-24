@@ -313,7 +313,6 @@ export function OrganizationForm({
       <Button
         type="submit"
         disabled={isSubmitting || conflict}
-        className="bg-[color:var(--action-cta-bg)] text-white hover:bg-[color:var(--action-cta-bg)]/90"
       >
         Save changes
       </Button>
