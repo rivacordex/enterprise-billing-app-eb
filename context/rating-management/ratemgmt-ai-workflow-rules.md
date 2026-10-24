@@ -18,7 +18,7 @@ Supplements `context/ai-workflow-rules.md` and the module rules below; applies t
 3. **Build one step per pass.** Do not start the next until the current passes §8 + the update checks below and is committed.
 
 **Scoping — no speculative changes.**
-4. **`PER_UNIT` is in scope; nothing beyond it is.** `TIERED_*`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` stay out (§3.1, updated). Do not build **card-driven** `usage_rate` rating — raise `CARD_DRIVEN_RATING_UNSUPPORTED`.
+4. **`PER_UNIT` is in scope; nothing beyond it is.** `TIERED_*`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` stay out (§3.1, updated). Do not build **card-driven** `usage_rate` rating — raise `CARD_DRIVEN_RATING_UNSUPPORTED`. *(Amended 2026-10-22, rm30: the product-rate fallback for a card with no cell rates is built — Inv 24; reading card rates is still out.)*
 5. **Do not build Workstream C** (Product-management UI, `product_catalog` permission, the `singleSubInstPerCust`/MNO-key ordering guards). It is deferred to `_updatemodule-product-mgmt-ui-plan.md`. Raise the gap; do not fill it.
 6. **Do not store `party_role_id` on `udr_rated`.** The rated row's subscription anchor is `udr_subscription_ref_id` (a `product_inventory_id`); `party_role_id` is resolved transiently for the factor-2 cross-check only.
 
@@ -128,7 +128,7 @@ Supplements `context/ai-workflow-rules.md`, §0 and the module rules below; appl
 
 ## 3. Scoping — No Speculative Changes
 
-1. **Implement `PER_UNIT`; implement no other rate type.** *(PER_UNIT update — supersedes the earlier FLAT-only scope; authorized by `_change-rating-configuration-plan.md`.)* `PER_UNIT` (`ratePerUnit × usage_volume`) and `FLAT` are valid. `TIERED_GRADUATED`, `TIERED_VOLUME`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` stay **out of scope** — implementing their calculation is a spec change, not a unit. **Card-driven `usage_rate` rating is also out of scope:** if RP resolves a `usage_rate` with `plaSpecId = 'PLA_USAGE_RATE'`, raise `CARD_DRIVEN_RATING_UNSUPPORTED` — do not build the calculation.
+1. **Implement `PER_UNIT`; implement no other rate type.** *(PER_UNIT update — supersedes the earlier FLAT-only scope; authorized by `_change-rating-configuration-plan.md`.)* `PER_UNIT` (`ratePerUnit × usage_volume`) and `FLAT` are valid. `TIERED_GRADUATED`, `TIERED_VOLUME`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` stay **out of scope** — implementing their calculation is a spec change, not a unit. **Card-driven `usage_rate` rating is also out of scope:** if RP resolves a `usage_rate` with `plaSpecId = 'PLA_USAGE_RATE'`, raise `CARD_DRIVEN_RATING_UNSUPPORTED` — do not build the calculation. *(Amended 2026-10-22, rm30: when the named card's ACTIVE version carries no `rate_per_unit`, RP rates it at the product's `ratePerUnit` instead — Inv 24.)*
 2. **Do not add minimum-commitment, cap, or allowance handling.** These cannot be computed per record and are bill-run-time concerns. Adding a column or a rate-type value for them is a category error — raise it, do not build it.
 3. **Do not add `rating.udr_exception`.** It was deliberately removed. `status = 'BILL_NOTUSED'` covers the case.
 4. **Do not add a `udr_key_hash` column** or any hash-based index. `udr_key` is indexed directly, and the decision is recorded with measurements in `_newmodule-rating-engine-plan.md` §12.5.

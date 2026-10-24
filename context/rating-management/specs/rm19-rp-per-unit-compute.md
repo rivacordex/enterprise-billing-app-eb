@@ -1,5 +1,7 @@
 # rm19 — Runtime rename + RP `PER_UNIT` computation — Spec
 
+> **Forward note (2026-10-22, rm30):** the unconditional `PLA_USAGE_RATE` → `CARD_DRIVEN_RATING_UNSUPPORTED` refusal below is narrowed by rm30 — a card with no cell rates now falls back to `ratePerUnit`. This spec is the record of what rm19 shipped; see `rm30-rp-card-driven-product-rate-fallback.md`.
+
 - **Unit:** rm19 of Phase G (`rm00-build-plan.md`)
 - **Repo:** `workflow-management` · **Boundary:** `worker/workflow-engine/runtime/rp.py` (+ the rename in `rl.py`)
 - **Authorizes from:** `_change-rating-configuration-plan.md` (A2, A3); `ratemgmt-architecture.md` Inv 22–24; `ratemgmt-code-standards.md` §0, §2.2 (Decimal, round-once); `ratemgmt-ai-workflow-rules.md` §0 rules 4, 7.

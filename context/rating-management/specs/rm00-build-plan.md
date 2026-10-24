@@ -226,6 +226,17 @@ Implements `_updatemodule-rating-udr-key-resource-plan.md` and `ratemgmt-update-
 
 ---
 
+## Phase I — Card-driven product-rate fallback (rm30)
+
+Owner decision 2026-10-22: a card-driven `usage_rate` whose card supplies no rate is rated at the product's `ratePerUnit` (PC10's final fallback). Reading card rates stays unbuilt. Spec: `rm30-rp-card-driven-product-rate-fallback.md`.
+
+### rm30 — RP: card-driven `usage_rate` falls back to the product rate
+- **Repo:** wfm. **Boundary:** `runtime/rp.py` + a new rm30 suite + the Inv 23/24 doc amendments.
+- **Builds:** one card query per batch counting non-NULL `rate_per_unit` cells on the named card's ACTIVE version; `PLA_USAGE_RATE` → `PER_UNIT` at `ratePerUnit` when that count is 0; refusal (same event code, reason in the message) for an empty `rateCardLookUp`, no ACTIVE version, or any cell rate.
+- **Visible result:** the eMBB feed priced on a card-driven price rates at 100/Mbps; a card carrying rates still refuses loudly. **Depends on:** rm19, rm20, rm21.
+
+---
+
 ## Build-order summary
 
 | Unit | Name | Repo | Boundary | Key just-in-time dependency introduced |
@@ -260,6 +271,7 @@ Implements `_updatemodule-rating-udr-key-resource-plan.md` and `ratemgmt-update-
 | rm27 | RP carries `udr_resource` | wfm | `rp.py` | One extra pass-through column |
 | rm28 | RL writes `udr_resource` | wfm | `rl.py` | `COPY` column; OI-R3 trace |
 | rm29 | Seeds, write-once, E2E, ship gate | both | seeds / tests / CI | Tests 17–20; image bump |
+| rm30 | RP card-driven product-rate fallback | wfm | `rp.py` | Per-batch card-rate presence check |
 
 ---
 
@@ -270,7 +282,7 @@ Implements `_updatemodule-rating-udr-key-resource-plan.md` and `ratemgmt-update-
 - **Repo order:** app units land before the wfm units that depend on them (rm01–rm03a → Phase B+; rm15–rm18 → rm19–rm21; rm24–rm25 → rm26–rm28). rm03 before rm03a is load-bearing (`PUBLIC` `CONNECT`).
 - **Configuration is introduced just in time,** one key per unit that needs it. Phase H introduces none.
 - **Retention is not uniform:** `udr_rated` 7 years, `process_log` 24 months, `archive/` 7 years, `error/`/`logs/` 24 months.
-- **Rate types:** `FLAT` (rm08) and `PER_UNIT` (rm19). `TIERED_*`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` stay a spec change, not a unit; card-driven `usage_rate` raises `CARD_DRIVEN_RATING_UNSUPPORTED`.
+- **Rate types:** `FLAT` (rm08) and `PER_UNIT` (rm19). `TIERED_*`, `BLOCK`, `PERCENTAGE`, `ZERO_RATED` stay a spec change, not a unit; card-driven `usage_rate` falls back to `ratePerUnit` when its card carries no rates (rm30) and otherwise raises `CARD_DRIVEN_RATING_UNSUPPORTED`.
 - **`udr_key` field list** (open item 1) is closed for `RAN_USAGE`: `mno_public_id | commercial_unit | polygon_id`, identity `(partition_period, udr_key)`. The "canonical" value rule is **reversed by Phase H**; the shape stays.
 - **The X2 grain is table-wide.** `UNIQUE (partition_period, udr_key, is_live)` binds every `udr_type`; a sub-monthly `udr_type` needs a `udr_type`-scoped partial index.
 - **Out of scope:** the bill run's claim path, adjustments and credit notes, minimum commitments, caps, allowances, any UI, Workstream C, and (Phase H) any new `udr_rated` column, cutover guard or normalised uniqueness index.

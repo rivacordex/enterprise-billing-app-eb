@@ -152,7 +152,7 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 - `PER_UNIT` compute: `udr_rated_price_raw (18,6) = ratePerUnit × usage_volume`; `udr_rated_price (18,2) = round(raw − discount, HALF_UP)`; discount `= 0`.
 - Explicit `perUnitRateDetailSchema`: `{ rateType: "PER_UNIT", ratePerUnit, quantity, amountRaw }` (Zod + Python mirror).
 - `udr_usage_unit` sourced from the product's `usage_rate.unit_of_measure`.
-- Loud `CARD_DRIVEN_RATING_UNSUPPORTED` error if a card-driven `usage_rate` is ever resolved (not built).
+- Loud `CARD_DRIVEN_RATING_UNSUPPORTED` error if a card-driven `usage_rate` is resolved and its card carries cell rates or has no ACTIVE version; a card with no cell rates falls back to the product's `ratePerUnit` (rm30, 2026-10-22).
 
 **Loading (RL)**
 - Unchanged behavior, verified: single-transaction `COPY` insert at `RATED`, rm10 supersession by `file_key`, reconciliation identity, archive-after-commit.
@@ -216,7 +216,7 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 - **`singleSubInstPerCust` ordering-layer enforcement** — no code guard this phase (seed discipline only); lands with the ordering UI.
 - **Maker-checker** on product lifecycle — single-operator `MANAGER`.
 - **Multi-MNO-per-customer** (`mnoPublicKey2..N`) — the resolver is written as "first of N" but only the single key is wired.
-- **Card-driven PER_UNIT rating** (`PLA_USAGE_RATE`) — not built; RP raises `CARD_DRIVEN_RATING_UNSUPPORTED`.
+- **Card-driven PER_UNIT rating** (`PLA_USAGE_RATE`) from card rates — not built; RP raises `CARD_DRIVEN_RATING_UNSUPPORTED` when the card carries rates. A card with no rates falls back to `ratePerUnit` (rm30).
 - **Other rate types** (TIERED_GRADUATED / TIERED_VOLUME / BLOCK / PERCENTAGE / ZERO_RATED) — enum-present, unbuilt.
 - **Usage-level discounts** — all discount fields `0`/NULL.
 - **Effective-dated pricing for existing customers** — grandfather-until-re-subscribe only.

@@ -496,7 +496,7 @@ export async function seedProductDemo(tx: Database): Promise<void> {
 // ---------------------------------------------------------------------------
 
 // The single tracked card (D-A5). There is no surface to create a second card.
-export const RAN_USAGE_CARD_NAME = "RAN_USAGE";
+export const RAN_USAGE_CARD_NAME = "RATECARD_RAN_USAGE_LKP";
 
 // A demo upload row keyed by TABLE COLUMN (the values of pm58's
 // RATE_CARD_HEADER_MAP). Every field is a string exactly as a CSV cell is; an
