@@ -34,7 +34,9 @@ In order (rm08-spec D1-D11):
    ``udr_rated_price`` is rounded once to ``numeric(18,2)`` per
    ``udr_rounding_mode`` (D7/D8), in Python ``Decimal`` throughout — never
    ``float``, never through ``services/accounts/money.ts``. A card-driven
-   ``usage_rate`` (``plaSpecId = 'PLA_USAGE_RATE'``) raises
+   ``usage_rate`` (``plaSpecId = 'PLA_USAGE_RATE'``) rates ``PER_UNIT`` at the
+   product's ``ratePerUnit`` while its named card's ACTIVE version carries no
+   cell rate (rm30, Inv 24); otherwise it raises
    ``CARD_DRIVEN_RATING_UNSUPPORTED`` — a loud failure, never a partial result.
 6. **Stamps ``udr_currency``** from the **resolved price row** (D9) and the
    version columns ``rated_datetime`` / ``rating_engine_version`` /
@@ -248,37 +250,59 @@ def _validate_per_unit_rate_detail(detail: dict[str, str]) -> None:
 
 
 # The `plaSpecId` that marks a card-driven usage_rate (pricing-component.schema.ts
-# PC10/D4: a non-null `rateCardLookUp` forces `plaSpecId = 'PLA_USAGE_RATE'`). RP
-# has no rate-card join/resolution (Inv. #42) — a card-driven component is a loud,
-# diagnosable refusal, never a silent miss or a partial charge.
+# PC10/D4: a non-null `rateCardLookUp` forces `plaSpecId = 'PLA_USAGE_RATE'`).
+# rm30 (Inv 24): RP rates a card-driven component at the product's `ratePerUnit`
+# ONLY while the named card's ACTIVE version supplies no cell rate (PC10's final
+# fallback). Reading card rates is still a later phase, so a card that does carry
+# rates — or a card with no ACTIVE version — is a loud, diagnosable refusal, never
+# a silent miss, a silently-ignored card rate, or a partial charge.
 _CARD_DRIVEN_PLA_SPEC_ID = "PLA_USAGE_RATE"
 
 
 class CardDrivenRatingUnsupported(Exception):
     """A resolved ``usage_rate`` component is card-driven (``plaSpecId =
-    'PLA_USAGE_RATE'``) — rate-card resolution is a later phase (Inv. #42), so RP
-    cannot rate it. Raised (never swallowed into a LOOKUP_MISS drop) so the whole
-    RP task fails loudly with the ``CARD_DRIVEN_RATING_UNSUPPORTED`` event code
-    (rm18) and produces no rated row, rather than a silent or partial result."""
+    'PLA_USAGE_RATE'``) and the product-rate fallback does not apply (rm30): the
+    component names no card, the named card has no ACTIVE version, or its ACTIVE
+    version carries cell rates RP cannot read yet (Inv 24). Raised (never
+    swallowed into a LOOKUP_MISS drop) so the whole RP task fails loudly with the
+    ``CARD_DRIVEN_RATING_UNSUPPORTED`` event code (rm18) and produces no rated
+    row, rather than a silent or partial result."""
 
     event_code = "CARD_DRIVEN_RATING_UNSUPPORTED"
 
-    def __init__(self, pla_spec_id: str, price_ref: str):
+    def __init__(
+        self,
+        pla_spec_id: str,
+        price_ref: str,
+        reason: str,
+        card_name: str | None = None,
+    ):
         super().__init__(
-            f"usage_rate price {price_ref} is card-driven (plaSpecId={pla_spec_id!r}); "
-            "rate-card resolution is unsupported in RP (a later phase) — not rated."
+            f"usage_rate price {price_ref} is card-driven (plaSpecId={pla_spec_id!r}) "
+            f"and {reason} — not rated."
         )
         self.pla_spec_id = pla_spec_id
         self.price_ref = price_ref
+        self.card_name = card_name
 
 
-def derive_rate_type(component_type: str, pla_spec_id: str | None, *, price_ref: str) -> str:
+def derive_rate_type(
+    component_type: str,
+    pla_spec_id: str | None,
+    *,
+    price_ref: str,
+    card_name: str | None = None,
+    card_rated_cells: int | None = None,
+) -> str:
     """Derive ``udr_rate_type`` from the resolved component (rm19, D3), replacing
     the hardcoded ``"FLAT"``:
 
     * ``usage_rate`` + no ``plaSpecId`` → ``"PER_UNIT"`` (a plain scalar rate);
-    * ``usage_rate`` + ``plaSpecId = 'PLA_USAGE_RATE'`` → raise
-      ``CardDrivenRatingUnsupported`` (card-driven, unsupported here);
+    * ``usage_rate`` + ``plaSpecId = 'PLA_USAGE_RATE'`` → ``"PER_UNIT"`` at the
+      product's ``ratePerUnit`` when the named card's ACTIVE version carries no
+      cell rate (``card_rated_cells == 0``, rm30); otherwise raise
+      ``CardDrivenRatingUnsupported`` (no card named, no ACTIVE version —
+      ``card_rated_cells is None`` — or cell rates present);
     * ``flat_fee`` → ``"FLAT"`` (the existing path, unchanged).
 
     Anything else fails closed (§5.4) — the resolution query only returns
@@ -288,7 +312,26 @@ def derive_rate_type(component_type: str, pla_spec_id: str | None, *, price_ref:
         if pla_spec_id is None:
             return "PER_UNIT"
         if pla_spec_id == _CARD_DRIVEN_PLA_SPEC_ID:
-            raise CardDrivenRatingUnsupported(pla_spec_id, price_ref)
+            if not card_name:
+                raise CardDrivenRatingUnsupported(
+                    pla_spec_id, price_ref, "names no rate card (rateCardLookUp is empty)"
+                )
+            if card_rated_cells is None:
+                raise CardDrivenRatingUnsupported(
+                    pla_spec_id,
+                    price_ref,
+                    f"rate card {card_name!r} has no ACTIVE version",
+                    card_name,
+                )
+            if card_rated_cells > 0:
+                raise CardDrivenRatingUnsupported(
+                    pla_spec_id,
+                    price_ref,
+                    f"rate card {card_name!r} carries {card_rated_cells} cell rate(s); "
+                    "reading card rates is unsupported in RP (a later phase)",
+                    card_name,
+                )
+            return "PER_UNIT"
         raise ValueError(
             f"usage_rate price {price_ref} carries an unexpected plaSpecId "
             f"{pla_spec_id!r} (expected null or {_CARD_DRIVEN_PLA_SPEC_ID!r})."
@@ -325,14 +368,15 @@ price_windows AS (
            -- plaSpecId + rateCardLookUp from the price_component envelope (rm19).
            -- `plaSpecId` DRIVES the rate-type derivation: a usage_rate with
            -- plaSpecId=null rates PER_UNIT, one with 'PLA_USAGE_RATE' is
-           -- card-driven and raises CARD_DRIVEN_RATING_UNSUPPORTED (see
-           -- derive_rate_type). `rateCardLookUp` is projected into the window for
-           -- provenance but is DELIBERATELY not read for resolution: no rate-card
-           -- join, resolution or fallback exists in this query or anywhere in
-           -- this file (Inv. #42, PC10, H3) — the card-driven case is refused,
-           -- not resolved.
+           -- card-driven (see derive_rate_type). `rateCardLookUp` is projected
+           -- out so RP can check, once per batch, that the named card's ACTIVE
+           -- version carries no cell rate before falling back to `ratePerUnit`
+           -- (rm30, Inv 24, PC10's final fallback). No card RATE is ever read or
+           -- joined here: the amount is always the product's `ratePerUnit`.
            popp.price_component->>'plaSpecId'      AS pla_spec_id,
-           popp.price_component->>'rateCardLookUp' AS rate_card_lookup,
+           -- `rateCardLookUp` lives under `params` (pricing-component.schema.ts);
+           -- `plaSpecId` is top-level.
+           popp.price_component #>> '{params,rateCardLookUp}' AS rate_card_lookup,
            --
            -- A `usage_rate`'s `ratePerUnit` is NOT NULL by CHECK, so — unlike
            -- the old `tiered`-row-with-NULL-amount case this window used to
@@ -371,6 +415,7 @@ SELECT r.line_no,
        pw.component_type                  AS component_type,
        pw.unit_of_measure                 AS unit_of_measure,
        pw.pla_spec_id                     AS pla_spec_id,
+       pw.rate_card_lookup                AS rate_card_lookup,
        pw.product_offering_price_id       AS udr_price_ref,
        pw.eff_from                        AS udr_price_effective_date,
        pw.currency                        AS udr_currency,
@@ -405,6 +450,7 @@ class Resolution:
     udr_currency: str
     effective_amount: Decimal | None
     udr_price_override_ref: str | None
+    rate_card_lookup: str | None = None
 
 
 def resolve_chunk(
@@ -440,6 +486,7 @@ def resolve_chunk(
             component_type=row["component_type"],
             unit_of_measure=row["unit_of_measure"],
             pla_spec_id=row["pla_spec_id"],
+            rate_card_lookup=row["rate_card_lookup"],
             udr_price_ref=row["udr_price_ref"],
             udr_price_effective_date=row["udr_price_effective_date"],
             udr_currency=row["udr_currency"],
@@ -448,6 +495,34 @@ def resolve_chunk(
             udr_price_override_ref=row["udr_price_override_ref"],
         )
     return resolved
+
+
+# rm30 (Inv 24) — how many cells of each named card's ACTIVE version carry a
+# `rate_per_unit`. ONE query per batch for the distinct card names the resolved
+# card-driven prices name (cached across chunks, Inv #10). A name absent from the
+# result has no ACTIVE version. The rate VALUES are never selected — only whether
+# any exist, which decides fallback-to-`ratePerUnit` versus refusal.
+_CARD_RATED_CELLS_SQL = """
+SELECT v.card_name,
+       count(l.rate_per_unit) AS rated_cells
+FROM   product.ratecard_version v
+LEFT JOIN product.ratecard_ran_usage_lkp l
+       ON l.ratecard_version_id = v.ratecard_version_id
+WHERE  v.status = 'ACTIVE'
+  AND  v.card_name = ANY(%(card_names)s::text[])
+GROUP BY v.card_name
+"""
+
+
+def card_rated_cells(
+    conn: psycopg.Connection, card_names: list[str]
+) -> dict[str, int]:
+    """``card_name -> rated cell count`` for each named card's ACTIVE version
+    (rm30). A card with no ACTIVE version is absent from the map."""
+    if not card_names:
+        return {}
+    rows = db.fetch(conn, _CARD_RATED_CELLS_SQL, {"card_names": card_names})
+    return {str(r["card_name"]): int(r["rated_cells"]) for r in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +566,7 @@ def rate_record(
     usage_quantity: str,
     resolution: Resolution,
     rounding_mode: str,
+    card_rates: dict[str, int] | None = None,
 ) -> RatedRecord:
     """Derive ``udr_rate_type`` and compute the charge, then assemble the rated
     record (rm19, D3/D4/D5/D8).
@@ -498,17 +574,22 @@ def rate_record(
     The caller has already confirmed ``resolution.effective_amount`` is present. A
     ``usage_rate`` with no ``plaSpecId`` rates ``PER_UNIT`` (``ratePerUnit ×
     usage_quantity``); a ``flat_fee`` stays ``FLAT`` (quantity ignored). A
-    card-driven ``usage_rate`` raises ``CardDrivenRatingUnsupported`` (via
+    card-driven ``usage_rate`` rates ``PER_UNIT`` at the same ``ratePerUnit``
+    when ``card_rates`` shows its card's ACTIVE version has no cell rate (rm30),
+    and otherwise raises ``CardDrivenRatingUnsupported`` (via
     ``derive_rate_type``) before any calc. Rounding happens **once**, from the
     full-precision raw charge (D8). ``udr_usage_unit`` is the resolved catalog
     ``unit_of_measure`` (the product's vocabulary, e.g. ``Mbps``), not the feed
     token (rm19 §6)."""
     amount = resolution.effective_amount
     assert amount is not None  # caller guards LOOKUP_MISS on a missing amount
+    card_name = resolution.rate_card_lookup
     rate_type = derive_rate_type(
         resolution.component_type,
         resolution.pla_spec_id,
         price_ref=resolution.udr_price_ref,
+        card_name=card_name,
+        card_rated_cells=(card_rates or {}).get(card_name) if card_name else None,
     )
     # RP owns the numeric(18,6) boundary for the resolved rate (udr_usage_rate,
     # D8): a catalog / override amount with >6 significant fractional digits cannot
@@ -730,6 +811,11 @@ def process_chunks(
     source_file = manifest["source_file"]
     udr_type = manifest["udr_type"]
     outcome = Outcome()
+    # rm30 — per-batch cache of each card-driven price's card: name -> rated cell
+    # count of its ACTIVE version (absent = no ACTIVE version). Queried once per
+    # newly-seen name, never per record (Inv #10).
+    card_rates: dict[str, int] = {}
+    cards_checked: set[str] = set()
 
     for idx, chunk_uri in enumerate(manifest.get("chunk_uris", [])):
         frame = storage.read_frame(chunk_uri)
@@ -755,6 +841,17 @@ def process_chunks(
         # ONE set-based as-of query for the whole chunk (Inv #10, no per-record
         # fan-out). Resolve against the PINNED version through the price chain.
         resolved = resolve_chunk(conn, line_nos, subscriber_refs, start_datetimes)
+        new_cards = sorted(
+            {
+                r.rate_card_lookup
+                for r in resolved.values()
+                if r.pla_spec_id == _CARD_DRIVEN_PLA_SPEC_ID and r.rate_card_lookup
+            }
+            - cards_checked
+        )
+        if new_cards:
+            card_rates.update(card_rated_cells(conn, new_cards))
+            cards_checked.update(new_cards)
 
         rated: list[RatedRecord] = []
         for i, line_no in enumerate(line_nos):
@@ -779,6 +876,7 @@ def process_chunks(
                     usage_quantity=quantities[i],
                     resolution=resolution,
                     rounding_mode=rounding_mode,
+                    card_rates=card_rates,
                 )
             )
             for name, values in geo_in.items():
@@ -882,6 +980,7 @@ def emit_card_driven_unsupported(
             "file_key": file_key,
             "pla_spec_id": exc.pla_spec_id,
             "price_ref": exc.price_ref,
+            "card_name": exc.card_name,
         },
     )
     path = storage.location("logs") / f"RP-{workflow_execution_id}.jsonl"
@@ -1058,8 +1157,9 @@ def main(argv: list[str] | None = None) -> int:
                 rated_datetime=rated_datetime,
             )
         except CardDrivenRatingUnsupported as exc:
-            # A card-driven usage_rate (plaSpecId='PLA_USAGE_RATE') is unsupported
-            # in RP — rate-card resolution is a later phase (Inv. #42). Fail LOUD:
+            # A card-driven usage_rate (plaSpecId='PLA_USAGE_RATE') whose card has
+            # no ACTIVE version or carries cell rates RP cannot read yet (rm30,
+            # Inv 24). Fail LOUD:
             # emit the rm18 event code as a process_log line (the sweep raises it as
             # a non-auto-clearing alarm) AND write NO rated manifest — never a silent
             # miss or a partial charge (rm19 §3).
