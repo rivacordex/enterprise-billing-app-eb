@@ -231,7 +231,9 @@ describe("prp flow wiring (rm21-spec §6 — static)", () => {
     expect(vars).toMatch(/rating-input-file-/);
     expect(vars).toMatch(/\\.udr\$/);
     expect(vars).toMatch(/reject_threshold:\s*"0"/);
-    expect(vars).toMatch(/subscription_product_name:\s*"Sample 5G Services"/);
+    expect(vars).toMatch(
+      /subscription_product_name:\s*"eMBB Wholesale 5G Network"/,
+    );
     expect(vars).toMatch(/ratecard_coverage_enforcement:\s*HARD_STOP/);
     // The rm07 placeholder subscriber var is retired (rm21 §6).
     expect(vars).not.toMatch(/subscriber_ref_column:/);
