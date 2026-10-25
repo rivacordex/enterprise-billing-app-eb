@@ -358,6 +358,10 @@ export function InvoiceStructureForm({
       setDraftNo(draftVersionNo);
       setActivateOpen(false);
       setAdopted(canonical(initialStructure));
+      // bm79 review fix — a refused activation's problems describe the draft
+      // this form held; a newer server state (discarded, replaced, activated)
+      // drops them.
+      setLayoutProblems([]);
     }
   }
   useEffect(() => {
@@ -393,6 +397,11 @@ export function InvoiceStructureForm({
   // stale and never overwrites newer state.
   const requestRef = useRef(0);
 
+  // bm79 review fix — the working copy of a DRAFT previews that draft (and the
+  // layout it points at, an uploaded layout DRAFT included); any other version
+  // previews the version in use. The action honours it only for EDIT.
+  const previewDraft = editable && draftId !== null;
+
   // Every input of the current request; any change (an edit, the source, a
   // toggle, Retry) makes the shown preview stale until its request settles.
   const requestKey =
@@ -405,6 +414,7 @@ export function InvoiceStructureForm({
           outline,
           retryToken,
           familyId,
+          previewDraft,
         ]);
   const pending = requestKey !== null && preview.key !== requestKey;
   const previewStatus: PreviewStatus = pending
@@ -428,6 +438,7 @@ export function InvoiceStructureForm({
         annotate,
         outline,
         familyId,
+        draft: previewDraft,
       })
         .then((result) => {
           if (requestRef.current !== id) return;
@@ -462,7 +473,15 @@ export function InvoiceStructureForm({
         .finally(() => clearTimeout(queued));
     }, DEBOUNCE_MS);
     return () => clearTimeout(debounce);
-  }, [previewKey, requestKey, source, annotate, outline, familyId]);
+  }, [
+    previewKey,
+    requestKey,
+    source,
+    annotate,
+    outline,
+    familyId,
+    previewDraft,
+  ]);
 
   // The server's refusal of a line (`structure.footnote.N`) shows under it;
   // false when nothing could be placed on a line.

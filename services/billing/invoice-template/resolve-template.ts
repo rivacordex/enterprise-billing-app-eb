@@ -89,6 +89,22 @@ async function versionById(
   return row;
 }
 
+// The layout a settings DRAFT points at: ACTIVE/RETIRED, or the type's layout
+// DRAFT (bm79 review fix, the editor's draft preview only).
+async function draftPreviewLayout(
+  db: Database,
+  id: string,
+): Promise<BillTemplateVersion> {
+  const row = await billTemplateVersionRepository.findById(db, id);
+  if (!row || row.kind !== "layout") {
+    throw notFound(`layout template version ${id} not found`, {
+      versionId: id,
+      kind: "layout",
+    });
+  }
+  return row;
+}
+
 // bm65-spec §3 (Inv #51, #53) — the live resolutions, used only by run-start
 // capture and the Invoice Settings `preview-family` mode (guardrail 57).
 //
@@ -187,10 +203,21 @@ export async function resolveTemplate(
     }
     case "preview-family": {
       const current = await resolveCurrentVersionsForFamily(db, mode.familyId);
-      if (current.generated === null) {
+      // bm79 review fix — the editor's working-DRAFT preview renders that
+      // draft (and, below, the layout it points at — possibly an uploaded
+      // layout DRAFT). Only the preview builds this mode (guardrail 57); a
+      // run path never sees a DRAFT (Inv #61).
+      const draft = mode.draft
+        ? await billTemplateVersionRepository.findDraft(db, {
+            kind: "generated",
+            familyId: mode.familyId,
+          })
+        : null;
+      const shown = draft ?? current.generated;
+      if (shown === null) {
         throw familyNotActive(mode.familyId, null);
       }
-      generated = current.generated;
+      generated = shown;
       csv = current.csv;
       profileVersion = current.profileVersion;
       break;
@@ -222,7 +249,12 @@ export async function resolveTemplate(
       { versionId: generated.billTemplateVersionId },
     );
   }
-  const layout = await versionById(db, generated.refLayoutVersionId, "layout");
+  // bm79 review fix — only the draft preview's settings DRAFT may point at a
+  // layout DRAFT of its own type (`btv_pair_same_type_fk`).
+  const layout =
+    generated.status === "DRAFT"
+      ? await draftPreviewLayout(db, generated.refLayoutVersionId)
+      : await versionById(db, generated.refLayoutVersionId, "layout");
 
   return { generated, layout, profileVersion, csv };
 }

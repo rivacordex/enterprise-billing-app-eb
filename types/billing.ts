@@ -998,12 +998,17 @@ export type RenderMode =
   | { kind: "run"; stamps: RunTemplateStamps; banId: string }
   | { kind: "final"; bill: PostedBillStamps }
   | { kind: "preview-posted"; bill: PostedBillStamps }
-  | { kind: "preview-family"; familyId: string };
+  // bm79 review fix — `draft`: the editor previews its working DRAFT (EDIT
+  // only, decided by the preview action): the settings DRAFT and the layout it
+  // points at, which may itself be a DRAFT (an uploaded pair).
+  | { kind: "preview-family"; familyId: string; draft?: true };
 
 // D1 — never cached (workflow rules §3.9): every render queries the rows.
 export interface ResolvedTemplate {
-  generated: BillTemplateVersion; // kind = 'generated', never DRAFT
-  layout: BillTemplateVersion; // generated.ref_layout_version_id (page_setup)
+  // kind = 'generated'; a DRAFT only in the editor's draft preview (bm79)
+  generated: BillTemplateVersion;
+  // generated.ref_layout_version_id (page_setup); a DRAFT only in that preview
+  layout: BillTemplateVersion;
   profileVersion: number | null; // G15 A: null when none ACTIVE / none stamped
   csv: BillTemplateVersion; // kind = 'csv'
 }

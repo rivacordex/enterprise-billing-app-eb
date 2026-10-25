@@ -9,6 +9,7 @@ import type {
   InvoiceTemplateStructure,
   UploadLayoutPackageResult,
 } from "@/types/billing";
+import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-template-structure.schema";
 import type { LayoutManifest } from "@/validation/billing/layout-manifest.schema";
 
 // bm78 (Inv #59) — the ONLY writer of layout DRAFT rows, their blobs and the settings
@@ -33,7 +34,10 @@ function contentTypeFor(name: string): string {
 // outside (a returned value would COMMIT).
 class InstallRollback extends Error {
   constructor(
-    readonly code: "TEMPLATE_TYPE_RETIRED" | "DRAFT_CHANGED_SINCE_WARNING",
+    readonly code:
+      | "TEMPLATE_TYPE_RETIRED"
+      | "DRAFT_CHANGED_SINCE_WARNING"
+      | "SERVER_ERROR",
   ) {
     super(code);
   }
@@ -140,6 +144,11 @@ export async function installLayoutPackage(args: {
             throw new InstallRollback("DRAFT_CHANGED_SINCE_WARNING");
           settingsDraftId = settings.billTemplateVersionId;
         } else {
+          // Review fix (Data rule 9) — the structure is validated before it is
+          // written: the type's current settings, else a Payment-on default
+          // with Standard's footnote. A catalog where neither passes (e.g. a
+          // stale seed with no footnote) needs the bm64 reset; nothing is
+          // written and the failure is logged.
           const base =
             (await billTemplateVersionRepository.findActive(tx, {
               kind: "generated",
@@ -149,13 +158,25 @@ export async function installLayoutPackage(args: {
               kind: "generated",
               familyId,
             }));
-          const structure =
-            (base?.structure as InvoiceTemplateStructure | null | undefined) ??
-            ({
-              sections: { payment: true },
-              columns: {},
-              footnote: await standardFootnote(tx),
-            } satisfies InvoiceTemplateStructure);
+          const fromBase = invoiceTemplateStructureSchema.safeParse(
+            base?.structure,
+          );
+          const parsed = fromBase.success
+            ? fromBase
+            : invoiceTemplateStructureSchema.safeParse({
+                sections: { payment: true },
+                columns: {},
+                footnote: await standardFootnote(tx),
+              } satisfies InvoiceTemplateStructure);
+          if (!parsed.success) {
+            logger.error("LAYOUT_INSTALL_STRUCTURE_INVALID", {
+              familyId,
+              baseVersionId: base?.billTemplateVersionId ?? null,
+              issues: parsed.error.issues.map((i) => i.path.join(".")),
+            });
+            throw new InstallRollback("SERVER_ERROR");
+          }
+          const structure = parsed.data;
           const created = await billTemplateVersionRepository.insertDraft(tx, {
             versionNo: await billTemplateVersionRepository.nextVersionNo(tx, {
               kind: "generated",

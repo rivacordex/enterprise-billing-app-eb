@@ -502,6 +502,54 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(n!.n).toBe(2);
     });
 
+    it("review fix (Data rule 9) — a settings structure that fails the schema is never written: no footnote anywhere is SERVER_ERROR with no rows", async () => {
+      const created = await createTemplateType({ name: "No Footnote" }, ACTOR);
+      if (!created.ok) throw new Error(`create type failed: ${created.code}`);
+      const prefix = "layouts/INVTPL-NO_FOOTNOTE/";
+      // A stale catalog: Standard's settings carry no footnote lines.
+      await sql`ALTER TABLE billing.bill_template_version DISABLE TRIGGER USER`;
+      await sql`
+        UPDATE billing.bill_template_version
+        SET structure = jsonb_set(structure, '{footnote}', '[]'::jsonb)
+        WHERE kind = 'generated' AND ref_bill_template_family_id = 'BTF00000001'`;
+      await sql`ALTER TABLE billing.bill_template_version ENABLE TRIGGER USER`;
+      try {
+        const before = await counts(created.typeId, prefix);
+        const result = await uploadLayoutPackage(
+          {
+            familyId: created.typeId,
+            zip: buildLayoutPackage({
+              layoutCode: "INVTPL-NO_FOOTNOTE",
+              layoutVersion: 1,
+            }).zip,
+            expectedDraft: { none: true },
+          },
+          ACTOR,
+          { render: cleanRender() },
+        );
+        expect(result).toEqual({
+          ok: false,
+          code: "SERVER_ERROR",
+          problems: [],
+        });
+        const after = await counts(created.typeId, prefix);
+        expect(after.familyVersions).toBe(0);
+        expect(after.audit).toBe(before.audit);
+      } finally {
+        await sql`ALTER TABLE billing.bill_template_version DISABLE TRIGGER USER`;
+        await sql`
+          UPDATE billing.bill_template_version
+          SET structure = jsonb_set(structure, '{footnote}', ${JSON.stringify(SEEDED_FOOTNOTE)}::jsonb)
+          WHERE kind = 'generated' AND ref_bill_template_family_id = 'BTF00000001'`;
+        await sql`ALTER TABLE billing.bill_template_version ENABLE TRIGGER USER`;
+        for (const name of (await blobs(prefix)).keys()) {
+          await templates()
+            .deleteBlob(name)
+            .catch(() => undefined);
+        }
+      }
+    });
+
     // A lazily-built fixture, so `it.each` rows don't build zips at collection.
     function wholesalePackageFixture(opts: LayoutPackageOptions = {}) {
       return () => wholesalePackage(opts);

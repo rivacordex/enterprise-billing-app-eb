@@ -139,6 +139,27 @@ describe("InvoiceStructureForm — EDIT user", () => {
     expect(screen.getAllByRole("checkbox")).toHaveLength(7);
   });
 
+  it("bm79 review fix — the working copy of a draft previews it (`draft: true`); a read-only view never does", async () => {
+    const { unmount } = renderForm({
+      expectedDraftToken: TOKEN,
+      draftVersionId: "BTV00000011",
+      draftVersionNo: 1,
+    });
+    await flushDebounce();
+    expect(mockPreview.mock.lastCall?.[0]).toMatchObject({ draft: true });
+    unmount();
+
+    mockPreview.mockClear();
+    renderForm({
+      editable: false,
+      expectedDraftToken: TOKEN,
+      draftVersionId: "BTV00000011",
+      draftVersionNo: 1,
+    });
+    await flushDebounce();
+    expect(mockPreview.mock.lastCall?.[0]).toMatchObject({ draft: false });
+  });
+
   it("previews the initial structure after the 400 ms debounce, then the toggled one", async () => {
     renderForm();
     expect(mockPreview).not.toHaveBeenCalled();
@@ -151,6 +172,8 @@ describe("InvoiceStructureForm — EDIT user", () => {
       outline: false,
       // bm66 — the preview names the Standard family it renders with.
       familyId: "BTF00000001",
+      // bm79 review fix — no working draft here, so the version in use.
+      draft: false,
     });
 
     fireEvent.click(
@@ -742,6 +765,36 @@ describe("InvoiceStructureForm — Activate a pair (bm79)", () => {
     expect(screen.getByText("LAYOUT_EXTERNAL_FETCH")).toBeInTheDocument();
     expect(screen.getByText("(render)")).toBeInTheDocument();
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("review fix — the problems alert is dropped once the page brings a newer draft", async () => {
+    mockActivate.mockResolvedValue({
+      ok: false,
+      code: "LAYOUT_REJECTED",
+      problems: [
+        {
+          file: "(render)",
+          code: "LAYOUT_EXTERNAL_FETCH",
+          message: "the layout tried to fetch 1 URL: http://x/a.png",
+        },
+      ],
+    });
+    const { rerender } = renderForm({ ...PAIR_PROPS, activeStructure: null });
+    await confirmActivate(1);
+    expect(screen.getByText("LAYOUT_EXTERNAL_FETCH")).toBeInTheDocument();
+    // The draft was replaced by another upload: a new token from the server.
+    rerender(
+      <InvoiceStructureForm
+        initialStructure={ALL_ON}
+        editable
+        recentBills={BILLS}
+        canPreviewBills
+        {...PAIR_PROPS}
+        expectedDraftToken="2026-10-25T09:00:00.000001Z"
+        activeStructure={null}
+      />,
+    );
+    expect(screen.queryByText("LAYOUT_EXTERNAL_FETCH")).toBeNull();
   });
 
   it("on TEMPLATE_TYPE_RETIRED shows the retired message and refreshes", async () => {

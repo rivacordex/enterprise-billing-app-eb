@@ -13,9 +13,10 @@ import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 // bm78-spec §9 / §13 (Inv #61) — the sample preview of an uploaded, not yet
 // activated layout: on a real database and Azurite (the activation harness),
 // after "Wholesale" receives layout DRAFT v1, `previewInvoiceTemplate({ source:
-// "sample", familyId })` renders THAT draft layout (through `loadLayoutDraft`),
-// labelled "INVTPL-WHOLESALE v1 (draft)", while Standard's preview is
-// unchanged. The upload's probe render is injected clean (the e2e suite proves
+// "sample", familyId, draft: true })` renders THAT draft layout (through
+// `loadLayoutDraft`), labelled "INVTPL-WHOLESALE v1 (draft)", while Standard's
+// preview is unchanged. bm79 review fix: without `draft` (a READ user, or a
+// version opened from history) the preview never shows the draft. The upload's probe render is injected clean (the e2e suite proves
 // the real one). The services use the `@/db/client` singleton, so it is
 // replaced with one built on the test client.
 const databaseUrl = process.env.DATABASE_URL;
@@ -173,6 +174,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         structure: STRUCTURE,
         source: "sample",
         familyId: wholesaleId,
+        draft: true,
       });
       expect(result.templateLabel).toBe("INVTPL-WHOLESALE v1 (draft)");
       expect(result.pinnedVersionNo).toBeNull();
@@ -180,6 +182,16 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       // The submitted structure's footnote is generated in.
       expect(result.html).toContain(SEEDED_FOOTNOTE[0]!);
       expect(new Map(loadedTemplateMemo)).toEqual(memoBefore);
+    });
+
+    it("review fix — without `draft` the preview never renders the draft: Wholesale has no version in use yet", async () => {
+      await expect(
+        previewInvoiceTemplate({
+          structure: STRUCTURE,
+          source: "sample",
+          familyId: wholesaleId,
+        }),
+      ).rejects.toMatchObject({ code: "TEMPLATE_VERSION_NOT_FOUND" });
     });
 
     it("Standard's sample preview is unchanged: its own layout, not a draft label", async () => {

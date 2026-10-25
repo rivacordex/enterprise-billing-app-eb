@@ -4,13 +4,14 @@
 // Styling rules 3–4; ui-context §10e) — `UploadLayoutDialog`: the one way a
 // layout enters the app. It keeps no server state. A refused package lists
 // every problem in one Danger alert grouped by file (never a toast) and stays
-// until the next attempt; a changed draft or a retired type shows its message
-// and re-fetches the page; success closes and re-fetches. While the type has an
+// until the next attempt; every refusal shows its message and re-fetches the
+// page (Next.js rule 4); success closes and re-fetches. While the type has an
 // open layout DRAFT the trigger is disabled with a caption (bm80 replaces this
 // with the overwrite path).
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { uploadLayoutPackageAction } from "@/actions/billing/invoice-settings/upload-layout-package.action";
 import {
@@ -56,10 +57,26 @@ export function UploadLayoutDialog({
   function handleOpenChange(next: boolean): void {
     if (submitting) return;
     setOpen(next);
-    if (!next) {
+    // Opening or closing starts clean (a message kept by the disabled branch
+    // below never reappears inside a later dialog).
+    setFile(null);
+    setProblems([]);
+    setMessage(null);
+  }
+
+  // Review fix — a refusal's re-fetch that reveals an open layout DRAFT swaps
+  // the Dialog for the disabled trigger: close it and drop the selected file
+  // (adjusted during render, as the structure form adopts server state), so it
+  // never re-opens by itself with a stale file once that draft is gone. The
+  // message stays, shown beside the disabled trigger.
+  const hasOpenDraft = openLayoutDraft !== null;
+  const [sawOpenDraft, setSawOpenDraft] = useState(hasOpenDraft);
+  if (hasOpenDraft !== sawOpenDraft) {
+    setSawOpenDraft(hasOpenDraft);
+    if (hasOpenDraft) {
+      setOpen(false);
       setFile(null);
       setProblems([]);
-      setMessage(null);
     }
   }
 
@@ -84,13 +101,17 @@ export function UploadLayoutDialog({
         case "LAYOUT_REJECTED":
           setProblems(result.problems);
           break;
+        // Review fix (owner decision) — the two refusals whose re-fetch can
+        // remount this dialog elsewhere (an empty type's alert → the heading)
+        // also raise a Warning toast, which survives the remount. The problems
+        // list stays an in-dialog Danger alert, never a toast.
         case "DRAFT_CHANGED_SINCE_WARNING":
           setMessage(TEMPLATE_TYPE_MESSAGES.uploadDraftChanged);
-          router.refresh();
+          toast.warning(TEMPLATE_TYPE_MESSAGES.uploadDraftChanged);
           break;
         case "TEMPLATE_TYPE_RETIRED":
           setMessage(TEMPLATE_TYPE_MESSAGES.uploadTypeRetired);
-          router.refresh();
+          toast.warning(TEMPLATE_TYPE_MESSAGES.uploadTypeRetired);
           break;
         case "FORBIDDEN":
           setMessage(TEMPLATE_TYPE_MESSAGES.uploadForbidden);
@@ -98,6 +119,7 @@ export function UploadLayoutDialog({
         default:
           setMessage(TEMPLATE_TYPE_MESSAGES.uploadFailed);
       }
+      router.refresh();
     } catch {
       setMessage(TEMPLATE_TYPE_MESSAGES.uploadFailed);
     } finally {
@@ -106,6 +128,8 @@ export function UploadLayoutDialog({
   }
 
   if (openLayoutDraft) {
+    // A refusal's re-fetch can reveal another user's new draft, which unmounts
+    // the Dialog; its message (e.g. uploadDraftChanged) stays visible here.
     return (
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" disabled>
@@ -114,6 +138,14 @@ export function UploadLayoutDialog({
         <span className="text-body-sm text-muted-foreground">
           {uploadDraftOpen(openLayoutDraft.versionNo)}
         </span>
+        {message ? (
+          <p
+            role="alert"
+            className="w-full text-body-sm text-[color:var(--color-danger-700)]"
+          >
+            {message}
+          </p>
+        ) : null}
       </div>
     );
   }

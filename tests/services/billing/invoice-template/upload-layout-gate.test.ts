@@ -23,7 +23,9 @@ vi.mock("@/services/billing/blob-store", () => ({
 
 // guardrail 69 — count every streaming Unzip and every UnzipInflate the gate
 // constructs, wrapping (not replacing) fflate's own classes.
-const inflateSpy = vi.hoisted(() => ({ unzips: 0, inflates: 0 }));
+// Review fix: also sum every byte any UnzipInflate hands on (`inflated`), so
+// a test can bound how much a lying entry expands before the cap stops it.
+const inflateSpy = vi.hoisted(() => ({ unzips: 0, inflates: 0, inflated: 0 }));
 vi.mock("fflate", async (importOriginal) => {
   const actual = await importOriginal<typeof Fflate>();
   class CountingUnzip extends actual.Unzip {
@@ -36,6 +38,18 @@ vi.mock("fflate", async (importOriginal) => {
     constructor() {
       super();
       inflateSpy.inflates++;
+      let handler: ((...a: unknown[]) => void) | undefined;
+      Object.defineProperty(this, "ondata", {
+        configurable: true,
+        get: () => handler,
+        set: (fn: (err: unknown, data: Uint8Array, final: boolean) => void) => {
+          handler = (err, data, final) => {
+            inflateSpy.inflated +=
+              (data as Uint8Array | undefined)?.length ?? 0;
+            fn(err, data as Uint8Array, final as boolean);
+          };
+        },
+      });
     }
   }
   return {
@@ -169,6 +183,19 @@ function patchDeclaredSize(zip: Uint8Array, name: string, size: number) {
   return out;
 }
 
+// Rename an entry in its LOCAL header only (same byte length): the central
+// directory pass 1 approves then names a different file than pass 2 reads.
+function renameLocalOnly(zip: Uint8Array, from: string, to: string) {
+  expect(Buffer.byteLength(from)).toBe(Buffer.byteLength(to));
+  const out = new Uint8Array(zip);
+  const local = headers(out).filter(
+    (h) => h.name === from && h.kind === "local",
+  );
+  expect(local).toHaveLength(1);
+  out.set(Buffer.from(to, "utf-8"), local[0]!.nameAt);
+  return out;
+}
+
 // Rename an entry (same byte length) in both headers — how a zip with two
 // entries of the SAME name is made, since zipSync takes an object.
 function renameEntry(zip: Uint8Array, from: string, to: string) {
@@ -183,6 +210,7 @@ function renameEntry(zip: Uint8Array, from: string, to: string) {
 beforeEach(() => {
   inflateSpy.unzips = 0;
   inflateSpy.inflates = 0;
+  inflateSpy.inflated = 0;
 });
 
 describe("bm78 layout package gate — a clean package", () => {
@@ -262,6 +290,38 @@ describe("bm78 layout package gate — stage 1, zip shape and size (blocking)", 
     // Pass 1 passed (the stream ran); the counter, not the header, stopped it.
     expect(inflateSpy.unzips).toBe(1);
     expect(inflateSpy.inflates).toBeGreaterThan(0);
+  });
+
+  it("review fix — a 64 MiB deflate bomb declaring 1 KiB is stopped near the cap: pushed in small steps, it never inflates in full", async () => {
+    const built = pkg({
+      override: (f) => f.set("fonts/big.woff2", Buffer.alloc(64 * 1024 * 1024)),
+    });
+    const lying = patchDeclaredSize(built.zip, "fonts/big.woff2", 1024);
+
+    expect(codes(problemsOf(await gate(lying)))).toEqual(["ZIP_TOO_LARGE"]);
+    // One push of the whole zip inflated all 64 MiB before the cap ran.
+    expect(inflateSpy.inflated).toBeLessThanOrEqual(
+      LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES + 2 * 1024 * 1024,
+    );
+  });
+
+  it("review fix — a local header naming a file the central directory does not list is refused, never stored", async () => {
+    const built = pkg();
+    // Same byte length as "partials/header.hbs", and on the font allow-list.
+    const forged = renameLocalOnly(
+      built.zip,
+      "partials/header.hbs",
+      "fonts/abcdefg.woff2",
+    );
+    const result = readZip(forged);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.problems).toContainEqual(
+      expect.objectContaining({
+        file: "fonts/abcdefg.woff2",
+        code: "ZIP_UNEXPECTED_FILE",
+      }),
+    );
   });
 
   it(`ZIP_TOO_MANY_ENTRIES: ${LAYOUT_PACKAGE_MAX_ENTRIES + 1} entries`, async () => {

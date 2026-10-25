@@ -50,6 +50,9 @@ export const previewInvoiceTemplateInputSchema = z
     outline: z.boolean().optional(),
     // bm66-spec §4 — the family whose live versions the preview renders.
     familyId: templateFamilyIdSchema,
+    // bm79 review fix — the form previews its working DRAFT (and the layout
+    // it points at). The action honours it only for invoice_settings EDIT.
+    draft: z.boolean().optional(),
   })
   .strict();
 

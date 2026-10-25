@@ -9,12 +9,17 @@ import { describe, expect, it, vi } from "vitest";
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+vi.mock("sonner", () => ({
+  toast: { warning: vi.fn(), error: vi.fn(), success: vi.fn() },
+}));
 vi.mock(
   "@/actions/billing/invoice-settings/discard-template-draft.action",
   () => ({ discardTemplateDraftAction: vi.fn() }),
 );
 
 import { discardTemplateDraftAction } from "@/actions/billing/invoice-settings/discard-template-draft.action";
+import { toast } from "sonner";
+
 import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/draft-messages";
 
 import { GeneratedHbsViewer } from "@/components/billing/invoice-settings/generated-hbs-viewer";
@@ -431,7 +436,7 @@ describe("VersionHistoryTable: Discard (bm79)", () => {
     });
   });
 
-  it("on DRAFT_CONFLICT shows the shared conflict message and refreshes", async () => {
+  it("on DRAFT_CONFLICT closes, shows the shared conflict message as a Warning toast (it outlives the row) and refreshes", async () => {
     refresh.mockClear();
     vi.mocked(discardTemplateDraftAction).mockResolvedValue({
       ok: false,
@@ -440,10 +445,32 @@ describe("VersionHistoryTable: Discard (bm79)", () => {
     renderTable(DISCARD);
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     fireEvent.click(screen.getByRole("button", { name: "Discard draft" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      DRAFT_CONFLICT_MESSAGE,
+    await vi.waitFor(() =>
+      expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+        DRAFT_CONFLICT_MESSAGE,
+      ),
     );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it("review fix — a discarded row has no View link for a READ user (it is still a draft)", () => {
+    render(
+      <VersionHistoryTable
+        rows={[
+          {
+            ...DRAFT,
+            status: "RETIRED",
+            retiredAt: new Date("2026-10-25T02:00:00Z"),
+          },
+        ]}
+        shownVersionId="BTV00000002"
+        canViewDrafts={false}
+        locale="en-MY"
+        timezone="Asia/Kuala_Lumpur"
+      />,
+    );
+    expect(screen.queryByRole("link", { name: /View/ })).toBeNull();
   });
 
   it("a discarded row keeps the Retired badge, shows — for Activated and has no download", () => {

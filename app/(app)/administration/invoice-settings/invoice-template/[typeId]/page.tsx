@@ -325,6 +325,19 @@ async function renderGenerated(
       </Alert>
     );
   }
+  if (shown.activatedDatetime === null) {
+    // bm79 review fix — a discarded draft was never activated, so it never had
+    // generated files (not a verification failure).
+    return (
+      <Alert>
+        <Info aria-hidden />
+        <AlertDescription>
+          This draft was discarded before it was activated, so it has no
+          generated files.
+        </AlertDescription>
+      </Alert>
+    );
+  }
   const sources = await getGeneratedHbsSources(shown);
   if (!sources.ok) {
     // Inv #45 — unverified bytes are never shown.

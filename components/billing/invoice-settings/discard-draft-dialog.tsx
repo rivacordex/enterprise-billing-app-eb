@@ -4,11 +4,14 @@
 // Next.js rule 4) — `DiscardDraftDialog`, the Version history DRAFT row's
 // ghost **Discard** control. The confirm is in the danger role inside the
 // `AlertDialog` only. It keeps no server state: success closes and re-fetches;
-// any refusal shows its message and re-fetches the page, so the history shows
-// the current DRAFT (a stale token is `DRAFT_CONFLICT_MESSAGE`).
+// any refusal closes, shows its message as a toast and re-fetches the page, so
+// the history shows the current DRAFT (a stale token is the Warning toast
+// `DRAFT_CONFLICT_MESSAGE`, ui-context §10). A toast, because the re-fetch may
+// remove the DRAFT row — and this dialog with it (review fix).
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { discardTemplateDraftAction } from "@/actions/billing/invoice-settings/discard-template-draft.action";
 import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/draft-messages";
@@ -85,7 +88,12 @@ export function DiscardDraftDialog({
         router.refresh();
         return;
       }
-      setMessage(refusalMessage(result.code));
+      setOpen(false);
+      if (result.code === "DRAFT_CONFLICT") {
+        toast.warning(refusalMessage(result.code));
+      } else {
+        toast.error(refusalMessage(result.code));
+      }
       router.refresh();
     } catch {
       setMessage(TEMPLATE_TYPE_MESSAGES.discardFailed);

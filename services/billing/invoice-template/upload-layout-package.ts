@@ -64,6 +64,12 @@ const MANIFEST_FILE = "manifest.json";
 const RENDER_FILE = "(render)";
 const PACKAGE_FILE = "(package)";
 const MAX_LISTED_URLS = 10;
+// Review fix — pass 2 feeds the zip to fflate in steps this small. fflate
+// inflates a whole pushed chunk before `ondata` sees a byte (and the sync
+// decoder ignores `terminate()`), so one push of the whole zip let a deflate
+// bomb expand ~1000:1 before the cap ran. At 1 KiB per push, at most about
+// 1 MiB is inflated past the cap before pushing stops.
+const INFLATE_PUSH_BYTES = 1024;
 const REQUIRED = new Set<string>(LAYOUT_PACKAGE_REQUIRED_FILES);
 
 function problem(
@@ -160,7 +166,9 @@ export function readZip(
 
   // Pass 2: the streamed inflate. Every entry's name is re-checked BEFORE it
   // starts (an entry absent from the central directory is never inflated), and
-  // a running total aborts at the cap whatever the headers declared.
+  // a running total aborts at the cap whatever the headers declared: the zip
+  // is pushed in small steps, and pushing stops once the cap is crossed.
+  const listed = new Set(fileEntries.map((e) => e.name));
   const parts = new Map<string, Uint8Array[]>();
   const seen = new Set<string>();
   let started = 0;
@@ -169,7 +177,7 @@ export function readZip(
   const unzip = new Unzip();
   unzip.register(UnzipInflate);
   unzip.onfile = (file) => {
-    if (isDirectory(file.name)) return;
+    if (overCap || isDirectory(file.name)) return;
     if (seen.has(file.name)) {
       problems.push(
         problem(
@@ -182,7 +190,13 @@ export function readZip(
     }
     seen.add(file.name);
     started++;
-    if (started > LAYOUT_PACKAGE_MAX_ENTRIES || !isAllowedName(file.name)) {
+    // Review fix — the local header must name an entry the central directory
+    // listed (pass 1 approved those names, not these).
+    if (
+      started > LAYOUT_PACKAGE_MAX_ENTRIES ||
+      !listed.has(file.name) ||
+      !isAllowedName(file.name)
+    ) {
       problems.push(
         problem(
           file.name,
@@ -212,7 +226,6 @@ export function readZip(
             `the package unpacks to more than ${LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES} bytes`,
           ),
         );
-        file.terminate();
         return;
       }
       chunks.push(data);
@@ -220,7 +233,14 @@ export function readZip(
     file.start();
   };
   try {
-    unzip.push(zip, true);
+    for (
+      let offset = 0;
+      offset < zip.length && !overCap;
+      offset += INFLATE_PUSH_BYTES
+    ) {
+      const end = Math.min(offset + INFLATE_PUSH_BYTES, zip.length);
+      unzip.push(zip.subarray(offset, end), end === zip.length);
+    }
   } catch {
     if (!overCap) {
       problems.push(
@@ -462,24 +482,22 @@ export async function uploadLayoutPackage(
     return { ok: false, code: "TEMPLATE_TYPE_RETIRED", problems: [] };
   }
 
-  // One open layout draft at a time until bm80 adds the overwrite path.
-  const openLayoutDraft = await billTemplateVersionRepository.findDraft(db, {
+  // One open layout draft at a time until bm80 adds the overwrite path. The
+  // expected version is computed, never typed: max over every layout row of
+  // the type (RETIRED included) + 1. Review fix — a plain read, no lock: an
+  // advisory xact lock here would run in autocommit and protect nothing;
+  // install re-checks both under its locks.
+  const layoutRows = await billTemplateVersionRepository.listForKind(db, {
     kind: "layout",
+    withUsage: false,
     familyId: input.familyId,
   });
+  const openLayoutDraft = layoutRows.some((l) => l.status === "DRAFT");
   if (openLayoutDraft && "none" in input.expectedDraft) {
     return { ok: false, code: "DRAFT_CHANGED_SINCE_WARNING", problems: [] };
   }
-
-  // The expected version is computed, never typed: max over every layout row
-  // of the type (RETIRED included) + 1.
-  const expectedVersionNo = await billTemplateVersionRepository.nextVersionNo(
-    db,
-    {
-      kind: "layout",
-      familyId: input.familyId,
-    },
-  );
+  const expectedVersionNo =
+    layoutRows.reduce((max, l) => Math.max(max, l.versionNo), 0) + 1;
 
   const gate = await checkLayoutPackage(
     input.zip,

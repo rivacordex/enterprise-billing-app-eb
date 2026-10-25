@@ -31,8 +31,8 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
     findActive: vi.fn(),
     findDefault: vi.fn(),
     findById: vi.fn(),
-    // bm78 — no settings DRAFT, so the sample preview keeps the existing
-    // preview-family path (the draft-layout branch is covered by
+    // bm79 review fix — read only for an EDIT holder's draft preview; no
+    // settings DRAFT here (the draft-layout render is covered by
     // tests/db/preview-invoice-template.integration.test.ts).
     findDraft: vi.fn(async () => null),
   },
@@ -245,6 +245,47 @@ describe("previewInvoiceTemplateAction — familyId (bm66)", () => {
       kind: "generated",
       familyId: FAMILY,
     });
+  });
+});
+
+describe("previewInvoiceTemplateAction — draft preview (bm79 review fix)", () => {
+  it("a READ user's `draft: true` is ignored: the draft is never read", async () => {
+    const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
+      structure: ALL_ON,
+      source: "sample",
+      draft: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(repo.findDraft).not.toHaveBeenCalled();
+  });
+
+  it("an EDIT holder's `draft: true` previews the family's working DRAFT", async () => {
+    setPermissions(
+      { invoice_settings: "EDIT", billrun_view: "READ" },
+      `editor-${userSeq}`,
+    );
+    const result = await previewInvoiceTemplateAction({
+      familyId: FAMILY,
+      structure: ALL_ON,
+      source: "sample",
+      draft: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(repo.findDraft).toHaveBeenCalledWith(expect.anything(), {
+      kind: "generated",
+      familyId: FAMILY,
+    });
+  });
+
+  it("an EDIT holder without `draft` previews the version in use", async () => {
+    setPermissions({ invoice_settings: "EDIT" }, `editor2-${userSeq}`);
+    await previewInvoiceTemplateAction({
+      familyId: FAMILY,
+      structure: ALL_ON,
+      source: "sample",
+    });
+    expect(repo.findDraft).not.toHaveBeenCalled();
   });
 });
 

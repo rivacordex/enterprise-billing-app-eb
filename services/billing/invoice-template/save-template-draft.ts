@@ -72,16 +72,21 @@ export async function saveTemplateDraft(
   try {
     return await db.transaction(
       async (tx): Promise<SaveTemplateDraftResult> => {
-        // Serialise draft writers first (see `lockKind`).
-        await billTemplateVersionRepository.lockKind(tx, { kind: "generated" });
         // bm77 — the type comes from the `[typeId]` page, never the default;
         // every generated read is scoped to it (review fix §24c). An unknown
-        // type is a stale client.
-        const family = await billTemplateFamilyRepository.findById(
+        // type is a stale client. Review fix (Inv #66 lock order) — like every
+        // writer of a type's DRAFTs (install, activation, discard), lock the type
+        // row FIRST, then the kind: taking the kind lock first and then
+        // inserting (whose FK check needs the type row) deadlocked against an
+        // upload holding the type row and waiting for the kind lock.
+        const family = await billTemplateFamilyRepository.lockTemplateType(
           tx,
           familyId,
+          "update",
         );
         if (!family) return { ok: false, code: "DRAFT_CONFLICT" };
+        // Serialise draft writers (see `lockKind`).
+        await billTemplateVersionRepository.lockKind(tx, { kind: "generated" });
         const draft = await billTemplateVersionRepository.findDraft(tx, {
           kind: "generated",
           familyId,

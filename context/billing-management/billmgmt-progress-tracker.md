@@ -38,12 +38,45 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built** (uncommitted). Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
 
 Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+
+**bm77–bm79 code review fixes (2026-10-25):** xhigh review of bm77 → bm79 + the uncommitted bm78
+fix (15 findings); owner decisions on the draft preview and the upload message.
+
+- **Zip bomb (critical):** pass 2 pushed the whole zip to fflate in one call, which inflates a chunk in
+  full before `ondata` (and the sync decoder ignores `terminate()`): a 200 MiB lying entry inflated in
+  one 200 MiB chunk. Now pushed in 1 KiB steps, stopping at the cap (64 MiB bomb: ≤ cap + 2 MiB
+  inflated; mutation-checked). Pass 2 also refuses a local-header name the central directory did not
+  list.
+- **Deadlock:** save-draft took the kind advisory lock, then its INSERT's FK check waited on the type
+  row an upload held while that upload waited for the kind lock (40P01, reproduced). Save-draft now
+  locks the type row first, like every other DRAFT writer (Inv #66 order); deterministic two-connection
+  regression test.
+- **Draft preview (owner: form-driven + EDIT):** the form sends `draft: true` only for the working copy
+  of a draft; the preview action honours it only for `invoice_settings` EDIT; `resolveTemplate`'s
+  `preview-family` gains `draft` (the settings DRAFT and its layout, possibly an uploaded layout
+  DRAFT), so the sample AND the bill-source preview render the draft through one path;
+  `previewDraftLayoutSample` (the duplicated render-input builder and its two extra queries per
+  request) is deleted. READ users and versions opened from history preview the version in use.
+- **Upload message (owner: also toast):** "drafts changed" / "type retired" also raise a Warning toast
+  (survives the empty-state → heading remount; ui-context §10e amended); the dialog closes and drops its
+  file when a re-fetch reveals an open draft, so it never re-opens by itself; a new open starts clean.
+- **Discarded drafts** (RETIRED, never activated) count as drafts: EDIT-only to open, no View link for
+  READ, no file download (404, not a verification failure), and the Generated tab says so.
+- Install validates the settings structure it writes (Data rule 9) — a catalog with no valid footnote
+  is SERVER_ERROR, logged, nothing written. Discard refusals close the dialog and toast (Warning for
+  DRAFT_CONFLICT; the row may vanish on refresh). A refused activation's problems alert clears on a
+  newer server draft. The pre-gate version read no longer takes an autocommit advisory lock. The
+  discard token uses `DRAFT_TOKEN_RE` (spec said `min(1)`).
+- **Skipped:** reusing `resolveGeneratedForFamily` in install/activate — guardrail 57 allows only
+  capture and preview to import a live resolver.
+- Results: unit 4848 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); integration 166/0
+  (16 template suites + journey); Chromium e2e 27/0; admin browser e2e 5/0 after `next build`.
 
 **bm79 notes (2026-10-25):**
 
@@ -77,6 +110,13 @@ Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
   `layoutChange`.
 
 **bm78 notes (2026-10-25):**
+
+- **Review fix (2026-10-25):** `UploadLayoutDialog` now calls `router.refresh()` on every `ok: false`
+  (Next.js rule 4), keeping each code's message / problem list; when the re-fetch reveals an open layout
+  DRAFT (the Dialog unmounts), the disabled-trigger branch still shows the message (e.g.
+  `uploadDraftChanged`). New `upload-layout-dialog.test.tsx` 6/0. Sonar S5852 (bm77
+  `template-types.ts`): the `_` trims (`/^_+|_+$/g`, `/_+$/` ×2) replaced by linear loops, same output
+  (20,000 random strings; a 50,000-`_` run: ~706 ms → 0.1 ms).
 
 - Gate (`upload-layout-package.ts`): stage 1 reads the zip in memory in two passes (central directory
   via `unzipSync` filter → nothing inflated; then a streamed `Unzip` + `UnzipInflate` with a running
@@ -235,7 +275,7 @@ a compliance-only probe.
 | bm75–76 code review fixes | xhigh review of `a2a74d3`+`d7bbca4` (15 findings) + Sonar S5852 (3 regexes) | **Built** (2026-10-25, `1abf17c`) — tsc/ESLint/Prettier clean; lint guardrail 62/0; static compliance 24/0; visible e2e 14/0 and render e2e 7/0 (`RUN_CHROMIUM_E2E=1`); guardrail 74 2/0, mutation-checked against 5 bypasses (all passed the old pattern); billing + guardrail unit suites 1134 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload + template journey 36/0 on the disposable DB |
 | bm77 | Invoice template type list, create type, per-type detail page (`[typeId]`), `app_runtime` grant | **Built** (2026-10-25, `e251953`) — tsc/ESLint/Prettier clean; unit 4735 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) — incl. new template-types 9/0, list page 6/0, detail page 6/0, read service 13/0, authz matrix + nav guard + audit filters 39/0; integration on the disposable DB: 22 template/grant/invoice suites 250+/0 incl. new create-type 10/0, save-draft + activate 31/0, template journey 19/0; admin browser e2e 5/0 after a fresh `next build` (`RUN_INVOICE_SETTINGS_E2E=1`; the first run had one company-profile `waitFor` timeout, passed on rerun) |
 | bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`, draft-layout preview) | **Built** (2026-10-25, `6366487` fflate, `1f1c895`) — tsc/ESLint/Prettier clean; unit 4797 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new gate 35/0, load-layout-draft 14/0, single-layout-writer 5/0 (mutation-checked), authz matrix 32/0; integration on the disposable DB 83/0 incl. new upload 9/0, preview 2/0, capture +1 DRAFT-only case; Chromium e2e 26/0 incl. new upload gate 3/0 |
-| bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; unit 4829 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new discard action 15/0, Discard + discarded-row component cases, pair form cases 5/0, authz matrix + discard READ refusal; integration on the disposable DB 163/0 across 16 template suites incl. new pair activation 8/0 (guardrail 71 activation half, interleaved upload, compliance re-run, retired type, frozen files, Standard untouched), new discard 6/0, bm58 activate suite on the `STANDARD/` path, template journey; Chromium e2e 27/0 incl. new activation re-run 1/0; admin browser e2e 5/0 after a fresh `next build` |
+| bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4829 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new discard action 15/0, Discard + discarded-row component cases, pair form cases 5/0, authz matrix + discard READ refusal; integration on the disposable DB 163/0 across 16 template suites incl. new pair activation 8/0 (guardrail 71 activation half, interleaved upload, compliance re-run, retired type, frozen files, Standard untouched), new discard 6/0, bm58 activate suite on the `STANDARD/` path, template journey; Chromium e2e 27/0 incl. new activation re-run 1/0; admin browser e2e 5/0 after a fresh `next build` |
 
 ## Delivered units
 

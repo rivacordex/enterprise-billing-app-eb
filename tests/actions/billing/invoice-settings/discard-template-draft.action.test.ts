@@ -82,6 +82,7 @@ describe("discardTemplateDraftAction (bm79)", () => {
     ["a missing familyId", { ...INPUT, familyId: undefined }],
     ["a malformed draft id", { ...INPUT, draftId: "BTV11" }],
     ["an empty token", { ...INPUT, expectedDraftToken: "" }],
+    ["a malformed token", { ...INPUT, expectedDraftToken: "yesterday" }],
     ["a missing token", { familyId: INPUT.familyId, draftId: INPUT.draftId }],
     ["an unknown key", { ...INPUT, reason: "x" }],
     ["a non-object", "BTV00000011"],

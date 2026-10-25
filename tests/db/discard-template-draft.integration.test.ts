@@ -33,7 +33,10 @@ import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/loa
 import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
 import { createTemplateType } from "@/services/billing/invoice-template/template-types";
 import { uploadLayoutPackage } from "@/services/billing/invoice-template/upload-layout-package";
-import { getInvoiceTemplatePageData } from "@/services/billing/read/invoice-template-settings";
+import {
+  getGeneratedVersionFile,
+  getInvoiceTemplatePageData,
+} from "@/services/billing/read/invoice-template-settings";
 import {
   buildLayoutPackage,
   cleanRender,
@@ -315,6 +318,27 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         (h) => h.billTemplateVersionId === saved.versionId,
       );
       expect(discarded).toMatchObject({ status: "RETIRED", activatedAt: null });
+
+      // Review fix — a discarded draft is still a draft: a READ user's
+      // `?version=` falls back to the version in use, and it is no stored
+      // version (the file download is a 404, not a verification failure).
+      const asReader = await getInvoiceTemplatePageData(
+        "BTF00000001",
+        saved.versionId,
+        { canEdit: false },
+      );
+      if (!asReader || asReader.empty) throw new Error("expected the editor");
+      expect(asReader.shown.billTemplateVersionId).toBe("BTV00000002");
+      const asEditor = await getInvoiceTemplatePageData(
+        "BTF00000001",
+        saved.versionId,
+        { canEdit: true },
+      );
+      if (!asEditor || asEditor.empty) throw new Error("expected the editor");
+      expect(asEditor.shown.billTemplateVersionId).toBe(saved.versionId);
+      expect(
+        await getGeneratedVersionFile(saved.versionId, "invoice.hbs"),
+      ).toBeNull();
     }, 120_000);
 
     it("[Inv #67] a retired type is TEMPLATE_TYPE_RETIRED and its DRAFTs stay", async () => {

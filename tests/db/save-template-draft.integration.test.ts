@@ -331,6 +331,39 @@ describe.skipIf(!databaseUrl)(
       }
     });
 
+    it("review fix (Inv #66 lock order) — a first save racing an upload that holds the type row and then wants the kind lock does not deadlock", async () => {
+      await resetDrafts();
+      // A second connection plays install: the type row FOR UPDATE first,
+      // then (while the save is in flight) the generated kind lock. Before the
+      // fix the save took the kind lock first and its INSERT's FK check then
+      // waited on the type row: Postgres aborted one side (40P01).
+      const holder = postgres(databaseUrl as string, {
+        max: 1,
+        onnotice: () => {},
+      });
+      let save: ReturnType<typeof saveTemplateDraft> | undefined;
+      try {
+        await holder.begin(async (t) => {
+          await t`
+            SELECT 1 FROM billing.bill_template_family
+            WHERE bill_template_family_id = 'BTF00000001' FOR UPDATE`;
+          save = saveTemplateDraft(
+            {
+              structure: structure({ payment: false }),
+              expectedDraftToken: null,
+              familyId: "BTF00000001",
+            },
+            ACTOR,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          await t`SELECT pg_advisory_xact_lock(hashtext(${"billing.bill_template_version:INVOICE:generated"}))`;
+        });
+        expect(await save).toMatchObject({ ok: true });
+      } finally {
+        await holder.end();
+      }
+    }, 30_000);
+
     it("refuses a mandatory section key even when called directly, writing nothing", async () => {
       // bm71 (D56) — mandatory sections are not part of the stored structure,
       // so the strict schema refuses the key outright.

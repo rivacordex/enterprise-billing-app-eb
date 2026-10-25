@@ -11,6 +11,7 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
     findById: vi.fn(),
     findActive: vi.fn(),
     findDefault: vi.fn(),
+    findDraft: vi.fn(),
   },
 }));
 // Review fix (§24d) — the family resolver reads the family to refuse a
@@ -103,6 +104,7 @@ beforeEach(() => {
     createdDatetime: new Date("2026-10-15T00:00:00Z"),
   }));
   profileRepo.findActiveVersion.mockResolvedValue(null);
+  repo.findDraft.mockResolvedValue(null);
 });
 
 const STANDARD = "BTF00000001";
@@ -205,6 +207,62 @@ describe("resolveTemplate — run (the BAN's captured stamps)", () => {
         ),
       ).toBe("TEMPLATE_VERSION_NOT_FOUND");
     }
+  });
+});
+
+describe("resolveTemplate — preview-family draft (bm79 review fix)", () => {
+  const WHOLESALE = "BTF00000002";
+  const LAYOUT_DRAFT = row("BTV00000020", "layout", {
+    status: "DRAFT",
+    isDefault: false,
+    layoutCode: "INVTPL-WHOLESALE",
+    refBillTemplateFamilyId: WHOLESALE,
+  });
+  const SETTINGS_DRAFT = {
+    ...row("BTV00000021", "generated", {
+      status: "DRAFT",
+      isDefault: false,
+      refLayoutVersionId: "BTV00000020",
+      refBillTemplateFamilyId: WHOLESALE,
+    }),
+    token: "2026-10-25T01:02:03.123456Z",
+  };
+
+  beforeEach(() => {
+    ROWS.set(LAYOUT_DRAFT.billTemplateVersionId, LAYOUT_DRAFT);
+    repo.findDraft.mockImplementation(async (_db, { kind, familyId }) =>
+      kind === "generated" && familyId === WHOLESALE ? SETTINGS_DRAFT : null,
+    );
+  });
+
+  it("with `draft` resolves the working DRAFT and the layout DRAFT it points at — even with no version in use", async () => {
+    const r = await resolveTemplate(DB, {
+      kind: "preview-family",
+      familyId: WHOLESALE,
+      draft: true,
+    });
+    expect(r.generated.billTemplateVersionId).toBe("BTV00000021");
+    expect(r.layout.billTemplateVersionId).toBe("BTV00000020");
+    expect(r.layout.status).toBe("DRAFT");
+  });
+
+  it("without `draft` never reads the draft: a type with no version in use is TEMPLATE_VERSION_NOT_FOUND", async () => {
+    expect(
+      await codeOf(
+        resolveTemplate(DB, { kind: "preview-family", familyId: WHOLESALE }),
+      ),
+    ).toBe("TEMPLATE_VERSION_NOT_FOUND");
+    expect(repo.findDraft).not.toHaveBeenCalled();
+  });
+
+  it("with `draft` but no working DRAFT, resolves the version in use", async () => {
+    const r = await resolveTemplate(DB, {
+      kind: "preview-family",
+      familyId: STANDARD,
+      draft: true,
+    });
+    expect(r.generated.billTemplateVersionId).toBe("BTV00000002");
+    expect(r.layout.billTemplateVersionId).toBe("BTV00000001");
   });
 });
 

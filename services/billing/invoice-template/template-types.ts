@@ -25,17 +25,28 @@ export function normalizeTemplateTypeName(raw: string): string {
   return raw.trim().replace(/\s+/g, " ");
 }
 
+// Linear underscore trims (Sonar S5852: `/_+$/` backtracks on a long `_` run
+// that does not end the string).
+function trimTrailingUnderscores(s: string): string {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === "_") end--;
+  return s.slice(0, end);
+}
+
+function trimUnderscores(s: string): string {
+  let start = 0;
+  while (start < s.length && s[start] === "_") start++;
+  return trimTrailingUnderscores(s.slice(start));
+}
+
 // Upper-case, each run of non-[A-Z0-9] → `_`, trim `_`, `T_` prefix when the
 // result does not start with a letter, cut to 60 characters (btf_code_format).
 // "Wholesale & Retail (East)" → WHOLESALE_RETAIL_EAST; "5G Enterprise" →
 // T_5G_ENTERPRISE.
 export function deriveTemplateTypeCode(name: string): string {
-  let code = name
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+  let code = trimUnderscores(name.toUpperCase().replace(/[^A-Z0-9]+/g, "_"));
   if (!/^[A-Z]/.test(code)) code = `T_${code}`;
-  return code.slice(0, CODE_MAX).replace(/_+$/, "");
+  return trimTrailingUnderscores(code.slice(0, CODE_MAX));
 }
 
 // The one place a type's status is derived (TS rule 4) — never stored.
@@ -51,7 +62,7 @@ export function deriveTemplateTypeStatus(
 function candidateCode(base: string, n: number): string {
   if (n === 1) return base;
   const suffix = `_${n}`;
-  return `${base.slice(0, CODE_MAX - suffix.length).replace(/_+$/, "")}${suffix}`;
+  return `${trimTrailingUnderscores(base.slice(0, CODE_MAX - suffix.length))}${suffix}`;
 }
 
 interface PgErrorFields {

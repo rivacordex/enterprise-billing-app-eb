@@ -244,7 +244,10 @@ export function VersionHistoryTable(
                     </td>
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-3 whitespace-nowrap">
-                        {row.status === "DRAFT" && !canViewDrafts ? null : (
+                        {/* A discarded draft (never activated) is still a
+                            draft: no View link for READ users (bm79). */}
+                        {(row.status === "DRAFT" || row.activatedAt === null) &&
+                        !canViewDrafts ? null : (
                           <Link
                             href={`?tab=edit&version=${row.viewParam}`}
                             className={LINK}
