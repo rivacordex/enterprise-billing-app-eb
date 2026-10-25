@@ -388,6 +388,24 @@ export function lintReason(hit: string): string {
 // after entity decoding — an entity-encoded brace is printed text, never a
 // mustache (the HTML parser decodes it after Handlebars has run).
 
+// Every `{{…}}` (from each `{{` to the first `}}` after it, left to right)
+// replaced by `replacement`; an unclosed `{{` stays as written. The same result
+// as `source.replace(/\{\{[\s\S]*?\}\}/g, replacement)`, in one linear pass:
+// the lazy regex rescans to the end from every unclosed `{{` (Sonar S5852).
+function replaceMustaches(source: string, replacement: string): string {
+  let out = "";
+  let pos = 0;
+  for (;;) {
+    const open = source.indexOf("{{", pos);
+    if (open === -1) break;
+    const close = source.indexOf("}}", open + 2);
+    if (close === -1) break;
+    out += source.slice(pos, open) + replacement;
+    pos = close + 2;
+  }
+  return out + source.slice(pos);
+}
+
 // Attribute names in every start tag, read the way an HTML parser reads
 // them: names are separated by whitespace or `/`, and a `>` inside a quoted
 // value does not end the tag. Mustaches are read both as nothing and as a
@@ -395,8 +413,8 @@ export function lintReason(hit: string): string {
 function attributeNames(source: string): string[] {
   const names: string[] = [];
   for (const text of [
-    source.replace(/\{\{[\s\S]*?\}\}/g, ""),
-    source.replace(/\{\{[\s\S]*?\}\}/g, " "),
+    replaceMustaches(source, ""),
+    replaceMustaches(source, " "),
   ]) {
     let i = 0;
     while ((i = text.indexOf("<", i)) !== -1) {
@@ -447,7 +465,7 @@ function decodeCssEscapes(text: string): string {
 // read when the decoded source is no longer valid Handlebars (a decoded
 // `&#123;{` is a `{{`).
 function withoutMustaches(source: string): string {
-  let text = source.replace(/\{\{[\s\S]*?\}\}/g, "");
+  let text = replaceMustaches(source, "");
   while (text.includes("{{")) text = text.replace(/\{\{/g, "{");
   return text;
 }

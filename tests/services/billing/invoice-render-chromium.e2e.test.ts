@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -16,7 +17,14 @@ vi.mock(
 );
 
 import { bind } from "@/services/billing/invoice-template/bind";
-import { executeInvoiceTemplate } from "@/services/billing/invoice-template/compile";
+import {
+  compileInvoiceTemplate,
+  executeInvoiceTemplate,
+} from "@/services/billing/invoice-template/compile";
+import {
+  generate,
+  layoutFilesFromVerified,
+} from "@/services/billing/invoice-template/generate";
 import { loadGenerated } from "@/services/billing/invoice-template/load";
 import { withHardenedPage } from "@/services/billing/render-invoice";
 import {
@@ -541,6 +549,156 @@ describe.skipIf(!run)(
       expect(after.toString("latin1").startsWith("%PDF-")).toBe(true);
       expect(pdfPageCount(after)).toBe(pdfPageCount(before));
       expect(pdfPageCount(after)).toBe(SEEDED_V1_SMALL_BILL_PAGES);
+    }, 120_000);
+  },
+);
+
+// Review follow-up (2026-10-25) — INVTPL-BASIC-A4/v1, the reference layout new
+// types start from, rendered to real PDFs (draft and final) through the
+// hardened context, not just checked for visible text: PDF pagination, and
+// the print styles of its shell (.sec, table, thead, tr) in print media.
+const BASIC_DIR = path.join(
+  process.cwd(),
+  "db/seeds/invoice-templates/INVTPL-BASIC-A4/v1",
+);
+
+function basicLayoutFiles(): Map<string, Buffer> {
+  const out = new Map<string, Buffer>();
+  const walk = (abs: string): void => {
+    for (const entry of readdirSync(abs)) {
+      const child = path.join(abs, entry);
+      if (statSync(child).isDirectory()) walk(child);
+      else
+        out.set(
+          path.relative(BASIC_DIR, child).split(path.sep).join("/"),
+          readFileSync(child),
+        );
+    }
+  };
+  walk(BASIC_DIR);
+  return out;
+}
+
+describe.skipIf(!run)(
+  "INVTPL-BASIC-A4 v1 — real Chromium draft and final PDFs (RUN_CHROMIUM_E2E=1)",
+  () => {
+    const layout = layoutFilesFromVerified(basicLayoutFiles());
+    const generated = generate(layout, {
+      sections: { payment: true },
+      columns: {},
+      footnote: [...SEEDED_FOOTNOTE],
+    });
+    const invoice = compileInvoiceTemplate(generated.invoiceHbs);
+    const footer = compileInvoiceTemplate(generated.footerHbs);
+    const pageSetup = layout.manifest.pageSetup;
+
+    async function renderBasic(input: InvoiceRenderInput) {
+      const html = executeInvoiceTemplate(invoice, input);
+      return withHardenedPage(html, async (p) => {
+        const pdf = await p.pdf({
+          format: pageSetup.format,
+          landscape: pageSetup.orientation === "landscape",
+          printBackground: pageSetup.printBackground,
+          margin: pageSetup.margin,
+          displayHeaderFooter: true,
+          headerTemplate: "<span></span>",
+          footerTemplate: executeInvoiceTemplate(footer, input),
+        });
+        await p.emulateMedia({ media: "print" });
+        const layoutFacts = await p.evaluate(() => {
+          const box = (sel: string) => {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { top: r.top, left: r.left, right: r.right };
+          };
+          const style = (sel: string) => {
+            const el = document.querySelector(sel);
+            return el ? getComputedStyle(el) : null;
+          };
+          const typePages = [
+            ...document.querySelectorAll(".sec--chargeDetails > section"),
+          ].map((el) => getComputedStyle(el).breakBefore);
+          const watermark = style(".watermark");
+          return {
+            identification: box(".sec--identification"),
+            billTo: box(".sec--billTo"),
+            secMarginBottom: style(".sec")?.marginBottom ?? null,
+            tableWidth: box("table")
+              ? document.querySelector("table")!.getBoundingClientRect().width
+              : 0,
+            sheetWidth: document
+              .querySelector(".sheet")!
+              .getBoundingClientRect().width,
+            theadDisplay: style("thead")?.display ?? null,
+            trBreakInside: style("tbody tr")?.breakInside ?? null,
+            typePages,
+            watermarkPosition: watermark?.position ?? null,
+          };
+        });
+        return { pdf, layoutFacts, html };
+      });
+    }
+
+    it("final: a 3-page PDF (page 1, one detail page, Total Amount), half sections side by side, print styles applied", async () => {
+      const raw = rawInput(buildDetail(1, 1));
+      raw.document = {
+        documentId: "INV00000076",
+        postingDate: new Date("2026-07-05"),
+      };
+      const input = bind(raw, {
+        isDraft: false,
+        locale: "en-MY",
+        timezone: TZ,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
+        invoiceNo: "INV00000076",
+      });
+
+      const { value, blockedUrls } = await renderBasic(input);
+      const { pdf, layoutFacts: f, html } = value;
+
+      expect(blockedUrls).toEqual([]);
+      expect(pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
+      expect(pdfPageCount(pdf)).toBe(3);
+      expect(html).toContain("INV00000076");
+      expect(f.watermarkPosition).toBeNull();
+
+      // .sec--half: identification and billTo share a row, left to right.
+      expect(f.identification).not.toBeNull();
+      expect(f.billTo).not.toBeNull();
+      expect(f.billTo!.top).toBe(f.identification!.top);
+      expect(f.billTo!.left).toBeGreaterThanOrEqual(f.identification!.right);
+      expect(f.secMarginBottom).toBe("16px");
+      expect(f.tableWidth).toBeCloseTo(f.sheetWidth, 0);
+      expect(f.theadDisplay).toBe("table-header-group");
+      expect(f.trBreakInside).toBe("avoid");
+      // Each type of service and the Total Amount page start a new page.
+      expect(f.typePages).toEqual(["page", "page"]);
+    }, 120_000);
+
+    it("draft: a 900-polygon bill paginates across many PDF pages under the fixed DRAFT watermark", async () => {
+      const input = bind(rawInput(buildDetail(9, 100)), {
+        isDraft: true,
+        locale: "en-MY",
+        timezone: TZ,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
+      });
+
+      const { value, blockedUrls } = await renderBasic(input);
+      const { pdf, layoutFacts: f, html } = value;
+
+      expect(blockedUrls).toEqual([]);
+      expect(html.match(/<td>PCU-/g)).toHaveLength(900);
+      expect(f.watermarkPosition).toBe("fixed");
+      expect(f.theadDisplay).toBe("table-header-group");
+      expect(f.trBreakInside).toBe("avoid");
+      // 900 rows at 9pt cannot fit one detail page: page 1, many detail
+      // pages, the Total Amount page.
+      expect(pdfPageCount(pdf)).toBeGreaterThan(10);
     }, 120_000);
   },
 );
