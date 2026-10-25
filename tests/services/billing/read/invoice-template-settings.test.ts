@@ -70,6 +70,7 @@ beforeEach(() => {
     billTemplateFamilyId: "BTF00000001",
     code: "STANDARD",
     name: "Standard",
+    layoutCode: "INVTPL-STD-A4",
     kind: "generated",
     isDefault: true,
     retiredDatetime: null,

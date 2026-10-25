@@ -2,26 +2,23 @@
 
 Update this file after every meaningful implementation change.
 
-- 2026-10-17: Invoice capacity detail extracts `polygon_id` only at the start
-  of `udr_key` or after `|`, preserving the raw value up to the next delimiter
-  and the existing NULL result for missing or empty values.
+_Compacted 2026-10-25 (earlier passes 2026-10-12, 2026-10-07, 2026-10-04, 2026-09-16) — the
+Invoice Template Phase 3 per-unit narrative (bm64–bm73, incl. review-fix logs, test runs and the
+invariant audit) trimmed to durable facts + decisions. Full history:
+`git log -- context/billing-management/billmgmt-progress-tracker.md` (pre-compaction text at
+`5b5f746`); per-unit detail: `context/billing-management/specs/bm*.md`; defect detail:
+`billmgmt-known-issues.md`._
 
-_Compacted 2026-10-12 (earlier passes 2026-10-07, 2026-10-04, 2026-09-16) — the Invoice
-Template update's per-unit narrative (bm47–bm63) and the bm42a follow-up trimmed to durable
-facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full history:
-`git log -- context/billing-management/billmgmt-progress-tracker.md`; per-unit detail:
-`context/billing-management/specs/bm*.md`; defect detail: `billmgmt-known-issues.md`._
-
-## Current state (2026-10-18)
+## Current state (2026-10-25)
 
 - **Invoice Template Phase 3 (bm64–bm73) COMPLETED — signed off at the bm73 ship gate (2026-10-18).**
   Criteria 1–15 with evidence in `billmgmt-project-overview.md`; the manual run on the owner's data
   (`BRN00000001`, `COMPLETED`) is signed off with a recorded gap (steps 3–5 rely on the automated
-  journey). Four defects found and fixed during that run (uncommitted at sign-off); the draft
-  preview timeout on large invoices is open (known-issues §26). **Before Azure dev's first real bill
-  run:** apply the `billrun_runtime` column grant (`rated_amount`, `additional_info`) and redeploy
-  `bill_run_processing` (new `business_timezone` input).
-
+  journey). The four defects found during that run and three review rounds are fixed and committed
+  (through `b20256f`, 2026-10-19). The draft preview timeout on large invoices is open
+  (known-issues §26). **Before Azure dev's first real bill run:** apply the `billrun_runtime`
+  column grant (`rated_amount`, `additional_info`) and redeploy `bill_run_processing` (new
+  `business_timezone` input).
 - **Invoice Template update (bm47–bm63) COMPLETED — signed off at the bm63 ship gate
   (2026-10-11).** Overview success criteria 1–12 proven on a fresh database (journey 8/8) and
   in the browser (admin e2e 5/5); unit suite 4378/0, integration 1219/0, `tsc`/ESLint/Prettier
@@ -39,336 +36,36 @@ facts + decisions and archived verbatim to `billmgmt-completed-tracker.md`. Full
   order of ops: `infra/docs/db-role-verification.md` "Production cutover".
 - **wfm01** (`0b31f50`): `rating-engine/` → `workflow-management/`; flow paths are
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
-- **Next update:** Bill Run uses the BAN's invoice template (Phase 3,
-  `_updatemodule-billing-invoice-template-phase3-billrun-plan.md`), specced 2026-10-15 as bm64–bm73 (`specs/bm64`–`bm73`) and
-  now delivered (see the first bullet). Parts 1 and 2 (earlier updates) are
-  folded into `billmgmt-project-overview.md` (Part 1 fully rolled up 2026-10-15).
+- **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
+  `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
+  written 2026-10-25; **bm74 built** (uncommitted), bm75 next. Parts 1 and 2 and Phase 3 are folded into
+  `billmgmt-project-overview.md`.
 
-## Invoice Template Phase 3 — Bill Run uses the BAN's template (bm64–bm73)
+## Invoice Template Types — IN PROGRESS (bm74–bm85)
+
+Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+
+**bm74 notes (2026-10-25):**
+
+- `0053` exactly as the spec's SQL; journal `idx 53`; mirrors gain `layoutCode` (NOT NULL) and
+  `lastModifiedBy`; comment-only edits in `bill-template-version.ts` and `activate-template.ts`.
+- **Deviation 1 — fixtures the spec said would pass unchanged.** Five second-family fixtures
+  (`run-template-capture` ×2, `draft-uses-run-stamps`, `posting-skips-null-template`, the template
+  journey) inserted a family with no `layout_code`, a hyphenated code (`BM65-EMPTY`, refused by
+  `btf_code_format`) and a generated row on Standard's layout (refused by
+  `btv_pair_same_type_fk`). New helper `tests/db/helpers/template-type-fixtures.ts`
+  (`insertTemplateTypeFixture`) inserts the type with its own ACTIVE layout v1 (a copy of Standard
+  v1's files) and the generated rows point at it; codes now use `_`.
+- **Deviation 2 — more forced test edits:** two family-insert fixtures in the catalog suite gain
+  `layout_code`; the unit mocks in `resolve-template.test.ts` and `invoice-template-settings.test.ts`
+  gain `layoutCode` (tsc); `billing-schema.test.ts` has no version column-set test, so
+  `last_modified_by` (and `layout_code` NOT NULL) got their own column assertions.
+- The precondition case runs on the same disposable DB reset to `0052` (schemas dropped, trimmed
+  journal), not a separate database; drizzle wraps the driver error, so it reads `err.cause`.
 
 | Unit | What | Status |
 | --- | --- | --- |
-| bm64 | Standard template family in the catalog (`bill_template_family`, `0046` edited in place per D26) | **Built** (2026-10-15, `0e65a57`) — tsc/ESLint/Prettier clean; unit 4593/0; integration 1239/0 (110 skipped); `db:setup` chain ×2 on a fresh disposable DB OK; checklist queries match |
-| bm65 | Template captured at run start and on rerun (`bill_run_account` stamps, migration `0051`) | **Built** (2026-10-15, `9e399b7`) — tsc/ESLint/Prettier clean; unit 4596/0; integration 1245/0 (110 skipped). Code-review findings (xhigh) held pending owner decisions |
-| bm66 | Draft PRO-FORMA renders from the captured template (`RenderMode` run / preview-family, draft route 422) | **Built** (2026-10-16, `4139f02`) — tsc/ESLint/Prettier clean; unit 4615/0; integration 1248/0 (110 skipped) |
-| bm67 | Posted invoices use the captured template (`stampPosted` copies run stamps + family, migration `0052`, NULL-stamp skip) | **Built** (2026-10-16, `976d2ca`) — tsc/ESLint/Prettier clean; unit 4615/0; full integration run completed with the review fixes below (1254/0, 110 skipped) |
-
-| bm64–67 review fixes | Fixes from the xhigh (bm65) and max (bm65–bm67) code reviews, all items | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4630/0; full integration 1256/0 (110 skipped, run in four foreground chunks); known-issues §24 RESOLVED |
-| bm68 | Capacity flow stops writing the appendix (flow SQL, two ratecard grants revoked, appendix types deleted, guardrail 66) | **Built** (2026-10-18; live proof at the bm73 manual run: `BRN00000001` `COMPLETED` on local Kestra, 4/4 capacity lines carry `pricing`/`calc`/`summary` and no `appendix`) — code, tests, docs done: tsc/ESLint/Prettier clean; unit 4638/0 (two repo-scan timeouts pass alone); targeted integration 78/78; full integration 1165 passed, 2 failed (E2E journeys stop at INVOICED with no engine, known-issues §4c, identical on baseline) + azurite env file; **live-Kestra gate (spec §6, Inv #38) met** by that bm73 manual run (owner data, capacity path, edited flow deployed) in place of the `ci` smoke script; `npm run billrun:live-kestra-smoke` on `ci` was not run separately |
-| bm69 | Invoice dates `DD/MM/YYYY` and Mbps quantities (`formatCalendarDate` `"dmy"` style; `date`/`period`/`qty` helpers) | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; targeted unit (billing services, `tests/lib`, layout lint) 1029/0; v1 goldens regenerated (date + quantity text only); full unit 4577 passed, 1 failed (`ratecard-parse-csv` repo-scan timeout, passes alone) + 7 files fail to load on missing `.env` keys (`DATABASE_URL`/`BETTER_AUTH_*`), identical on baseline; no expectation edits outside the spec's files |
-| bm70 | New invoice page 1: capacity summary per service type (render-input SQL, binder guards, v1 layout rewrite, embedded IBM Plex, `0046` checksum literals) | **Built** (2026-10-16, uncommitted) — tsc/ESLint/Prettier clean; unit 4598 passed, 1 failed (`ratecard-parse-csv` repo-scan timeout) + 7 files fail to load on missing `.env` keys, identical to bm69's baseline; integration 1260/0 (110 skipped) on a throwaway Postgres + Azurite with a scrubbed env; Chromium e2e 3/3 (`RUN_CHROMIUM_E2E=1`: fonts load from the embedded data, zero network requests) |
-| bm69–70 SonarQube fixes | Golden `@font-face` stub is valid CSS (`local("stripped")`, css:S4654); duplicated test lines factored into `tests/helpers/invoice-render-input-fixtures.ts` + `bootstrapFlowDoubleDatabase` / `dropFlowDoubleSchemas` (flow-double helper); `formatCalendarDate` cases as `it.each` tables. Tests only, no product code | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; affected unit files 212/0; `invoice-capacity-summary` 4/0 + `billrun-capacity-aggregation` 10/0 on a throwaway Postgres DB |
-| bm69–70 code review fixes | xhigh review: one finding. `readCapacitySummary` now orders by the printed label (`COALESCE(min(description), offering_id)`), so a type with no description sorts by its fallback label instead of last. Noted, not changed: a `line_type = 'discount'` line would trip `SUMMARY_BLOCKS_DO_NOT_ADD_UP` (no flow writes one today); `CSV_PATH_ROOTS` does not list the new bind fields (CSV unchanged by spec) | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; `bind` + `invoice-render-source-boundary` 33/0; `invoice-capacity-summary` integration not re-run (needs a disposable DB) |
-| bm71 | Invoice detail pages per service type and State-District (`listCapacityDetailForInvoice`, binder guards incl. `INVOICE_POLYGON_DATA_MISSING`, `chargeDetails` rewrite, `usageAnnex` + column keys retired, layout manifest schema) | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; unit 4404/0; integration 1265/0 (110 skipped) on a throwaway Postgres + Azurite with a scrubbed env; Chromium e2e 3/3 (`RUN_CHROMIUM_E2E=1`, 900 polygons, zero network requests); new guardrail 63 suite 9/9 |
-| bm71 SonarQube fixes | Detail-table header cells carry `scope` (`group-label` → `scope="colgroup"`, `col-head` → `scope="col"`; Web:S5256) in layout v1 `chargeDetails.hbs`; generated v1 regenerated, both `checksums.json` + the `0046` / `seeded-invoice-template.ts` checksum literals updated, golden fixture + golden test expectations follow | **Built** (2026-10-17) — ESLint/Prettier clean; billing service + template unit suites 1061/0 (`trigger-run.service` fails to load on missing `.env` keys, unrelated), seed-checksum test green; integration not re-run |
-| bm71 code review fixes | xhigh review, two fixes in `listCapacityDetailForInvoice`: the `polygon_id=` match is anchored to a whole key name (key start or right after a pipe), so a sorted-earlier key column such as `cell_polygon_id=` is never printed as the polygon (new guardrail 63 case); the type `label` the rows sort by is per offering (window `COALESCE(min(description), offering_id)`), so an offering with two capacity lines of different descriptions stays one contiguous block and the binder never splits a State-District group into two with a doubled Sub Total. Noted, not changed: v1 `sample-data.json`'s "RAN Usage — Target Capacity" detail sums to 200,000.00 against Utilised 150,000.00 (checksum literals); the CSV runs the detail read it never prints; the Sub Total row lost the annex's `break-before: avoid` | **Built** (2026-10-16) — tsc/ESLint/Prettier clean; guardrail 63 suite 10/10 on a throwaway Postgres DB |
-| bm72 | Total Amount page and editable footnote (`notes` → `footnote`, `InvoiceStructureForm` on RHF + `useFieldArray`, footnote diff in `ActivateVersionDialog`, v1 pin guardrail) | **Built** (2026-10-17) — tsc/ESLint/Prettier clean; unit 4508/0 (3 skipped); integration 1269/0 (110 skipped) on a throwaway Postgres + Azurite with a scrubbed env; Chromium e2e 3/3 (`RUN_CHROMIUM_E2E=1`); admin browser e2e 5/5 (`RUN_INVOICE_SETTINGS_E2E=1`, fresh `next build`); v1 pin mutation-checked (a changed v1 byte and a changed `0046` literal each fail it, then reverted) |
-| bm73 | Phase 3 ship gate: full suites, journey steps 1–6 and 8 + 900-polygon fixture, manual sample-data run, invariant audit, docs fold | **Built** (2026-10-18; manual run on the owner's data signed off with a recorded gap, see the manual-run notes below) — journey 19/19; typecheck/lint clean; unit 4620/0 (3 skipped); integration 1280/0 (110 skipped) on a throwaway Postgres + Azurite; Chromium e2e 3/3; admin browser e2e 5/5 (fresh `next build`); invariant audit done (one gap closed); docs folded. Manual run: `BRN00000001` `COMPLETED`, ~1 min of system time, 34-page PDFs |
-| bm73 code review (max) fixes | Owner decisions 2026-10-18. **(1) Subscription overlap:** every ACTIVE-subscription selection in the flow (recurring, capacity as-of + `subscription_count`, verification) keeps to subscriptions overlapping the period, so one ordered ahead is not billed now that bm03 no longer excludes its account (bm29/bm42/bm03 spec notes). **(2) Window scope:** Validation and Collection take only the period's rows (business zone); other months stay `RATED`, counted in the NOTICE; `WINDOW_COVERAGE` retired (bm27 spec amended, template updated). **(3) Zone guard:** `services/billing/rating-timezone.ts`; trigger and rerun return `BUSINESS_TIMEZONE_MISMATCH` unless `APP_TIMEZONE` = rating's zone (dialog messages added); guardrail pins the constant to `0034`'s `period_of()`. **Tests:** `list-exceptions`/`pre-approval-checks` mock app config and expect the zone; grant guardrail anchored to one statement (mutation-checked); timezone guardrail hardened (every `AT TIME ZONE`, no `timezone()`/zone literal, GUC from input, CRLF-safe, overlap check; mutation-checked); `runValidation`/`runCollection` (period + zone) in `extract-flow-sql.ts`, the correlation suite runs the flow's own Validation + Collection (copies removed), the journey runs Validation and passes the zone; recurring suite gains overlap + KL price-date cases; rating hand-off test; rm09 `monthBucket` in KL; polygon fixture price `toFixed(2)`. **Docs:** runbook (`r.status`, `superseded_count` on the new batch, reject/cancel scope, failed-account case, §10 limitations 13–15), `kestra.yml` comment (local only), rating runtime `outputs.<task>.vars.uri` text, grant correction recorded in architecture + workflow rules, drifted audit citations, known-issues §27 (approval marked a failed account's claimed rows `BILL_APPROVED`) **fixed**: approve now releases the `SKIPPED` accounts' rows to `RATED` before `markApproved` (`releaseSkipped`; `markSkippedForRun` returns the account ids), Inv #19 extended. Not changed: `maxFiles: 1` (operational, owner); efficiency items (per-row zone conversion is needed for correctness; test-fixture speed and journey duplication are cleanup) | **Built** (2026-10-18) — tsc/ESLint/Prettier clean; full unit 4639/0 (3 skipped; the 2 `list-exceptions` failures the review found came from the 2026-10-18 time-zone fix, after bm73's 4620/0 run); all four stage heredocs dry-bind; integration 1283/0 (110 skipped) on a throwaway Postgres + Azurite (`.env.test` + `APP_TIMEZONE=Asia/Kuala_Lumpur`), incl. journey 19/19, e2e happy path (approval releases the failed account's 2 claimed rows), the new overlap / KL price-date / window-scope cases; Chromium e2e 3/3; rm08/rm09 rating suites skipped (need host `python3` + runtime, as before); local Kestra flow not redeployed |
-| bm73 second review + §28 option 1 | Review of `449c63e`: ops guide renamed `workflow-management/docs/opsguide-rating-batch.md` and its mixed-account reload guidance corrected (no rating-side partial reload once sibling rows are `BILL_APPROVED`); the subscription-overlap comment skipped (no defect named). **known-issues §28, option 1 (owner decision 2026-10-19):** a run account's unclaimed `RATED` usage dated before the period is surfaced — Exceptions tab kind `PRIOR_PERIOD` ("Earlier period", per account + month with record count and summed value) and the informational checklist line `prior_period_usage`; billing raises an adjustment. `rated-lines.repository.ts` `priorPeriodConditions` / `listPriorPeriodForRun` / `countPriorPeriodForRun`; `ExceptionRow` gains `usageMonth` + `recordCount`. Still open: the rows reappear on every later run (no "handled" marker), unresolvable earlier-period rows not counted, billing the usage (options 2/3) | **Built** (2026-10-19) — tsc/ESLint/Prettier clean; billing services + components + guardrails 1293/0 (3 skipped); new integration case in `billrun-uncharged-exceptions` 3/3; full unit 4640 passed (2 repo-scan timeouts under parallel load, pass alone 11/11); full integration project **with the rating runtime** (host Python 3.14 venv, `RATING_PYTHON3`) 1388 passed / 0 failed (6 skipped) after the stale rating suites rm08–rm11 were rewritten onto the rm21 harness (see `ratemgmt-completed-tracker.md`) and rm12's timeout raised; the 6 opt-in skips then run too: admin browser e2e 5/5 (`RUN_INVOICE_SETTINGS_E2E=1`, fresh `next build`) and the rm13 live no-fan-out guard 1/1 on the local dev Kestra (rewritten; 10,000-record `_SAMPLE_-RM13` fixture left in the dev DB; deployed rating flow pin restored, now revision 9) |
-| bm73 third review fixes (2026-10-19) | Owner decisions: earlier-period usage is owned by Revenue Ops (dashboard/report to be built later; cleared before the account's next run); `EXCLUDED` accounts stay out of their run and Revenue Ops handles their unclaimed usage (Inv #26 note); the remaining gaps are documented in known-issues §28. Fixes: the earlier-period date test compares raw `start_datetime` with the zone midnight (index-friendly); earlier-period rows are grouped by the cycle's billing period (`usagePeriodStart`/`usagePeriodEnd`, a range label when cycle_day != 1); one `exceptionWindowForRun` helper for the Exceptions list and both counts; the Exceptions headline counts rows again ("N exceptions") and names Revenue Ops only when earlier-period rows exist (checklist text too); the integration case pins the business zone; `insertRanRatecard` is atomic and rejects an empty card; `writeUdr` checks one volume per cell and builds valid times past 10 cells; stale header comments refreshed; ops guide reload cases corrected (no run bills reloaded or released closed-period rows; Revenue Ops adjusts the full corrected usage); bm27 line 52 and rm13 seed/checksum fixes from the earlier pass. Approval runs only the blocking checks under the run lock (`runPreApprovalChecks(…, { informational: false })`; the full list is re-run only to return a failed checklist); the partial index on unclaimed `RATED` rows is deferred to rating (known-issues §29). rm13's live fixture is 25,000 records (three chunks), under new "-25K" names. | **Built** (2026-10-19) — tsc/ESLint/Prettier clean; unit (Exceptions table, list-exceptions, pre-approval checks, approve-run) 50/50; integration on a throwaway Postgres: §28 cases incl. a new cycle_day-15 grouping case 4/4, rating rm08–rm11 + rm13 71 passed (the rm13 live Kestra test skipped: needs the dev stack), approval paths (`billing-e2e-happy-path`, `posting-skips-null-template`) 5/5. Throwaway stack dropped. |
-
-**bm73 notes (2026-10-17) — Invoice Template Phase 3 ship gate:**
-
-- **Manual run on the owner's data (criterion 14; 2026-10-18) — signed off by the owner with a recorded gap.**
-  - Data: 4 customers (BAN00000001–04), one RAN_USAGE subscription each (PRDINV00000005–08, Wholesale eMBB), 3,600 usage records (900 polygons per BAN) loaded through the real rating path (`UDRBAT00000004`, `rating-input-file-202609010000_v5.udr`, COMPLETE 3,600/3,600).
-  - Run `BRN00000001` (cycle `BCY00000001`, 2026-09-01..2026-09-30). Triggered 07:02:58 UTC (all 4 BANs stamped `BTF00000001`/`BTV00000002`, 0 excluded); attempt 1 failed Validation and attempt 2 failed Aggregation (findings below); attempt 3 rerun 07:30:15 → `PROCESSED` 07:30:25 (**processing ~10 s**). Approved 07:50:42 by a second user; posting 07:50:46.7 → `INVOICED` 07:50:58.4 (**~12 s**, INV00000001–04, 4 final renders); distribution 07:50:58.4 → `COMPLETED` 07:51:37.8 (**~39 s**, 5/5 artifacts `DELIVERED` to the loopback). Clean-path system time ~1 min, inside the ~1 hour budget.
-  - Money: gross = rated (46,233,700.00 / 46,295,200.00 / 46,399,100.00 / 46,343,800.00); commitment 400,000 Mbps MET (top-up 0.00); motivation band 1 at 50 above 400,000 → net 43,116,850.00 / 43,147,600.00 / 43,199,550.00 / 43,171,900.00; run total 172,635,900.00 = Σ bills; tax 0.00. Pre-approval: 0 orphans, 0 zero-total bills. All 3,600 rows `BILL_APPROVED`.
-  - Stamps: each posted bill carries the run's stamps plus the family (`BTV00000002`, `BTF00000001`; CSV `BTV00000003`).
-  - **PDF page counts:** INV00000001–04 are 34 pages each (~197 KB), counted from the stored blobs in Azurite.
-  - **Gap, accepted by the owner:** steps 3–5 (footnote edit + activate, frozen drafts, one-BAN rerun picking up the new footnote) were not run on the owner's data. They rest on the automated journey (19/19). Step 2's draft review rests on the posted PDFs, because the draft preview timed out (known-issues §26). The visual check of the 34-page layout (repeated label/header, "Page X of Y") is the owner's to do on INV00000001.pdf.
-  - Also proves bm68's live-Kestra check on capacity data (4/4 lines: no `appendix`, `pricing`/`calc`/`summary` present), which is stronger than the spec's `ci`-seed smoke.
-  - **Findings fixed during the run** (bullets below, all uncommitted): bm03 partial-period predicate; business time zone for the window and price dates; `billrun_runtime` column grant. Rating/WFM fixes from the first live rating run are in `workflow-management/docs/opsguide-rating-batch.md` and the rating code (cross-domain). **Open:** known-issues §26 (draft preview timeout).
-
-- **Nothing new built; tests and docs only** (plus the guardrail-56 assertion repair below).
-- **Manual run finding (2026-10-18) — bm03 partial-period predicate fixed.** Triggering the September run (`BRN00000001`) returned `NO_ELIGIBLE_ACCOUNTS`: each BAN kept a TERMINATED pre-resubscription subscription starting 2026-10-18, and the start rule (`start_date > period_start`, no upper bound) flagged a subscription starting *after* the window as mid-period, so all 4 BANs were `EXCLUDED`. `services/billing/partial-period.ts` now also requires `start_date <= period_end` (mirrors the cease rule's `>= period_start` lower bound); bm03 spec predicate amended; 2 unit tests added (start on `period_end` still partial; start after the window ignored).
-- **Manual run finding (2026-10-18) — bill run now dates usage and prices in the business time zone (cross-domain with rating X1).** All 4 BANs failed Validation `WINDOW_COVERAGE (HARD): 6 … outside [2026-09-01, 2026-09-30]`: rating's `period_of()` buckets the billing month in `Asia/Kuala_Lumpur` (X1, 2026-09-30), but the flow took calendar dates in UTC, so 00:00–07:59 +08 on the 1st read as 31 Aug. Per the owner, the zone is **read from config, not hard-coded**: the app sends `getAppTimezone()` (APP_TIMEZONE) as a new flow input `business_timezone` (`ProcessingTriggerPayload`; `trigger-run.ts`, `rerun-run.ts`; flow default `UTC` for hand-run executions), and every `AT TIME ZONE` in `local-dev/bill_run_processing.yml` uses it — Validation's window check (GUC `billrun.tz`) and the three price as-of `effective_date`/`lead()` reads (aggregation recurring + capacity, verification; psql `:'tz'`). The Rated Lines/exception window (`rated-lines.repository.ts` `ExceptionWindow.timezone`, callers `pre-approval-checks.ts`, `list-exceptions.ts`) does the same. Template flow input list + Validation comment updated. Tests: new guardrail `tests/guardrails/billrun-business-timezone.test.ts`; bm27 correlation suite's Validation copy dates in the business zone + a first-of-month boundary case; payload fixtures (engine-client/registry, trigger/rerun service) carry `business_timezone`; `extract-flow-sql.ts` binds `tz` (default `UTC`). Deployed to local Kestra as flow revision 2 (via API, not `flow-deploy`, to keep the owner's Kestra-only rating pin edit). **Note:** rating's `period_of()` literal is a deploy-time constant (rm15) — APP_TIMEZONE must stay equal to it.
-- **Manual run finding (2026-10-18) — billrun_runtime column grant gap (bm41 latent).** The rerun's aggregation failed `permission denied for table customer_bill_line`: 0044 (bm41) added `rated_amount` + `additional_info` and bm42's aggregation INSERT writes both, but `db/bootstrap/billrun-db-roles.sql` Step 5a's column-scoped `GRANT INSERT (...)` was never extended (the integration suites run the flow SQL as the owner). Both columns added to the grant; applied to the local dev DB by a one-off `GRANT INSERT (rated_amount, additional_info)`. New DB-free guardrail `tests/guardrails/billrun-flow-column-grants.test.ts` pins every column the flow inserts into `customer_bill_line` to the grant (verified failing without the fix). **Azure dev needs the same GRANT** (re-run the bootstrap or apply the one-liner) before its first real bill run.
-- **Journey (spec §2).** `tests/e2e/invoice-template-journey.integration.test.ts` gains a second describe, "bm73 — the Invoice Template Phase 3 journey on a fresh database" (its own `freshDatabase` + `ci` seed), steps 1–6 and 8a–8e: trigger stamps + audit; drafts incl. a 900-polygon BAN (9 groups, `thead` label + header, multi-page Chromium PDF, Page X of Y); footnote edit → preview → save → activate (v1 layout reused, default v1 ACTIVE); frozen drafts; one-BAN rerun (re-capture, `BILL_RUN_RERUN` stamps, new footnote); a newer activation before approval, then approve + post (bill stamps = run stamps + family, final renders on the frozen versions); negatives (NULL family version → 422 + SKIPPED with no INV; negative Utilised; no `polygon_id`; 10,001 rows); **8e recovery** (an ACTIVE version in the empty family + rerun → non-NULL stamp, draft renders, real approval passes, the BAN posts). The Part 2 block's stage loop is now the shared `processAccountOnFlowSql` (no behaviour change). Journey 19/19 (Part 2 8 + Phase 3 11).
-  - Step 7 (loopback distribution) stays with the distribution suites and the manual run (spec §2).
-  - The 900-polygon and negative capacity BANs are on fixture runs (the `ci` seed bills no capacity line), captured with the real `captureTemplateStamps`.
-- **New helper:** `tests/db/helpers/capacity-polygon-fixtures.ts` (`createCapacityPolygonFixtures`, `regionPolygons`, `polygonResource`). bm71 had none in `tests/db/helpers/`; its builders moved out of `invoice-capacity-detail.integration.test.ts`, which now uses the helper (11/11).
-- **Guardrail 56 repair (from the bm72 review fix `d223df0`).** The authz matrix still asserted the old token-keyed `InvoiceStructureForm`; the bm72 review run did not include the full unit suite. It now asserts the `"working"` key plus the form's adopt-a-newer-token logic.
-- **Invariant audit (Inv #51–#58 + amendments; code ↔ test):**
-
-  | Inv | Code | Test |
-  |---|---|---|
-  | #51 | `services/billing/capture-template-stamps.ts:25` (from `trigger-run.ts:152`); `render-invoice-template.ts:150` (`run` mode); `post-run.ts:509-522` | `run-template-capture` case 1; `draft-uses-run-stamps` case 1; `invoice-version-pinning` (46); `trigger-run` bm65 cases; journey 4, 6 |
-  | #52 | `rerun-run.ts:134` (re-capture), `:153` (audit stamps) | `run-template-capture` case 2; journey 5–6 |
-  | #53 | `invoice-template/resolve-template.ts:161` (`run` :170); `preview-family` only in `preview.ts:126,214` | `tests/guardrails/no-live-template-resolution.test.ts` (57) |
-  | #54 | `bill-run-account.repository.ts:44` (`listBanFamilies`, NULL→default :57) | `trigger-run` bm65; `run-template-capture` case 5; `phase3-boundaries` (66); cm22 exemption |
-  | #55 | `invoice-render-input.ts:278` (`readCapacitySummary`); `bind.ts:182-188` | `invoice-capacity-summary` (62); `bind.test.ts` guard 2; journey 8b |
-  | #56 | `rated-lines.repository.ts:205` (`listCapacityDetailForInvoice`); `bind.ts:211-275` | `invoice-capacity-detail` (63) cases 1–6; `bind.test.ts`; journey 8c, 8d |
-  | #57 | `db/migrations/0046_invoice_template_catalog.sql:159-175,259` (guard trigger); `save-template-draft.ts:158` (layout reuse) | `tests/guardrails/invoice-template-v1-pin.test.ts`; `activate-template` (65); journey 3 |
-  | #58 | `capture-template-stamps.ts:53-58`; `resolve-template.ts:173`; `pre-approval-checks.ts:270` (D58a); `post-run.ts:401-414` | `run-template-capture` case 3; `draft-uses-run-stamps` case 3; `posting-skips-null-template`; journey 8a, **8e (recovery, added here)** |
-  | #36 note | `bill-run-processor/local-dev/bill_run_processing.yml:1035-1084` | `billrun-capacity-trace`; `phase3-boundaries` 1 |
-  | #40 note | as #58 | as #58 (8e closes the recovery half) |
-  | #41 note | `post-run.ts:509-522`; `customer-bill.repository.ts:434` (`stampPosted`, family :452); `0052:9` | `posting-skips-null-template` siblings; `invoice-version-pinning`; journey 6 |
-  | #42 note | `render-invoice-template.ts:150/:152`; `resolve-template.ts:100,173,198-203` | `draft-uses-run-stamps` 1, 3; `run-template-capture` 4 |
-  | #44 note | `0046…sql:102,109,119,175` | `invoice-template-catalog` bm64 cases |
-  | #46 note | `validation/billing/invoice-template-structure.schema.ts:15-31` | `generate.test.ts` (67); `save-template-draft.action.test.ts`; golden `<script>` case (50) |
-
-  One gap found and closed: no test took a NULL-version BAN through activation + rerun to posting (Inv #58 recovery, guardrail 60's last bullet) — journey step 8e. Stale markers fixed: guardrail 59 (posted-PDF half now journey 5–6) and guardrail 62 / Inv #55 (per-polygon half built bm71/bm72; Σ per-polygon = `rated_amount` at every anchor because each anchor case binds the full read and `bind` throws on any per-type mismatch).
-- **Guardrails 57–67:** every named test file exists, every item is marked built, and all are green in the runs below.
-- **Criterion 13:** `git diff --stat 0e65a57^` (bm64's parent) over the Customer Management paths and `0050` is empty. The diff from bm63 (`614743a`) is non-empty, but every change is cm17–cm21 (2026-10-12/13), which created `0050` before Phase 3 began.
-- **Fresh environment:** the local dev stack was dropped (`docker compose -p enterprise-billing-app down -v`) and rebuilt per the bm64 runbook (README Part 1 steps 3–6, Part 2 steps 8–10): empty DB and container verified before seeding; `db:setup` uploaded 23 v1 blobs (no conflict); one family `BTF00000001 | STANDARD | true`; Kestra healthy, rating + bm68 bill-run flows deployed.
-- **Docs folded:** `billmgmt-project-overview.md` gains the Phase 3 section with criteria 1–15 and evidence, and its current-state block; `billmgmt-update-overview.md` is pointers only; architecture, code-standards, UI context (§10d, the delta header) and `bm00` Part 5 flipped to delivered; workflow rules re-scoped (Phase 3 rules → §0 item 8, "What changed" row); known-issues §20 re-checked (closed); §19 and §23e were already closed (bm67, bm70); the Customer Management Inv #18 note was already present (bm65); the planning repo's `TODOS.md` Phase 3 entry notes the delivered scope and the deferred family UI (left unchecked, §7.3).
-
-**bm72 notes (2026-10-17):**
-
-- **Total Amount (D22, D30, P10).** `readCapacitySummary` also returns `utilisedTotal`: a SQL `SUM` over the same per-offering Utilised figures, at `numeric(18,2)`, `0.00` with no capacity line. It reaches the binder as `raw.bill.utilisedTotal`.
-  - **Deviation 1:** `InvoiceRenderInput.totals.totalAmount` existed already (the bill total). Nothing printed it, and no CSV map path used it. Per the spec it now means Σ Utilised. `amountDue` stays the bill total, so the Grand Total is unchanged.
-  - The last page is appended to `partials/chargeDetails.hbs` as the spec's markup. `shell.hbs` gains the `.total-amount`, `.total-amount .num` and `.footnote` CSS.
-- **`notes` → `footnote` (D56 part 2).** The key, `partials/notes.hbs`, the manifest entry and the "Notes & terms" editor row are removed.
-  - `structure` is `{ sections: { payment }, columns: {}, footnote: string[] }`, and `footnoteLineSchema` carries the editor's messages.
-  - The binder takes `footnote` from its context: `render-invoice-template.ts` passes the override structure in a preview, else the loaded generated version's structure. `preview.ts` (sample) passes the submitted footnote, and the CSV path passes the stamped one (it never prints it).
-  - The generator's case matrix is 2.
-- **v1 regenerated for the last time.**
-  - `regenerate-generated.ts` was run, then `write-checksums.ts` for both directories.
-  - `0046` got the `BTV00000002` structure literal and both checksum literals: layout `17ec1bd7…`, generated `0c875a77…`, regenerated on top of the bm71 SonarQube `scope` attributes. `tests/helpers/seeded-invoice-template.ts` has the same literals plus `SEEDED_FOOTNOTE`.
-  - The golden was regenerated: the last page plus its CSS, and Notes & terms removed.
-  - New `tests/guardrails/invoice-template-v1-pin.test.ts` pins both `checksums.json` digests.
-- **Editor.** `InvoiceStructureForm` runs on React Hook Form.
-  - **Deviation 2 — the line shape:** `useFieldArray` needs objects, so a line is `{ text }` in the form. The resolver wraps `zodResolver(invoiceTemplateStructureSchema)` and maps line errors to `footnote.N.text`, following the company-profile form's wrapped-resolver precedent. A valid submit hands over the trimmed structure.
-  - **Deviation 3 — no preview while invalid:** no preview request goes out while the structure is invalid (a blank or over-long line), and the last good preview stays up.
-  - **Deviation 4 — `MANDATORY_SECTION_HIDDEN`:** its inline row errors are retired from the form. They were unreachable since bm71's Deviation 3. The server codes are left in place, and such a refusal now shows the generic save toast. A server refusal at `structure.footnote.N` shows under line N.
-  - **Page heading:** "Invoice template — Standard (default)". The family name comes from the page data (`standardFamilyName` added to `getInvoiceTemplatePageData`), and the `v{n}` and status badge follow the heading.
-  - **Dialog:** `StructureChangeSummary` in `activate-version-dialog.tsx` renders the diff as the spec words it: `Footnote line N: "old" → "new"`, `… added: "…"`, `… removed`. UI context §10b now records that wording.
-- **Deviation 5 — the panel class:** the spec says Total Amount is "not inside `.amount-due-panel`", but v1's amount-due panel class is `.grand-total-panel`. The golden asserts against that class, and against any `--inv-soft`/`--inv-accent` in `.total-amount`.
-- **Tests changed outside the spec's list (each forced):**
-  - fixtures and contexts: the shared render-input fixtures (`utilisedTotal`, `footnote`) and `PROBE_RENDER_INPUT`; bind contexts in `bind`, `render-invoice-template`, the capacity summary and detail suites, and the Chromium e2e;
-  - schema and layout: `generate-parity` (seeded structure), `invoice-layout-lint` (seeded `.hbs` count 13 → 12), `structure-labels`, and the preview and save-draft action tests (the footnote replaces `notes` as the visible difference; server-side footnote limits added);
-  - version markers: `draft-uses-run-stamps`, `run-template-capture`, guardrail 46 `invoice-version-pinning` and the template journey (a footnote line, not the `notes` toggle, marks a version), plus the `save-template-draft` DB suite.
-- **The admin browser e2e had gone stale.** It still clicked bm71's removed `#column-showDiscountColumn`, because the suite is opt-in. Its EDIT case is rewritten for the footnote flow:
-  - edit line 2, preview, save, activate (dialog diff), then hide Payment as v3;
-  - history shows v1 ACTIVE (default), v2 RETIRED and v3 ACTIVE;
-  - a run started afterwards renders the new line.
-
-  It now waits for the "Editing draft vN" banner before opening Activate. The save's revalidation remounts the form, which closed a dialog opened before the refresh landed (seen once, at v3).
-- **Docs:**
-  - architecture Inv #46 and #57 are marked built;
-  - code-standards: TS rules 4/5 and guardrail items 64 (final), 65 and 67 are marked built; the superseded rows for guardrails 48 and 53 are updated; Next.js rule 2 gets the RHF correction (spec Open question 1);
-  - UI context §10b Phase 3 rows are confirmed as built, and §10d has the last page as built;
-  - the placeholder catalog is synced (`footnote` root, `totals.totalAmount` meaning).
-- **Built on top of the bm71 SonarQube and code-review fixes.** The new anchor case uses the fixture label `TOTAL2000` so it doesn't collide with the code-review case's `ANCHOR`.
-- **Merge artifact removed (owner decision, 2026-10-17).** A local "Merge branch 'dev1'" commit had re-added `partials/usageAnnex.hbs` and `tests/db/invoice-usage-annex.integration.test.ts`, both deleted by bm71. The v1 `checksums.json` did not list the partial. bm72 deletes both files again, so v1 is pinned without the dead annex.
-- **Still to do on each environment:** re-seed on an empty DB and an empty `invoice-templates` container (bm64 runbook). This is the last such reset for v1: v1 is now pinned (Inv #57).
-- **Code review fixes (xhigh, 084944b + the uncommitted test fixes, 2026-10-17).** Owner decisions on items 2, 4, 6 and 8; see known-issues §25.
-  - The live preview no longer sticks in "Rendering…": it renders the latest **valid** structure, so the source, the toggles and Retry still work while a line is invalid. A footnote edit marks the preview busy at once and hides a stale error. The status is derived from the request key, which replaces `markLoading()`.
-  - The counter counts the trimmed line, as the schema does.
-  - A stored structure the schema refuses (a pre-bm72 DB) fails loudly as `TEMPLATE_VERSION_NOT_FOUND` / `STRUCTURE_INVALID` at the page read (no TypeError). The page passes the parsed `currentStructure` to the dialog.
-  - `?version=` naming another family's version falls back to the Standard working copy, so the heading stays true.
-  - The working-copy form is no longer keyed on the draft token. It adopts a server state it does not already hold (a Reload, an activation), so the refresh after its own save no longer closes an open Activate dialog.
-  - `utilisedTotal` is a window `SUM` on the per-type query (one scan, not two). The structure parse is memoized, the type-only imports are grouped, and three tests import `SEEDED_FOOTNOTE`.
-
-**bm71 notes (2026-10-16):**
-
-- Rating Phase H prerequisite: implemented on dev1 (rm28/rm29); rm26 confirms `name=value` joined by `|`, value untouched.
-- Repository: `listCapacityDetailForInvoice` (count, rows, `GROUPING SETS` Sub Totals + per-type totals). `listBilledUsageForInvoice`, the `BilledUsage*` types, `usage`, `lineGroups`, `includeUsage`, `usageRatedTotal` and the per-source window sums are gone. `RawInvoiceServiceType` gains `ratedTotal` (the rated side of the per-type reconciliation).
-- **Deviation 1 — rate printed with `money` and read at 2 dp in SQL.** `price` prints 4 dp below RM1, so the spec (Open question 2) says use `money`; but `money` (`formatCurrency`) keeps the input string's scale, so the 6-dp `udr_usage_rate` printed "RM 100.000000". The read is `udr_usage_rate::numeric(18,2)::text` to meet D21's 2 decimals with no new helper.
-- **Deviation 2 — an empty `polygon_id=` value counts as missing** (`nullif(…, '')`), so a blank polygon name is never printed (General rule 7). A `udr_resource` not of the rm25 shape reports `missing: "udr_resource"` (spec table).
-- **Deviation 3 — structure stores only the optional sections.** Per the spec, `sections` = `{ payment, notes }` strict, so the generator treats every non-optional section as always shown and `[[if sections.<mandatory>]]` is now an unknown key. A mandatory key in a saved structure is refused as `VALIDATION_ERROR`; `MANDATORY_SECTION_HIDDEN` can no longer come from the schema (the code and its UI mapping are left in place, unreachable; bm72 can retire them with the editor rework).
-- **CSV unchanged:** `invoice-csv.ts` builds its `InvoiceLine` rows straight from `raw.lines` (it read `lineGroups`); a new test pins the field mapping. The CSV path now also runs the detail guards in `bind` (bad polygon data fails the CSV as it parks the PDF).
-- `structure.json` is now the generator's canonical output (`columns` first); `regenerate-generated.ts` writes it. `0046`: `BTV00000002` structure and both checksum literals updated (also in `tests/helpers/seeded-invoice-template.ts`).
-- Tests changed outside the spec's list (each forced): the shared capacity fixture (`billrun-capacity-pricing-fixtures.ts`) now writes the rm26 raw key and an rm25 `udr_resource` (the flow reads neither); structure fixtures in six DB suites; `build-invoice-html`, `invoice-csv`, `render-invoice-template`, save-draft action/DB, `invoice-layout-lint` (seeded `.hbs` count 14 → 13), `invoice-render-messages`. The journey's step 2 line-table count and step 7 annex half are retired with pointers to the new suite, golden and Chromium e2e (`ci` bills no capacity line). `invoice-usage-annex.integration.test.ts` deleted.
-- Docs: architecture Inv #56 + Inv #36 note + P9 built; code-standards TS rules 4/6, Data rule 6, items 63/64 built, superseded rows 48/49/54; UI context §6d superseded, §10d as built; placeholder catalog synced (it still listed bm70's retired `chargeSummary`).
-- Re-seed on an empty DB + empty `invoice-templates` container (bm64 runbook) is still to do on each environment.
-
-**bm70 notes (2026-10-16):**
-
-- Repository: `readCapacitySummary` (per-type Utilised/Unutilised/Total + `missingRated`/`negativeUtilised`
-  flags) and `readOtherCharges`; `otherChargesSubTotal`, `adjustments` and `summaryBlocksSum` as `FILTER`
-  aggregates on the existing sums select; `contactName` (`NULLIF(btrim(…), '')`) for `recipientName`.
-  The binder's three guards run before the D2 subtotal check. `chargeSummary` is gone (type,
-  probe input, sample data, CSV path roots).
-- Fonts: the official `@ibm/plex-sans` 1.1.0 / `@ibm/plex-mono` 2.5.0 npm releases (Latin-1 split
-  woff2, renamed to the spec's names), fetched via the npm registry (jsdelivr is blocked here).
-- **Deviation 1 — annex CSS carried into the new `shell.hbs`.** The spec lists only page-1 CSS, but
-  regenerating the stored v1 from a shell without the bm49 annex CSS would have left the
-  still-rendered usage annex unstyled. With it, the generated and stored v1 are byte-identical, so
-  `generate-parity`'s `it.fails` became a plain test and known-issues §20 / §23e / §23m (amount due)
-  are closed.
-- **Deviation 2 — due date added to `identification.hbs`.** §Implementation 4.4 says "unchanged
-  markup", but the D60 table row 2 lists Due date, and the block had none.
-- New `scripts/invoice-templates/regenerate-generated.ts` (no generator entry point existed, §5).
-  `tests/helpers/seeded-invoice-template.ts` carries the two checksum literals too; updated with `0046`.
-- Test changes outside the spec's list (each forced by the redesign): `generate.test.ts` pairing case
-  reorders its synthetic manifest (chargeDetails now sits between payment and the annex);
-  `load`/`preview`/`render-invoice-template`/`invoice-default-resolution` assert the new title or
-  supplier block instead of "TAX INVOICE"/`issuer`; the golden `normalise()` strips data URIs before
-  `src:` (an embedded font's `;` cut the old strip short). The spec's "second probe profile in
-  `load.ts`" does not exist; the SST-absent golden case builds it from `PROBE_RENDER_INPUT`.
-- **Test-env hazard (found running bm70's integration suite):** running the integration config with
-  `--env-file=.env` and only `DATABASE_URL` overridden inherits `.env`'s `BILLRUN_ENGINE_URL` and
-  `BOOTSTRAP_DATABASE_URL`, so `trigger-run`/journey suites dispatch real executions to the **dev**
-  Kestra and the partman suites run the (idempotent) bootstrap scripts on the dev DB. Happened once
-  this unit: 24 dev `bill_run_processing`/`bill_run_distribution` executions, all killed or failed; dev
-  DB audited unchanged (no claims, stages, bills, distributions; one cron job). Use a scrubbed env file
-  (drop `DATABASE_URL`, `BOOTSTRAP_DATABASE_URL`, `BILLRUN_ENGINE_*`, `BILLRUN_BLOB_CONNECTION_STRING`)
-  and a throwaway Postgres named `enterprise_billing` (pg_cron is bound to that name) + Azurite on 10001.
-- Re-seed on an empty DB + empty `invoice-templates` container (bm64 runbook) is still to do on each
-  environment.
-
-**bm68 notes (2026-10-16):** guardrail 66 item 3 pins `services/billing/post-run.ts` →
-`services/accounts/post-document` + `services/accounts/money` (ledger posting, Inv #6) as an exact
-allowlist — the spec's literal rule fails on existing code; recorded in code-standards item 66.
-`billrun-capacity-appendix` test renamed to `billrun-capacity-trace`. The bm41 grant drops the two
-ratecard tables and an explicit `REVOKE` follows. TC54 still open (doc correction 3): the capacity
-path is proven by the extracted-SQL suites; the `ci` live run closes it. Hazard: `vitest run` picks
-up `.claude/worktrees/**` and runs their integration files against `.env`'s dev DB — run with
-`--exclude ".claude/**"` until the config excludes it.
-
-**bm65–bm67 review fixes (2026-10-16):** owner decisions: a blocking approval gate (D58a),
-defer the skip audit row, edit `0051` in place, fix both UI items.
-
-- **D58a (owner):** blocking `template_versions_captured` pre-approval check
-  (`billRunAccountRepository.countMissingTemplateVersion`, PROCESSED accounts with a NULL
-  captured version); the D58 posting skip stays as the backstop. Recorded in the plan (D58a),
-  architecture Inv #58.
-- `0051` edited in place: `template_captured_at timestamptz(3)` (D26 round, owner-approved).
-- Draft 422 copy scoped by reason (`describeInvoiceRenderCode(code, reason)`; the modal shows the
-  route's message); an uncaptured row throws `TEMPLATE_NOT_CAPTURED` (generic text); `run` mode
-  carries `banId` for the TS rule 8 detail.
-- Editor-preview race: the override path refuses a bill posted inside the binder's snapshot.
-- Activation copy: "Activating changes the invoices of bill runs started from now on…"; bank
-  warning "Bank details change for bill runs started from now on."; history caption "In use for
-  new runs" (components, e2e/component tests, UI context).
-- Posting progress lists posting-time skips (`POSTING_SKIP_CODES`) with a neutral Skipped badge
-  and reason, counted apart (`skippedCount`).
-- cm22 guardrail: the exemption is now the `listBanFamilies` function body only; the rest of the
-  file is held to the pairing rule (mutation-checked).
-- Cleanups: `listBanFamilies` ordered by BAN; the lock read drops the always-NULL bill stamps;
-  `stampPosted` takes the derived `PostingTemplateStamps`; stale `btv_one_active_uq` comments.
-- Tests: pre-approval check unit + DB case, capture-service unit test, engine-failure rollback,
-  `timestamptz(3)` precision, column-level grant checks (`bill_run_account` stamps,
-  `customer_bill.ref_bill_template_family_id`), message/route/modal/posting-progress/build cases.
-- Second pass (owner: "fix all the rest"): every §24 item (a–i) fixed — the
-  `BILL_RUN_ACCOUNT_SKIPPED` audit event on both posting skips; capture pruned to the run's
-  partition (new `periodPartition` argument); family-scoped generated reads (save-draft, page,
-  activation retires only within the draft's family); retired/missing families unusable; a
-  NULL family + version for an unresolvable BAN (corrupted catalog or a non-generated
-  reference); `statement_timestamp()`; `toInvoiceRenderResponse` in `lib/http.ts`; Danger
-  `-fg` modal text; CSV/profile read once per run (`resolveSharedCurrentVersions`,
-  `resolveGeneratedForFamily`; `*InFamily` finders removed; guardrail 57 covers all live
-  resolvers). Docs: D35, bm00 §65 and code-standards General rule 2 now say capture runs before
-  the rerun audit with `(tx, billRunId, banIds, periodPartition)`.
-
-**bm67 notes (2026-10-16):**
-
-- Migration `0052` (`customer_bill.ref_bill_template_family_id`, nullable plain key, no FK) +
-  journal `idx 52`; Drizzle mirror; `billrun-db-roles.sql` Step 5 comment only (no grant change).
-  `0033` freezes the whole posted row, so the new column is frozen with no trigger change.
-- `lockBillForPosting` returns the BAN's five run stamps as a nested `runStamps` object (same
-  query, no extra lock). **Deviation:** nested because the read already returns the bill's own
-  stamps under the same field names (unused by posting, kept).
-- `postAccount`: D58 skip (captured + NULL version → `SKIPPED` / `TEMPLATE_VERSION_NOT_FOUND`,
-  before any INV, `expectedStatus: PROCESSED`); no-capture guard throws → `POSTING_FAILED`;
-  `stampPosted` gets the explicit run stamps + family (non-null by type).
-  `resolveVersionsForPosting`, `currentVersions` and `PostingVersionStamps` deleted;
-  `PostedBillStamps` gains `refBillTemplateFamilyId` (read by `findForAccount`/`readBillStamps`).
-- **bm66 ↔ bm67 spec conflict — resolved in the specs (2026-10-16):** bm66 had
-  `render-invoice-template.ts` build the `preview-family` mode for the editor override, which
-  guardrail 57 and code-standards Phase 3 TS rule 1 ("only `preview.ts` may construct it")
-  forbid. The override now carries its `renderMode`, built by `preview.ts` (bm66's `familyId`
-  parameter is gone; a missing mode is a type error, so the runtime "no familyId" test was
-  dropped). `specs/bm66` §Design/§3/§4 and `specs/bm67` §5 now say so, with dated correction
-  notes; code-standards already matched.
-- Guardrail 57 (`tests/guardrails/no-live-template-resolution.test.ts`, now as `specs/bm67` §5
-  states) checks **comment-stripped** code: `services/accounts/resolve-ban-template-label.ts` keeps a historical
-  comment naming `resolveVersionsForPosting`, and D46 forbids touching Customer Management files,
-  so the spec's raw `grep -rn resolveVersionsForPosting services db app` still finds that one
-  comment. `preview.ts` does not import `resolveCurrentVersionsForFamily` (it reaches it through
-  `resolveTemplate`), so the importer check is "only these two may", plus a check that only
-  `preview.ts` builds a `preview-family` mode.
-- Guardrail 46 rewritten: capture (v2/profile v1) → activate v3 + profile v2 mid-run → post; A is
-  stamped v2/v1 + `BTF00000001`, equal to its run row, and its final render is v2; account C's
-  later run posts v3/v2. New `posting-skips-null-template.integration.test.ts` (SKIPPED, no
-  document, consecutive INV numbers, siblings + run `INVOICED`; distribution trigger stubbed).
-  `customer-bill-stamps` asserts the family in the same UPDATE and its freeze; schema test.
-- Docs: known-issues §19 closed (and table row 23b); architecture Inv #41/#58 notes and
-  #51/#53/#58 marked built; code-standards guardrails 57, 58, 60 marked built.
-
-**bm66 notes (2026-10-16):**
-
-- `RenderMode` = `run` | `final` | `preview-posted` | `preview-family`; `resolveTemplate` is a
-  `switch` ending in a `never` check. `run` reads only the stamps (never `currentVersion`); a NULL
-  generated stamp throws `TEMPLATE_VERSION_NOT_FOUND` with
-  `{ reason: "FAMILY_HAS_NO_ACTIVE_VERSION", familyId }` (`familyNotActive`). `preview-family`
-  uses bm65's `resolveCurrentVersionsForFamily`. Posting (`resolveVersionsForPosting`) unchanged.
-- `buildInvoiceHtml` keeps its public `mode: "draft"`: no override → `readStamps` (widened with
-  `status`) → missing/EXCLUDED = `DraftInvoiceNotFoundError` (404); override → requires `familyId`
-  → `preview-family`.
-- Preview: `familyId` required on `previewInvoiceTemplateInputSchema` (`templateFamilyIdSchema`),
-  passed by `InvoiceStructureForm` from the page's `standardFamilyId`
-  (`billTemplateFamilyRepository.findDefault`; a missing default family throws, like a missing
-  default version).
-- Draft route: `InvoiceRenderError` → `422 { error: { code, message } }` (logged code + detail);
-  `lib/invoice-render-messages.ts` `describeInvoiceRenderCode` shared with
-  `InvoicePreviewModal` (unreadable 422 body → generic text).
-- **Test fixture change:** `invoice-render-fixtures.ts` now captures each fixture row with the real
-  `captureTemplateStamps` (a real trigger always captures; without it every fixture draft would hit
-  the NULL-stamp path). Guardrail 46's draft case now starts B's run after v3's activation (spec
-  §6 wording).
-- New `tests/db/draft-uses-run-stamps.integration.test.ts` (mid-run activation keeps the captured
-  version vs `preview-family` showing the new one; EXCLUDED → 404; NULL stamp → 422, via the real
-  route behind a mocked session). It asserts on `resolved.generated` (what `template.version` binds
-  from) and the Notes section, since layout v1 does not print `template.version`.
-- Docs: architecture Inv #42 note, #51 (draft half), #53 marked built; code-standards Phase 3
-  Next.js rules 3–4 and API rule 2 marked built (the 422 contract was already recorded there);
-  UI context §10d records the message map and the two bm66 copy rows.
-
-**bm65 notes (2026-10-15):**
-
-- Migration `0051` (five nullable plain-key stamp columns, no FK) + journal `idx 51`; Drizzle
-  mirror on `bill-run-account.ts`. No grant change.
-- `resolveCurrentVersionsForFamily` (the one run-path resolver, Inv #51/#53) on top of new
-  `findActiveInFamily`/`findDefaultInFamily`; `resolveVersionsForPosting` and draft mode untouched.
-- `billRunAccountRepository.listBanFamilies` (the one sanctioned billing read of the BAN template
-  reference, Inv #54), `captureTemplateStamps` (one `unnest` UPDATE per 1,000-row chunk, never
-  EXCLUDED) and `readStamps`. Array params use the repo's `ARRAY[…]::text[]` idiom (Drizzle
-  expands a bare JS array into a value list).
-- `services/billing/capture-template-stamps.ts` resolves once per distinct family; NULL version
-  for a family with no ACTIVE/default (D55). Wired into `triggerRun` (after `insertSnapshot`,
-  before the engine) and `rerunRun` (step 0, before the audit); both audits carry
-  `templateStamps`.
-- cm22 guardrail: one exemption (`bill-run-account.repository.ts`), asserted non-vacuous;
-  `post-run.ts` asserted never to read the column.
-- Tests: `run-template-capture.integration.test.ts` (activation-after-trigger, rerun re-capture,
-  no-ACTIVE family → NULL never EXCLUDED); `trigger-run.integration` (PENDING stamped, EXCLUDED
-  NULL, audit, cancel → re-trigger fresh); `billrun-db-roles` 17j (billrun_runtime SELECT-only on
-  `bill_run_account`); service unit tests (order + afterData); schema test.
-- `trigger-run.integration` simulates the EXCLUDED account by wrapping the real
-  `scopeAccounts` (the e2e journey's simulated-exclusion precedent); a genuine partial-period
-  exclusion needs the full product-inventory fixture chain.
-- Docs: architecture Inv #51 (capture half), #52, #54 and the `bill_run_account` storage row
-  marked built (storage row now states "no FK"; Inv #52 corrected from `setAttemptForRerun` to
-  `rerunRun` → `captureTemplateStamps`, which is where the code re-captures); code-standards
-  guardrail 59 marked built for the stamp/audit half; custmgmt-architecture Inv #18 note added.
-  Code-standards Data rules 4/5 already carried the spec's corrections.
-
-**bm64 notes (2026-10-15):**
-
-- **Owner confirmed** the fresh-DB round (D26: empty DB + empty `invoice-templates` for every
-  environment) and the family code `STANDARD` before `0046` was edited. `_journal.json` untouched.
-- `0046`: `bill_template_family` (+ seq, `btf_one_default_uq`, `bill_template_family_guard`),
-  `ref_bill_template_family_id` + `btv_generated_has_family`, the four family/format-scoped
-  indexes + `btv_family_ref_idx`, the family in the version guard's identity list, seed
-  `BTF00000001` and `BTV00000002`'s family. Checksums unchanged.
-- `insertDraft` takes `refBillTemplateFamilyId`; `saveTemplateDraft` passes the base version's
-  family (missing family → `TEMPLATE_VERSION_NOT_FOUND`, like a missing layout). Resolution
-  queries unchanged. New read repo `bill-template-family.ts` (`findDefault`, `findById`) for bm65.
-- **Deviation 1 — grants:** `bootstrap-db-roles.sql` also has an explicit
-  `GRANT SELECT … bill_template_family TO app_runtime` before the spec's REVOKE. This matches
-  `bill_format`. Without it, a DB migrated as superuser (the local and Azure scratch path, and the
-  grants test) leaves `app_runtime` with no SELECT, because default privileges never fire there.
-- **Deviation 2 — runbook order:** the spec listed role bootstrap before `db:setup`. On an empty
-  DB the GRANTs need the schemas, so the runbook keeps the repo order: migrate/`db:setup`
-  first, then the role bootstraps.
-- `invoice-csv.integration.test.ts` needed no fixture change: its raw insert is a CSV row, and
-  CSV rows have no family.
-- Doc corrections in spec Open question 1 were already applied in the companion docs; this
-  unit added only the "built (bm64)" markers (architecture Inv #44 note + storage rows,
-  code-standards guardrail 61).
+| bm74 | Type-scoped template catalog in the DB (migration `0053`, two Drizzle mirrors) | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; integration 124/0 on the disposable `ebill-test` DB (new types-catalog suite incl. precondition abort + the full §5 matrix; catalog, activate, save-draft, capture, seed-upload, migration, draft-stamps, posting-skip, template journey); unit 4564 passed, 1 failed (`ratecard-demo-seed-boundary`, pre-existing since `771d39b`, unrelated) + 8 files fail to load without an env file |
 
 ## Delivered units
 
@@ -483,7 +180,7 @@ defer the skip audit row, edit `0051` in place, fix both UI items.
 
 ### Target Capacity Pricing update — DELIVERED (bm40–bm46, + bm42a)
 
-Full per-unit detail archived to `billmgmt-completed-tracker.md`.
+Spec per unit: `specs/bm40…bm46-*.md`; full per-unit narrative in this file's git history.
 
 - **bm40** — extracted-SQL harness (`tests/db/helpers/extract-flow-sql.ts`) + fail-closed
   destructive-DB preflight (`DESTRUCTIVE_DB_OK=1` + disposable sentinel).
@@ -505,7 +202,7 @@ Full per-unit detail archived to `billmgmt-completed-tracker.md`.
 ### Invoice Template update — COMPLETED (bm47–bm63, 2026-10-08 → 2026-10-11)
 
 Spec per unit: `specs/bm47…bm63-*.md`; build plan `bm00-build-plan.md` Part 4. Full narrative,
-deviations, review-fix logs and test runs archived to `billmgmt-completed-tracker.md`.
+deviations, review-fix logs and test runs are in this file's git history.
 
 | Unit | What | Commits |
 | --- | --- | --- |
@@ -550,6 +247,80 @@ deviations, review-fix logs and test runs archived to `billmgmt-completed-tracke
 - Cross-domain: `auth/resolver.ts` `findActiveUserById` refuses a user owing a password change
   (closes the gap on the billing and GL-export Route Handlers).
 
+### Invoice Template Phase 3 — COMPLETED (bm64–bm73, 2026-10-15 → 2026-10-19)
+
+Bill Run uses the BAN's template. Spec per unit: `specs/bm64…bm73-*.md`; build plan `bm00` Part 5;
+criteria 1–15 + evidence in `billmgmt-project-overview.md`. Full narrative, deviations, review-fix
+logs, test runs and the Inv #51–#58 code ↔ test audit are in this file's git history (`5b5f746`).
+
+| Unit | What | Commits |
+| --- | --- | --- |
+| bm64 | Standard template family `bill_template_family` (`BTF00000001`, `0046` edited in place, D26) | `0e65a57` |
+| bm65 | Template stamps captured on `bill_run_account` at trigger and rerun (migration `0051`) | `9e399b7` |
+| bm66 | Draft PRO-FORMA renders from the captured stamps (`RenderMode`, draft route 422) | `4139f02` |
+| bm67 | Posting copies the run stamps + family onto `customer_bill` (migration `0052`), NULL-stamp skip | `976d2ca` |
+| bm64–67 review | D58a blocking check, known-issues §24 a–i | `e83fb33` |
+| bm68 | Capacity flow stops writing `additional_info.appendix`; two ratecard grants revoked | `762b6ab`, `80eebf8` |
+| bm69 | Invoice dates `DD/MM/YYYY`, Mbps quantities | `206e08e` |
+| bm70 | Page 1 capacity summary per service type; IBM Plex embedded | `9e8593a`, `e366579`, `5bc3867` |
+| bm71 | Detail pages per service type × State-District; usage annex retired | `302e94f`, `b342a09`, `bbdc204` |
+| bm72 | Total Amount page; `notes` → editable `footnote`; v1 pinned | `084944b`, `d223df0` |
+| bm73 | Ship gate, manual run on owner data, three review rounds | `96fc861`, `449c63e`, `495d89c`, `5b5f746`, `b20256f` |
+
+**Durable facts and decisions from this update:**
+
+- **Capture once, render from the stamps (Inv #51–#54).** `captureTemplateStamps` stamps every
+  non-EXCLUDED `bill_run_account` (five plain-key columns, no FK) at trigger and again at rerun
+  (before the rerun audit); it resolves once per family via `resolveCurrentVersionsForFamily`.
+  Drafts render in `run` mode from the stamps only; posting copies them plus
+  `ref_bill_template_family_id`. `preview-family` mode is built only by `preview.ts`
+  (guardrail 57). `listBanFamilies` is the one sanctioned billing read of the BAN's template
+  reference (cm22 exemption, function body only).
+- **NULL version (D55/D58/D58a).** A family with no ACTIVE/default version is stamped NULL (never
+  EXCLUDED). The blocking pre-approval check `template_versions_captured` stops approval; the
+  posting skip (`SKIPPED` / `TEMPLATE_VERSION_NOT_FOUND`, no INV, `BILL_RUN_ACCOUNT_SKIPPED`
+  audit) stays as the backstop. Recovery = activate a version + rerun (journey 8e).
+- **Layout v1 is final and pinned (Inv #57).** `tests/guardrails/invoice-template-v1-pin.test.ts`
+  pins both `checksums.json` digests and the `0046` / `tests/helpers/seeded-invoice-template.ts`
+  literals. Every environment needs one last reset: empty DB + empty `invoice-templates`
+  container, then re-seed (bm64 runbook).
+- **Invoice layout.** Page 1 = capacity summary per service type (`readCapacitySummary`, binder
+  guards incl. `SUMMARY_BLOCKS_DO_NOT_ADD_UP`); detail pages per service type × State-District
+  (`listCapacityDetailForInvoice`, `GROUPING SETS` Sub Totals, `INVOICE_POLYGON_DATA_MISSING`);
+  last page = Total Amount + footnote. `totals.totalAmount` now means Σ Utilised; `amountDue`
+  stays the bill total. Rates print at 2 dp (`udr_usage_rate::numeric(18,2)`). `polygon_id` is
+  matched only at the key start or right after `|` (so `cell_polygon_id=` never matches); an
+  empty value counts as missing. The CSV is unchanged but runs the detail guards. Structure is
+  `{ sections: { payment }, columns: {}, footnote: string[] }`; the editor is RHF + `useFieldArray`.
+- **Capacity flow (bm68).** No appendix is written; lines carry `pricing`/`calc`/`summary` only.
+  Proven live on the bm73 manual run in place of the `ci` smoke script.
+- **Business time zone (bm73).** The app sends `getAppTimezone()` (`APP_TIMEZONE`) as the flow
+  input `business_timezone`; every `AT TIME ZONE` in `bill_run_processing.yml` and the Rated
+  Lines / exception window use it. Trigger and rerun refuse with `BUSINESS_TIMEZONE_MISMATCH`
+  unless it equals rating's deploy-time `period_of()` zone (`services/billing/rating-timezone.ts`,
+  guardrail pins it to `0034`).
+- **Period scope (bm73 review).** Every ACTIVE-subscription selection keeps to subscriptions
+  overlapping the period. Validation and Collection take only the period's rows; other months
+  stay `RATED` (`WINDOW_COVERAGE` retired). bm03's partial-period start rule now also needs
+  `start_date <= period_end`.
+- **Approval releases failed accounts' rows (known-issues §27 fixed).** Approve releases the
+  `SKIPPED` accounts' claimed rows to `RATED` before `markApproved` (`releaseSkipped`, Inv #19).
+  Under the run lock it runs only the blocking checks (`informational: false`).
+- **Earlier-period usage (known-issues §28 option 1).** Unclaimed `RATED` usage dated before the
+  period shows on the Exceptions tab as `PRIOR_PERIOD` ("Earlier period", grouped by the cycle's
+  billing period) and as the informational check `prior_period_usage`. Revenue Ops owns it (and
+  `EXCLUDED` accounts' unclaimed usage) and raises adjustments; a dashboard comes later.
+- **`billrun_runtime` column grant.** `db/bootstrap/billrun-db-roles.sql` Step 5a's
+  `GRANT INSERT (...)` on `customer_bill_line` now lists `rated_amount` + `additional_info`
+  (bm41 latent gap); guardrail `billrun-flow-column-grants` pins it to the flow's INSERT.
+- **Manual run baseline (2026-10-18).** `BRN00000001` on 4 BANs × 900 polygons (3,600 rated
+  rows): clean-path system time ~1 min (processing ~10 s, posting ~12 s, distribution ~39 s),
+  run total 172,635,900.00, 34-page PDFs (~197 KB). Owner's open visual check: the 34-page layout
+  on INV00000001.pdf.
+- **Final test baseline (2026-10-19):** unit 4640 (2 repo-scan timeouts under parallel load,
+  pass alone); integration with the rating runtime 1388/0 (6 opt-in skips then run green);
+  journey 19/19; Chromium e2e 3/3; admin e2e 5/5.
+
 ## Outstanding / Next
 
 - **Release gate before any production template activation (known-issues §20).** Seed
@@ -564,7 +335,16 @@ deviations, review-fix logs and test runs archived to `billmgmt-completed-tracke
 - **Before any prod deploy:** rotate `billrun-engine-auth` username to
   `workflow-ops@billing.ops` (coupled triple: engine, pipeline `--user`, KV secret) or every
   app→engine call 401s.
-- **Redeploy `bill_run_processing`** with `deploy_workflow_flows` (bm42a + pm46a flow changes).
+- **Redeploy `bill_run_processing`** with `deploy_workflow_flows` (bm42a + pm46a + bm68/bm73
+  flow changes, incl. the `business_timezone` input).
+- **Azure dev, before its first real bill run:** re-run the billrun role bootstrap (or apply
+  `GRANT INSERT (rated_amount, additional_info) ON billing.customer_bill_line TO billrun_runtime`),
+  and reset + re-seed for the pinned layout v1 (empty DB + empty `invoice-templates`).
+- **Phase 3 open items:** draft preview times out on large invoices (known-issues §26);
+  earlier-period rows reappear on every later run with no "handled" marker, unresolvable
+  earlier-period rows are not counted, billing that usage (options 2/3) undecided
+  (known-issues §28); partial index on unclaimed `RATED` rows deferred to rating
+  (known-issues §29); the template family UI is deferred (planning `TODOS.md`, §7.3).
 - **Build a capacity-aware live-Kestra smoke harness (TC54).** `scripts/billrun-live-kestra-smoke.ts`
   is `ci`-seed-only; it needs a seed-profile parameter or a sibling script targeting `capacity`
   (four anchors, six `CAPACITY_*` guards, `CAPACITY_RATE_MATCHING` ON/OFF). Blocked on a live
@@ -669,6 +449,17 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
   containerised `app` can't dispatch to the engine (loopback/HTTPS rules) — trigger real
   runs from a host dev server or `billrun-live-kestra-smoke.ts`; the container app must
   stay up because flow callbacks target `http://app:3000`.
+- **Scrub the env for integration runs (bm70).** `--env-file=.env` with only `DATABASE_URL`
+  overridden inherits `BILLRUN_ENGINE_URL` and `BOOTSTRAP_DATABASE_URL`, so suites dispatch to
+  the **dev** Kestra and run bootstrap scripts on the dev DB. Use a scrubbed env file (drop
+  `DATABASE_URL`, `BOOTSTRAP_DATABASE_URL`, `BILLRUN_ENGINE_*`, `BILLRUN_BLOB_CONNECTION_STRING`)
+  and a throwaway Postgres named `enterprise_billing` (pg_cron is bound to that name) + Azurite on
+  10001; set `APP_TIMEZONE=Asia/Kuala_Lumpur` so trigger/rerun pass the zone guard.
+- **`vitest run` picks up `.claude/worktrees/**`** and runs their integration files against
+  `.env`'s dev DB — pass `--exclude ".claude/**"` until the config excludes it.
+- **Dev DB leftovers:** rm13's live no-fan-out fixture (`_SAMPLE_-RM13` family, 25,000 records under "-25K" names) is
+  left in the dev DB; the local Kestra rating flow carries an owner pin edit — deploy the bill-run
+  flow via the API, not `flow-deploy`, to keep it.
 - Context docs renamed from a `billling-` triple-l typo. 4 pre-existing
   hardcoded-date-drift subscription tests fail on a clean baseline (unrelated).
 

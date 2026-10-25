@@ -20,9 +20,9 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 -->
  
 
-## Billing Module Update Context
+## Billing Module or Customre Module Update Context
 
-Read the following files in order before implementing or making any architectural decision related to the Billing Module related to Bill Run:
+Read the following files in order before implementing or making any architectural decision related to the Billing Module & Customer Module related to Invoice Template Type Change:
 
 1. `context/billing-management/billmgmt-update-overview.md` — current update's definition, goals, core flow, and scope
 2. `context/billing-management/billmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
@@ -30,7 +30,13 @@ Read the following files in order before implementing or making any architectura
 4. `context/billing-management/billmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
 5. `context/billing-management/billmgmt-ui-context.md` — theme, colors, typography, and component conventions
 
-Update `context/billing-management/billmgmt-progress-tracker.md` after each meaningful implementation change.
+1. `context/customer-management/custmgmt-update-overview.md` — current update's definition, goals, core flow, and scope
+2. `context/customer-management/custmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
+3. `context/customer-management/custmgmt-code-standards.md` — implementation rules and conventions
+4. `context/customer-management/custmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+5. `context/customer-management/custmgmt-ui-context.md` — theme, colors, typography, and component conventions
+
+Update `context/billing-management/billmgmt-progress-tracker.md` (for Billing Module) or `context/customer-management/custmgmt-progress-tracker.md` (for Billing Module)  after each meaningful implementation change.
 
 Read also the general context document to support the changes as referenced by the context files above:
 1. `context/architecture.md` — system structure, boundaries, storage model, and invariants  

@@ -46,6 +46,7 @@ import type * as DraftInvoiceRoute from "@/app/(app)/billing/bill-runs/[runId]/d
 import type * as FlowDoubleFixtures from "@/tests/db/helpers/billrun-flow-double-fixtures";
 import type * as PolygonFixtures from "@/tests/db/helpers/capacity-polygon-fixtures";
 import { INVOICE_USAGE_ROW_LIMIT } from "@/types/billing";
+import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixtures";
 
 // bm63-spec §Design D1 — the Invoice Template update's full journey on a FRESH
 // database, the one proof no single unit owns (overview Part 2 success
@@ -1413,16 +1414,20 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
     it("step 8a — a NULL family version: the draft is 422 and posting SKIPs it before any INV (criterion 6)", async () => {
       // A second, non-default family holding only a RETIRED version (bm65 §8
       // case 3's fixture), bound by SQL: the capture stamps a NULL version.
-      await sql`
-        INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, kind)
-        VALUES ('BTF00000099', 'BM73-EMPTY', 'Empty family', 'generated')`;
+      // bm74 — the type needs its own layout (btv_pair_same_type_fk).
+      await insertTemplateTypeFixture(sql, {
+        typeId: "BTF00000099",
+        code: "BM73_EMPTY",
+        name: "Empty family",
+        layoutVersionId: "BTV00000097",
+      });
       await sql`
         INSERT INTO billing.bill_template_version
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
            ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum,
            checksum_algorithm, change_note, activated_datetime, retired_datetime)
         SELECT 'BTV00000099', 'INVOICE', 'generated', 99, 'RETIRED', false,
-               'BTV00000001', 'BTF00000099', structure, 'invoice-templates/generated/INVOICE/v99/',
+               'BTV00000097', 'BTF00000099', structure, 'invoice-templates/generated/INVOICE/v99/',
                ${"9".repeat(64)}, 'sha256', 'bm73 retired fixture', now(), now()
         FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
       await fx.newRun(PHASE3_RUN_NULL);
@@ -1587,7 +1592,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
            ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum,
            checksum_algorithm, change_note, activated_datetime)
         SELECT 'BTV00000098', 'INVOICE', 'generated', 98, 'ACTIVE', false,
-               'BTV00000001', 'BTF00000099', structure, blob_ref, checksum,
+               'BTV00000097', 'BTF00000099', structure, blob_ref, checksum,
                checksum_algorithm, 'bm73 recovery fixture', now()
         FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
 

@@ -297,7 +297,7 @@ export async function activateTemplate(
   }
 
   // Step 8: one transaction. Retire BEFORE promote
-  // (`btv_one_active_family_uq`, bm64).
+  // (`btv_one_active_family_uq`, bm64; per (type, kind) since bm74).
   const blobRef = `${CONTAINER}/${dir}/`;
   try {
     return await db.transaction(async (tx): Promise<ActivateTemplateResult> => {

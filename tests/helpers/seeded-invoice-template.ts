@@ -46,7 +46,8 @@ export const SEEDED_LAYOUT_ROW: BillTemplateVersion = {
   isDefault: true,
   layoutCode: "INVTPL-STD-A4",
   refLayoutVersionId: null,
-  refBillTemplateFamilyId: null,
+  // bm74 (`0053`) — the default layout joined the Standard type.
+  refBillTemplateFamilyId: "BTF00000001",
   structure: null,
   pageSetup: {
     format: "A4",
@@ -64,6 +65,7 @@ export const SEEDED_LAYOUT_ROW: BillTemplateVersion = {
   activatedBy: null,
   activatedDatetime: new Date("2026-10-08T00:00:00Z"),
   retiredDatetime: null,
+  lastModifiedBy: null,
   lastModifiedDatetime: new Date("2026-10-08T00:00:00Z"),
 };
 
@@ -99,6 +101,7 @@ export const SEEDED_GENERATED_ROW: BillTemplateVersion = {
   activatedBy: null,
   activatedDatetime: new Date("2026-10-08T00:00:00Z"),
   retiredDatetime: null,
+  lastModifiedBy: null,
   lastModifiedDatetime: new Date("2026-10-08T00:00:00Z"),
 };
 
