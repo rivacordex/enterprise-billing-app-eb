@@ -1,0 +1,32 @@
+<section class="sec sec--chargeDetails sec--full">
+  {{#each serviceTypes}}
+  {{!-- each type starts a new page (D17) --}}
+  <section style="break-before: page">
+    <h2>{{label}}</h2>
+    <p>Access Seeker: {{../customer.name}}</p>
+    {{#if regions.length}}
+    {{#each regions}}
+    <table>
+      {{!-- repeats on every page the group spans (D48) --}}
+      <thead>
+        <tr><th scope="colgroup" colspan="5">{{label}}</th></tr>
+        <tr class="col-head"><th scope="col">Polygon Start Date</th><th scope="col">Polygon Name</th><th scope="col" class="num">Capacity (Mbps)</th><th scope="col" class="num">Rate/Mbps (MYR)</th><th scope="col" class="num">Utilised Capacity Charges (MYR)</th></tr>
+      </thead>
+      <tbody>
+        {{#each rows}}<tr><td>{{date polygonStartDate}}</td><td>{{polygonName}}</td><td class="num">{{qty capacityMbps}}</td><td class="num">{{money ratePerMbps}}</td><td class="num">{{money amount}}</td></tr>{{/each}}
+        <tr><td colspan="4">Sub Total</td><td class="num">{{money subTotal}}</td></tr>
+      </tbody>
+    </table>
+    {{/each}}
+    {{else}}<p>No utilised capacity this period.</p>{{/if}}
+  </section>
+  {{/each}}
+  {{!-- the last page: Σ Utilised, never the amount due (D22, D30, P10) --}}
+  <section style="break-before: page">
+    <h2>Summary of Utilised Capacity Charges</h2>
+    <table>
+      <tr><th>Total Amount</th><th class="num">{{money totals.totalAmount}}</th></tr>
+    </table>
+    {{#if footnote.length}}<div>{{#each footnote}}<p>{{this}}</p>{{/each}}</div>{{/if}}
+  </section>
+</section>

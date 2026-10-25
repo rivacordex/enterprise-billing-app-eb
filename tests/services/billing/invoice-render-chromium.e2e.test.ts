@@ -1,4 +1,7 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -14,8 +17,16 @@ vi.mock(
 );
 
 import { bind } from "@/services/billing/invoice-template/bind";
-import { executeInvoiceTemplate } from "@/services/billing/invoice-template/compile";
+import {
+  compileInvoiceTemplate,
+  executeInvoiceTemplate,
+} from "@/services/billing/invoice-template/compile";
+import {
+  generate,
+  layoutFilesFromVerified,
+} from "@/services/billing/invoice-template/generate";
 import { loadGenerated } from "@/services/billing/invoice-template/load";
+import { withHardenedPage } from "@/services/billing/render-invoice";
 import {
   SEEDED_FOOTNOTE,
   SEEDED_GENERATED_ROW,
@@ -399,6 +410,295 @@ describe.skipIf(!run)(
         await page.close();
       }
       expect(requests).toEqual([]);
+    }, 120_000);
+  },
+);
+
+// bm75-spec §4 (Inv #64, guardrail 74 draft/final half) — the same harness,
+// but every case renders through the ONE hardened context, `withHardenedPage`,
+// instead of launching its own Chromium: JavaScript off, offline, every request
+// except data:/about: aborted and recorded.
+const PNG_1PX =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+// Measured with the pre-bm75 renderer (the plain `browser.newPage()` above):
+// the PDF of the seeded Standard v1 final bill with one polygon has this many
+// pages (page 1, one detail page per type of service, the Total Amount page).
+// The hardened context must paginate it identically.
+const SEEDED_V1_SMALL_BILL_PAGES = 3;
+
+// A PDF's page count: its `/Type /Page` objects (not `/Pages`).
+function pdfPageCount(pdf: Buffer): number {
+  return pdf.toString("latin1").match(/\/Type\s*\/Page(?!s)\b/g)?.length ?? 0;
+}
+
+describe.skipIf(!run)(
+  "bm75 hardened render — real Chromium through withHardenedPage (RUN_CHROMIUM_E2E=1)",
+  () => {
+    let server: Server;
+    let hits = 0;
+    let origin: string;
+
+    beforeAll(async () => {
+      server = createServer((_req, res) => {
+        hits++;
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("x");
+      });
+      await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+      origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    });
+
+    afterAll(async () => {
+      if (server) await new Promise<void>((r) => server.close(() => r()));
+    });
+
+    it("no request reaches the network: four external URLs are blocked, recorded, and the PDF still renders", async () => {
+      const html = `<!doctype html><html><head>
+        <link rel="stylesheet" href="${origin}/s.css">
+        <style>
+          @font-face { font-family: Remote; src: url(${origin}/f.woff2); }
+          .bg { background: url(${origin}/b.png); font-family: Remote; }
+        </style></head>
+        <body><div class="bg">text</div><img src="${origin}/a.png"></body></html>`;
+
+      const { value: pdf, blockedUrls } = await withHardenedPage(html, (p) =>
+        p.pdf({ format: "A4" }),
+      );
+
+      expect(hits).toBe(0);
+      expect([...blockedUrls].sort()).toEqual(
+        [
+          `${origin}/a.png`,
+          `${origin}/b.png`,
+          `${origin}/f.woff2`,
+          `${origin}/s.css`,
+        ].sort(),
+      );
+      expect(pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
+    }, 60_000);
+
+    it("no script runs", async () => {
+      const html = `<p id="t">static</p><script>document.getElementById("t").textContent="ran"</script>`;
+
+      const { value, blockedUrls } = await withHardenedPage(html, (p) =>
+        p.innerText("#t"),
+      );
+
+      expect(value).toBe("static");
+      expect(blockedUrls).toEqual([]);
+    }, 60_000);
+
+    it("inline data still renders: a data: image and a data: font are not blocked", async () => {
+      const html = `<!doctype html><html><head><style>
+          @font-face { font-family: Inline; src: url(data:font/woff2;base64,d09GMgABAAAAAA==) format("woff2"); }
+          body { font-family: Inline, sans-serif; }
+        </style></head><body><img src="${PNG_1PX}"><p>inline</p></body></html>`;
+
+      const { value: pdf, blockedUrls } = await withHardenedPage(html, (p) =>
+        p.pdf({ format: "A4" }),
+      );
+
+      expect(blockedUrls).toEqual([]);
+      expect(pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
+    }, 60_000);
+
+    it("the seeded Standard v1 renders unchanged through renderPdfFromHtml's options, with no blocked URL", async () => {
+      const { render, renderFooter } = await loadSeededDefault();
+      const pageSetup = await loadPageSetup();
+      const raw = rawInput(buildDetail(1, 1));
+      raw.document = {
+        documentId: "INV00000075",
+        postingDate: new Date("2026-07-05"),
+      };
+      const bound = bind(raw, {
+        isDraft: false,
+        locale: "en-MY",
+        timezone: TZ,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
+        invoiceNo: "INV00000075",
+      });
+      const html = render(bound);
+      const footerHtml = renderFooter(bound);
+
+      // Code review fix (2026-10-25): count the PDF's own pages, with the
+      // pre-bm75 plain renderer (a bare `browser.newPage()`, as above) and the
+      // hardened one, instead of a screen-height estimate that cannot see
+      // print page breaks.
+      const plain = await chromium.launch();
+      let before: Buffer;
+      try {
+        before = await renderPdf(plain, html, footerHtml, pageSetup);
+      } finally {
+        await plain.close();
+      }
+      const { value: after, blockedUrls } = await withHardenedPage(html, (p) =>
+        p.pdf({
+          format: pageSetup.format,
+          landscape: pageSetup.orientation === "landscape",
+          printBackground: pageSetup.printBackground,
+          margin: pageSetup.margin,
+          displayHeaderFooter: true,
+          headerTemplate: "<span></span>",
+          footerTemplate: footerHtml,
+        }),
+      );
+
+      expect(blockedUrls).toEqual([]);
+      expect(after.toString("latin1").startsWith("%PDF-")).toBe(true);
+      expect(pdfPageCount(after)).toBe(pdfPageCount(before));
+      expect(pdfPageCount(after)).toBe(SEEDED_V1_SMALL_BILL_PAGES);
+    }, 120_000);
+  },
+);
+
+// Review follow-up (2026-10-25) — INVTPL-BASIC-A4/v1, the reference layout new
+// types start from, rendered to real PDFs (draft and final) through the
+// hardened context, not just checked for visible text: PDF pagination, and
+// the print styles of its shell (.sec, table, thead, tr) in print media.
+const BASIC_DIR = path.join(
+  process.cwd(),
+  "db/seeds/invoice-templates/INVTPL-BASIC-A4/v1",
+);
+
+function basicLayoutFiles(): Map<string, Buffer> {
+  const out = new Map<string, Buffer>();
+  const walk = (abs: string): void => {
+    for (const entry of readdirSync(abs)) {
+      const child = path.join(abs, entry);
+      if (statSync(child).isDirectory()) walk(child);
+      else
+        out.set(
+          path.relative(BASIC_DIR, child).split(path.sep).join("/"),
+          readFileSync(child),
+        );
+    }
+  };
+  walk(BASIC_DIR);
+  return out;
+}
+
+describe.skipIf(!run)(
+  "INVTPL-BASIC-A4 v1 — real Chromium draft and final PDFs (RUN_CHROMIUM_E2E=1)",
+  () => {
+    const layout = layoutFilesFromVerified(basicLayoutFiles());
+    const generated = generate(layout, {
+      sections: { payment: true },
+      columns: {},
+      footnote: [...SEEDED_FOOTNOTE],
+    });
+    const invoice = compileInvoiceTemplate(generated.invoiceHbs);
+    const footer = compileInvoiceTemplate(generated.footerHbs);
+    const pageSetup = layout.manifest.pageSetup;
+
+    async function renderBasic(input: InvoiceRenderInput) {
+      const html = executeInvoiceTemplate(invoice, input);
+      return withHardenedPage(html, async (p) => {
+        const pdf = await p.pdf({
+          format: pageSetup.format,
+          landscape: pageSetup.orientation === "landscape",
+          printBackground: pageSetup.printBackground,
+          margin: pageSetup.margin,
+          displayHeaderFooter: true,
+          headerTemplate: "<span></span>",
+          footerTemplate: executeInvoiceTemplate(footer, input),
+        });
+        await p.emulateMedia({ media: "print" });
+        const layoutFacts = await p.evaluate(() => {
+          const box = (sel: string) => {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { top: r.top, left: r.left, right: r.right };
+          };
+          const style = (sel: string) => {
+            const el = document.querySelector(sel);
+            return el ? getComputedStyle(el) : null;
+          };
+          const typePages = [
+            ...document.querySelectorAll(".sec--chargeDetails > section"),
+          ].map((el) => getComputedStyle(el).breakBefore);
+          const watermark = style(".watermark");
+          return {
+            identification: box(".sec--identification"),
+            billTo: box(".sec--billTo"),
+            secMarginBottom: style(".sec")?.marginBottom ?? null,
+            tableWidth: box("table")
+              ? document.querySelector("table")!.getBoundingClientRect().width
+              : 0,
+            sheetWidth: document
+              .querySelector(".sheet")!
+              .getBoundingClientRect().width,
+            theadDisplay: style("thead")?.display ?? null,
+            trBreakInside: style("tbody tr")?.breakInside ?? null,
+            typePages,
+            watermarkPosition: watermark?.position ?? null,
+          };
+        });
+        return { pdf, layoutFacts, html };
+      });
+    }
+
+    it("final: a 3-page PDF (page 1, one detail page, Total Amount), half sections side by side, print styles applied", async () => {
+      const raw = rawInput(buildDetail(1, 1));
+      raw.document = {
+        documentId: "INV00000076",
+        postingDate: new Date("2026-07-05"),
+      };
+      const input = bind(raw, {
+        isDraft: false,
+        locale: "en-MY",
+        timezone: TZ,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
+        invoiceNo: "INV00000076",
+      });
+
+      const { value, blockedUrls } = await renderBasic(input);
+      const { pdf, layoutFacts: f, html } = value;
+
+      expect(blockedUrls).toEqual([]);
+      expect(pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
+      expect(pdfPageCount(pdf)).toBe(3);
+      expect(html).toContain("INV00000076");
+      expect(f.watermarkPosition).toBeNull();
+
+      // .sec--half: identification and billTo share a row, left to right.
+      expect(f.identification).not.toBeNull();
+      expect(f.billTo).not.toBeNull();
+      expect(f.billTo!.top).toBe(f.identification!.top);
+      expect(f.billTo!.left).toBeGreaterThanOrEqual(f.identification!.right);
+      expect(f.secMarginBottom).toBe("16px");
+      expect(f.tableWidth).toBeCloseTo(f.sheetWidth, 0);
+      expect(f.theadDisplay).toBe("table-header-group");
+      expect(f.trBreakInside).toBe("avoid");
+      // Each type of service and the Total Amount page start a new page.
+      expect(f.typePages).toEqual(["page", "page"]);
+    }, 120_000);
+
+    it("draft: a 900-polygon bill paginates across many PDF pages under the fixed DRAFT watermark", async () => {
+      const input = bind(rawInput(buildDetail(9, 100)), {
+        isDraft: true,
+        locale: "en-MY",
+        timezone: TZ,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
+      });
+
+      const { value, blockedUrls } = await renderBasic(input);
+      const { pdf, layoutFacts: f, html } = value;
+
+      expect(blockedUrls).toEqual([]);
+      expect(html.match(/<td>PCU-/g)).toHaveLength(900);
+      expect(f.watermarkPosition).toBe("fixed");
+      expect(f.theadDisplay).toBe("table-header-group");
+      expect(f.trBreakInside).toBe("avoid");
+      // 900 rows at 9pt cannot fit one detail page: page 1, many detail
+      // pages, the Total Amount page.
+      expect(pdfPageCount(pdf)).toBeGreaterThan(10);
     }, 120_000);
   },
 );

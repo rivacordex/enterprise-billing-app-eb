@@ -44,6 +44,7 @@ import {
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { INVOICE_OPTIONAL_SECTION_KEYS } from "@/types/billing";
+import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixtures";
 
 const databaseUrl = process.env.DATABASE_URL;
 const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
@@ -187,16 +188,20 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     it("3. a NULL-version capture (family with no ACTIVE version) is 422 TEMPLATE_VERSION_NOT_FOUND, never the default", async () => {
       // bm65 §8 case 3's fixture: a second, non-default family holding only a
       // RETIRED generated version, and a BAN bound to it by SQL.
-      await sql`
-        INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, kind)
-        VALUES ('BTF00000099', 'BM66-EMPTY', 'Empty family', 'generated')`;
+      // bm74 — the type needs its own layout (btv_pair_same_type_fk).
+      await insertTemplateTypeFixture(sql, {
+        typeId: "BTF00000099",
+        code: "BM66_EMPTY",
+        name: "Empty family",
+        layoutVersionId: "BTV00000097",
+      });
       await sql`
         INSERT INTO billing.bill_template_version
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
            ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum,
            checksum_algorithm, change_note, activated_datetime, retired_datetime)
         SELECT 'BTV00000099', 'INVOICE', 'generated', 99, 'RETIRED', false,
-               'BTV00000001', 'BTF00000099', structure, 'invoice-templates/generated/INVOICE/v99/',
+               'BTV00000097', 'BTF00000099', structure, 'invoice-templates/generated/INVOICE/v99/',
                ${"9".repeat(64)}, 'sha256', 'bm66 retired fixture', now(), now()
         FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
       const { banId } = await fx.draftBill({ label: "NUL", runId: RUN });

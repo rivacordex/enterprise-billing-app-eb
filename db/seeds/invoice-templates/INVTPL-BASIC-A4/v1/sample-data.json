@@ -1,0 +1,148 @@
+{
+  "template": {
+    "layoutCode": "INVTPL-STD-A4",
+    "layoutVersion": 1,
+    "version": 1
+  },
+  "company": {
+    "name": "Sample Telco Sdn Bhd",
+    "tradingName": "Sample Telco",
+    "registrationNo": "199901012345",
+    "tin": "C12345678901",
+    "sstRegNo": "A10-1234-56781234",
+    "addressLine1": "Level 10, Menara Sample",
+    "addressLine2": "Jalan Contoh 1",
+    "postcode": "50450",
+    "city": "City-01",
+    "stateCode": "14",
+    "state": "State-01",
+    "countryCode": "MY",
+    "country": "Country-01",
+    "phone": "+60 3-1234 5678",
+    "email": "billing@sampletelco.example",
+    "website": "https://sampletelco.example",
+    "brandColor": "#12355B",
+    "accentColor": "#1F9E89",
+    "logoUrl": null
+  },
+  "payment": {
+    "bankName": "Sample Bank Berhad",
+    "accountName": "Sample Telco Sdn Bhd",
+    "accountNo": "1234567890",
+    "swift": "SAMPMYKL",
+    "jomPayBillerCode": "12345",
+    "remittanceEmail": "remittance@sampletelco.example"
+  },
+  "invoice": {
+    "number": "INV00000042",
+    "isDraft": false,
+    "date": "2026-09-05",
+    "periodStart": "2026-08-01",
+    "periodEnd": "2026-08-31",
+    "dueDate": "2026-09-15",
+    "currency": "MYR",
+    "billRunId": "BRN00000042",
+    "cycleName": "Enterprise Monthly",
+    "billRef": "CBL00000001",
+    "poRef": null,
+    "contractRef": null,
+    "paymentTermsDays": 10
+  },
+  "customer": {
+    "billingAccountId": "BAN00000001",
+    "recipientName": "Aisha Rahman",
+    "name": "Acme Communications Sdn Bhd",
+    "tradingName": "Acme Communications",
+    "registrationNo": "201001098765",
+    "tin": "C98765432109",
+    "sstRegNo": null,
+    "address": {
+      "line1": "Suite 5, Wisma Acme",
+      "line2": null,
+      "city": "City-02",
+      "stateProvince": "State-02",
+      "postalCode": "46050",
+      "country": "Country-01"
+    },
+    "email": "accounts@acme.example",
+    "phone": "+60 3-7654 3210"
+  },
+  "totals": {
+    "grossTotal": "310000.00",
+    "discountTotal": "50000.00",
+    "subtotalExclTax": "260000.00",
+    "taxTotal": "0.00",
+    "totalAmount": "150000.00",
+    "amountDue": "260000.00",
+    "totalCharges": "260000.00",
+    "adjustments": "0.00",
+    "otherChargesSubTotal": "10000.00"
+  },
+  "taxes": [],
+  "taxRateLabel": "0",
+  "serviceTypes": [
+    {
+      "offeringId": "POF00000021",
+      "label": "5G RAN Target Capacity",
+      "utilised": "0.00",
+      "unutilised": "100000.00",
+      "total": "100000.00",
+      "regions": []
+    },
+    {
+      "offeringId": "POF00000020",
+      "label": "RAN Usage — Target Capacity",
+      "utilised": "150000.00",
+      "unutilised": "0.00",
+      "total": "150000.00",
+      "regions": [
+        {
+          "label": "State-01 - District-01",
+          "rows": [
+            {
+              "polygonStartDate": "2025-03-01",
+              "polygonName": "POLY-001",
+              "capacityMbps": "700.000000",
+              "ratePerMbps": "100.00",
+              "amount": "70000.00"
+            },
+            {
+              "polygonStartDate": "2025-04-15",
+              "polygonName": "POLY-002",
+              "capacityMbps": "599.500000",
+              "ratePerMbps": "100.00",
+              "amount": "59950.00"
+            }
+          ],
+          "subTotal": "129950.00"
+        },
+        {
+          "label": "Unassigned region",
+          "rows": [
+            {
+              "polygonStartDate": "2025-05-01",
+              "polygonName": "POLY-003",
+              "capacityMbps": "700.500000",
+              "ratePerMbps": "100.00",
+              "amount": "70050.00"
+            }
+          ],
+          "subTotal": "70050.00"
+        }
+      ]
+    }
+  ],
+  "otherCharges": [
+    {
+      "description": "Enterprise Fibre 1Gbps",
+      "amount": "10000.00"
+    }
+  ],
+  "footnote": [
+    "Calculations are done in Mbps",
+    "This invoice is billed exclusive of Universal Service Provision (USP)"
+  ],
+  "isDraft": false,
+  "locale": "en-MY",
+  "timezone": "Asia/Kuala_Lumpur"
+}

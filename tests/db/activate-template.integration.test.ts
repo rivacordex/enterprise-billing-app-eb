@@ -586,8 +586,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       await sql`
         INSERT INTO billing.bill_template_version
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status, layout_code,
-           page_setup, blob_ref, checksum, checksum_algorithm, activated_datetime, change_note)
-        VALUES ('BTV00000090', 'INVOICE', 'layout', 2, 'ACTIVE', 'INVTPL-STD-A4',
+           ref_bill_template_family_id, page_setup, blob_ref, checksum, checksum_algorithm, activated_datetime, change_note)
+        VALUES ('BTV00000090', 'INVOICE', 'layout', 2, 'ACTIVE', 'INVTPL-STD-A4', 'BTF00000001',
                 ${JSON.stringify(v1!.page_setup)}::jsonb, ${`invoice-templates/${dir}`}, ${sha256(indexBytes)}, 'sha256', now(), 'bad helper fixture')`;
       // A DRAFT pointing at it (the trigger forbids changing this later, so it
       // is inserted that way). Free the single draft slot first.

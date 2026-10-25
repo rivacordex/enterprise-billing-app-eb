@@ -15,6 +15,10 @@ import type { InvoiceTemplateStructureInput } from "@/validation/billing/invoice
 // never deleted. `ref_layout_version_id` self-references this table in the
 // migration; the FK is omitted here (plain text) to avoid a circular Drizzle
 // reference — typing is unaffected.
+// bm74 (`0053_invoice_template_types.sql`): the catalog is type-scoped. Layout
+// DRAFTs exist from `0053` (they carry files and may be overwritten in place),
+// and a never-activated DRAFT may be discarded: DRAFT → RETIRED with
+// `activated_datetime` NULL.
 export const billTemplateVersionSeq = billing.sequence(
   "bill_template_version_seq",
   { startWith: 1 },
@@ -35,9 +39,10 @@ export const billTemplateVersion = billing.table("bill_template_version", {
   isDefault: boolean("is_default").notNull().default(false),
   layoutCode: text("layout_code"),
   refLayoutVersionId: text("ref_layout_version_id"),
-  // bm64 — the family of a `generated` version (`btv_generated_has_family`);
-  // NULL for layout/CSV. Plain text like `ref_layout_version_id` (the FK lives
-  // in the migration). An identity column: the guard trigger refuses a change.
+  // bm64/bm74 — the type of a `layout` or `generated` version
+  // (`btv_type_scoped_has_family`); NULL only for CSV (`btv_csv_has_no_family`).
+  // Plain text like `ref_layout_version_id` (the FK lives in the migration). An
+  // identity column: the guard trigger refuses a change.
   refBillTemplateFamilyId: text("ref_bill_template_family_id"),
   // bm55-spec §Design D2 — typed from the Zod schema (general §6.17).
   structure: jsonb("structure").$type<InvoiceTemplateStructureInput>(),
@@ -65,6 +70,9 @@ export const billTemplateVersion = billing.table("bill_template_version", {
   retiredDatetime: timestamp("retired_datetime", {
     withTimezone: true,
     mode: "date",
+  }),
+  lastModifiedBy: text("last_modified_by").references(() => appuser.id, {
+    onDelete: "set null",
   }),
   lastModifiedDatetime: timestamp("last_modified_datetime", {
     withTimezone: true,

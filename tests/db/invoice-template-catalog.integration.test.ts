@@ -18,6 +18,10 @@ import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-tem
 // only — migrate() applies 0046, which also seeds the rows. bm64 adds the
 // template family: the seeded Standard family, btv_generated_has_family, the
 // family-scoped ACTIVE/DRAFT indexes and the family guard (guardrail 61).
+// bm74 (`0053`) makes the catalog type-scoped: the layout row joins Standard,
+// layout rows need a type and CSV rows must not have one, and CSV (not layout)
+// is barred from DRAFT. The full 0053 matrix is in
+// invoice-template-types-catalog.integration.test.ts (guardrail 75).
 const STANDARD = "BTF00000001";
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -132,7 +136,7 @@ describe.skipIf(!databaseUrl)(
       ]);
     });
 
-    it("bm64 — seeds one family, Standard (default); only the generated version references it", async () => {
+    it("bm64/bm74 — seeds one family, Standard (default); the layout and generated versions reference it", async () => {
       const families = await sql<
         {
           bill_template_family_id: string;
@@ -163,9 +167,10 @@ describe.skipIf(!databaseUrl)(
       >`SELECT bill_template_version_id, ref_bill_template_family_id
           FROM billing.bill_template_version ORDER BY 1`;
       expect(versions).toEqual([
+        // bm74 (`0053`) — the default layout joined the Standard type.
         {
           bill_template_version_id: "BTV00000001",
-          ref_bill_template_family_id: null,
+          ref_bill_template_family_id: STANDARD,
         },
         {
           bill_template_version_id: "BTV00000002",
@@ -222,12 +227,12 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
-    it("bm64 — refuses a generated version without a family (btv_generated_has_family)", async () => {
+    it("bm64/bm74 — refuses a generated version without a family (btv_type_scoped_has_family)", async () => {
       await expect(
         insertGenerated("BTV00000009", 9, "ACTIVE", false, null),
       ).rejects.toMatchObject({
         code: "23514",
-        constraint_name: "btv_generated_has_family",
+        constraint_name: "btv_type_scoped_has_family",
       });
     });
 
@@ -260,12 +265,32 @@ describe.skipIf(!databaseUrl)(
       `).rejects.toThrow(/VERSION_IMMUTABLE/);
     });
 
-    it("bm64 — layout and CSV versions are inserted without a family", async () => {
-      await sql`
+    it("bm74 — a layout version requires a type; a CSV version must not have one", async () => {
+      await expect(sql`
         INSERT INTO billing.bill_template_version
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status,
            layout_code, page_setup, blob_ref, checksum, checksum_algorithm, change_note, activated_datetime)
-        VALUES ('BTV00000050','INVOICE','layout',2,'ACTIVE',
+        VALUES ('BTV00000052','INVOICE','layout',3,'ACTIVE',
+           'INVTPL-STD-A4','{}'::jsonb,'invoice-templates/layouts/INVTPL-STD-A4/v3/',${"d".repeat(64)},'sha256','test row',now())
+      `).rejects.toMatchObject({
+        code: "23514",
+        constraint_name: "btv_type_scoped_has_family",
+      });
+      await expect(sql`
+        INSERT INTO billing.bill_template_version
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, ref_bill_template_family_id,
+           blob_ref, checksum, checksum_algorithm, change_note, activated_datetime)
+        VALUES ('BTV00000053','INVOICE','csv',3,'ACTIVE',${STANDARD},
+           'invoice-templates/system/csv/v3/',${"e".repeat(64)},'sha256','test row',now())
+      `).rejects.toMatchObject({
+        code: "23514",
+        constraint_name: "btv_csv_has_no_family",
+      });
+      await sql`
+        INSERT INTO billing.bill_template_version
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, ref_bill_template_family_id,
+           layout_code, page_setup, blob_ref, checksum, checksum_algorithm, change_note, activated_datetime)
+        VALUES ('BTV00000050','INVOICE','layout',2,'ACTIVE',${STANDARD},
            'INVTPL-STD-A4','{}'::jsonb,'invoice-templates/layouts/INVTPL-STD-A4/v2/',${"d".repeat(64)},'sha256','test row',now())
       `;
       await sql`
@@ -282,14 +307,14 @@ describe.skipIf(!databaseUrl)(
         WHERE bill_template_version_id IN ('BTV00000050','BTV00000051') ORDER BY 1`;
       expect(rows).toEqual([
         { kind: "csv", ref_bill_template_family_id: null },
-        { kind: "layout", ref_bill_template_family_id: null },
+        { kind: "layout", ref_bill_template_family_id: STANDARD },
       ]);
     });
 
     it("bm64 — refuses a second default family (btf_one_default_uq)", async () => {
       await expect(sql`
-        INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, kind, is_default)
-        VALUES ('BTF00000090', 'SECOND', 'Second', 'generated', true)
+        INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, layout_code, kind, is_default)
+        VALUES ('BTF00000090', 'SECOND', 'Second', 'INVTPL-SECOND', 'generated', true)
       `).rejects.toMatchObject({
         code: "23505",
         constraint_name: "btf_one_default_uq",
@@ -310,8 +335,8 @@ describe.skipIf(!databaseUrl)(
 
     it("bm64 — a non-default family may only be retired, once", async () => {
       await sql`
-        INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, kind)
-        VALUES ('BTF00000091', 'OTHER', 'Other', 'generated')
+        INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, layout_code, kind)
+        VALUES ('BTF00000091', 'OTHER', 'Other', 'INVTPL-OTHER', 'generated')
       `;
       await expect(sql`
         UPDATE billing.bill_template_family SET name = 'Renamed' WHERE bill_template_family_id = 'BTF00000091'
@@ -330,7 +355,7 @@ describe.skipIf(!databaseUrl)(
       ).rejects.toThrow(/btv_one_default_uq/);
     });
 
-    it("CHECKs: DRAFT with files, ACTIVE without note, generated without layout, layout DRAFT", async () => {
+    it("CHECKs: DRAFT with files, ACTIVE without note, generated without layout, CSV DRAFT", async () => {
       // DRAFT with files
       await expect(sql`
         INSERT INTO billing.bill_template_version
@@ -349,12 +374,25 @@ describe.skipIf(!databaseUrl)(
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status, ref_bill_template_family_id, blob_ref, checksum, checksum_algorithm, change_note, activated_datetime)
         VALUES ('BTV00000042','INVOICE','generated',42,'ACTIVE',${STANDARD},'x/',${"c".repeat(64)},'sha256','n',now())
       `).rejects.toThrow(/btv_generated_has_layout/);
-      // layout as DRAFT (only generated may be DRAFT)
+      // bm74 — CSV as DRAFT (CSV is never a DRAFT; layout DRAFTs now exist)
       await expect(sql`
         INSERT INTO billing.bill_template_version
-          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, layout_code, page_setup)
-        VALUES ('BTV00000043','INVOICE','layout',43,'DRAFT','X','{}'::jsonb)
-      `).rejects.toThrow(/btv_draft_only_generated/);
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status)
+        VALUES ('BTV00000043','INVOICE','csv',43,'DRAFT')
+      `).rejects.toThrow(/btv_draft_not_csv/);
+    });
+
+    it("bm74 — a layout DRAFT with files is accepted", async () => {
+      await sql`
+        INSERT INTO billing.bill_template_version
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, ref_bill_template_family_id,
+           layout_code, page_setup, blob_ref, checksum, checksum_algorithm)
+        VALUES ('BTV00000044','INVOICE','layout',44,'DRAFT',${STANDARD},
+           'INVTPL-STD-A4','{}'::jsonb,'invoice-templates/layouts/INVTPL-STD-A4/v44/',${"f".repeat(64)},'sha256')
+      `;
+      const [row] = await sql<{ status: string }[]>`
+        SELECT status FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000044'`;
+      expect(row?.status).toBe("DRAFT");
     });
 
     it("guardrail 45 — the default is immutable and undeletable", async () => {

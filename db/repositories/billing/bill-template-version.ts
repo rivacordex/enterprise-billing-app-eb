@@ -53,9 +53,9 @@ export const billTemplateVersionRepository = {
   },
 
   // The current non-default ACTIVE row for the kind, or `null` — resolution
-  // order is pinned → this → default (G3/C3). For layout/CSV `btv_one_active_uq`
-  // guarantees at most one. For `generated`, uniqueness is per family since
-  // bm64 (`btv_one_active_family_uq`), so generated callers pass `familyId`
+  // order is pinned → this → default (G3/C3). For CSV `btv_one_active_uq`
+  // guarantees at most one. For layout and `generated`, uniqueness is per
+  // (type, kind) since bm74 (`btv_one_active_family_uq`), so generated callers pass `familyId`
   // (review fix, known-issues §24c); without it the read is exact only while
   // one family exists (the Customer Management label reader, D46).
   async findActive(
@@ -152,7 +152,7 @@ export const billTemplateVersionRepository = {
   },
 
   // `max(version_no) + 1` for the kind, under the kind lock. `btv_version_uq`
-  // is the backstop against a lost race.
+  // (per (type, kind) since bm74) is the backstop against a lost race.
   async nextVersionNo(
     tx: Database,
     { kind }: { kind: TemplateKind },
@@ -194,10 +194,11 @@ export const billTemplateVersionRepository = {
   },
 
   // bm57 D1 — first save: insert the working DRAFT. No files
-  // (`btv_draft_has_no_files`), never the default. A concurrent first save is
-  // refused by `btv_one_draft_uq` (the service maps the 23505 to
-  // `DRAFT_CONFLICT`). bm64: the draft carries its family
-  // (`btv_generated_has_family`) — the family of the version it is built from.
+  // (`btv_draft_has_no_files`, which applies to settings DRAFTs only since
+  // bm74), never the default. A concurrent first save is refused by
+  // `btv_one_draft_uq` (the service maps the 23505 to `DRAFT_CONFLICT`). bm64:
+  // the draft carries its family (`btv_type_scoped_has_family`, which replaced
+  // `btv_generated_has_family` in bm74) — the family of the version it is built from.
   async insertDraft(
     tx: Database,
     input: {

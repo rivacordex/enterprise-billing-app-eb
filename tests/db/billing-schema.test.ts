@@ -427,7 +427,7 @@ describe("billing.accounting_period", () => {
 });
 
 // bm64-spec §2 — the template family table and the version's family column
-// (DDL of record: 0046; Drizzle mirrors it for query typing only).
+// (DDL of record: 0046 + 0053; Drizzle mirrors it for query typing only).
 describe("billing.bill_template_family", () => {
   it("exposes the exact snake_case column set", () => {
     expect(columnNames(billTemplateFamily).sort()).toEqual(
@@ -435,6 +435,7 @@ describe("billing.bill_template_family", () => {
         "bill_template_family_id",
         "code",
         "name",
+        "layout_code",
         "kind",
         "is_default",
         "retired_datetime",
@@ -450,9 +451,23 @@ describe("billing.bill_template_family", () => {
 });
 
 describe("billing.bill_template_version (bm64)", () => {
-  it("carries ref_bill_template_family_id, nullable (layout/CSV rows have no family)", () => {
+  it("carries ref_bill_template_family_id, nullable (NULL only for CSV, bm74)", () => {
     const col = getTableColumns(billTemplateVersion).refBillTemplateFamilyId;
     expect(col.name).toBe("ref_bill_template_family_id");
     expect(col.notNull).toBe(false);
+  });
+
+  it("bm74 — carries last_modified_by, nullable", () => {
+    const col = getTableColumns(billTemplateVersion).lastModifiedBy;
+    expect(col.name).toBe("last_modified_by");
+    expect(col.notNull).toBe(false);
+  });
+});
+
+describe("billing.bill_template_family (bm74)", () => {
+  it("carries layout_code, NOT NULL", () => {
+    const col = getTableColumns(billTemplateFamily).layoutCode;
+    expect(col.name).toBe("layout_code");
+    expect(col.notNull).toBe(true);
   });
 });

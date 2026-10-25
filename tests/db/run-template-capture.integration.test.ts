@@ -43,6 +43,7 @@ import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/loa
 import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
 import { rerunRun } from "@/services/billing/rerun-run";
 import { triggerRun } from "@/services/billing/trigger-run";
+import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixtures";
 
 // bm72 — a new Standard version differs from v1 by its footnote.
 function structure(footnoteLine: string) {
@@ -313,16 +314,20 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       // A second, non-default family (test-only) holding just a RETIRED
       // generated version, and a BAN bound to that version by SQL — bypassing
       // assertBindableTemplate, which accepts NULL only today.
-      await sql`
-        INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, kind)
-        VALUES ('BTF00000099', 'BM65-EMPTY', 'Empty family', 'generated')`;
+      // bm74 — the type needs its own layout (btv_pair_same_type_fk).
+      await insertTemplateTypeFixture(sql, {
+        typeId: "BTF00000099",
+        code: "BM65_EMPTY",
+        name: "Empty family",
+        layoutVersionId: "BTV00000097",
+      });
       await sql`
         INSERT INTO billing.bill_template_version
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
            ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum,
            checksum_algorithm, change_note, activated_datetime, retired_datetime)
         SELECT 'BTV00000099', 'INVOICE', 'generated', 99, 'RETIRED', false,
-               'BTV00000001', 'BTF00000099', structure, 'invoice-templates/generated/INVOICE/v99/',
+               'BTV00000097', 'BTF00000099', structure, 'invoice-templates/generated/INVOICE/v99/',
                ${"9".repeat(64)}, 'sha256', 'bm65 retired fixture', now(), now()
         FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
 
@@ -367,16 +372,20 @@ describe.skipIf(!databaseUrl || !blobConnection)(
 
     // Review fixes (2026-10-16, known-issues §24c/§24d/§24e).
     it("4. a second family: Standard activation never retires its ACTIVE version; a retired family captures a NULL version", async () => {
-      await sql`
-        INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, kind)
-        VALUES ('BTF00000088', 'BM65-SECOND', 'Second family', 'generated')`;
+      // bm74 — the type needs its own layout (btv_pair_same_type_fk).
+      await insertTemplateTypeFixture(sql, {
+        typeId: "BTF00000088",
+        code: "BM65_SECOND",
+        name: "Second family",
+        layoutVersionId: "BTV00000087",
+      });
       await sql`
         INSERT INTO billing.bill_template_version
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
            ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum,
            checksum_algorithm, change_note, activated_datetime)
         SELECT 'BTV00000088', 'INVOICE', 'generated', 88, 'ACTIVE', false,
-               'BTV00000001', 'BTF00000088', structure, 'invoice-templates/generated/INVOICE/v88/',
+               'BTV00000087', 'BTF00000088', structure, 'invoice-templates/generated/INVOICE/v88/',
                ${"8".repeat(64)}, 'sha256', 'bm65 second-family fixture', now()
         FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
 
