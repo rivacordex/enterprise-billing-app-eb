@@ -1,6 +1,7 @@
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 
 import { createSemaphore } from "@/lib/concurrency";
+import { logger } from "@/lib/logger";
 import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
 import type { LayoutPageSetup } from "@/types/billing";
 
@@ -50,12 +51,17 @@ export async function renderDraftInvoice({
   runId,
   banId,
 }: RenderDraftInvoiceParams): Promise<Buffer> {
-  const { html, footerHtml, pageSetup } = await buildInvoiceHtml({
+  const { html, footerHtml, pageSetup, resolved } = await buildInvoiceHtml({
     runId,
     banId,
     mode: "draft",
   });
-  return renderPdfFromHtml(html, { pageSetup, footerHtml });
+  return renderPdfFromHtml(html, {
+    pageSetup,
+    footerHtml,
+    layoutVersionId: resolved.layout.billTemplateVersionId,
+    generatedVersionId: resolved.generated.billTemplateVersionId,
+  });
 }
 
 export interface RenderFinalInvoiceParams {
@@ -77,50 +83,61 @@ export async function renderFinalInvoice({
   banId,
   invoiceNo,
 }: RenderFinalInvoiceParams): Promise<Buffer> {
-  const { html, footerHtml, pageSetup } = await buildInvoiceHtml({
+  const { html, footerHtml, pageSetup, resolved } = await buildInvoiceHtml({
     runId,
     banId,
     mode: "final",
     invoiceNo,
   });
-  return renderPdfFromHtml(html, { pageSetup, footerHtml });
+  return renderPdfFromHtml(html, {
+    pageSetup,
+    footerHtml,
+    layoutVersionId: resolved.layout.billTemplateVersionId,
+    generatedVersionId: resolved.generated.billTemplateVersionId,
+  });
 }
 
-// D9 — `renderPdfFromHtml` gains one optional parameter object; nothing else
-// in this file changes (the semaphore, `chromium.launch()`, `setContent`
-// `networkidle`, and the `BROWSER_CLOSE_TIMEOUT_MS` race are byte-identical
-// to before bm47).
-export interface PdfRenderOptions {
-  pageSetup: LayoutPageSetup;
-  footerHtml: string;
+// bm75 (Inv #64) — the ONE hardened Chromium context. JavaScript off, offline, every request
+// except data:/about: aborted and recorded. Draft/final renders log blocked URLs and never
+// throw for them; the upload gate (bm78) fails on them. No other file may launch Chromium
+// (guardrail 74, tests/guardrails/chromium-single-factory.test.ts).
+const ALLOWED_SCHEMES = ["data:", "about:"] as const;
+const MAX_LOGGED_URLS = 5;
+
+export interface HardenedPageResult<T> {
+  value: T;
+  blockedUrls: string[];
 }
 
-// 2-4. Render — one launch per render (D19), shared by both draft and final
-// rendering: the T9 concurrency guard (`renderSemaphore`) is a single
-// process-level Chromium-launch cap, not one per mode (Phase-2 review fold
-// T9 — "same render concurrency guard applies to final render"). The
-// semaphore serializes beyond MAX_CONCURRENT_RENDERS; the browser always
-// closes in `finally`, so a render error (or a queued request's later
-// failure) never leaks a process.
-function renderPdfFromHtml(
+// One launch per render (D19), inside the process-level T9 concurrency guard
+// (`renderSemaphore`), so every Chromium render — draft, final and later the
+// upload gate — counts against the same cap. The browser always closes in
+// `finally`, so a render error (or a queued request's later failure) never
+// leaks a process.
+export function withHardenedPage<T>(
   html: string,
-  { pageSetup, footerHtml }: PdfRenderOptions,
-): Promise<Buffer> {
+  inPage: (page: Page) => Promise<T>,
+): Promise<HardenedPageResult<T>> {
   return renderSemaphore.run(async () => {
     const browser = await chromium.launch();
     try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: "networkidle" });
-      const pdf = await page.pdf({
-        format: pageSetup.format,
-        landscape: pageSetup.orientation === "landscape",
-        printBackground: pageSetup.printBackground,
-        margin: pageSetup.margin,
-        displayHeaderFooter: true,
-        headerTemplate: "<span></span>",
-        footerTemplate: footerHtml,
+      const context = await browser.newContext({
+        javaScriptEnabled: false,
+        offline: true,
       });
-      return pdf;
+      const page = await context.newPage();
+      const blockedUrls: string[] = [];
+      await page.route("**/*", (route) => {
+        const url = route.request().url();
+        if (ALLOWED_SCHEMES.some((s) => url.startsWith(s))) {
+          return route.continue();
+        }
+        blockedUrls.push(url);
+        return route.abort("blockedbyclient");
+      });
+      await page.setContent(html, { waitUntil: "networkidle" });
+      const value = await inPage(page);
+      return { value, blockedUrls };
     } finally {
       // Bound the close and swallow any rejection: a hung close must not wedge
       // the permit/loop, and a close failure must not mask the real render
@@ -136,4 +153,48 @@ function renderPdfFromHtml(
       ]);
     }
   });
+}
+
+// bm75: the context is hardened (Inv #64); the semaphore, the per-render
+// launch (D19) and the bounded close are unchanged.
+export interface PdfRenderOptions {
+  pageSetup: LayoutPageSetup;
+  footerHtml: string;
+  // bm75 — for the blocked-fetch log line only.
+  layoutVersionId: string;
+  generatedVersionId: string;
+}
+
+// Shared by draft and final rendering. A blocked fetch is logged and the PDF
+// still returned: a posted invoice is never failed or parked by it (Inv #40,
+// Inv #64).
+async function renderPdfFromHtml(
+  html: string,
+  {
+    pageSetup,
+    footerHtml,
+    layoutVersionId,
+    generatedVersionId,
+  }: PdfRenderOptions,
+): Promise<Buffer> {
+  const { value: pdf, blockedUrls } = await withHardenedPage(html, (page) =>
+    page.pdf({
+      format: pageSetup.format,
+      landscape: pageSetup.orientation === "landscape",
+      printBackground: pageSetup.printBackground,
+      margin: pageSetup.margin,
+      displayHeaderFooter: true,
+      headerTemplate: "<span></span>",
+      footerTemplate: footerHtml,
+    }),
+  );
+  if (blockedUrls.length > 0) {
+    logger.warn("INVOICE_RENDER_BLOCKED_FETCH", {
+      layoutVersionId,
+      generatedVersionId,
+      count: blockedUrls.length,
+      urls: blockedUrls.slice(0, MAX_LOGGED_URLS),
+    });
+  }
+  return pdf;
 }

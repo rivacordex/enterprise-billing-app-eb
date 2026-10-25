@@ -38,12 +38,25 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (uncommitted), bm75 next. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (uncommitted), bm76 next. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
 
 Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+
+**bm75 notes (2026-10-25):**
+
+- `withHardenedPage(html, inPage)` as specified: one launch per render inside the unchanged T9
+  semaphore, `newContext({ javaScriptEnabled: false, offline: true })`, `page.route("**/*")`
+  continuing only `data:`/`about:`, the unchanged bounded close. `renderPdfFromHtml` calls it and
+  logs `INVOICE_RENDER_BLOCKED_FETCH` (both version ids, count, first 5 URLs); never throws on it.
+- **Deviation — parameter name.** The spec's second parameter `use` trips ESLint
+  `react-hooks/rules-of-hooks` (it reads as React's `use()`), so it is `inPage`; positional, so
+  the call shape for bm76/bm78 is unchanged.
+- The e2e's existing three cases keep their own `chromium.launch()` (spec: "kept as is"); the
+  guardrail scans only production dirs. The Standard v1 page count (1) was measured with the old
+  plain-page renderer before the hardened case was pinned to it.
 
 **bm74 notes (2026-10-25):**
 
@@ -65,7 +78,8 @@ Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
 
 | Unit | What | Status |
 | --- | --- | --- |
-| bm74 | Type-scoped template catalog in the DB (migration `0053`, two Drizzle mirrors) | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; integration 124/0 on the disposable `ebill-test` DB (new types-catalog suite incl. precondition abort + the full §5 matrix; catalog, activate, save-draft, capture, seed-upload, migration, draft-stamps, posting-skip, template journey); unit 4564 passed, 1 failed (`ratecard-demo-seed-boundary`, pre-existing since `771d39b`, unrelated) + 8 files fail to load without an env file |
+| bm74 | Type-scoped template catalog in the DB (migration `0053`, two Drizzle mirrors) | **Built** (2026-10-25, `d1fbb92`) — tsc/ESLint/Prettier clean; integration 124/0 on the disposable `ebill-test` DB (new types-catalog suite incl. precondition abort + the full §5 matrix; catalog, activate, save-draft, capture, seed-upload, migration, draft-stamps, posting-skip, template journey); unit 4564 passed, 1 failed (`ratecard-demo-seed-boundary`, pre-existing since `771d39b`, unrelated) + 8 files fail to load without an env file |
+| bm75 | Network-blocked, script-free Chromium rendering (`withHardenedPage`, guardrail 74 draft/final half) | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; `render-invoice.service` 15/0 (4 spec cases + a final-render blocked-fetch case); guardrail `chromium-single-factory` 2/0, mutation-checked (a scratch `chromium.launch()` under `services/` fails it); Chromium e2e 7/0 (`RUN_CHROMIUM_E2E=1`: zero stub-server hits, 4 URLs blocked, script not run, data: allowed, Standard v1 1 page as before, no blocked URL); unchanged: golden, `post-run.service`, `draft-invoice-route` (87/0 with the above) and the template journey 19/19 on the disposable DB |
 
 ## Delivered units
 

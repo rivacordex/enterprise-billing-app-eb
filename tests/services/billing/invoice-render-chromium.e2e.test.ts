@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -16,6 +18,7 @@ vi.mock(
 import { bind } from "@/services/billing/invoice-template/bind";
 import { executeInvoiceTemplate } from "@/services/billing/invoice-template/compile";
 import { loadGenerated } from "@/services/billing/invoice-template/load";
+import { withHardenedPage } from "@/services/billing/render-invoice";
 import {
   SEEDED_FOOTNOTE,
   SEEDED_GENERATED_ROW,
@@ -399,6 +402,137 @@ describe.skipIf(!run)(
         await page.close();
       }
       expect(requests).toEqual([]);
+    }, 120_000);
+  },
+);
+
+// bm75-spec §4 (Inv #64, guardrail 74 draft/final half) — the same harness,
+// but every case renders through the ONE hardened context, `withHardenedPage`,
+// instead of launching its own Chromium: JavaScript off, offline, every request
+// except data:/about: aborted and recorded.
+const PNG_1PX =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+// Measured once with the pre-bm75 renderer (the plain `browser.newPage()`
+// above): the seeded Standard v1 final bill with one polygon spans this many
+// print pages. The hardened context must lay it out identically.
+const SEEDED_V1_SMALL_BILL_PAGES = 1;
+
+describe.skipIf(!run)(
+  "bm75 hardened render — real Chromium through withHardenedPage (RUN_CHROMIUM_E2E=1)",
+  () => {
+    let server: Server;
+    let hits = 0;
+    let origin: string;
+
+    beforeAll(async () => {
+      server = createServer((_req, res) => {
+        hits++;
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("x");
+      });
+      await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+      origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    });
+
+    afterAll(async () => {
+      if (server) await new Promise<void>((r) => server.close(() => r()));
+    });
+
+    it("no request reaches the network: four external URLs are blocked, recorded, and the PDF still renders", async () => {
+      const html = `<!doctype html><html><head>
+        <link rel="stylesheet" href="${origin}/s.css">
+        <style>
+          @font-face { font-family: Remote; src: url(${origin}/f.woff2); }
+          .bg { background: url(${origin}/b.png); font-family: Remote; }
+        </style></head>
+        <body><div class="bg">text</div><img src="${origin}/a.png"></body></html>`;
+
+      const { value: pdf, blockedUrls } = await withHardenedPage(html, (p) =>
+        p.pdf({ format: "A4" }),
+      );
+
+      expect(hits).toBe(0);
+      expect([...blockedUrls].sort()).toEqual(
+        [
+          `${origin}/a.png`,
+          `${origin}/b.png`,
+          `${origin}/f.woff2`,
+          `${origin}/s.css`,
+        ].sort(),
+      );
+      expect(pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
+    }, 60_000);
+
+    it("no script runs", async () => {
+      const html = `<p id="t">static</p><script>document.getElementById("t").textContent="ran"</script>`;
+
+      const { value, blockedUrls } = await withHardenedPage(html, (p) =>
+        p.innerText("#t"),
+      );
+
+      expect(value).toBe("static");
+      expect(blockedUrls).toEqual([]);
+    }, 60_000);
+
+    it("inline data still renders: a data: image and a data: font are not blocked", async () => {
+      const html = `<!doctype html><html><head><style>
+          @font-face { font-family: Inline; src: url(data:font/woff2;base64,d09GMgABAAAAAA==) format("woff2"); }
+          body { font-family: Inline, sans-serif; }
+        </style></head><body><img src="${PNG_1PX}"><p>inline</p></body></html>`;
+
+      const { value: pdf, blockedUrls } = await withHardenedPage(html, (p) =>
+        p.pdf({ format: "A4" }),
+      );
+
+      expect(blockedUrls).toEqual([]);
+      expect(pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
+    }, 60_000);
+
+    it("the seeded Standard v1 renders unchanged through renderPdfFromHtml's options, with no blocked URL", async () => {
+      const { render, renderFooter } = await loadSeededDefault();
+      const pageSetup = await loadPageSetup();
+      const raw = rawInput(buildDetail(1, 1));
+      raw.document = {
+        documentId: "INV00000075",
+        postingDate: new Date("2026-07-05"),
+      };
+      const bound = bind(raw, {
+        isDraft: false,
+        locale: "en-MY",
+        timezone: TZ,
+        template: SEEDED_TEMPLATE_STAMP,
+        profile: null,
+        footnote: [...SEEDED_FOOTNOTE],
+        invoiceNo: "INV00000075",
+      });
+      const html = render(bound);
+      const PX_PER_MM = 96 / 25.4;
+      const printablePx =
+        (297 -
+          parseFloat(pageSetup.margin.top) -
+          parseFloat(pageSetup.margin.bottom)) *
+        PX_PER_MM;
+
+      const { value, blockedUrls } = await withHardenedPage(html, async (p) => {
+        const pdf = await p.pdf({
+          format: pageSetup.format,
+          landscape: pageSetup.orientation === "landscape",
+          printBackground: pageSetup.printBackground,
+          margin: pageSetup.margin,
+          displayHeaderFooter: true,
+          headerTemplate: "<span></span>",
+          footerTemplate: renderFooter(bound),
+        });
+        await p.emulateMedia({ media: "print" });
+        const heightPx = await p.evaluate(
+          () => document.documentElement.scrollHeight,
+        );
+        return { pdf, pages: Math.ceil(heightPx / printablePx) };
+      });
+
+      expect(blockedUrls).toEqual([]);
+      expect(value.pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
+      expect(value.pages).toBe(SEEDED_V1_SMALL_BILL_PAGES);
     }, 120_000);
   },
 );
