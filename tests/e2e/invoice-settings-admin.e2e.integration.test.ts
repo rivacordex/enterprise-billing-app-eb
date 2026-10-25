@@ -58,6 +58,9 @@ const optedIn =
 const PASSWORD = "E2e-Invoice-Settings-63!";
 const SCRIPT_NAME = "<script>alert(1)</script>";
 const SETTINGS = "/administration/invoice-settings";
+// bm77 — the editor lives on each template type's detail page; the bare
+// invoice-template route is now the type list.
+const STANDARD_DETAIL = `${SETTINGS}/invoice-template/BTF00000001`;
 // bm72 — the seeded v1 footnote's line 2, and the admin's edit of it.
 const SEEDED_LINE_2 =
   "This invoice is billed exclusive of Universal Service Provision (USP)";
@@ -354,9 +357,9 @@ describe.skipIf(
     const page = await signIn("reader");
     await navLink(page).waitFor();
 
-    await page.goto(`${SETTINGS}/invoice-template`);
+    await page.goto(STANDARD_DETAIL);
     await page
-      .getByRole("heading", { name: /Invoice template — Standard/ })
+      .getByRole("heading", { name: /Invoice template type — Standard/ })
       .waitFor();
     // bm72 — the footnote is a plain list, with no inputs.
     await page.getByRole("list", { name: "Footnote lines" }).waitFor();
@@ -389,7 +392,7 @@ describe.skipIf(
 
   it("a READ user with billrun_view is offered posted bills, and a <script> customer name renders escaped with no dialog (criterion 11)", async () => {
     const page = await signIn("viewer");
-    await page.goto(`${SETTINGS}/invoice-template`);
+    await page.goto(STANDARD_DETAIL);
     await previewFrame(page);
     await page.locator("#preview-source").click();
     await page.getByRole("option", { name: /INV09063101/ }).click();
@@ -401,9 +404,9 @@ describe.skipIf(
 
   it("an EDIT user: mandatory sections are locked; a footnote edit previews, saves and activates; a run triggered afterwards prints it (criterion 4, bm72)", async () => {
     const page = await signIn("editor");
-    await page.goto(`${SETTINGS}/invoice-template`);
+    await page.goto(STANDARD_DETAIL);
     await page
-      .getByRole("heading", { name: /Invoice template — Standard/ })
+      .getByRole("heading", { name: /Invoice template type — Standard/ })
       .waitFor();
     expect(await page.locator("#section-billTo").isDisabled()).toBe(true);
     await page.getByTestId("section-billTo").getByText("Required").waitFor();
@@ -446,7 +449,7 @@ describe.skipIf(
 
     // v3: Payment information hidden too — v2 becomes RETIRED; the default
     // v1 stays ACTIVE as the fallback (P7).
-    await page.goto(`${SETTINGS}/invoice-template`);
+    await page.goto(STANDARD_DETAIL);
     await page.locator("#section-payment").click();
     await page.getByRole("button", { name: "Save draft", exact: true }).click();
     await page.getByText("Draft v3 saved — not used on invoices").waitFor();
@@ -461,7 +464,7 @@ describe.skipIf(
     await confirmWithNote(page, "e2e: hide payment", "Activate v3");
     await page.getByText("Template v3 activated").waitFor();
 
-    await page.goto(`${SETTINGS}/invoice-template?tab=history`);
+    await page.goto(`${STANDARD_DETAIL}?tab=history`);
     // The version cell reads "v{n}" followed by the version id.
     const row = (n: number) =>
       page.locator("tbody tr").filter({ hasText: new RegExp(`^\\s*v${n}BTV`) });
@@ -470,7 +473,7 @@ describe.skipIf(
     await row(1).locator('[data-status="ACTIVE"]').waitFor();
     await row(3).getByText("e2e: hide payment").waitFor();
 
-    await page.goto(`${SETTINGS}/invoice-template?tab=generated`);
+    await page.goto(`${STANDARD_DETAIL}?tab=generated`);
     const hbs = await page.locator('pre[aria-label="invoice.hbs"]').innerText();
     expect(hbs.length).toBeGreaterThan(1000);
     expect(hbs).not.toContain("[[");

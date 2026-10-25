@@ -60,6 +60,11 @@ import {
   type PreviewStatus,
 } from "@/components/billing/invoice-settings/invoice-preview-frame";
 import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/draft-messages";
+import { LayoutProblemsAlert } from "@/components/billing/invoice-settings/layout-problems-alert";
+import {
+  TEMPLATE_TYPE_MESSAGES,
+  layoutChangeLine,
+} from "@/components/billing/invoice-settings/template-type-messages";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -74,6 +79,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import type {
   InvoiceTemplateStructure,
+  LayoutProblem,
   RecentPostedBill,
 } from "@/types/billing";
 import {
@@ -115,6 +121,9 @@ const ACTIVATE_MESSAGES = {
     "The generated template failed its test render. Nothing was activated.",
   ACTIVATION_BLOB_CONFLICT:
     "A different file already exists at the target path. Nothing was activated.",
+  // bm79 — the pair's layout DRAFT failed the compliance re-run; the retired type.
+  LAYOUT_REJECTED: TEMPLATE_TYPE_MESSAGES.activateLayoutRejected,
+  TEMPLATE_TYPE_RETIRED: TEMPLATE_TYPE_MESSAGES.typeRetired,
   FORBIDDEN: "You do not have permission to activate a template.",
   VALIDATION_ERROR: "The request was not valid. Reload and try again.",
   SERVER_ERROR: "The version could not be activated. Please try again.",
@@ -240,8 +249,16 @@ export interface InvoiceStructureFormProps {
   draftVersionId?: string | null;
   draftVersionNo?: number | null;
   activeStructure?: InvoiceTemplateStructure | null;
-  // bm66: the template family (Standard) the live preview renders with.
+  // bm66/bm77: the template type (from the `[typeId]` page) the live
+  // preview renders with and the save/activate actions write to.
   familyId: string;
+  // bm79: set when the draft carries a layout DRAFT (an uploaded pair); the
+  // Activate dialog's summary leads with its layout line.
+  layoutChange?: {
+    code: string;
+    fromVersionNo: number | null;
+    toVersionNo: number;
+  } | null;
 }
 
 function RequiredMark(): React.JSX.Element {
@@ -271,8 +288,11 @@ export function InvoiceStructureForm({
   draftVersionNo = null,
   activeStructure = null,
   familyId,
+  layoutChange = null,
 }: InvoiceStructureFormProps): React.JSX.Element {
   const router = useRouter();
+  // bm79 — the compliance re-run's problems from the last refused Activate.
+  const [layoutProblems, setLayoutProblems] = useState<LayoutProblem[]>([]);
   const {
     control,
     register,
@@ -338,6 +358,10 @@ export function InvoiceStructureForm({
       setDraftNo(draftVersionNo);
       setActivateOpen(false);
       setAdopted(canonical(initialStructure));
+      // bm79 review fix — a refused activation's problems describe the draft
+      // this form held; a newer server state (discarded, replaced, activated)
+      // drops them.
+      setLayoutProblems([]);
     }
   }
   useEffect(() => {
@@ -373,6 +397,11 @@ export function InvoiceStructureForm({
   // stale and never overwrites newer state.
   const requestRef = useRef(0);
 
+  // bm79 review fix — the working copy of a DRAFT previews that draft (and the
+  // layout it points at, an uploaded layout DRAFT included); any other version
+  // previews the version in use. The action honours it only for EDIT.
+  const previewDraft = editable && draftId !== null;
+
   // Every input of the current request; any change (an edit, the source, a
   // toggle, Retry) makes the shown preview stale until its request settles.
   const requestKey =
@@ -385,6 +414,7 @@ export function InvoiceStructureForm({
           outline,
           retryToken,
           familyId,
+          previewDraft,
         ]);
   const pending = requestKey !== null && preview.key !== requestKey;
   const previewStatus: PreviewStatus = pending
@@ -408,6 +438,7 @@ export function InvoiceStructureForm({
         annotate,
         outline,
         familyId,
+        draft: previewDraft,
       })
         .then((result) => {
           if (requestRef.current !== id) return;
@@ -442,7 +473,15 @@ export function InvoiceStructureForm({
         .finally(() => clearTimeout(queued));
     }, DEBOUNCE_MS);
     return () => clearTimeout(debounce);
-  }, [previewKey, requestKey, source, annotate, outline, familyId]);
+  }, [
+    previewKey,
+    requestKey,
+    source,
+    annotate,
+    outline,
+    familyId,
+    previewDraft,
+  ]);
 
   // The server's refusal of a line (`structure.footnote.N`) shows under it;
   // false when nothing could be placed on a line.
@@ -466,6 +505,7 @@ export function InvoiceStructureForm({
       const result = await saveTemplateDraftAction({
         structure: next,
         expectedDraftToken: draftToken,
+        familyId,
       });
       if (result.ok) {
         setSaved(next);
@@ -499,10 +539,12 @@ export function InvoiceStructureForm({
     if (draftId === null || draftToken === null) {
       return { ok: false, message: ACTIVATE_MESSAGES.DRAFT_CONFLICT };
     }
+    setLayoutProblems([]);
     const result = await activateTemplateAction({
       draftId,
       expectedDraftToken: draftToken,
       changeNote,
+      familyId,
     });
     if (result.ok) {
       // No `router.refresh()`: the action revalidates the Invoice Settings layout
@@ -519,6 +561,10 @@ export function InvoiceStructureForm({
         action: { label: "Reload", onClick: () => router.refresh() },
       });
     }
+    if (result.code === "LAYOUT_REJECTED") setLayoutProblems(result.problems);
+    // The type was retired meanwhile: re-fetch, so the page drops its edit
+    // controls (ui-context §10e).
+    if (result.code === "TEMPLATE_TYPE_RETIRED") router.refresh();
     return { ok: false, message: activateMessage(result) };
   }
 
@@ -767,12 +813,31 @@ export function InvoiceStructureForm({
           onOpenChange={setActivateOpen}
           title={`Activate template v${draftNo ?? ""}`}
           confirmLabel={`Activate v${draftNo ?? ""}`}
-          summary={<StructureChangeSummary changes={structureChanges} />}
+          summary={
+            <div className="space-y-2">
+              {layoutChange ? (
+                <p className="font-mono text-mono">
+                  {layoutChangeLine(layoutChange)}
+                </p>
+              ) : null}
+              {activeStructure ? (
+                <StructureChangeSummary changes={structureChanges} />
+              ) : (
+                <p>{TEMPLATE_TYPE_MESSAGES.firstVersionOfType}</p>
+              )}
+            </div>
+          }
           onConfirm={activate}
         />
       ) : null}
 
       <div className="min-w-0 space-y-3">
+        {layoutProblems.length > 0 ? (
+          <LayoutProblemsAlert
+            title={TEMPLATE_TYPE_MESSAGES.activateLayoutRejectedTitle}
+            problems={layoutProblems}
+          />
+        ) : null}
         {preview.pinnedVersionNo !== null ? (
           <p
             role="status"

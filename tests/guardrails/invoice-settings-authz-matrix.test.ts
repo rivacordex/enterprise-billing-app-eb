@@ -31,15 +31,27 @@ vi.mock("@/services/billing/invoice-template/save-template-draft", () => ({
 vi.mock("@/services/billing/invoice-template/activate-template", () => ({
   activateTemplate: vi.fn(),
 }));
+// bm78 — the upload service, so an upload that slips past the guard is visible.
+vi.mock("@/services/billing/invoice-template/upload-layout-package", () => ({
+  uploadLayoutPackage: vi.fn(),
+}));
+// bm79 — the discard service, so a discard that slips past the guard is visible.
+vi.mock("@/services/billing/invoice-template/discard-template-draft", () => ({
+  discardTemplateDraft: vi.fn(),
+}));
 vi.mock("@/lib/logger", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { activateTemplateAction } from "@/actions/billing/invoice-settings/activate-template.action";
+import { discardTemplateDraftAction } from "@/actions/billing/invoice-settings/discard-template-draft.action";
 import { saveTemplateDraftAction } from "@/actions/billing/invoice-settings/save-template-draft.action";
+import { uploadLayoutPackageAction } from "@/actions/billing/invoice-settings/upload-layout-package.action";
 import { activateTemplate } from "@/services/billing/invoice-template/activate-template";
+import { discardTemplateDraft } from "@/services/billing/invoice-template/discard-template-draft";
 import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
+import { uploadLayoutPackage } from "@/services/billing/invoice-template/upload-layout-package";
 import { PERMISSION_NAMES } from "@/types/rbac";
 
 // bm55-spec §Tests — guardrail 56 (routes), code-standards Part 2 §8/§9 item
@@ -67,6 +79,10 @@ type MatrixRow = {
   alsoBillrunView?: true;
 };
 
+// bm77 — the editor moved to the template type detail page.
+const TYPE_DETAIL_PAGE =
+  "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx";
+
 const MATRIX: MatrixRow[] = [
   {
     surface: "/administration/invoice-settings (redirect only)",
@@ -93,10 +109,24 @@ const MATRIX: MatrixRow[] = [
     kind: "route",
   },
   {
+    // bm77 — the invoice template TYPE list.
     surface: "/administration/invoice-settings/invoice-template",
     file: "app/(app)/administration/invoice-settings/invoice-template/page.tsx",
     level: "READ",
     kind: "page",
+  },
+  {
+    // bm77 — a type's detail page (today's editor, per type).
+    surface: "/administration/invoice-settings/invoice-template/[typeId]",
+    file: TYPE_DETAIL_PAGE,
+    level: "READ",
+    kind: "page",
+  },
+  {
+    surface: "create invoice template type (a mutation)",
+    file: "actions/billing/invoice-settings/create-template-type.action.ts",
+    level: "EDIT",
+    kind: "action",
   },
   {
     surface: "GET …/invoice-template/versions/[versionId]/files/[file]",
@@ -138,6 +168,20 @@ const MATRIX: MatrixRow[] = [
   {
     surface: "upload logo / import app logo (mutations)",
     file: "actions/billing/invoice-settings/upload-logo.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
+  {
+    // bm78 — upload a layout package as a new draft.
+    surface: "upload layout package (a mutation)",
+    file: "actions/billing/invoice-settings/upload-layout-package.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
+  {
+    // bm79 — discard a type's DRAFTs.
+    surface: "discard template draft (a mutation)",
+    file: "actions/billing/invoice-settings/discard-template-draft.action.ts",
     level: "EDIT",
     kind: "action",
   },
@@ -231,9 +275,7 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
   });
 
   it("while a working draft exists the draft is the only editable version, and the form adopts a newer draft token (bm57, bm72 review)", () => {
-    const src = read(
-      "app/(app)/administration/invoice-settings/invoice-template/page.tsx",
-    );
+    const src = read(TYPE_DETAIL_PAGE);
     // Another version is editable only when there is no draft to overwrite.
     expect(src).toMatch(
       /editable=\{\s*canEdit &&\s*\(shownIsDraft \|\|\s*\(!draft &&/,
@@ -252,7 +294,11 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(form).toContain("setDraftToken(expectedDraftToken)");
     expect(form).toContain("reset(toFormValues(adopted))");
     // The Generated .hbs tab defaults to the current version, not the file-less draft.
-    expect(src).toContain("onGenerated && version === undefined ? current");
+    // bm78: an uploaded-but-not-activated type has no current version and
+    // falls back to the shown draft (which then reports "no generated files").
+    expect(src).toContain(
+      "onGenerated && version === undefined ? (current ?? data.shown)",
+    );
     // A READ user gets no View link on a DRAFT history row.
     expect(src).toContain("canViewDrafts={canEdit}");
   });
@@ -387,9 +433,7 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
   });
 
   it("the page offers posted bills only to billrun_view holders", () => {
-    const src = read(
-      "app/(app)/administration/invoice-settings/invoice-template/page.tsx",
-    );
+    const src = read(TYPE_DETAIL_PAGE);
     expect(src).toMatch(
       /canPreviewBills = hasLevel\(\s*permissionMap,\s*PERMISSIONS\.BILLRUN_VIEW,\s*LEVELS\.READ,?\s*\)/,
     );
@@ -437,34 +481,74 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
   });
 });
 
-// bm72-spec §5 (code-standards Phase 3 permission map): the footnote is an
-// `invoice_settings : EDIT` write like the rest of the structure. A READ user
-// who posts a changed footnote, or activates a draft carrying one, is refused
-// server-side before any parse or service call (the hidden inputs and buttons
-// are show/hide only).
-describe("invoice-settings authz matrix — a READ user cannot change the footnote (bm72)", () => {
+// A READ-only user's mutation is refused server-side before any parse or
+// service call (the hidden inputs, buttons and dialog triggers are show/hide
+// only). bm72-spec §5: the footnote is an `invoice_settings : EDIT` write like
+// the rest of the structure. bm78-spec §13: the layout upload. bm79: discard.
+describe("invoice-settings authz matrix — a READ user's mutation is FORBIDDEN and runs no service", () => {
   const CHANGED = {
     sections: { payment: true },
     columns: {},
     footnote: ["Calculations are done in Mbps", "A READ user's edit"],
   };
+  const TOKEN = "2026-10-10T01:02:03.123456Z";
 
-  it("save draft carrying a changed footnote is FORBIDDEN and saves nothing", async () => {
-    const result = await saveTemplateDraftAction({
-      structure: CHANGED,
-      expectedDraftToken: null,
-    });
-    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
-    expect(vi.mocked(saveTemplateDraft)).not.toHaveBeenCalled();
-  });
+  function layoutForm(): FormData {
+    const form = new FormData();
+    form.set("familyId", "BTF00000002");
+    form.set("expectedDraft", "none");
+    form.set(
+      "file",
+      new File([new Uint8Array([0x50, 0x4b, 0x05, 0x06])], "layout.zip", {
+        type: "application/zip",
+      }),
+    );
+    return form;
+  }
 
-  it("activating a draft that carries a changed footnote is FORBIDDEN and activates nothing", async () => {
-    const result = await activateTemplateAction({
-      draftId: "BTV00000004",
-      expectedDraftToken: "2026-10-10T01:02:03.123456Z",
-      changeNote: "Reword the footnote",
-    });
-    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
-    expect(vi.mocked(activateTemplate)).not.toHaveBeenCalled();
+  it.each(
+    [
+      {
+        surface: "bm72 — save draft carrying a changed footnote",
+        call: () =>
+          saveTemplateDraftAction({
+            structure: CHANGED,
+            expectedDraftToken: null,
+          }),
+        service: saveTemplateDraft,
+        refused: { ok: false, code: "FORBIDDEN" },
+      },
+      {
+        surface: "bm72 — activating a draft that carries a changed footnote",
+        call: () =>
+          activateTemplateAction({
+            draftId: "BTV00000004",
+            expectedDraftToken: TOKEN,
+            changeNote: "Reword the footnote",
+          }),
+        service: activateTemplate,
+        refused: { ok: false, code: "FORBIDDEN" },
+      },
+      {
+        surface: "bm78 — a layout package upload",
+        call: () => uploadLayoutPackageAction(layoutForm()),
+        service: uploadLayoutPackage,
+        refused: { ok: false, code: "FORBIDDEN", problems: [] },
+      },
+      {
+        surface: "bm79 — discarding a draft",
+        call: () =>
+          discardTemplateDraftAction({
+            familyId: "BTF00000002",
+            draftId: "BTV00000004",
+            expectedDraftToken: TOKEN,
+          }),
+        service: discardTemplateDraft,
+        refused: { ok: false, code: "FORBIDDEN" },
+      },
+    ].map((c) => [c.surface, c] as const),
+  )("%s is refused", async (_surface, { call, service, refused }) => {
+    expect(await call()).toEqual(refused);
+    expect(vi.mocked(service)).not.toHaveBeenCalled();
   });
 });

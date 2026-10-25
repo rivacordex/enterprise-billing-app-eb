@@ -47,6 +47,8 @@ const ROUTE_MANIFEST = [
   "/administration/invoice-settings",
   "/administration/invoice-settings/company-profile",
   "/administration/invoice-settings/invoice-template",
+  // bm77 — a template type's detail page.
+  "/administration/invoice-settings/invoice-template/[typeId]",
 ] as const;
 
 function collectPageFiles(dir: string): string[] {

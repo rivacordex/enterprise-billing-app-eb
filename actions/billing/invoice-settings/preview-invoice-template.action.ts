@@ -83,8 +83,19 @@ export async function previewInvoiceTemplateAction(
     return { ok: false, code: "RATE_LIMITED" };
   }
 
+  // bm79 review fix — drafts are EDIT-only (a READ user never sees one), so a
+  // draft preview is honoured only for an EDIT holder; otherwise the preview
+  // renders the version in use.
+  const draft =
+    input.draft === true &&
+    hasLevel(
+      principal.permissionMap,
+      PERMISSIONS.INVOICE_SETTINGS,
+      LEVELS.EDIT,
+    );
+
   try {
-    const result = await previewInvoiceTemplate(input);
+    const result = await previewInvoiceTemplate({ ...input, draft });
     return { ok: true, ...result };
   } catch (error) {
     if (

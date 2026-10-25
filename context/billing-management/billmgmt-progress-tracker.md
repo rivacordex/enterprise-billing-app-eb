@@ -38,12 +38,170 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`), bm77 next. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
 
 Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+
+**bm77–bm79 Sonar duplication follow-up (2026-10-25):** test-side shared helpers —
+`tests/db/helpers/template-type-db-harness.ts` (fresh migrated + seeded DB lifecycle, blob cleanup,
+upload / settings-draft / type-with-layout / audit-row helpers; used by the upload, pair-activation and
+discard suites), `tests/helpers/list-source-files.ts` (guardrails 68 and 74), `fetch-stub-server.ts` and
+`externalFetchPackage` (both Chromium e2e suites), `in-memory-blob-store.ts` (load-layout-draft and the
+activation e2e), `cleanReport`/`cleanRender` in `layout-package.ts` (gate test), `action-guard.ts`
+(discard action test); the authz matrix's READ-refusal cases are one table. Production: the upload
+action uses the inline guard of its sibling actions instead of a copy of upload-logo's `guardEdit`. No
+behaviour change; the outside-diff `readZip` slicing comment was already fixed. Unit 4848/1 (pre-existing
+`ratecard-demo-seed-boundary`), template integration 95/0, Chromium e2e 27/0.
+  **Review fixes (xhigh review of the follow-up, 13 findings):** the harness's `afterAll` deleted the
+  suite's blobs even when `beforeAll`'s store guard had refused the target (Vitest runs `afterAll` after a
+  failed `beforeAll`) — the blob client is now built, and blobs deleted, only after both guards pass; the
+  harness returns one handle (`h.db`, `h.sql`, `h.upload`, `h.settingsDraft`, `h.createTypeWithLayout`
+  deriving the layout code, `h.auditRows`) and fills the suite's `@/db/client` holder itself; it reuses
+  `tests/e2e/helpers/fresh-database.ts`'s `dropAllSchemas`; no non-null assertion; explicit return types
+  (incl. `principal()`, no longer `never`). New `upload-layout-package.action.test.ts` 9/0 for the
+  refactored guard. The in-memory blob store throws an untyped error for a missing blob unless
+  `missingAs404` (so `load-layout-draft` cannot pass on a wrong path); the guardrail walker also reads
+  `.jsx`/`.mts`/`.cts`; readable `it.each` titles (discard, upload, authz matrix). Unit 4857/1 (pre-existing),
+  template integration 78/0, Chromium e2e 27/0.
+
+**bm77–bm79 code review fixes (2026-10-25):** xhigh review of bm77 → bm79 + the uncommitted bm78
+fix (15 findings); owner decisions on the draft preview and the upload message.
+
+- **Zip bomb (critical):** pass 2 pushed the whole zip to fflate in one call, which inflates a chunk in
+  full before `ondata` (and the sync decoder ignores `terminate()`): a 200 MiB lying entry inflated in
+  one 200 MiB chunk. Now pushed in 1 KiB steps, stopping at the cap (64 MiB bomb: ≤ cap + 2 MiB
+  inflated; mutation-checked). Pass 2 also refuses a local-header name the central directory did not
+  list.
+- **Deadlock:** save-draft took the kind advisory lock, then its INSERT's FK check waited on the type
+  row an upload held while that upload waited for the kind lock (40P01, reproduced). Save-draft now
+  locks the type row first, like every other DRAFT writer (Inv #66 order); deterministic two-connection
+  regression test.
+- **Draft preview (owner: form-driven + EDIT):** the form sends `draft: true` only for the working copy
+  of a draft; the preview action honours it only for `invoice_settings` EDIT; `resolveTemplate`'s
+  `preview-family` gains `draft` (the settings DRAFT and its layout, possibly an uploaded layout
+  DRAFT), so the sample AND the bill-source preview render the draft through one path;
+  `previewDraftLayoutSample` (the duplicated render-input builder and its two extra queries per
+  request) is deleted. READ users and versions opened from history preview the version in use.
+- **Upload message (owner: also toast):** "drafts changed" / "type retired" also raise a Warning toast
+  (survives the empty-state → heading remount; ui-context §10e amended); the dialog closes and drops its
+  file when a re-fetch reveals an open draft, so it never re-opens by itself; a new open starts clean.
+- **Discarded drafts** (RETIRED, never activated) count as drafts: EDIT-only to open, no View link for
+  READ, no file download (404, not a verification failure), and the Generated tab says so.
+- Install validates the settings structure it writes (Data rule 9) — a catalog with no valid footnote
+  is SERVER_ERROR, logged, nothing written. Discard refusals close the dialog and toast (Warning for
+  DRAFT_CONFLICT; the row may vanish on refresh). A refused activation's problems alert clears on a
+  newer server draft. The pre-gate version read no longer takes an autocommit advisory lock. The
+  discard token uses `DRAFT_TOKEN_RE` (spec said `min(1)`).
+- **Skipped:** reusing `resolveGeneratedForFamily` in install/activate — guardrail 57 allows only
+  capture and preview to import a live resolver.
+- Results: unit 4848 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); integration 166/0
+  (16 template suites + journey); Chromium e2e 27/0; admin browser e2e 5/0 after `next build`.
+
+**bm79 notes (2026-10-25):**
+
+- Activate promotes the PAIR: when the settings DRAFT points at a layout DRAFT, step 3 loads it through
+  `loadLayoutDraft` and re-runs `checkLayoutFiles` (both compliance tiers + the fetch check; a failure is
+  `LAYOUT_REJECTED` with its problems, nothing written). Step 8 locks the type, then the kind (the
+  install order), re-checks the token and the layout DRAFT's checksum, then retires the old layout →
+  promotes the layout (`promoteLayoutDraft`, files frozen) → retires the old settings → promotes the
+  settings; one `INVOICE_TEMPLATE_ACTIVATED` (`afterData.familyId` + `layout`, `beforeData.activeLayoutVersionId`).
+  A retired type is `TEMPLATE_TYPE_RETIRED` (early and under the lock). Generated blobs now go under
+  `generated/INVOICE/<type code>/v<n>-<digest12>/`; older rows keep their `blob_ref`.
+- Discard (`discard-template-draft.ts` + action): one transaction, type then kind lock, token check,
+  settings then layout DRAFT → RETIRED (`discardDraft`), one `INVOICE_TEMPLATE_DRAFT_DISCARDED`
+  ("Removal"; filter options 91). UI: `DiscardDraftDialog` (ghost trigger, danger confirm inside the
+  `AlertDialog`), `LayoutProblemsAlert` extracted from the upload dialog, the Activate summary's layout
+  line / "First version of this type.", page data `layoutChange`.
+- **Deviation 1 — `testRender` moved to `services/billing/invoice-template/test-render.ts`** (re-exported
+  by `activate-template.ts`): activation now imports the upload gate, which imported `testRender` from
+  activation — an import cycle. No behaviour change.
+- **Deviation 2 — the Chromium e2e is DB-free** (the bm78 gate e2e precedent): the layout DRAFT the gate
+  never saw comes from repository stand-ins and an in-memory blob store, not an SQL insert; the URL is
+  split by an empty `{{#if}}` block so stage 7, not the lint, refuses it. It also asserts no blob write
+  and no transaction.
+- **Deviation 3 — small UI/test additions:** a discarded (never-activated) row hides "Download .hbs" (it
+  has no files); the Discard dialog re-fetches on every `ok: false` (Next.js rule 4); the bm58 suite's
+  `render` stub throws if called (proves settings-only activation never re-runs compliance); bm78's
+  `cleanRender` moved to `tests/helpers/layout-package.ts` for reuse.
+- **Forced edits:** `activate-template.test.ts` mocks the gate module (its import chain needs the real
+  repositories); the status-literal allow-list gains `[typeId]/page.tsx` — its bm78 `"RETIRED"` gate was
+  already un-listed at HEAD — and Discard reuses that `canUpload` gate; the detail-page fixture gains
+  `layoutChange`.
+
+**bm78 notes (2026-10-25):**
+
+- **Review fix (2026-10-25):** `UploadLayoutDialog` now calls `router.refresh()` on every `ok: false`
+  (Next.js rule 4), keeping each code's message / problem list; when the re-fetch reveals an open layout
+  DRAFT (the Dialog unmounts), the disabled-trigger branch still shows the message (e.g.
+  `uploadDraftChanged`). New `upload-layout-dialog.test.tsx` 6/0. Sonar S5852 (bm77
+  `template-types.ts`): the `_` trims (`/^_+|_+$/g`, `/_+$/` ×2) replaced by linear loops, same output
+  (20,000 random strings; a 50,000-`_` run: ~706 ms → 0.1 ms).
+
+- Gate (`upload-layout-package.ts`): stage 1 reads the zip in memory in two passes (central directory
+  via `unzipSync` filter → nothing inflated; then a streamed `Unzip` + `UnzipInflate` with a running
+  2 MiB cap and a per-entry allow-list re-check); stages 2–3 blocking, 4–7 collecting. Install
+  (`install-layout-package.ts`) writes blobs write-once under `layouts/<code>/v<n>-<digest12>/`, then
+  one transaction (`lockTemplateType` + the generated kind lock, re-checks, layout DRAFT, settings
+  DRAFT re-pointed or created, `INVOICE_TEMPLATE_LAYOUT_UPLOADED`). `loadLayoutDraft` is the only
+  DRAFT loader. `checksum-index.ts` holds the moved helpers (no behaviour change).
+- **Deviation 1 — stage 7 reads both probe renders** (Payment on and off; the bm75–76 review fix),
+  so a clean gate run is two Chromium launches, blocked URLs merged — not the spec's one.
+- **Deviation 2 — `LAYOUT_PACKAGE_REQUIRED_FILES`** is built from `["header", ...INVOICE_SECTION_KEYS]`
+  in `types/billing.ts` (importing `LAYOUT_PART_KEYS` would be a runtime cycle); a gate test pins it
+  to `LAYOUT_PART_KEYS`.
+- **Deviation 3 — a READ user with only a settings DRAFT** (uploaded, not activated) still sees the
+  empty state (drafts stay hidden from READ); EDIT users get the tabs on the draft. Page data gains
+  an explicit `empty` discriminator and `openLayoutDraft`.
+- **Deviation 4 — lockfile:** `npm install` also normalised unrelated lock entries (`@emnapi/*`,
+  `peer` flags); the lock was restored and only the fflate entries added, so the dependency diff is
+  8 lines.
+- Forced edits: the authz matrix's Generated-tab source check (`current ?? data.shown`), the preview
+  action test's repository mock (`findDraft`), bm77's page/read test fixtures.
+- **Finding (open, bm76 lint):** `url(http{{#if company}}{{/if}}://…)` passes the raw-text lint and
+  renders as an external URL. Stage 7 refuses it (`LAYOUT_EXTERNAL_FETCH`, no request leaves —
+  e2e-proven), so it is not exploitable, but the lint is weaker than it reads.
+
+**bm77 notes (2026-10-25):**
+
+- The type comes from the URL everywhere: `getInvoiceTemplatePageData(typeId, versionId, { canEdit })`
+  (`findById`; unknown → `null` → `notFound()`; a type with no settings → `current: null`, the
+  empty state, never a throw), `saveTemplateDraft` / `activateTemplate` take `familyId` (an unknown
+  type, or a draft of another type, is `DRAFT_CONFLICT`). No family `findDefault` call remains in
+  production code. `nextVersionNo` requires `familyId` for layout/generated (per-type `max + 1`);
+  CSV keeps the per-format max. Every settings-DRAFT write sets `last_modified_by` (D128).
+- Create type: `services/billing/invoice-template/template-types.ts` (normalize → validate →
+  case/space-insensitive taken check, retired included → derived code with `_2`… suffix, up to 5
+  attempts on a lost race → row + `INVOICE_TEMPLATE_TYPE_CREATED` in one transaction; no version rows).
+  `listUsable` ships for cm23/bm83. Grant: `app_runtime` SELECT/INSERT/UPDATE + sequence USAGE,
+  DELETE revoked.
+- **Deviation 1 — the page tests are new, not moved.** The spec says today's page tests move to the
+  `[typeId]` test; there were none (only source checks in the authz matrix, which now read the
+  detail page). `invoice-template-types-page.test.tsx` and `invoice-template-type-detail-page.test.tsx`
+  are written from scratch (6 + 6 cases).
+- **Deviation 2 — forced edits outside the spec's list:** the grants guardrail (it pinned SELECT
+  only); the save/activate action unit tests and the structure-form test (exact call shapes, plus
+  new missing/malformed `familyId` cases); the route manifest (`[typeId]`); the status-literal
+  allow-list (guardrail 30: the type status's `RETIRED`); the template journey's action calls (the
+  actions take `unknown`, so `tsc` cannot see a missing `familyId`); the opt-in admin browser e2e
+  (its editor steps go to Standard's detail page; heading text). And one bm76 follow-up: the
+  `grep-gates` money gate bans `parseFloat(` anywhere outside `money.ts`, and the visible-tier
+  reader used it on CSS values — now `Number(…)`.
+- **Deviation 3 — UI details:** there is no shadcn `Table` in this repo, so `TemplateTypeList` reuses
+  `VersionHistoryTable`'s Administration table markup; it takes `locale`/`timezone` props for
+  `formatDatetime`. "Danger `-fg`" is `--color-danger-700` (the ui-context foreground column).
+- **Review fix (2026-10-25):** `CreateTemplateTypeDialog` calls `router.refresh()` on every
+  `ok: false` (Next.js rule 4), keeping the dialog and its error up; new
+  `create-template-type-dialog.test.tsx` 5/0.
+- **Follow-up (SonarQube duplication):** `[typeId]/error.tsx` re-exports the list
+  route's `error.tsx`; both `loading.tsx` files render the shared
+  `InvoiceTemplateLoadingSkeleton` with their own caption; the authz matrix reads the detail page
+  through one `TYPE_DETAIL_PAGE` constant; the three bm77 status-literal allow-list entries are built
+  by one `templateTypeStatus` helper. `next build` green; admin browser e2e 5/0.
+- Not done here (by design): the Upload button (bm78), the "Bound BANs" column (bm82 with cm23),
+  per-type generated blob paths (bm79).
 
 **bm75–76 code review fixes (2026-10-25):** owner decisions: re-port the editor's CURRENT hardening;
 a compliance-only probe.
@@ -69,7 +227,7 @@ a compliance-only probe.
 - **Guardrail 74:** any engine, `launch*`/`connect*`, bracket access, any `.newContext(`/`.newPage(`,
   and `.js`/`.mjs`/`.cjs` files.
 - **bm75 render e2e:** the Standard v1 case now counts the PDF's own pages, plain vs hardened (3 = 3).
-- **Follow-up (2026-10-25, uncommitted):** Sonar S5852 second scan — the re-ported mustache strip
+- **Follow-up (2026-10-25, `2aaec90`):** Sonar S5852 second scan — the re-ported mustache strip
   `/\{\{[\s\S]*?\}\}/g` (in `attributeNames`, `withoutMustaches`) replaced by a linear
   `replaceMustaches` scan with identical output (edge cases + 2,000 random strings; 20k unclosed
   `{{`: 180 ms → 0 ms). Review comment on `INVTPL-BASIC-A4/v1/shell.hbs`: the render e2e now renders
@@ -137,6 +295,9 @@ a compliance-only probe.
 | bm75 | Network-blocked, script-free Chromium rendering (`withHardenedPage`, guardrail 74 draft/final half) | **Built** (2026-10-25, `a2a74d3`) — tsc/ESLint/Prettier clean; `render-invoice.service` 15/0 (4 spec cases + a final-render blocked-fetch case); guardrail `chromium-single-factory` 2/0, mutation-checked (a scratch `chromium.launch()` under `services/` fails it); Chromium e2e 7/0 (`RUN_CHROMIUM_E2E=1`: zero stub-server hits, 4 URLs blocked, script not run, data: allowed, Standard v1 1 page as before, no blocked URL); unchanged: golden, `post-run.service`, `draft-invoice-route` (87/0 with the above) and the template journey 19/19 on the disposable DB |
 | bm76 | Layout rules module `compliance.ts` (static + visible tiers) and the `INVTPL-BASIC-A4` reference package | **Built** (2026-10-25, `d7bbca4`) — tsc/ESLint/Prettier clean; lint guardrail 55/0 (22 `.hbs` incl. BASIC, hardening + typed-supplier cases); static compliance guardrail 16/0 (both packages clean, BASIC checksums match, 5 negative fixtures, import scan); visible e2e 7/0 (`RUN_CHROMIUM_E2E=1`: both packages clean, all 5 hiding tricks pass static and fail visible); template + golden + seed-checksum + guardrail unit suites 564 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload integration 17/0 on the disposable DB. **PR note: "editor contract refresh needed"** (E7/E8) |
 | bm75–76 code review fixes | xhigh review of `a2a74d3`+`d7bbca4` (15 findings) + Sonar S5852 (3 regexes) | **Built** (2026-10-25, `1abf17c`) — tsc/ESLint/Prettier clean; lint guardrail 62/0; static compliance 24/0; visible e2e 14/0 and render e2e 7/0 (`RUN_CHROMIUM_E2E=1`); guardrail 74 2/0, mutation-checked against 5 bypasses (all passed the old pattern); billing + guardrail unit suites 1134 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload + template journey 36/0 on the disposable DB |
+| bm77 | Invoice template type list, create type, per-type detail page (`[typeId]`), `app_runtime` grant | **Built** (2026-10-25, `e251953`) — tsc/ESLint/Prettier clean; unit 4735 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) — incl. new template-types 9/0, list page 6/0, detail page 6/0, read service 13/0, authz matrix + nav guard + audit filters 39/0; integration on the disposable DB: 22 template/grant/invoice suites 250+/0 incl. new create-type 10/0, save-draft + activate 31/0, template journey 19/0; admin browser e2e 5/0 after a fresh `next build` (`RUN_INVOICE_SETTINGS_E2E=1`; the first run had one company-profile `waitFor` timeout, passed on rerun) |
+| bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`, draft-layout preview) | **Built** (2026-10-25, `6366487` fflate, `1f1c895`) — tsc/ESLint/Prettier clean; unit 4797 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new gate 35/0, load-layout-draft 14/0, single-layout-writer 5/0 (mutation-checked), authz matrix 32/0; integration on the disposable DB 83/0 incl. new upload 9/0, preview 2/0, capture +1 DRAFT-only case; Chromium e2e 26/0 incl. new upload gate 3/0 |
+| bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4829 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new discard action 15/0, Discard + discarded-row component cases, pair form cases 5/0, authz matrix + discard READ refusal; integration on the disposable DB 163/0 across 16 template suites incl. new pair activation 8/0 (guardrail 71 activation half, interleaved upload, compliance re-run, retired type, frozen files, Standard untouched), new discard 6/0, bm58 activate suite on the `STANDARD/` path, template journey; Chromium e2e 27/0 incl. new activation re-run 1/0; admin browser e2e 5/0 after a fresh `next build` |
 
 ## Delivered units
 
@@ -423,6 +584,11 @@ logs, test runs and the Inv #51–#58 code ↔ test audit are in this file's git
 - **After pulling grant-file changes:** re-run `db:bootstrap-billrun-roles`.
 - **DB verification:** run DB-gated suites + `db:seed-sample` only against a disposable/CI
   Postgres — never the shared dev DB (see test-safety gotchas).
+- **Deferred from the bm77–bm79 review (owner, 2026-10-25):** (a) one shared server-action guard
+  (`requirePermission` + `isRedirectError` → FORBIDDEN/SERVER_ERROR), repeated in ~84 action files across
+  every domain — its own cross-domain unit; (b) move the older template DB suites (bm58 activation,
+  preview, capture, upload-logo) and `load.test.ts`'s blob mock onto
+  `tests/db/helpers/template-type-db-harness.ts` / `tests/helpers/in-memory-blob-store.ts`.
 - **Recorded cleanups (not scheduled):** share `buildInvoiceHtml`'s orchestration and the route
   auth preamble; the `lib/csv.ts` wire-format overlap. Owner-review items live in
   `billmgmt-design-review.md`.

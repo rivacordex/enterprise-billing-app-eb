@@ -154,6 +154,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         {
           structure: structure("bm65 activation footnote"),
           expectedDraftToken: null,
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -163,6 +164,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: saved.versionId,
           expectedDraftToken: saved.draftToken,
           changeNote: note,
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -431,6 +433,65 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         ref_bill_template_family_id: "BTF00000088",
         ref_bill_template_version_id: null,
       });
+    });
+
+    // bm78-spec §13 (guardrail 70) — an uploaded, not yet activated type: its
+    // only versions are a layout DRAFT and the settings DRAFT pointing at it.
+    // A BAN bound to that settings DRAFT (by SQL) is stamped with the type and
+    // a NULL version at capture — never a DRAFT id.
+    it("6. a type whose only versions are DRAFTs stamps a NULL version, never a DRAFT id (bm78)", async () => {
+      await sql`
+        INSERT INTO billing.bill_template_family
+          (bill_template_family_id, code, name, layout_code, kind)
+        VALUES ('BTF00000077', 'BM78_DRAFTS', 'Drafts only', 'INVTPL-BM78_DRAFTS', 'generated')`;
+      await sql`
+        INSERT INTO billing.bill_template_version
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
+           ref_bill_template_family_id, layout_code, page_setup, blob_ref, checksum,
+           checksum_algorithm, created_by, last_modified_by)
+        SELECT 'BTV00000076', 'INVOICE', 'layout', 1, 'DRAFT', false,
+               'BTF00000077', 'INVTPL-BM78_DRAFTS', page_setup,
+               'invoice-templates/layouts/INVTPL-BM78_DRAFTS/v1-000000000000/',
+               ${"7".repeat(64)}, 'sha256', ${ACTOR}, ${ACTOR}
+        FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000001'`;
+      await sql`
+        INSERT INTO billing.bill_template_version
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
+           ref_layout_version_id, ref_bill_template_family_id, structure, created_by,
+           last_modified_by)
+        SELECT 'BTV00000077', 'INVOICE', 'generated', 1, 'DRAFT', false,
+               'BTV00000076', 'BTF00000077', structure, ${ACTOR}, ${ACTOR}
+        FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
+      const draftIds = ["BTV00000076", "BTV00000077"];
+
+      const cycleId = await newCycle("BM78VERIFY Drafts Only Cycle");
+      const ban = await newBillingAccount(cycleId);
+      await sql`
+        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000077'
+        WHERE billing_account_id = ${ban}`;
+      const runId = await newScheduledRun(cycleId);
+
+      const result = await triggerRun(runId, ACTOR, "2026-07-01");
+      expect(result.ok).toBe(true);
+      const row = (await stamps(runId)).get(ban);
+      expect(row).toMatchObject({
+        status: "PENDING",
+        ref_bill_template_family_id: "BTF00000077",
+        ref_bill_template_version_id: null,
+      });
+      expect(row?.template_captured_at).not.toBeNull();
+
+      // No stamp anywhere in the run, nor the audit, names a DRAFT.
+      const [drafted] = await sql<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM billing.bill_run_account
+        WHERE ref_bill_template_version_id = ANY(${draftIds})`;
+      expect(drafted!.n).toBe(0);
+      const [audit] = await sql<{ after_data: Record<string, unknown> }[]>`
+        SELECT after_data FROM core.audit_log
+        WHERE event_type = 'BILL_RUN_TRIGGERED' AND target_id = ${runId}`;
+      expect(audit?.after_data.templateStamps).toEqual([
+        { banId: ban, familyId: "BTF00000077", versionId: null },
+      ]);
     });
 
     it("5. a BAN bound to a non-generated version is captured with a NULL family and version, never silently Standard (§24e)", async () => {

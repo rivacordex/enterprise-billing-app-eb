@@ -330,12 +330,14 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       const saved = await svc.saveTemplateDraftAction({
         structure: structure(footnoteLine),
         expectedDraftToken: null,
+        familyId: "BTF00000001",
       });
       if (!saved.ok) throw new Error(`save draft: ${saved.code}`);
       const activated = await svc.activateTemplateAction({
         draftId: saved.versionId,
         expectedDraftToken: saved.draftToken,
         changeNote: note,
+        familyId: "BTF00000001",
       });
       if (!activated.ok) throw new Error(`activate: ${activated.code}`);
       svc.clearLoadedTemplateMemo();
@@ -1003,12 +1005,14 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       const saved = await svc.saveTemplateDraftAction({
         structure: editedStructure(line2),
         expectedDraftToken: null,
+        familyId: "BTF00000001",
       });
       if (!saved.ok) throw new Error(`save draft: ${saved.code}`);
       const activated = await svc.activateTemplateAction({
         draftId: saved.versionId,
         expectedDraftToken: saved.draftToken,
         changeNote: note,
+        familyId: "BTF00000001",
       });
       if (!activated.ok) throw new Error(`activate: ${activated.code}`);
       svc.clearLoadedTemplateMemo();

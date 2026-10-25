@@ -67,24 +67,26 @@ export async function saveTemplateDraft(
       code: hidden ? "MANDATORY_SECTION_HIDDEN" : "VALIDATION_ERROR",
     };
   }
-  const { structure, expectedDraftToken } = parsed.data;
+  const { structure, expectedDraftToken, familyId } = parsed.data;
 
   try {
     return await db.transaction(
       async (tx): Promise<SaveTemplateDraftResult> => {
-        // Serialise draft writers first (see `lockKind`).
+        // bm77 — the type comes from the `[typeId]` page, never the default;
+        // every generated read is scoped to it (review fix §24c). An unknown
+        // type is a stale client. Review fix (Inv #66 lock order) — like every
+        // writer of a type's DRAFTs (install, activation, discard), lock the type
+        // row FIRST, then the kind: taking the kind lock first and then
+        // inserting (whose FK check needs the type row) deadlocked against an
+        // upload holding the type row and waiting for the kind lock.
+        const family = await billTemplateFamilyRepository.lockTemplateType(
+          tx,
+          familyId,
+          "update",
+        );
+        if (!family) return { ok: false, code: "DRAFT_CONFLICT" };
+        // Serialise draft writers (see `lockKind`).
         await billTemplateVersionRepository.lockKind(tx, { kind: "generated" });
-        // Review fix (known-issues §24c) — the editor edits the Standard
-        // (default) family (D45); every generated read is scoped to it.
-        const family = await billTemplateFamilyRepository.findDefault(tx);
-        if (!family) {
-          throw new InvoiceRenderError(
-            "TEMPLATE_VERSION_NOT_FOUND",
-            "no default template family to save a draft into",
-            { reason: "FAMILY_NOT_FOUND" },
-          );
-        }
-        const familyId = family.billTemplateFamilyId;
         const draft = await billTemplateVersionRepository.findDraft(tx, {
           kind: "generated",
           familyId,
@@ -99,6 +101,7 @@ export async function saveTemplateDraft(
               id: draft.billTemplateVersionId,
               structure,
               expectedToken: expectedDraftToken,
+              actorId,
             });
           if (token === null) return { ok: false, code: "DRAFT_CONFLICT" };
 
@@ -149,9 +152,10 @@ export async function saveTemplateDraft(
           );
         }
 
+        // bm77 — numbered within the type (bm74 `btv_version_uq`).
         const nextVersionNo = await billTemplateVersionRepository.nextVersionNo(
           tx,
-          { kind: "generated" },
+          { kind: "generated", familyId },
         );
         const created = await billTemplateVersionRepository.insertDraft(tx, {
           versionNo: nextVersionNo,

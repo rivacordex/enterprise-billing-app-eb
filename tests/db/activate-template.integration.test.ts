@@ -54,6 +54,13 @@ import { saveTemplateDraft } from "@/services/billing/invoice-template/save-temp
 import type { Database } from "@/db/client";
 
 const ACTOR = "bm58-actor";
+// bm79 — a settings-only activation never re-runs the compliance check, so
+// its renderer must never be called.
+const NO_RENDER = {
+  render: async (): Promise<never> => {
+    throw new Error("a settings-only activation must not render");
+  },
+};
 const NOTE = "Reword footnote line 2 for the pilot MNOs";
 // bm72 — a footnote edit: line 2 of the seeded v1 footnote reworded.
 const FOOTNOTE_EDIT = [
@@ -122,7 +129,11 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         kind: "generated",
       });
       const saved = await saveTemplateDraft(
-        { structure: s, expectedDraftToken: existing?.token ?? null },
+        {
+          structure: s,
+          expectedDraftToken: existing?.token ?? null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       if (!saved.ok) throw new Error(`save draft failed: ${saved.code}`);
@@ -192,6 +203,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
               .catch(() => undefined);
           }
         }
+        // bm79 — activations now write under the type code.
+        for await (const b of templates().listBlobsFlat({
+          prefix: "generated/INVOICE/STANDARD/",
+        })) {
+          await templates()
+            .deleteBlob(b.name)
+            .catch(() => undefined);
+        }
         for await (const b of templates().listBlobsFlat({
           prefix: "layouts/INVTPL-STD-A4/v2-",
         })) {
@@ -214,13 +233,17 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: NOTE,
+          familyId: "BTF00000001",
         },
         ACTOR,
+        NO_RENDER,
       );
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.versionNo).toBe(2);
       expect(result.retiredVersionId).toBeNull();
+      // bm79 — a settings-only activation promotes no layout.
+      expect(result.layout).toBeNull();
 
       const [row] = await sql`
         SELECT * FROM billing.bill_template_version
@@ -233,7 +256,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         checksum_algorithm: "sha256",
       });
       expect(row?.blob_ref).toMatch(
-        /^invoice-templates\/generated\/INVOICE\/v2-[0-9a-f]{12}\/$/,
+        /^invoice-templates\/generated\/INVOICE\/STANDARD\/v2-[0-9a-f]{12}\/$/,
       );
       expect(row?.activated_datetime).not.toBeNull();
 
@@ -260,8 +283,11 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(audit[0]?.before_data).toEqual({
         activeVersionId: "BTV00000002",
         activeVersionNo: 1,
+        activeLayoutVersionId: "BTV00000001",
       });
       expect(audit[0]?.after_data).toMatchObject({
+        familyId: "BTF00000001",
+        layout: null,
         activatedVersionId: result.versionId,
         versionNo: 2,
         retiredVersionId: null,
@@ -334,8 +360,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: "v3",
+          familyId: "BTF00000001",
         },
         ACTOR,
+        NO_RENDER,
       );
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -363,6 +391,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(audit[1]?.before_data).toEqual({
         activeVersionId: previous.bill_template_version_id,
         activeVersionNo: 2,
+        activeLayoutVersionId: "BTV00000001",
       });
       expect(audit[1]?.after_data).toMatchObject({
         retiredVersionId: previous.bill_template_version_id,
@@ -386,8 +415,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: "boom",
+            familyId: "BTF00000001",
           },
           ACTOR,
+          NO_RENDER,
         ),
       ).rejects.toThrow("injected");
 
@@ -399,7 +430,9 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(stillDraft?.status).toBe("DRAFT");
       expect(await activatedAudit()).toHaveLength(auditBefore);
       // The four files from step 7 remain as orphans.
-      const orphans = await blobNames(`generated/INVOICE/v${draft.versionNo}-`);
+      const orphans = await blobNames(
+        `generated/INVOICE/STANDARD/v${draft.versionNo}-`,
+      );
       expect(orphans.map((n) => n.split("/").pop()).sort()).toEqual([
         "checksums.json",
         "footer.hbs",
@@ -413,8 +446,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: "retry",
+          familyId: "BTF00000001",
         },
         ACTOR,
+        NO_RENDER,
       );
       expect(retry.ok).toBe(true);
       if (!retry.ok) return;
@@ -422,7 +457,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         activeBefore.bill_template_version_id,
       );
       expect(
-        await blobNames(`generated/INVOICE/v${draft.versionNo}-`),
+        await blobNames(`generated/INVOICE/STANDARD/v${draft.versionNo}-`),
       ).toHaveLength(4);
       expect(await activatedAudit()).toHaveLength(auditBefore + 1);
     }, 180_000);
@@ -441,16 +476,58 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: "stale",
+          familyId: "BTF00000001",
         },
         ACTOR,
+        NO_RENDER,
       );
       expect(result).toEqual({ ok: false, code: "DRAFT_CONFLICT" });
       expect(await nonDefaultActive()).toEqual(activeBefore);
       expect(await activatedAudit()).toHaveLength(auditBefore);
       expect(
-        await blobNames(`generated/INVOICE/v${draft.versionNo}-`),
+        await blobNames(`generated/INVOICE/STANDARD/v${draft.versionNo}-`),
       ).toHaveLength(0);
     }, 120_000);
+
+    it.each([
+      ["another existing type", "BTF00000078"],
+      ["an unknown type", "BTF00009999"],
+    ])(
+      "bm77 — activating with a familyId of %s (not the draft's) is DRAFT_CONFLICT and changes nothing",
+      async (_case, familyId) => {
+        await sql`
+          INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, layout_code, kind)
+          VALUES ('BTF00000078', 'BM77_OTHER', 'BM77 Other', 'INVTPL-BM77_OTHER', 'generated')
+          ON CONFLICT DO NOTHING`;
+        const draft = await ensureDraft(
+          structure({ footnote: ["Wrong type footnote"] }),
+        );
+        const auditBefore = (await activatedAudit()).length;
+        const activeBefore = await nonDefaultActive();
+
+        const result = await activateTemplate(
+          {
+            draftId: draft.id,
+            expectedDraftToken: draft.token,
+            changeNote: "wrong type",
+            familyId,
+          },
+          ACTOR,
+          NO_RENDER,
+        );
+        expect(result).toEqual({ ok: false, code: "DRAFT_CONFLICT" });
+        expect(await nonDefaultActive()).toEqual(activeBefore);
+        expect(await activatedAudit()).toHaveLength(auditBefore);
+        const [still] = await sql<{ status: string }[]>`
+          SELECT status FROM billing.bill_template_version
+          WHERE bill_template_version_id = ${draft.id}`;
+        expect(still?.status).toBe("DRAFT");
+        expect(
+          await blobNames(`generated/INVOICE/STANDARD/v${draft.versionNo}-`),
+        ).toHaveLength(0);
+      },
+      120_000,
+    );
 
     it.each(["", "   \n\t"])(
       "an empty change note (%j) is CHANGE_NOTE_REQUIRED and writes nothing",
@@ -462,13 +539,15 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: note,
+            familyId: "BTF00000001",
           },
           ACTOR,
+          NO_RENDER,
         );
         expect(result).toEqual({ ok: false, code: "CHANGE_NOTE_REQUIRED" });
         expect(await activatedAudit()).toHaveLength(auditBefore);
         expect(
-          await blobNames(`generated/INVOICE/v${draft.versionNo}-`),
+          await blobNames(`generated/INVOICE/STANDARD/v${draft.versionNo}-`),
         ).toHaveLength(0);
       },
     );
@@ -494,13 +573,15 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: fresh.token,
             changeNote: "x",
+            familyId: "BTF00000001",
           },
           ACTOR,
+          NO_RENDER,
         ),
       ).toEqual({ ok: false, code: "VALIDATION_ERROR" });
       expect(await activatedAudit()).toHaveLength(auditBefore);
       expect(
-        await blobNames(`generated/INVOICE/v${draft.versionNo}-`),
+        await blobNames(`generated/INVOICE/STANDARD/v${draft.versionNo}-`),
       ).toHaveLength(0);
 
       // Restore a valid structure for the tests that follow.
@@ -514,8 +595,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: "BTV00000002",
           expectedDraftToken: draft.token,
           changeNote: "x",
+          familyId: "BTF00000001",
         },
         ACTOR,
+        NO_RENDER,
       );
       expect(result).toEqual({ ok: false, code: "DRAFT_CONFLICT" });
     });
@@ -537,8 +620,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: "t",
+            familyId: "BTF00000001",
           },
           ACTOR,
+          NO_RENDER,
         );
         expect(result).toEqual({
           ok: false,
@@ -549,7 +634,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       }
       expect(await activatedAudit()).toHaveLength(auditBefore);
       expect(
-        await blobNames(`generated/INVOICE/v${draft.versionNo}-`),
+        await blobNames(`generated/INVOICE/STANDARD/v${draft.versionNo}-`),
       ).toHaveLength(0);
     }, 120_000);
 
@@ -596,6 +681,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       await sql`ALTER TABLE billing.bill_template_version ENABLE TRIGGER USER`;
       const nextNo = await billTemplateVersionRepository.nextVersionNo(db, {
         kind: "generated",
+        familyId: "BTF00000001",
       });
       await sql`
         INSERT INTO billing.bill_template_version
@@ -612,12 +698,16 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.billTemplateVersionId,
           expectedDraftToken: draft.token,
           changeNote: "bad",
+          familyId: "BTF00000001",
         },
         ACTOR,
+        NO_RENDER,
       );
       expect(result).toEqual({ ok: false, code: "TEMPLATE_COMPILE_FAILED" });
       expect(await activatedAudit()).toHaveLength(auditBefore);
-      expect(await blobNames(`generated/INVOICE/v${nextNo}-`)).toHaveLength(0);
+      expect(
+        await blobNames(`generated/INVOICE/STANDARD/v${nextNo}-`),
+      ).toHaveLength(0);
 
       // Remove the fixture draft so later tests start clean.
       await sql`ALTER TABLE billing.bill_template_version DISABLE TRIGGER USER`;
@@ -641,12 +731,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: "first",
+            familyId: "BTF00000001",
           },
           ACTOR,
+          NO_RENDER,
         ),
       ).rejects.toThrow("injected");
       const orphan = (
-        await blobNames(`generated/INVOICE/v${draft.versionNo}-`)
+        await blobNames(`generated/INVOICE/STANDARD/v${draft.versionNo}-`)
       ).find((n) => n.endsWith("/invoice.hbs"))!;
       await templates()
         .getBlockBlobClient(orphan)
@@ -657,8 +749,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: "retry",
+          familyId: "BTF00000001",
         },
         ACTOR,
+        NO_RENDER,
       );
       expect(result).toEqual({ ok: false, code: "ACTIVATION_BLOB_CONFLICT" });
       expect(await nonDefaultActive()).toEqual(activeBefore);
@@ -682,8 +776,10 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: note,
+            familyId: "BTF00000001",
           },
           ACTOR,
+          NO_RENDER,
         );
       const results = await Promise.all([run("a"), run("b")]);
       expect(results.filter((r) => r.ok)).toHaveLength(1);

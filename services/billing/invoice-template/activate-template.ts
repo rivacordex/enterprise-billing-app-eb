@@ -2,27 +2,31 @@ import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
+import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import { blobStore } from "@/services/billing/blob-store";
-import {
-  compileInvoiceTemplate,
-  executeInvoiceTemplate,
-} from "@/services/billing/invoice-template/compile";
 import {
   generate,
   layoutFilesFromVerified,
 } from "@/services/billing/invoice-template/generate";
 import {
   loadLayout,
-  PROBE_RENDER_INPUT,
-  probeGeneratedTemplate,
+  loadLayoutDraft,
 } from "@/services/billing/invoice-template/load";
+import {
+  buildChecksumIndex,
+  sha256,
+} from "@/services/billing/invoice-template/checksum-index";
+import type { renderAndReadSections } from "@/services/billing/invoice-template/compliance-render";
 import { parseSampleData } from "@/services/billing/invoice-template/sample-data";
+import { testRender } from "@/services/billing/invoice-template/test-render";
+import { checkLayoutFiles } from "@/services/billing/invoice-template/upload-layout-package";
 import {
   InvoiceRenderError,
   type InvoiceErrorCode,
-  type InvoiceRenderInput,
+  type LayoutProblem,
   type TemplateActivationErrorCode,
   type TemplateDraftErrorCode,
+  type TemplatePairActivationErrorCode,
 } from "@/types/billing";
 import {
   activateTemplateInputSchema,
@@ -34,14 +38,23 @@ import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-tem
 // the saved working DRAFT. All-or-nothing, in this order, and the previous
 // ACTIVE version is untouched by every failure:
 //
-//   2. read the draft (no lock), token + status, re-parse its structure
-//   3. load the layout (checksum-verified)
+//   2. read the type and the draft (no lock), token + status, re-parse its
+//      structure; a retired type is TEMPLATE_TYPE_RETIRED (bm79, Inv #67)
+//   3. load the layout (checksum-verified). bm79: when the settings DRAFT
+//      points at a layout DRAFT of its type (the PAIR an upload created), it
+//      loads through `loadLayoutDraft` and the compliance check is re-run
+//      (`checkLayoutFiles`, Inv #61/#63); a failure is LAYOUT_REJECTED
 //   4. generate invoice.hbs / footer.hbs / structure.json
 //   5. test-render both in a fresh compile against the layout's sample bill
-//   6. build checksums.json; the directory is content-addressed
+//   6. build checksums.json; the directory is content-addressed under the
+//      type code, `generated/INVOICE/<type code>/v<n>-<digest12>/` (bm79; rows
+//      activated before keep their stored `blob_ref`)
 //   7. write the four files write-once (blob store)
-//   8. ONE transaction: lock, re-read the draft FOR UPDATE, retire the previous
-//      non-default ACTIVE, promote the draft, audit
+//   8. ONE transaction: lock the type, then the kind (the install order,
+//      Inv #66), re-read the draft FOR UPDATE (its token, Inv #62); for a
+//      pair, re-read the layout DRAFT, retire the previous non-default ACTIVE
+//      layout and promote the layout DRAFT (files frozen); then retire the
+//      previous non-default ACTIVE settings, promote the draft, audit
 //
 // Steps 3-7 run outside any database transaction. A failure in step 8 rolls it
 // back and leaves the step-7 blobs as harmless orphans: they are write-once and
@@ -70,6 +83,7 @@ export type ActivateTemplateErrorCode =
   | TemplateActivationErrorCode
   | TemplateDraftErrorCode
   | ReturnedRenderCode
+  | TemplatePairActivationErrorCode
   | "VALIDATION_ERROR";
 
 export type ActivateTemplateResult =
@@ -80,8 +94,19 @@ export type ActivateTemplateResult =
       retiredVersionId: string | null;
       blobRef: string;
       checksum: string;
+      // bm79 — the layout DRAFT promoted with the settings; `null` for a
+      // settings-only activation.
+      layout: {
+        versionId: string;
+        versionNo: number;
+        retiredVersionId: string | null;
+      } | null;
     }
-  | { ok: false; code: ActivateTemplateErrorCode };
+  | { ok: false; code: Exclude<ActivateTemplateErrorCode, "LAYOUT_REJECTED"> }
+  | { ok: false; code: "LAYOUT_REJECTED"; problems: LayoutProblem[] };
+
+// The test render lives in its own module since bm79; re-exported for callers.
+export { testRender };
 
 const CONTAINER = "invoice-templates" as const;
 
@@ -95,96 +120,16 @@ const CONTENT_TYPES = {
 // Thrown inside the step-8 transaction to roll it back, then mapped to a result
 // outside (a returned value would COMMIT the retirement).
 class ActivationRollback extends Error {
-  constructor(readonly code: "DRAFT_CONFLICT") {
+  constructor(readonly code: "DRAFT_CONFLICT" | "TEMPLATE_TYPE_RETIRED") {
     super(code);
-  }
-}
-
-// The blob store's one checksum function, not a second implementation.
-function sha256(bytes: Buffer): string {
-  return blobStore.digest(bytes, "sha256");
-}
-
-const byCodePoint = (a: string, b: string): number =>
-  a < b ? -1 : a > b ? 1 : 0;
-
-// bm50 D3 canonical form: sorted keys, 2-space indent, LF, trailing newline.
-function buildChecksumIndex(files: ReadonlyMap<string, Buffer>): Buffer {
-  const index = { algorithm: "sha256", files: {} as Record<string, string> };
-  for (const [name, bytes] of [...files].sort(([a], [b]) =>
-    byCodePoint(a, b),
-  )) {
-    index.files[name] = sha256(bytes);
-  }
-  return Buffer.from(`${JSON.stringify(index, null, 2)}\n`, "utf-8");
-}
-
-function testRenderFailed(message: string): InvoiceRenderError {
-  return new InvoiceRenderError("TEMPLATE_COMPILE_FAILED", message, {
-    stage: "test-render",
-  });
-}
-
-// The three shapes every base input is rendered in: as a draft, as issued, and
-// issued with no company or payment profile (the G15 path).
-function variantsOf(base: InvoiceRenderInput): InvoiceRenderInput[] {
-  const issued: InvoiceRenderInput = {
-    ...base,
-    isDraft: false,
-    invoice: { ...base.invoice, isDraft: false },
-  };
-  return [
-    { ...base, isDraft: true, invoice: { ...base.invoice, isDraft: true } },
-    issued,
-    { ...issued, company: null, payment: null },
-  ];
-}
-
-// Step 5: compile both outputs fresh (never the memo), run the load-time probe
-// itself (`probeGeneratedTemplate`, the exact gate `loadGenerated` runs — both
-// gates must agree: a template that passed activation but failed the load
-// probe would already be ACTIVE, and the previous version RETIRED, while every
-// render of it parked), then execute `variantsOf` both the typed
-// `PROBE_RENDER_INPUT` and the layout's verified sample bill. Handlebars
-// compiles lazily, so executing is what surfaces an unknown helper or a
-// strict-mode missing path.
-export function testRender(
-  invoiceHbs: string,
-  footerHbs: string,
-  sample: InvoiceRenderInput,
-): void {
-  const invoice = compileInvoiceTemplate(invoiceHbs);
-  const footer = compileInvoiceTemplate(footerHbs);
-
-  probeGeneratedTemplate(invoice, footer);
-  const variants = [...variantsOf(PROBE_RENDER_INPUT), ...variantsOf(sample)];
-
-  for (const input of variants) {
-    const html = executeInvoiceTemplate(invoice, input);
-    if (html.trim() === "")
-      throw testRenderFailed("invoice.hbs rendered empty");
-    if (html.includes("[[") || html.includes("]]")) {
-      throw testRenderFailed(
-        "invoice.hbs rendered an unresolved [[ ]] directive",
-      );
-    }
-    const footerHtml = executeInvoiceTemplate(footer, input);
-    if (footerHtml.trim() === "")
-      throw testRenderFailed("footer.hbs rendered empty");
-    if (
-      !footerHtml.includes("pageNumber") ||
-      !footerHtml.includes("totalPages")
-    ) {
-      throw testRenderFailed(
-        "footer.hbs must carry the pageNumber and totalPages spans",
-      );
-    }
   }
 }
 
 export async function activateTemplate(
   rawInput: ActivateTemplateInput,
   actorId: string,
+  // bm79 — the compliance re-run's renderer (the DB-gated suites stub it).
+  deps: { render?: typeof renderAndReadSections } = {},
 ): Promise<ActivateTemplateResult> {
   // Step 1 (defense in depth; the action parsed already).
   const parsed = activateTemplateInputSchema.safeParse(rawInput);
@@ -197,11 +142,15 @@ export async function activateTemplate(
       code: noteMissing ? "CHANGE_NOTE_REQUIRED" : "VALIDATION_ERROR",
     };
   }
-  const { draftId, expectedDraftToken, changeNote } = parsed.data;
+  const { draftId, expectedDraftToken, changeNote, familyId } = parsed.data;
 
-  // Step 2: the draft, as the form last saw it — the Standard (default)
-  // family's working draft (D45; review fix §24c).
-  const family = await billTemplateFamilyRepository.findDefault(db);
+  // Step 2: the draft, as the form last saw it — the working draft of the
+  // type named by the `[typeId]` page (bm77; review fix §24c).
+  const family = await billTemplateFamilyRepository.findById(db, familyId);
+  // bm79 (Inv #67) — the early answer; step 8 re-checks it under the lock.
+  if (family && family.retiredDatetime !== null) {
+    return { ok: false, code: "TEMPLATE_TYPE_RETIRED" };
+  }
   const draft = family
     ? await billTemplateVersionRepository.findDraft(db, {
         kind: "generated",
@@ -209,6 +158,7 @@ export async function activateTemplate(
       })
     : null;
   if (
+    !family ||
     !draft ||
     draft.billTemplateVersionId !== draftId ||
     draft.token !== expectedDraftToken
@@ -235,14 +185,27 @@ export async function activateTemplate(
   let files: Map<string, Buffer>;
   let dir: string;
   let indexDigest: string;
+  let pairLayout: BillTemplateVersion | null;
   try {
-    // Step 3: the layout, checksum-verified.
+    // Step 3: the layout, checksum-verified. bm79: a layout DRAFT is checked
+    // again — `compliance.ts` may have gained a rule since the upload, and a
+    // row could reach DRAFT by an SQL bypass. `btv_pair_same_type_fk`
+    // guarantees it is this type's own layout.
     const layoutRow = await billTemplateVersionRepository.findById(
       db,
       draft.refLayoutVersionId,
     );
     if (!layoutRow) return { ok: false, code: "TEMPLATE_VERSION_NOT_FOUND" };
-    const layoutFiles = await loadLayout(layoutRow);
+    pairLayout = layoutRow.status === "DRAFT" ? layoutRow : null;
+    const layoutFiles = pairLayout
+      ? await loadLayoutDraft(pairLayout)
+      : await loadLayout(layoutRow);
+    if (pairLayout) {
+      const problems = await checkLayoutFiles(layoutFiles, deps.render);
+      if (problems.length > 0) {
+        return { ok: false, code: "LAYOUT_REJECTED", problems };
+      }
+    }
 
     // Step 4: generate.
     const generated = generate(
@@ -257,7 +220,8 @@ export async function activateTemplate(
       parseSampleData(layoutFiles),
     );
 
-    // Step 6: checksums and the content-addressed directory.
+    // Step 6: checksums and the content-addressed directory. bm79: under the
+    // immutable type code (Inv #65), so two types' v1 never share a folder.
     files = new Map<string, Buffer>([
       ["invoice.hbs", Buffer.from(generated.invoiceHbs, "utf-8")],
       ["footer.hbs", Buffer.from(generated.footerHbs, "utf-8")],
@@ -266,7 +230,7 @@ export async function activateTemplate(
     const indexBytes = buildChecksumIndex(files);
     files.set("checksums.json", indexBytes);
     indexDigest = sha256(indexBytes);
-    dir = `generated/INVOICE/v${draft.versionNo}-${indexDigest.slice(0, 12)}`;
+    dir = `generated/INVOICE/${family.code}/v${draft.versionNo}-${indexDigest.slice(0, 12)}`;
   } catch (error) {
     if (
       error instanceof InvoiceRenderError &&
@@ -297,33 +261,90 @@ export async function activateTemplate(
   }
 
   // Step 8: one transaction. Retire BEFORE promote
-  // (`btv_one_active_family_uq`, bm64; per (type, kind) since bm74).
+  // (`btv_one_active_family_uq`, bm64; per (type, kind) since bm74), the
+  // layout before the settings.
   const blobRef = `${CONTAINER}/${dir}/`;
   try {
     return await db.transaction(async (tx): Promise<ActivateTemplateResult> => {
+      // bm79 (Inv #66) — the type row first, then the kind: the install order,
+      // so an upload and an activation of one type are fully serialised.
+      const type = await billTemplateFamilyRepository.lockTemplateType(
+        tx,
+        familyId,
+        "update",
+      );
+      if (!type || type.retiredDatetime !== null) {
+        throw new ActivationRollback("TEMPLATE_TYPE_RETIRED");
+      }
       await billTemplateVersionRepository.lockKind(tx, { kind: "generated" });
 
       const locked = await billTemplateVersionRepository.findDraftForUpdate(
         tx,
         draftId,
       );
-      if (!locked || locked.token !== expectedDraftToken) {
+      if (
+        !locked ||
+        locked.token !== expectedDraftToken ||
+        // bm77 — the draft must belong to the type the page named.
+        locked.refBillTemplateFamilyId !== familyId
+      ) {
         throw new ActivationRollback("DRAFT_CONFLICT");
+      }
+
+      // The settings version this activation replaces (the audit's
+      // before-image, with the layout it used).
+      const previous =
+        (await billTemplateVersionRepository.findActive(tx, {
+          kind: "generated",
+          familyId,
+        })) ??
+        (await billTemplateVersionRepository.findDefault(tx, {
+          kind: "generated",
+          familyId,
+        }));
+
+      // bm79 — the pair's layout must still be the row step 3 loaded and
+      // checked (the token check already catches a replaced layout; this is
+      // the backstop). Retire the previous ACTIVE layout, then promote.
+      let layout: {
+        promoted: BillTemplateVersion;
+        retired: BillTemplateVersion | null;
+      } | null = null;
+      if (pairLayout) {
+        const lockedLayout =
+          await billTemplateVersionRepository.findDraftForUpdate(
+            tx,
+            pairLayout.billTemplateVersionId,
+          );
+        if (
+          !lockedLayout ||
+          !pairLayout.checksum ||
+          locked.refLayoutVersionId !== pairLayout.billTemplateVersionId ||
+          lockedLayout.checksum !== pairLayout.checksum
+        ) {
+          throw new ActivationRollback("DRAFT_CONFLICT");
+        }
+        const retiredLayout = await billTemplateVersionRepository.retireActive(
+          tx,
+          { kind: "layout", familyId },
+        );
+        const promotedLayout =
+          await billTemplateVersionRepository.promoteLayoutDraft(tx, {
+            id: pairLayout.billTemplateVersionId,
+            expectedChecksum: pairLayout.checksum,
+            activatedBy: actorId,
+            changeNote,
+          });
+        if (!promotedLayout) throw new ActivationRollback("DRAFT_CONFLICT");
+        layout = { promoted: promotedLayout, retired: retiredLayout };
       }
 
       // Review fix (§24c) — retire only within the draft's own family, so a
       // second family's ACTIVE version is never touched.
-      const familyId = locked.refBillTemplateFamilyId ?? undefined;
       const retired = await billTemplateVersionRepository.retireActive(tx, {
         kind: "generated",
-        ...(familyId !== undefined ? { familyId } : {}),
+        familyId,
       });
-      const previous =
-        retired ??
-        (await billTemplateVersionRepository.findDefault(tx, {
-          kind: "generated",
-          ...(familyId !== undefined ? { familyId } : {}),
-        }));
 
       const promoted = await billTemplateVersionRepository.promoteDraft(tx, {
         id: draftId,
@@ -344,14 +365,25 @@ export async function activateTemplate(
         beforeData: {
           activeVersionId: previous?.billTemplateVersionId ?? null,
           activeVersionNo: previous?.versionNo ?? null,
+          activeLayoutVersionId: previous?.refLayoutVersionId ?? null,
         },
         afterData: {
+          familyId,
           activatedVersionId: promoted.billTemplateVersionId,
           versionNo: promoted.versionNo,
           retiredVersionId: retired?.billTemplateVersionId ?? null,
           changeNote,
           blobRef,
           checksum: indexDigest,
+          layout: layout
+            ? {
+                activatedVersionId: layout.promoted.billTemplateVersionId,
+                versionNo: layout.promoted.versionNo,
+                retiredVersionId: layout.retired?.billTemplateVersionId ?? null,
+                blobRef: layout.promoted.blobRef,
+                checksum: layout.promoted.checksum,
+              }
+            : null,
         },
       });
 
@@ -362,6 +394,13 @@ export async function activateTemplate(
         retiredVersionId: retired?.billTemplateVersionId ?? null,
         blobRef,
         checksum: indexDigest,
+        layout: layout
+          ? {
+              versionId: layout.promoted.billTemplateVersionId,
+              versionNo: layout.promoted.versionNo,
+              retiredVersionId: layout.retired?.billTemplateVersionId ?? null,
+            }
+          : null,
       };
     });
   } catch (error) {

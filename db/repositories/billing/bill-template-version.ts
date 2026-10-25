@@ -6,7 +6,7 @@ import { billTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { appuser } from "@/db/schema/identity";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
-import type { TemplateKind } from "@/types/billing";
+import type { LayoutPageSetup, TemplateKind } from "@/types/billing";
 import type { InvoiceTemplateStructureInput } from "@/validation/billing/invoice-template-structure.schema";
 
 // bm50-spec §Design D9 — repository over `bill_template_version`. bm57 adds the
@@ -151,13 +151,16 @@ export const billTemplateVersionRepository = {
     );
   },
 
-  // `max(version_no) + 1` for the kind, under the kind lock. `btv_version_uq`
-  // (per (type, kind) since bm74) is the backstop against a lost race.
+  // `max(version_no) + 1` under the kind lock. bm77: layout and generated
+  // numbers are per TYPE (`familyId` required), matching bm74's
+  // `btv_version_uq` per (type, kind); CSV keeps the per-format max
+  // (`btv_version_csv_uq`). The unique index is the backstop against a lost
+  // race; the global per-kind lock is coarser than needed, and safe.
   async nextVersionNo(
     tx: Database,
-    { kind }: { kind: TemplateKind },
+    scope: { kind: "csv" } | { kind: "layout" | "generated"; familyId: string },
   ): Promise<number> {
-    await this.lockKind(tx, { kind });
+    await this.lockKind(tx, { kind: scope.kind });
     const [row] = await tx
       .select({
         maxNo: sql<number>`COALESCE(max(${billTemplateVersion.versionNo}), 0)::int`,
@@ -166,10 +169,50 @@ export const billTemplateVersionRepository = {
       .where(
         and(
           eq(billTemplateVersion.refBillFormatId, INVOICE),
-          eq(billTemplateVersion.kind, kind),
+          eq(billTemplateVersion.kind, scope.kind),
+          scope.kind === "csv" ? undefined : familyScope(scope.familyId),
         ),
       );
     return (row?.maxNo ?? 0) + 1;
+  },
+
+  // bm77 — per type, its non-default ACTIVE `generated` version, else its
+  // default: the settings version new invoices of that type use. One query,
+  // for the type list (version no + since when).
+  async listActiveSettingsByFamily(
+    db: Database,
+  ): Promise<
+    Map<string, { versionNo: number; activatedDatetime: Date | null }>
+  > {
+    const rows = await db
+      .selectDistinctOn([billTemplateVersion.refBillTemplateFamilyId], {
+        familyId: billTemplateVersion.refBillTemplateFamilyId,
+        versionNo: billTemplateVersion.versionNo,
+        activatedDatetime: billTemplateVersion.activatedDatetime,
+      })
+      .from(billTemplateVersion)
+      .where(
+        and(
+          eq(billTemplateVersion.refBillFormatId, INVOICE),
+          eq(billTemplateVersion.kind, "generated"),
+          eq(billTemplateVersion.status, "ACTIVE"),
+        ),
+      )
+      // Within a type the non-default ACTIVE (is_default false) sorts first.
+      .orderBy(
+        billTemplateVersion.refBillTemplateFamilyId,
+        billTemplateVersion.isDefault,
+      );
+    return new Map(
+      rows
+        .filter(
+          (r): r is typeof r & { familyId: string } => r.familyId !== null,
+        )
+        .map((r) => [
+          r.familyId,
+          { versionNo: r.versionNo, activatedDatetime: r.activatedDatetime },
+        ]),
+    );
   },
 
   // bm57 D1 — the working DRAFT of the kind (at most one, `btv_one_draft_uq`),
@@ -221,6 +264,8 @@ export const billTemplateVersionRepository = {
         refBillTemplateFamilyId: input.refBillTemplateFamilyId,
         structure: input.structure,
         createdBy: input.createdBy,
+        // bm77 (D128) — every DRAFT write records its last writer.
+        lastModifiedBy: input.createdBy,
       })
       .returning({
         ...getTableColumns(billTemplateVersion),
@@ -228,6 +273,74 @@ export const billTemplateVersionRepository = {
       });
     if (!row) throw new Error("insertDraft returned no row");
     return row;
+  },
+
+  // bm78 (Inv #59) — the layout DRAFT a package upload creates. Files are
+  // already stored write-once under `blobRef`; `checksum` is the sha256 of the
+  // package's `checksums.json`. Written ONLY by installLayoutPackage
+  // (guardrail 68).
+  async insertLayoutDraft(
+    tx: Database,
+    input: {
+      familyId: string;
+      layoutCode: string;
+      versionNo: number;
+      pageSetup: LayoutPageSetup;
+      blobRef: string;
+      checksum: string;
+      createdBy: string;
+    },
+  ): Promise<TemplateDraftRow> {
+    const [row] = await tx
+      .insert(billTemplateVersion)
+      .values({
+        refBillFormatId: INVOICE,
+        kind: "layout",
+        versionNo: input.versionNo,
+        status: "DRAFT",
+        isDefault: false,
+        layoutCode: input.layoutCode,
+        refBillTemplateFamilyId: input.familyId,
+        pageSetup: input.pageSetup,
+        blobRef: input.blobRef,
+        checksum: input.checksum,
+        checksumAlgorithm: "sha256",
+        createdBy: input.createdBy,
+        lastModifiedBy: input.createdBy,
+      })
+      .returning({
+        ...getTableColumns(billTemplateVersion),
+        token: draftToken,
+      });
+    if (!row) throw new Error("insertLayoutDraft returned no row");
+    return row;
+  },
+
+  // bm78 (Inv #62) — point the settings DRAFT at a new layout DRAFT. Bumps the
+  // draft's token (`last_modified_datetime`), so an editor holding the old token
+  // gets DRAFT_CONFLICT. bm74's guard allows a settings DRAFT to change
+  // `ref_layout_version_id`. Returns the new token, or `null` when the row is no
+  // longer a settings DRAFT.
+  async repointDraftLayout(
+    tx: Database,
+    input: { id: string; layoutVersionId: string; actorId: string },
+  ): Promise<string | null> {
+    const rows = await tx
+      .update(billTemplateVersion)
+      .set({
+        refLayoutVersionId: input.layoutVersionId,
+        lastModifiedBy: input.actorId,
+        lastModifiedDatetime: sql`now()`,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, input.id),
+          eq(billTemplateVersion.status, "DRAFT"),
+          eq(billTemplateVersion.kind, "generated"),
+        ),
+      )
+      .returning({ token: draftToken });
+    return rows[0]?.token ?? null;
   },
 
   // bm57 D1 — the only DRAFT update the guard trigger permits. Guarded by the
@@ -240,11 +353,16 @@ export const billTemplateVersionRepository = {
       id: string;
       structure: InvoiceTemplateStructureInput;
       expectedToken: string;
+      actorId: string;
     },
   ): Promise<string | null> {
     const rows = await tx
       .update(billTemplateVersion)
-      .set({ structure: input.structure, lastModifiedDatetime: sql`now()` })
+      .set({
+        structure: input.structure,
+        lastModifiedBy: input.actorId,
+        lastModifiedDatetime: sql`now()`,
+      })
       .where(
         and(
           eq(billTemplateVersion.billTemplateVersionId, input.id),
@@ -279,8 +397,8 @@ export const billTemplateVersionRepository = {
 
   // bm58 D2 step 8 — retire the current NON-default ACTIVE of the kind, if any.
   // MUST run before `promoteDraft`: the one-ACTIVE indexes
-  // (`btv_one_active_family_uq` for generated, bm64) are checked per
-  // statement, so promoting first would violate it. The default row is never
+  // (`btv_one_active_family_uq` for generated, bm64; layout too, from bm79)
+  // are checked per statement, so promoting first would violate it. The default row is never
   // touched (it is excluded here, and the guard trigger would refuse anyway).
   // Returns the retired row, or `null` when only the default was in use.
   async retireActive(
@@ -343,6 +461,64 @@ export const billTemplateVersionRepository = {
           eq(billTemplateVersion.billTemplateVersionId, input.id),
           eq(billTemplateVersion.status, "DRAFT"),
           sql`${draftToken} = ${input.expectedToken}`,
+        ),
+      )
+      .returning();
+    return row ?? null;
+  },
+
+  // bm79 — layout DRAFT → ACTIVE. Files are NOT set: the guard freezes
+  // blob_ref/checksum at activation, and the WHERE re-asserts the checksum
+  // step 3 verified. `null` → the caller reports DRAFT_CONFLICT.
+  async promoteLayoutDraft(
+    tx: Database,
+    input: {
+      id: string;
+      expectedChecksum: string;
+      activatedBy: string;
+      changeNote: string;
+    },
+  ): Promise<BillTemplateVersion | null> {
+    const [row] = await tx
+      .update(billTemplateVersion)
+      .set({
+        status: "ACTIVE",
+        activatedBy: input.activatedBy,
+        activatedDatetime: sql`now()`,
+        changeNote: input.changeNote,
+        lastModifiedDatetime: sql`now()`,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, input.id),
+          eq(billTemplateVersion.kind, "layout"),
+          eq(billTemplateVersion.status, "DRAFT"),
+          eq(billTemplateVersion.checksum, input.expectedChecksum),
+        ),
+      )
+      .returning();
+    return row ?? null;
+  },
+
+  // bm79 — DRAFT → RETIRED (discard). The bm74 guard allows only status +
+  // retired_datetime (last_modified_* are not frozen). `null` when the row is
+  // no longer a DRAFT.
+  async discardDraft(
+    tx: Database,
+    { id, actorId }: { id: string; actorId: string },
+  ): Promise<BillTemplateVersion | null> {
+    const [row] = await tx
+      .update(billTemplateVersion)
+      .set({
+        status: "RETIRED",
+        retiredDatetime: sql`now()`,
+        lastModifiedDatetime: sql`now()`,
+        lastModifiedBy: actorId,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, id),
+          eq(billTemplateVersion.status, "DRAFT"),
         ),
       )
       .returning();

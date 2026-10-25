@@ -133,7 +133,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         footnote: [footnoteLine],
       } as Parameters<typeof saveTemplateDraft>[0]["structure"];
       const saved = await saveTemplateDraft(
-        { structure, expectedDraftToken: null },
+        { structure, expectedDraftToken: null, familyId: "BTF00000001" },
         actorId,
       );
       if (!saved.ok) throw new Error(`save draft failed: ${saved.code}`);
@@ -142,6 +142,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: saved.versionId,
           expectedDraftToken: saved.draftToken,
           changeNote: note,
+          familyId: "BTF00000001",
         },
         actorId,
       );

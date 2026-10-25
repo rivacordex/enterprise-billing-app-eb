@@ -24,6 +24,19 @@ export type StatusLiteralAllowEntry = {
   reason: string;
 };
 
+// bm77 — an invoice template TYPE's `RETIRED` (its own derived
+// TemplateTypeStatus, never stored), with the shared reason wording.
+function templateTypeStatus(
+  file: string,
+  what: string,
+): StatusLiteralAllowEntry {
+  return {
+    file,
+    literal: "RETIRED",
+    reason: `billing invoice-settings (bm77): ${what} — the invoice template TYPE's own derived TemplateTypeStatus, unrelated to product lifecycle.`,
+  };
+}
+
 export const STATUS_LITERAL_ALLOWLIST: StatusLiteralAllowEntry[] = [
   // ── Product module's own home: db/** and services/product/** (guardrail 30 §9
   //    names both as allowed). Listed anyway because D3's sweep exclusion is
@@ -154,4 +167,23 @@ export const STATUS_LITERAL_ALLOWLIST: StatusLiteralAllowEntry[] = [
     reason:
       "billing invoice-settings (bm61): the retired company-profile version's `meta.retired_at` row is written with status RETIRED (its own ConfigStatus), unrelated to product lifecycle.",
   },
+  // ── bm77 — invoice template TYPES: their own derived TemplateTypeStatus
+  //    (USABLE | NOT_YET_USABLE | RETIRED), never stored, unrelated to product
+  //    lifecycle.
+  templateTypeStatus(
+    "types/billing.ts",
+    "defines TEMPLATE_TYPE_STATUSES, the derived type status union",
+  ),
+  templateTypeStatus(
+    "services/billing/invoice-template/template-types.ts",
+    "`deriveTemplateTypeStatus` returns RETIRED for a retired type",
+  ),
+  templateTypeStatus(
+    "components/billing/invoice-settings/template-type-list.tsx",
+    "hides and mutes RETIRED types in the type list",
+  ),
+  templateTypeStatus(
+    "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx",
+    "hides the Upload (bm78) and Discard (bm79) controls on a RETIRED type",
+  ),
 ];

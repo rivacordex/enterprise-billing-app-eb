@@ -139,6 +139,27 @@ describe("InvoiceStructureForm — EDIT user", () => {
     expect(screen.getAllByRole("checkbox")).toHaveLength(7);
   });
 
+  it("bm79 review fix — the working copy of a draft previews it (`draft: true`); a read-only view never does", async () => {
+    const { unmount } = renderForm({
+      expectedDraftToken: TOKEN,
+      draftVersionId: "BTV00000011",
+      draftVersionNo: 1,
+    });
+    await flushDebounce();
+    expect(mockPreview.mock.lastCall?.[0]).toMatchObject({ draft: true });
+    unmount();
+
+    mockPreview.mockClear();
+    renderForm({
+      editable: false,
+      expectedDraftToken: TOKEN,
+      draftVersionId: "BTV00000011",
+      draftVersionNo: 1,
+    });
+    await flushDebounce();
+    expect(mockPreview.mock.lastCall?.[0]).toMatchObject({ draft: false });
+  });
+
   it("previews the initial structure after the 400 ms debounce, then the toggled one", async () => {
     renderForm();
     expect(mockPreview).not.toHaveBeenCalled();
@@ -151,6 +172,8 @@ describe("InvoiceStructureForm — EDIT user", () => {
       outline: false,
       // bm66 — the preview names the Standard family it renders with.
       familyId: "BTF00000001",
+      // bm79 review fix — no working draft here, so the version in use.
+      draft: false,
     });
 
     fireEvent.click(
@@ -340,6 +363,7 @@ describe("InvoiceStructureForm — Footnote (bm72)", () => {
         footnote: [ALL_ON.footnote[0], "Billed inclusive of USP"],
       },
       expectedDraftToken: null,
+      familyId: "BTF00000001",
     });
     expect(screen.getByLabelText("Line 2")).toHaveValue(
       "Billed inclusive of USP",
@@ -511,6 +535,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       versionId: "BTV00000004",
       versionNo: 2,
       retiredVersionId: null,
+      layout: null,
     });
     renderForm(DRAFT_PROPS);
     fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
@@ -528,6 +553,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       draftId: "BTV00000004",
       expectedDraftToken: TOKEN,
       changeNote: "Show the usage annex",
+      familyId: "BTF00000001",
     });
     expect(toast.success).toHaveBeenCalledWith("Template v2 activated");
     // The action revalidates the layout; the form adopts the refreshed page.
@@ -614,6 +640,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       versionId: "BTV00000009",
       versionNo: 3,
       retiredVersionId: null,
+      layout: null,
     });
     renderForm();
     togglePayment();
@@ -635,7 +662,154 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       draftId: "BTV00000009",
       expectedDraftToken: "2026-10-10T02:00:00.000001Z",
       changeNote: "n",
+      familyId: "BTF00000001",
     });
+  });
+});
+
+describe("InvoiceStructureForm — Activate a pair (bm79)", () => {
+  const PAIR_PROPS = {
+    expectedDraftToken: TOKEN,
+    draftVersionId: "BTV00000011",
+    draftVersionNo: 1,
+    familyId: "BTF00000002",
+  } as const;
+
+  async function confirmActivate(versionNo: number): Promise<void> {
+    fireEvent.click(
+      screen.getByRole("button", { name: `Activate v${versionNo}` }),
+    );
+    fireEvent.change(screen.getByLabelText(/Change note/), {
+      target: { value: "Wholesale layout" },
+    });
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: `Activate v${versionNo}`,
+        }),
+      );
+    });
+  }
+
+  it("leads the summary with the layout line, old → new", () => {
+    renderForm({
+      ...PAIR_PROPS,
+      draftVersionNo: 3,
+      activeStructure: ALL_ON,
+      layoutChange: {
+        code: "INVTPL-WHOLESALE",
+        fromVersionNo: 1,
+        toVersionNo: 2,
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Activate v3" }));
+    const summary = screen.getByTestId("activate-summary");
+    expect(summary).toHaveTextContent(
+      "Layout: INVTPL-WHOLESALE v1 → v2No change in structure.",
+    );
+    expect(
+      within(summary).getByText("Layout: INVTPL-WHOLESALE v1 → v2"),
+    ).toHaveClass("font-mono");
+  });
+
+  it("for a new type reads '(first version)' and 'First version of this type.'", () => {
+    renderForm({
+      ...PAIR_PROPS,
+      activeStructure: null,
+      layoutChange: {
+        code: "INVTPL-WHOLESALE",
+        fromVersionNo: null,
+        toVersionNo: 1,
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Activate v1" }));
+    const summary = screen.getByTestId("activate-summary");
+    expect(
+      within(summary).getByText("Layout: INVTPL-WHOLESALE v1 (first version)"),
+    ).toBeInTheDocument();
+    expect(
+      within(summary).getByText("First version of this type."),
+    ).toBeInTheDocument();
+  });
+
+  it("a settings-only draft has no layout line", () => {
+    renderForm({ ...PAIR_PROPS, activeStructure: ALL_ON, layoutChange: null });
+    fireEvent.click(screen.getByRole("button", { name: "Activate v1" }));
+    expect(screen.getByTestId("activate-summary")).not.toHaveTextContent(
+      "Layout:",
+    );
+  });
+
+  it("on LAYOUT_REJECTED says nothing was activated and renders the problems alert above the preview", async () => {
+    mockActivate.mockResolvedValue({
+      ok: false,
+      code: "LAYOUT_REJECTED",
+      problems: [
+        {
+          file: "(render)",
+          code: "LAYOUT_EXTERNAL_FETCH",
+          message: "the layout tried to fetch 1 URL: http://x/a.png",
+        },
+      ],
+    });
+    renderForm({ ...PAIR_PROPS, activeStructure: null });
+    await confirmActivate(1);
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        "The layout no longer passes the compliance check. Nothing was activated.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("The draft layout failed the compliance check."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("LAYOUT_EXTERNAL_FETCH")).toBeInTheDocument();
+    expect(screen.getByText("(render)")).toBeInTheDocument();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("review fix — the problems alert is dropped once the page brings a newer draft", async () => {
+    mockActivate.mockResolvedValue({
+      ok: false,
+      code: "LAYOUT_REJECTED",
+      problems: [
+        {
+          file: "(render)",
+          code: "LAYOUT_EXTERNAL_FETCH",
+          message: "the layout tried to fetch 1 URL: http://x/a.png",
+        },
+      ],
+    });
+    const { rerender } = renderForm({ ...PAIR_PROPS, activeStructure: null });
+    await confirmActivate(1);
+    expect(screen.getByText("LAYOUT_EXTERNAL_FETCH")).toBeInTheDocument();
+    // The draft was replaced by another upload: a new token from the server.
+    rerender(
+      <InvoiceStructureForm
+        initialStructure={ALL_ON}
+        editable
+        recentBills={BILLS}
+        canPreviewBills
+        {...PAIR_PROPS}
+        expectedDraftToken="2026-10-25T09:00:00.000001Z"
+        activeStructure={null}
+      />,
+    );
+    expect(screen.queryByText("LAYOUT_EXTERNAL_FETCH")).toBeNull();
+  });
+
+  it("on TEMPLATE_TYPE_RETIRED shows the retired message and refreshes", async () => {
+    mockActivate.mockResolvedValue({
+      ok: false,
+      code: "TEMPLATE_TYPE_RETIRED",
+    });
+    renderForm({ ...PAIR_PROPS, activeStructure: null });
+    await confirmActivate(1);
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        "This invoice template type has been retired, so its drafts can no longer be activated or discarded.",
+      ),
+    ).toBeInTheDocument();
+    expect(refresh).toHaveBeenCalled();
   });
 });
 
@@ -682,6 +856,7 @@ describe("InvoiceStructureForm — Save draft (bm57)", () => {
         sections: { ...ALL_ON.sections, payment: false },
       },
       expectedDraftToken: TOKEN,
+      familyId: "BTF00000001",
     });
     expect(toast.success).toHaveBeenCalledWith(
       "Draft v2 saved — not used on invoices",

@@ -9,7 +9,10 @@ import {
   generate,
   layoutFilesFromVerified,
 } from "@/services/billing/invoice-template/generate";
-import { loadLayout } from "@/services/billing/invoice-template/load";
+import {
+  loadLayout,
+  loadLayoutDraft,
+} from "@/services/billing/invoice-template/load";
 import { resolveTemplate } from "@/services/billing/invoice-template/resolve-template";
 import { parseSampleData } from "@/services/billing/invoice-template/sample-data";
 import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
@@ -20,6 +23,7 @@ import {
 import {
   type InvoiceRenderInput,
   type InvoiceTemplateStructure,
+  type RenderMode,
   type ResolvedTemplate,
 } from "@/types/billing";
 
@@ -50,6 +54,10 @@ export interface PreviewInvoiceTemplateParams {
   source: PreviewSource;
   // bm66 — the template family whose live versions the preview renders.
   familyId: string;
+  // bm79 review fix — preview the family's working DRAFT and the layout it
+  // points at (an uploaded layout DRAFT included). Set only by the action, and
+  // only for invoice_settings EDIT.
+  draft?: boolean | undefined;
   annotate?: boolean | undefined;
   outline?: boolean | undefined;
 }
@@ -100,7 +108,12 @@ async function generateInMemory(
   footer: HandlebarsTemplateDelegate<InvoiceRenderInput>;
   layoutFiles: Map<string, Buffer>;
 }> {
-  const layoutFiles = await loadLayout(resolved.layout);
+  // bm78/bm79 — a layout DRAFT (the draft preview only) loads through the one
+  // DRAFT-accepting loader (verified, never memoized, Inv #61).
+  const layoutFiles =
+    resolved.layout.status === "DRAFT"
+      ? await loadLayoutDraft(resolved.layout)
+      : await loadLayout(resolved.layout);
   const generated = generate(layoutFilesFromVerified(layoutFiles), structure, {
     annotate,
   });
@@ -112,20 +125,30 @@ async function generateInMemory(
 }
 
 function layoutLabel(resolved: ResolvedTemplate): string {
-  return `${resolved.layout.layoutCode ?? "layout"} v${resolved.layout.versionNo}`;
+  const draft = resolved.layout.status === "DRAFT" ? " (draft)" : "";
+  return `${resolved.layout.layoutCode ?? "layout"} v${resolved.layout.versionNo}${draft}`;
+}
+
+// The live render mode for the family, optionally of its working DRAFT.
+function liveMode(
+  familyId: string,
+  draft: boolean,
+): Extract<RenderMode, { kind: "preview-family" }> {
+  return draft
+    ? { kind: "preview-family", familyId, draft: true }
+    : { kind: "preview-family", familyId };
 }
 
 async function previewSample(
   structure: InvoiceTemplateStructure,
   familyId: string,
   annotate: boolean,
+  draft: boolean,
 ): Promise<{ html: string; templateLabel: string }> {
   // Rows only; never cached (Inv #42). The profile is the current ACTIVE one,
-  // or none (G15 A).
-  const resolved = await resolveTemplate(db, {
-    kind: "preview-family",
-    familyId,
-  });
+  // or none (G15 A). bm78/bm79 — for the working DRAFT the layout may be an
+  // uploaded layout DRAFT (labelled "(draft)").
+  const resolved = await resolveTemplate(db, liveMode(familyId, draft));
   const [tpl, profile, locale] = await Promise.all([
     generateInMemory(resolved, structure, annotate),
     resolved.profileVersion === null
@@ -158,7 +181,11 @@ async function previewSample(
 
   return {
     html: executeInvoiceTemplate(tpl.invoice, input),
-    templateLabel: `Unsaved structure · ${layoutLabel(resolved)} · sample bill`,
+    // bm78-spec §9 — an uploaded layout DRAFT is labelled by itself.
+    templateLabel:
+      resolved.layout.status === "DRAFT"
+        ? layoutLabel(resolved)
+        : `Unsaved structure · ${layoutLabel(resolved)} · sample bill`,
   };
 }
 
@@ -168,12 +195,14 @@ export async function previewInvoiceTemplate({
   familyId,
   annotate = false,
   outline = false,
+  draft = false,
 }: PreviewInvoiceTemplateParams): Promise<PreviewInvoiceTemplateResult> {
   if (source === "sample") {
     const { html, templateLabel } = await previewSample(
       structure,
       familyId,
       annotate,
+      draft,
     );
     return {
       html: withPreviewStyles(html, { annotate, outline }),
@@ -211,7 +240,7 @@ export async function previewInvoiceTemplate({
     mode: "draft",
     override: {
       structure,
-      renderMode: { kind: "preview-family", familyId },
+      renderMode: liveMode(familyId, draft),
       load: async (resolved) => {
         const { invoice, footer } = await generateInMemory(
           resolved,

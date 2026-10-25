@@ -10,6 +10,7 @@ import {
   activateTemplate,
   type ActivateTemplateErrorCode,
 } from "@/services/billing/invoice-template/activate-template";
+import type { LayoutProblem } from "@/types/billing";
 import { activateTemplateInputSchema } from "@/validation/billing/activate-version.schema";
 
 export type ActivateTemplateActionResult =
@@ -18,6 +19,12 @@ export type ActivateTemplateActionResult =
       versionId: string;
       versionNo: number;
       retiredVersionId: string | null;
+      // bm79 — the layout DRAFT promoted with the settings, or `null`.
+      layout: {
+        versionId: string;
+        versionNo: number;
+        retiredVersionId: string | null;
+      } | null;
     }
   | { ok: false; code: "FORBIDDEN" | "SERVER_ERROR" }
   | {
@@ -25,7 +32,16 @@ export type ActivateTemplateActionResult =
       code: "VALIDATION_ERROR";
       fieldErrors: Record<string, string[]>;
     }
-  | { ok: false; code: Exclude<ActivateTemplateErrorCode, "VALIDATION_ERROR"> };
+  // bm79 adds TEMPLATE_TYPE_RETIRED (through ActivateTemplateErrorCode) and
+  // LAYOUT_REJECTED, which carries the compliance re-run's problems.
+  | {
+      ok: false;
+      code: Exclude<
+        ActivateTemplateErrorCode,
+        "VALIDATION_ERROR" | "LAYOUT_REJECTED"
+      >;
+    }
+  | { ok: false; code: "LAYOUT_REJECTED"; problems: LayoutProblem[] };
 
 // bm58-spec §Design D2 steps 1 and 9, code-standards Part 2 Next.js rule 3:
 // activate the working draft. A MUTATION, so the guard is
@@ -72,6 +88,7 @@ export async function activateTemplateAction(
   }
 
   if (!result.ok) {
+    if (result.code === "LAYOUT_REJECTED") return result;
     return result.code === "VALIDATION_ERROR"
       ? { ok: false, code: "VALIDATION_ERROR", fieldErrors: {} }
       : { ok: false, code: result.code };
@@ -83,5 +100,6 @@ export async function activateTemplateAction(
     versionId: result.versionId,
     versionNo: result.versionNo,
     retiredVersionId: result.retiredVersionId,
+    layout: result.layout,
   };
 }

@@ -31,10 +31,10 @@ const READ_SECTIONS_SCRIPT = String.raw`(probes) => {
     range.selectNodeContents(textNode);
     if (range.getClientRects().length === 0) return false;
     if (!parent.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return false;
-    if (parseFloat(getComputedStyle(parent).fontSize) < 6) return false;
+    if (Number(getComputedStyle(parent).fontSize.replace("px", "")) < 6) return false;
     var opacity = 1;
     for (var node = parent; node; node = node.parentElement) {
-      opacity *= parseFloat(getComputedStyle(node).opacity);
+      opacity *= Number(getComputedStyle(node).opacity);
     }
     return opacity >= 0.1;
   };
@@ -59,14 +59,24 @@ const READ_SECTIONS_SCRIPT = String.raw`(probes) => {
   return out;
 }`;
 
-export const readSectionsVisibly: VisibleSectionReader = async (
-  html,
-  probes,
-) => {
-  const { value } = await withHardenedPage(html, (page) =>
+// bm78-spec §6 — ONE hardened render returning both the visible-tier report and
+// the URLs the page tried to fetch, so the upload gate's fetch check and visible
+// tier share a single Chromium launch.
+export async function renderAndReadSections(
+  html: string,
+  probes: Parameters<VisibleSectionReader>[1],
+): Promise<{
+  report: Record<ComplianceSectionKey, VisibleSectionReport>;
+  blockedUrls: string[];
+}> {
+  const { value, blockedUrls } = await withHardenedPage(html, (page) =>
     page.evaluate<Record<ComplianceSectionKey, VisibleSectionReport>>(
       `(${READ_SECTIONS_SCRIPT})(${JSON.stringify(probes)})`,
     ),
   );
-  return value;
-};
+  return { report: value, blockedUrls };
+}
+
+// The visible-tier reader alone (bm76): the report, without the fetch list.
+export const readSectionsVisibly: VisibleSectionReader = async (html, probes) =>
+  (await renderAndReadSections(html, probes)).report;

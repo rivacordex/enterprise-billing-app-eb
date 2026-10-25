@@ -15,6 +15,7 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
+import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixtures";
 
 // bm57-spec §Tests: save-draft on a real database. The first save inserts the
 // working DRAFT as v2 (the next after the default v1) with a structure and no
@@ -135,6 +136,7 @@ describe.skipIf(!databaseUrl)(
         {
           structure: structure({ footnote: EDITED_FOOTNOTE }),
           expectedDraftToken: null,
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -163,7 +165,11 @@ describe.skipIf(!databaseUrl)(
 
     it("writes exactly one audit row per success, with null before on the insert", async () => {
       const result = await saveTemplateDraft(
-        { structure: structure(), expectedDraftToken: null },
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       if (!result.ok) throw new Error("expected ok");
@@ -182,7 +188,11 @@ describe.skipIf(!databaseUrl)(
 
     it("a second save updates the same row with the returned token and audits before/after", async () => {
       const first = await saveTemplateDraft(
-        { structure: structure({ payment: true }), expectedDraftToken: null },
+        {
+          structure: structure({ payment: true }),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       if (!first.ok) throw new Error("expected ok");
@@ -191,6 +201,7 @@ describe.skipIf(!databaseUrl)(
         {
           structure: structure({ payment: false }),
           expectedDraftToken: first.draftToken,
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -217,7 +228,11 @@ describe.skipIf(!databaseUrl)(
 
     it("a stale token is DRAFT_CONFLICT, changes nothing and writes no audit row", async () => {
       const first = await saveTemplateDraft(
-        { structure: structure(), expectedDraftToken: null },
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       if (!first.ok) throw new Error("expected ok");
@@ -226,6 +241,7 @@ describe.skipIf(!databaseUrl)(
         {
           structure: structure({ footnote: EDITED_FOOTNOTE }),
           expectedDraftToken: first.draftToken,
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -235,6 +251,7 @@ describe.skipIf(!databaseUrl)(
         {
           structure: structure({ payment: false }),
           expectedDraftToken: first.draftToken,
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -249,12 +266,20 @@ describe.skipIf(!databaseUrl)(
 
     it("believing no draft exists while one does is DRAFT_CONFLICT", async () => {
       await saveTemplateDraft(
-        { structure: structure(), expectedDraftToken: null },
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       expect(
         await saveTemplateDraft(
-          { structure: structure(), expectedDraftToken: null },
+          {
+            structure: structure(),
+            expectedDraftToken: null,
+            familyId: "BTF00000001",
+          },
           ACTOR,
         ),
       ).toEqual({ ok: false, code: "DRAFT_CONFLICT" });
@@ -266,6 +291,7 @@ describe.skipIf(!databaseUrl)(
           {
             structure: structure(),
             expectedDraftToken: "2026-10-10T01:02:03.123456Z",
+            familyId: "BTF00000001",
           },
           ACTOR,
         ),
@@ -281,6 +307,7 @@ describe.skipIf(!databaseUrl)(
             {
               structure: structure({ payment: true }),
               expectedDraftToken: null,
+              familyId: "BTF00000001",
             },
             ACTOR,
           ),
@@ -288,6 +315,7 @@ describe.skipIf(!databaseUrl)(
             {
               structure: structure({ payment: false }),
               expectedDraftToken: null,
+              familyId: "BTF00000001",
             },
             ACTOR,
           ),
@@ -303,6 +331,39 @@ describe.skipIf(!databaseUrl)(
       }
     });
 
+    it("review fix (Inv #66 lock order) — a first save racing an upload that holds the type row and then wants the kind lock does not deadlock", async () => {
+      await resetDrafts();
+      // A second connection plays install: the type row FOR UPDATE first,
+      // then (while the save is in flight) the generated kind lock. Before the
+      // fix the save took the kind lock first and its INSERT's FK check then
+      // waited on the type row: Postgres aborted one side (40P01).
+      const holder = postgres(databaseUrl as string, {
+        max: 1,
+        onnotice: () => {},
+      });
+      let save: ReturnType<typeof saveTemplateDraft> | undefined;
+      try {
+        await holder.begin(async (t) => {
+          await t`
+            SELECT 1 FROM billing.bill_template_family
+            WHERE bill_template_family_id = 'BTF00000001' FOR UPDATE`;
+          save = saveTemplateDraft(
+            {
+              structure: structure({ payment: false }),
+              expectedDraftToken: null,
+              familyId: "BTF00000001",
+            },
+            ACTOR,
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          await t`SELECT pg_advisory_xact_lock(hashtext(${"billing.bill_template_version:INVOICE:generated"}))`;
+        });
+        expect(await save).toMatchObject({ ok: true });
+      } finally {
+        await holder.end();
+      }
+    }, 30_000);
+
     it("refuses a mandatory section key even when called directly, writing nothing", async () => {
       // bm71 (D56) — mandatory sections are not part of the stored structure,
       // so the strict schema refuses the key outright.
@@ -310,7 +371,11 @@ describe.skipIf(!databaseUrl)(
       (crafted.sections as Record<string, boolean>).billTo = false;
       expect(
         await saveTemplateDraft(
-          { structure: crafted, expectedDraftToken: null },
+          {
+            structure: crafted,
+            expectedDraftToken: null,
+            familyId: "BTF00000001",
+          },
           ACTOR,
         ),
       ).toEqual({ ok: false, code: "VALIDATION_ERROR" });
@@ -324,7 +389,11 @@ describe.skipIf(!databaseUrl)(
     // the live preview resolution is checked here.
     it("the DRAFT is never resolved: the live preview still uses the ACTIVE/default version", async () => {
       await saveTemplateDraft(
-        { structure: structure({ payment: false }), expectedDraftToken: null },
+        {
+          structure: structure({ payment: false }),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       const draft = await billTemplateVersionRepository.findDraft(db, {
@@ -347,7 +416,11 @@ describe.skipIf(!databaseUrl)(
 
     it("a real btv_one_draft_uq violation is recognised as a draft race (postgres.js error shape)", async () => {
       await saveTemplateDraft(
-        { structure: structure(), expectedDraftToken: null },
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       const err = await sql`
@@ -368,7 +441,11 @@ describe.skipIf(!databaseUrl)(
         VALUES (${OTHER}, 'Second Saver', 'second-saver@example.com', 'LOCAL', 'ACTIVE')
         ON CONFLICT DO NOTHING`;
       const first = await saveTemplateDraft(
-        { structure: structure(), expectedDraftToken: null },
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       if (!first.ok) throw new Error("expected ok");
@@ -376,6 +453,7 @@ describe.skipIf(!databaseUrl)(
         {
           structure: structure({ payment: false }),
           expectedDraftToken: first.draftToken,
+          familyId: "BTF00000001",
         },
         OTHER,
       );
@@ -408,7 +486,11 @@ describe.skipIf(!databaseUrl)(
 
     it("a saved DRAFT shows in the version history and the default is untouched", async () => {
       await saveTemplateDraft(
-        { structure: structure(), expectedDraftToken: null },
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       const rows = await billTemplateVersionRepository.listForKind(db, {
@@ -418,6 +500,87 @@ describe.skipIf(!databaseUrl)(
         [2, "DRAFT"],
         [1, "ACTIVE"],
       ]);
+    });
+
+    // bm77 — version numbers are per type (bm74 `btv_version_uq`): another
+    // type's higher settings numbers do not move Standard's next number.
+    it("bm77 — a Standard draft is numbered Standard's max + 1, whatever another type holds", async () => {
+      await insertTemplateTypeFixture(sql, {
+        typeId: "BTF00000077",
+        code: "BM77_OTHER",
+        name: "BM77 Other",
+        layoutVersionId: "BTV00000770",
+      });
+      await sql`
+        INSERT INTO billing.bill_template_version
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
+           ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum,
+           checksum_algorithm, change_note, activated_datetime)
+        SELECT 'BTV00000771', 'INVOICE', 'generated', 9, 'ACTIVE', false,
+               'BTV00000770', 'BTF00000077', structure, 'invoice-templates/generated/INVOICE/v9/',
+               ${"9".repeat(64)}, 'sha256', 'bm77 other-type fixture', now()
+        FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
+      const [max] = await sql<{ n: number }[]>`
+        SELECT max(version_no)::int AS n FROM billing.bill_template_version
+        WHERE kind = 'generated' AND ref_bill_template_family_id = 'BTF00000001'`;
+
+      const result = await saveTemplateDraft(
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
+        ACTOR,
+      );
+      expect(result).toMatchObject({ ok: true, versionNo: max!.n + 1 });
+      expect(max!.n + 1).toBeLessThan(10);
+    });
+
+    it("bm77 — a familyId that does not exist is DRAFT_CONFLICT and writes nothing", async () => {
+      const result = await saveTemplateDraft(
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00009999",
+        },
+        ACTOR,
+      );
+      expect(result).toEqual({ ok: false, code: "DRAFT_CONFLICT" });
+      expect(await auditRows()).toHaveLength(0);
+    });
+
+    it("bm77 — every DRAFT write records last_modified_by", async () => {
+      const first = await saveTemplateDraft(
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
+        ACTOR,
+      );
+      if (!first.ok) throw new Error("expected ok");
+      const [inserted] = await sql<{ last_modified_by: string | null }[]>`
+        SELECT last_modified_by FROM billing.bill_template_version
+        WHERE bill_template_version_id = ${first.versionId}`;
+      expect(inserted?.last_modified_by).toBe(ACTOR);
+
+      await sql`
+        INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
+        VALUES ('bm77-second', 'Second Saver', 'second-saver@example.com', 'LOCAL', 'ACTIVE')
+        ON CONFLICT DO NOTHING`;
+      const second = await saveTemplateDraft(
+        {
+          structure: structure({ payment: false }),
+          expectedDraftToken: first.draftToken,
+          familyId: "BTF00000001",
+        },
+        "bm77-second",
+      );
+      if (!second.ok) throw new Error("expected ok");
+      const [updated] = await sql<{ last_modified_by: string | null }[]>`
+        SELECT last_modified_by FROM billing.bill_template_version
+        WHERE bill_template_version_id = ${first.versionId}`;
+      expect(updated?.last_modified_by).toBe("bm77-second");
     });
   },
 );

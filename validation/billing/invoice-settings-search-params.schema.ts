@@ -1,6 +1,11 @@
 import { z } from "zod";
 
+import { templateFamilyIdSchema } from "@/validation/billing/template-family-id.schema";
 import { billTemplateVersionIdSchema } from "@/validation/billing/template-version-id.schema";
+
+// bm77 — the `[typeId]` segment of the type detail page. A malformed id is
+// `notFound()` (the page checks `safeParse`).
+export const templateTypeIdParamSchema = templateFamilyIdSchema;
 
 // bm55-spec §Design D4, code-standards Part 2 Next.js rule 2 — the Invoice
 // template page's view state. Parsed, never trusted: an unknown `?tab=` falls

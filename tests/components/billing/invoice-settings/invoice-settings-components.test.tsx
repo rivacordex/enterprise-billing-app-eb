@@ -1,10 +1,26 @@
 // bm55-spec §Tests (components) — the preview frame is a sandboxed srcDoc
 // iframe (never injected into the app DOM); the status badge variants incl.
 // the Default chip; the version history "used by" column and actions; the
-// Generated .hbs viewer renders the source as text.
+// Generated .hbs viewer renders the source as text. bm79: the DRAFT row's
+// Discard control and a discarded row.
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+
+const refresh = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+vi.mock("sonner", () => ({
+  toast: { warning: vi.fn(), error: vi.fn(), success: vi.fn() },
+}));
+vi.mock(
+  "@/actions/billing/invoice-settings/discard-template-draft.action",
+  () => ({ discardTemplateDraftAction: vi.fn() }),
+);
+
+import { discardTemplateDraftAction } from "@/actions/billing/invoice-settings/discard-template-draft.action";
+import { toast } from "sonner";
+
+import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/draft-messages";
 
 import { GeneratedHbsViewer } from "@/components/billing/invoice-settings/generated-hbs-viewer";
 import { InvoicePreviewFrame } from "@/components/billing/invoice-settings/invoice-preview-frame";
@@ -319,6 +335,158 @@ describe("VersionHistoryTable: DRAFT rows (bm57)", () => {
     );
     expect(screen.getByText("Draft")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /View/ })).toBeNull();
+  });
+});
+
+describe("VersionHistoryTable: Discard (bm79)", () => {
+  const DRAFT: TemplateVersionHistoryRow = {
+    billTemplateVersionId: "BTV00000011",
+    versionNo: 1,
+    status: "DRAFT",
+    isDefault: false,
+    layoutLabel: "INVTPL-WHOLESALE v1 (draft)",
+    createdBy: "u1",
+    createdAt: new Date("2026-10-25T00:00:00Z"),
+    activatedAt: null,
+    retiredAt: null,
+    changeNote: null,
+    usedByCount: 0,
+  };
+  const DISCARD = {
+    familyId: "BTF00000002",
+    draftId: "BTV00000011",
+    draftToken: "2026-10-25T01:02:03.123456Z",
+    layoutDraft: { code: "INVTPL-WHOLESALE", versionNo: 1 },
+  };
+
+  function renderTable(
+    discard: NonNullable<
+      Parameters<typeof VersionHistoryTable>[0]["discard"]
+    > | null,
+    rows: TemplateVersionHistoryRow[] = [DRAFT],
+  ) {
+    return render(
+      <VersionHistoryTable
+        rows={rows}
+        shownVersionId="BTV00000011"
+        canViewDrafts
+        discard={discard}
+        locale="en-MY"
+        timezone="Asia/Kuala_Lumpur"
+      />,
+    );
+  }
+
+  it("renders Discard on the DRAFT row only when the page passes `discard` (EDIT on a non-retired type)", () => {
+    const active: TemplateVersionHistoryRow = {
+      ...DRAFT,
+      billTemplateVersionId: "BTV00000002",
+      status: "ACTIVE",
+      isDefault: true,
+      activatedAt: new Date("2026-10-10T00:00:00Z"),
+    };
+    renderTable(DISCARD, [DRAFT, active]);
+    expect(screen.getAllByRole("button", { name: "Discard" })).toHaveLength(1);
+    const draftRow = screen.getByText("BTV00000011").closest("tr")!;
+    expect(
+      within(draftRow).getByRole("button", { name: "Discard" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders no Discard control without `discard` (a READ user, or a retired type)", () => {
+    renderTable(null);
+    expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
+  });
+
+  it("names the layout DRAFT in the dialog when there is one, and only the settings otherwise", () => {
+    const { unmount } = renderTable(DISCARD);
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(
+      screen.getByRole("heading", { name: "Discard draft v1?" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The draft settings v1 and the draft layout INVTPL-WHOLESALE v1 will be retired. Their version numbers are not reused.",
+      ),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderTable({ ...DISCARD, layoutDraft: null });
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(
+      screen.getByText(
+        "The draft settings v1 will be retired. Their version numbers are not reused.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("confirms with the draft's id and token, then refreshes", async () => {
+    vi.mocked(discardTemplateDraftAction).mockResolvedValue({
+      ok: true,
+      discardedVersionIds: ["BTV00000011", "BTV00000010"],
+    });
+    renderTable(DISCARD);
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(vi.mocked(discardTemplateDraftAction)).toHaveBeenCalledWith({
+      familyId: "BTF00000002",
+      draftId: "BTV00000011",
+      expectedDraftToken: "2026-10-25T01:02:03.123456Z",
+    });
+  });
+
+  it("on DRAFT_CONFLICT closes, shows the shared conflict message as a Warning toast (it outlives the row) and refreshes", async () => {
+    refresh.mockClear();
+    vi.mocked(discardTemplateDraftAction).mockResolvedValue({
+      ok: false,
+      code: "DRAFT_CONFLICT",
+    });
+    renderTable(DISCARD);
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+    await vi.waitFor(() =>
+      expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+        DRAFT_CONFLICT_MESSAGE,
+      ),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("review fix — a discarded row has no View link for a READ user (it is still a draft)", () => {
+    render(
+      <VersionHistoryTable
+        rows={[
+          {
+            ...DRAFT,
+            status: "RETIRED",
+            retiredAt: new Date("2026-10-25T02:00:00Z"),
+          },
+        ]}
+        shownVersionId="BTV00000002"
+        canViewDrafts={false}
+        locale="en-MY"
+        timezone="Asia/Kuala_Lumpur"
+      />,
+    );
+    expect(screen.queryByRole("link", { name: /View/ })).toBeNull();
+  });
+
+  it("a discarded row keeps the Retired badge, shows — for Activated and has no download", () => {
+    renderTable(null, [
+      {
+        ...DRAFT,
+        status: "RETIRED",
+        retiredAt: new Date("2026-10-25T02:00:00Z"),
+      },
+    ]);
+    const row = screen.getByText("BTV00000011").closest("tr")!;
+    expect(within(row).getByText("Retired")).toBeInTheDocument();
+    // Activated at is the 6th column (Version, Status, Layout, Created by,
+    // Created at, Activated at).
+    expect(row.querySelectorAll("td")[5]).toHaveTextContent("—");
+    expect(within(row).queryByText(/Download/)).toBeNull();
   });
 });
 
