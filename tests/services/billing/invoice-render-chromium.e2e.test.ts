@@ -412,10 +412,16 @@ describe.skipIf(!run)(
 // except data:/about: aborted and recorded.
 const PNG_1PX =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-// Measured once with the pre-bm75 renderer (the plain `browser.newPage()`
-// above): the seeded Standard v1 final bill with one polygon spans this many
-// print pages. The hardened context must lay it out identically.
-const SEEDED_V1_SMALL_BILL_PAGES = 1;
+// Measured with the pre-bm75 renderer (the plain `browser.newPage()` above):
+// the PDF of the seeded Standard v1 final bill with one polygon has this many
+// pages (page 1, one detail page per type of service, the Total Amount page).
+// The hardened context must paginate it identically.
+const SEEDED_V1_SMALL_BILL_PAGES = 3;
+
+// A PDF's page count: its `/Type /Page` objects (not `/Pages`).
+function pdfPageCount(pdf: Buffer): number {
+  return pdf.toString("latin1").match(/\/Type\s*\/Page(?!s)\b/g)?.length ?? 0;
+}
 
 describe.skipIf(!run)(
   "bm75 hardened render — real Chromium through withHardenedPage (RUN_CHROMIUM_E2E=1)",
@@ -506,33 +512,35 @@ describe.skipIf(!run)(
         invoiceNo: "INV00000075",
       });
       const html = render(bound);
-      const PX_PER_MM = 96 / 25.4;
-      const printablePx =
-        (297 -
-          parseFloat(pageSetup.margin.top) -
-          parseFloat(pageSetup.margin.bottom)) *
-        PX_PER_MM;
+      const footerHtml = renderFooter(bound);
 
-      const { value, blockedUrls } = await withHardenedPage(html, async (p) => {
-        const pdf = await p.pdf({
+      // Code review fix (2026-10-25): count the PDF's own pages, with the
+      // pre-bm75 plain renderer (a bare `browser.newPage()`, as above) and the
+      // hardened one, instead of a screen-height estimate that cannot see
+      // print page breaks.
+      const plain = await chromium.launch();
+      let before: Buffer;
+      try {
+        before = await renderPdf(plain, html, footerHtml, pageSetup);
+      } finally {
+        await plain.close();
+      }
+      const { value: after, blockedUrls } = await withHardenedPage(html, (p) =>
+        p.pdf({
           format: pageSetup.format,
           landscape: pageSetup.orientation === "landscape",
           printBackground: pageSetup.printBackground,
           margin: pageSetup.margin,
           displayHeaderFooter: true,
           headerTemplate: "<span></span>",
-          footerTemplate: renderFooter(bound),
-        });
-        await p.emulateMedia({ media: "print" });
-        const heightPx = await p.evaluate(
-          () => document.documentElement.scrollHeight,
-        );
-        return { pdf, pages: Math.ceil(heightPx / printablePx) };
-      });
+          footerTemplate: footerHtml,
+        }),
+      );
 
       expect(blockedUrls).toEqual([]);
-      expect(value.pdf.toString("latin1").startsWith("%PDF-")).toBe(true);
-      expect(value.pages).toBe(SEEDED_V1_SMALL_BILL_PAGES);
+      expect(after.toString("latin1").startsWith("%PDF-")).toBe(true);
+      expect(pdfPageCount(after)).toBe(pdfPageCount(before));
+      expect(pdfPageCount(after)).toBe(SEEDED_V1_SMALL_BILL_PAGES);
     }, 120_000);
   },
 );

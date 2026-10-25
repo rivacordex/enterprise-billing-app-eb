@@ -174,12 +174,15 @@ export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
 // at `http(s):` or a protocol-relative `//`, in any element (img, source,
 // video poster, SVG image, form action …), plus the elements that load or
 // re-base content by themselves.
-const EXTERNAL_URL = String.raw`\s*["']?\s*(?:https?:|\/\/)`;
+// Linear forms (Sonar S5852, 2026-10-25): no two adjacent quantifiers can match
+// the same characters, so no input backtracks super-linearly. Same matches as
+// the bm63 originals (`\s*["']?\s*…` and `\s*["']?[^"'>]*?…`).
+const EXTERNAL_URL = String.raw`\s*(?:["']\s*)?(?:https?:|\/\/)`;
 const BANNED_TEXT: readonly [RegExp, string][] = [
   [
     new RegExp(
       String.raw`(?:^|[\s/"'])(?:src|srcset|href|xlink:href|data|poster|action|formaction|background)\s*=` +
-        String.raw`\s*["']?[^"'>]*?(?:https?:|\/\/)`,
+        String.raw`\s*(?:["']|(?![\s"'>]))[^"'>]*?(?:https?:|\/\/)`,
       "i",
     ),
     "external url attribute",
@@ -377,37 +380,125 @@ export function lintReason(hit: string): string {
   return LINT_REASONS[hit] ?? hit;
 }
 
+// --- hardening, re-ported 2026-10-25 from the editor's CURRENT gates.ts ----------
+// (attributeNames, decodeCssEscapes, withoutMustaches, hardeningHits), after the
+// code review of bm76 found the 2026-10-25 spec snapshot weaker than the editor.
+// One app-side addition both copies need: hits that only Handlebars cares about
+// (`{{{`, `{{>`, partial, unescaped, helper:) are ignored when they appear only
+// after entity decoding — an entity-encoded brace is printed text, never a
+// mustache (the HTML parser decodes it after Handlebars has run).
+
+// Attribute names in every start tag, read the way an HTML parser reads
+// them: names are separated by whitespace or `/`, and a `>` inside a quoted
+// value does not end the tag. Mustaches are read both as nothing and as a
+// separator, so `{{x}}onclick=` and `on{{x}}click=` are both seen.
+function attributeNames(source: string): string[] {
+  const names: string[] = [];
+  for (const text of [
+    source.replace(/\{\{[\s\S]*?\}\}/g, ""),
+    source.replace(/\{\{[\s\S]*?\}\}/g, " "),
+  ]) {
+    let i = 0;
+    while ((i = text.indexOf("<", i)) !== -1) {
+      i++;
+      if (!/[A-Za-z]/.test(text.charAt(i))) continue;
+      while (i < text.length && !/[\s/>]/.test(text.charAt(i))) i++; // tag name
+      for (;;) {
+        while (i < text.length && /[\s/]/.test(text.charAt(i))) i++;
+        if (i >= text.length || text.charAt(i) === ">") break;
+        const from = i;
+        i++; // a name may start with `=` or a quote (HTML parses it as one)
+        while (i < text.length && !/[\s/>=]/.test(text.charAt(i))) i++;
+        names.push(text.slice(from, i).toLowerCase());
+        while (i < text.length && /\s/.test(text.charAt(i))) i++;
+        if (text.charAt(i) !== "=") continue;
+        i++;
+        while (i < text.length && /\s/.test(text.charAt(i))) i++;
+        const quote = text.charAt(i);
+        if (quote === '"' || quote === "'") {
+          const close = text.indexOf(quote, i + 1);
+          i = close === -1 ? text.length : close + 1;
+        } else {
+          while (i < text.length && !/[\s>]/.test(text.charAt(i))) i++;
+        }
+      }
+    }
+  }
+  return names;
+}
+
+// CSS escapes as a CSS parser reads them: `\68 ` (hex, one optional
+// whitespace), `\h` (any other character stands for itself) and `\` + newline
+// (a line continuation in a string).
+function decodeCssEscapes(text: string): string {
+  return text.replace(
+    /\\(?:([0-9a-f]{1,6})(?:\r\n|[ \t\r\n\f])?|(\r\n|[\r\n\f])|([\s\S]))/gi,
+    (_, hex?: string, nl?: string, ch?: string) => {
+      if (hex !== undefined) {
+        const code = Number.parseInt(hex, 16);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "�";
+      }
+      return nl !== undefined ? "" : (ch ?? "");
+    },
+  );
+}
+
+// The template's text with every mustache removed: what the raw-text rules
+// read when the decoded source is no longer valid Handlebars (a decoded
+// `&#123;{` is a `{{`).
+function withoutMustaches(source: string): string {
+  let text = source.replace(/\{\{[\s\S]*?\}\}/g, "");
+  while (text.includes("{{")) text = text.replace(/\{\{/g, "{");
+  return text;
+}
+
+// Lint hits that concern Handlebars syntax only. Entity decoding can never
+// create a real mustache, so these are meaningless in the decoded text.
+function isHandlebarsOnlyHit(hit: string): boolean {
+  return (
+    hit === "{{{" ||
+    hit === "{{>" ||
+    hit === "partial" ||
+    hit === "unescaped" ||
+    hit.startsWith("helper:")
+  );
+}
+
 // Stricter than the lint above, which matches raw text: a URL spelled with
-// entities (`&#104;ttps:`) or CSS escapes (`\68ttps:`), `image-set()`, and
-// event-handler attributes. Ported from the editor's gates.ts.
+// entities (`&#104;ttps:`) or CSS escapes (`\68ttps:`, `\h\t\t\p\s:`),
+// `image-set()`, and event-handler attributes.
 export function hardeningHits(source: string): string[] {
   const hits: string[] = [];
-  if (/<[A-Za-z][^>]*?\son[a-z]+\s*=/i.test(source)) {
+  if (attributeNames(source).some((name) => name.startsWith("on"))) {
     hits.push(
       "event-handler attributes (on…=) are not allowed — a layout runs no script",
     );
   }
-  const decoded = decodeEntities(source).replace(
-    /\\([0-9a-f]{1,6})\s?/gi,
-    (_, hex: string) => {
-      const code = Number.parseInt(hex, 16);
-      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
-    },
-  );
+  const decoded = decodeCssEscapes(decodeEntities(source));
   if (/image-set\([^)]*(?:https?:|\/\/)/i.test(decoded)) {
     hits.push("CSS image-set() points at an external URL");
   }
   if (decoded !== source) {
-    let before: string[] = [];
-    let after: string[] = [];
+    let before: string[];
+    let after: string[];
     try {
       before = lintInvoiceTemplate(source);
       after = lintInvoiceTemplate(decoded);
     } catch {
-      // decoding produced text Handlebars cannot parse — nothing to compare
+      // Decoding made text Handlebars can't parse: compare the text alone, so
+      // the check never switches off.
+      try {
+        before = lintInvoiceTemplate(withoutMustaches(source));
+        after = lintInvoiceTemplate(withoutMustaches(decoded));
+      } catch (err) {
+        return [
+          ...hits,
+          `can't check for URLs hidden behind entities or CSS escapes: ${err instanceof Error ? err.message : String(err)}`,
+        ];
+      }
     }
     for (const hit of new Set(after)) {
-      if (!before.includes(hit) && !hit.startsWith("helper:")) {
+      if (!before.includes(hit) && !isHandlebarsOnlyHit(hit)) {
         hits.push(`${lintReason(hit)} (hidden behind entities or CSS escapes)`);
       }
     }
@@ -471,11 +562,13 @@ export function lintLayoutTemplates(
       });
       continue;
     }
-    const messages = [
-      ...[...new Set(hits)].map(lintReason),
+    // One line per distinct message: `{{> x}}` is both the `{{>` text hit
+    // and the `partial` AST hit, which share a message.
+    const messages = new Set([
+      ...hits.map(lintReason),
       ...hardeningHits(source),
       ...typedSupplierHits(source),
-    ];
+    ]);
     for (const message of messages) {
       problems.push({ file, code: "LINT_VIOLATION", message });
     }
@@ -504,14 +597,35 @@ export interface RequiredValue {
   text: string;
 }
 
+// The compliance checks render this, not PROBE_RENDER_INPUT itself (owner
+// decision 2026-10-25, bm76 code review): PROBE_RENDER_INPUT's amount due
+// (3.00) equals its subtotal, gross total and total charges, so a layout that
+// printed one of those as the amount due would pass. Here every money total
+// differs from the amount due; nothing else changes, so the load-time probe and
+// the HTML golden keep rendering PROBE_RENDER_INPUT byte-for-byte.
+export const COMPLIANCE_PROBE: InvoiceRenderInput = deepFreeze({
+  ...PROBE_RENDER_INPUT,
+  totals: {
+    grossTotal: "3.10",
+    discountTotal: "0.30",
+    subtotalExclTax: "2.80",
+    taxTotal: "0.24",
+    totalAmount: "1.50",
+    amountDue: "3.04",
+    totalCharges: "2.90",
+    adjustments: "-0.10",
+    otherChargesSubTotal: "1.00",
+  },
+});
+
 // The values a compliant layout must print. amountDue is formatted by the layout's own
 // `money` helper at check time, so a helper format change never breaks the check.
 // chargeSummary / taxSummary / chargeDetails need presence + non-empty text only.
 export function requiredProbeValues(): RequiredValue[] {
-  const company = PROBE_RENDER_INPUT.company!;
+  const company = COMPLIANCE_PROBE.company!;
   const amountDue = executeInvoiceTemplate(
     compileInvoiceTemplate("{{money totals.amountDue}}"),
-    PROBE_RENDER_INPUT,
+    COMPLIANCE_PROBE,
   ).trim();
   const values: RequiredValue[] = [
     { section: "header", label: "the supplier name", text: company.name },
@@ -534,12 +648,12 @@ export function requiredProbeValues(): RequiredValue[] {
     {
       section: "identification",
       label: "the invoice number",
-      text: PROBE_RENDER_INPUT.invoice.number ?? "",
+      text: COMPLIANCE_PROBE.invoice.number ?? "",
     },
     {
       section: "billTo",
       label: "the buyer name",
-      text: PROBE_RENDER_INPUT.customer.name,
+      text: COMPLIANCE_PROBE.customer.name,
     },
     { section: "amountDue", label: "the amount due", text: amountDue },
   ];
@@ -559,6 +673,9 @@ export const COMPLIANCE_STRUCTURES: readonly InvoiceTemplateStructure[] = [
   },
 ];
 
+// Appended to a problem found only in the second structure's render.
+const PAYMENT_HIDDEN = " (with Payment hidden)";
+
 const RENDER_FILE = "(render)";
 
 // Collapse every whitespace run (incl. NBSP) to one space, so a value is matched
@@ -571,20 +688,56 @@ function missingBlock(message: string): LayoutProblem {
   return { file: RENDER_FILE, code: "LAYOUT_MISSING_REQUIRED_BLOCKS", message };
 }
 
+// Every `<section class="sec sec--<key> …">` element, with its inner HTML up to
+// the MATCHING `</section>` (nested sections are counted, so a nested section
+// never cuts the text short).
+// Each `<section …>` tag is found with a linear pattern and its class tested on
+// the tag alone (Sonar S5852: `[^>]*\bclass=` overlaps and backtracks).
+function sectionBodies(markup: string, key: ComplianceSectionKey): string[] {
+  const isCompliance = new RegExp(`\\sclass="sec sec--${key}\\b`);
+  const bodies: string[] = [];
+  for (const m of markup.matchAll(/<section\b[^>]*>/g)) {
+    if (!isCompliance.test(m[0])) continue;
+    const start = m.index + m[0].length;
+    const tag = /<section\b[^>]*>|<\/section\s*>/gi;
+    tag.lastIndex = start;
+    let depth = 1;
+    let end = markup.length;
+    for (let t = tag.exec(markup); t; t = tag.exec(markup)) {
+      depth += t[0].startsWith("</") ? -1 : 1;
+      if (depth === 0) {
+        end = t.index;
+        break;
+      }
+    }
+    bodies.push(markup.slice(start, end));
+  }
+  return bodies;
+}
+
 function sectionProblems(html: string): LayoutProblem[] {
   const problems: LayoutProblem[] = [];
   const markup = html.replace(/<!--[\s\S]*?-->/g, "");
   const required = requiredProbeValues();
   for (const key of COMPLIANCE_SECTION_KEYS) {
-    const match = new RegExp(
-      `<section\\b[^>]*\\bclass="sec sec--${key}\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/section>`,
-    ).exec(markup);
-    if (!match) {
+    const bodies = sectionBodies(markup, key);
+    if (bodies.length === 0) {
       problems.push(missingBlock(`section ${key} is missing`));
       continue;
     }
+    if (bodies.length > 1) {
+      problems.push(
+        missingBlock(
+          `section ${key} appears ${bodies.length} times; a compliance section must appear exactly once`,
+        ),
+      );
+      continue;
+    }
     const text = normalizeText(
-      decodeEntities(match[1]!.replace(/<[^>]*>/g, " ")),
+      // `[^<>]` (not `[^>]`): an unclosed `<` cannot make every later `<`
+      // rescan to the end (Sonar S5852). Rendered text never holds a raw `<`
+      // (Handlebars escapes it), so this strips exactly the tags.
+      decodeEntities(bodies[0]!.replace(/<[^<>]*>/g, " ")),
     );
     const values = required.filter((v) => v.section === key);
     if (values.length === 0 && text === "") {
@@ -603,23 +756,49 @@ function sectionProblems(html: string): LayoutProblem[] {
   return problems;
 }
 
+// Adds the problems of the Payment-hidden render that the Payment-on render
+// did not already report, marked as such.
+function mergeRenders(
+  first: readonly LayoutProblem[],
+  second: readonly LayoutProblem[],
+): LayoutProblem[] {
+  const problems = [...first];
+  const seen = new Set(first.map((p) => p.message));
+  for (const p of second) {
+    if (!seen.has(p.message)) {
+      problems.push({ ...p, message: `${p.message}${PAYMENT_HIDDEN}` });
+    }
+  }
+  return problems;
+}
+
 // Static tier: render the layout for both structures and check each section's HTML.
 // Returns [] when compliant. Never throws for a layout fault; generation and compile
-// errors become COMPILE_FAILED problems.
+// errors (the invoice AND the footer, both executed as load.ts does) become
+// COMPILE_FAILED problems.
 export function staticComplianceProblems(layout: LayoutFiles): {
   problems: LayoutProblem[];
-  html: string; // the Payment-on probe render, handed to the visible tier
+  html: string; // the Payment-on probe render
+  renders: readonly string[]; // both probe renders (Payment on, off), for the visible tier
 } {
   const rendered: string[] = [];
   for (const structure of COMPLIANCE_STRUCTURES) {
     try {
-      const { invoiceHbs } = generate(layout, structure);
+      const { invoiceHbs, footerHbs } = generate(layout, structure);
       rendered.push(
         executeInvoiceTemplate(
           compileInvoiceTemplate(invoiceHbs),
-          PROBE_RENDER_INPUT,
+          COMPLIANCE_PROBE,
         ),
       );
+      try {
+        executeInvoiceTemplate(
+          compileInvoiceTemplate(footerHbs),
+          COMPLIANCE_PROBE,
+        );
+      } catch (err) {
+        throw new Error(`footer: ${errorMessage(err)}`);
+      }
     } catch (err) {
       return {
         problems: [
@@ -630,33 +809,35 @@ export function staticComplianceProblems(layout: LayoutFiles): {
           },
         ],
         html: "",
+        renders: [],
       };
     }
   }
   const [paymentOn, paymentOff] = rendered as [string, string];
-  const problems = sectionProblems(paymentOn);
-  const seen = new Set(problems.map((p) => p.message));
-  for (const p of sectionProblems(paymentOff)) {
-    if (!seen.has(p.message)) {
-      problems.push({ ...p, message: `${p.message} (with Payment hidden)` });
-    }
-  }
-  return { problems, html: paymentOn };
+  return {
+    problems: mergeRenders(
+      sectionProblems(paymentOn),
+      sectionProblems(paymentOff),
+    ),
+    html: paymentOn,
+    renders: rendered,
+  };
 }
 
 // Visible tier: the caller supplies a reader that renders `html` and reports, per
 // section, Chromium's innerText and whether each required value is legibly visible.
 export interface VisibleSectionReport {
   present: boolean;
-  text: string; // innerText of .sec--<key> (first match)
-  illegible: string[]; // required values found but opacity < 0.1 or font-size < 6px
+  count: number; // `section.sec.sec--<key>` elements found; compliance needs exactly 1
+  text: string; // innerText of the section (the only match)
+  illegible: string[]; // required values with no rendered, legible occurrence
 }
 export type VisibleSectionReader = (
   html: string,
   probes: readonly { key: ComplianceSectionKey; values: readonly string[] }[],
 ) => Promise<Record<ComplianceSectionKey, VisibleSectionReport>>;
 
-export async function visibleComplianceProblems(
+async function visibleRenderProblems(
   html: string,
   read: VisibleSectionReader,
 ): Promise<LayoutProblem[]> {
@@ -673,13 +854,22 @@ export async function visibleComplianceProblems(
       problems.push(missingBlock(`section ${key} is missing`));
       continue;
     }
-    const text = normalizeText(report.text);
+    if (report.count > 1) {
+      problems.push(
+        missingBlock(
+          `section ${key} appears ${report.count} times; a compliance section must appear exactly once`,
+        ),
+      );
+      continue;
+    }
+    // innerText applies CSS text-transform, so match case-insensitively.
+    const text = normalizeText(report.text).toLowerCase();
     const values = required.filter((v) => v.section === key);
     if (values.length === 0 && text === "") {
       problems.push(missingBlock(`section ${key} visibly prints no text`));
     }
     for (const value of values) {
-      if (!text.includes(normalizeText(value.text))) {
+      if (!text.includes(normalizeText(value.text).toLowerCase())) {
         problems.push(
           missingBlock(`section ${key} does not visibly print ${value.label}`),
         );
@@ -691,6 +881,21 @@ export async function visibleComplianceProblems(
         );
       }
     }
+  }
+  return problems;
+}
+
+// `renders`: one probe render, or both from `staticComplianceProblems(...).renders`
+// (Payment on, then off) — CSS can hide a value in only one of them.
+export async function visibleComplianceProblems(
+  renders: string | readonly string[],
+  read: VisibleSectionReader,
+): Promise<LayoutProblem[]> {
+  const list = typeof renders === "string" ? [renders] : renders;
+  let problems: LayoutProblem[] = [];
+  for (const [i, html] of list.entries()) {
+    const found = await visibleRenderProblems(html, read);
+    problems = i === 0 ? found : mergeRenders(problems, found);
   }
   return problems;
 }

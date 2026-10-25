@@ -6,59 +6,67 @@ import type {
 } from "@/services/billing/invoice-template/compliance";
 
 // bm76 — the visible tier's Chromium reader, through bm75's hardened context (JS off,
-// offline, fetches aborted). innerText excludes comments, display:none, visibility:hidden
-// and [hidden] (verified 2026-10-25); the evaluate step adds opacity and font-size.
+// offline, fetches aborted; `page.evaluate` still runs). innerText excludes comments,
+// display:none, visibility:hidden and [hidden] (verified 2026-10-25).
+//
+// Code review fixes (2026-10-25):
+// - the section is `section.sec.sec--<key>` (the element the static tier checks), and
+//   every match is counted, so a decoy `.sec--<key>` cannot stand in for it;
+// - a value is legible only if at least one text node containing it is RENDERED (has
+//   client rects, passes checkVisibility) with effective opacity ≥ 0.1 (the PRODUCT up
+//   to the root, so nested or shell-level opacity counts) and its own computed font
+//   size ≥ 6px (computed size already reflects inheritance, so a `font-size:0`
+//   container with sized children is fine). A value split across text nodes has no
+//   single occurrence and is reported illegible (conservative);
+// - the page code is a plain string evaluated in ONE round trip: a function compiled by
+//   tsx/esbuild (keepNames) would carry `__name(...)` calls the page does not define.
+// Known limits (accepted, the human preview stays the final check): same-colour text,
+// clipping and off-screen positioning are not detected.
+const READ_SECTIONS_SCRIPT = String.raw`(probes) => {
+  var squash = function (t) { return String(t || "").replace(/\s+/g, " ").trim(); };
+  var legible = function (textNode) {
+    var parent = textNode.parentElement;
+    if (!parent) return false;
+    var range = document.createRange();
+    range.selectNodeContents(textNode);
+    if (range.getClientRects().length === 0) return false;
+    if (!parent.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return false;
+    if (parseFloat(getComputedStyle(parent).fontSize) < 6) return false;
+    var opacity = 1;
+    for (var node = parent; node; node = node.parentElement) {
+      opacity *= parseFloat(getComputedStyle(node).opacity);
+    }
+    return opacity >= 0.1;
+  };
+  var out = {};
+  probes.forEach(function (probe) {
+    var matches = document.querySelectorAll("section.sec.sec--" + probe.key);
+    var el = matches[0];
+    if (!el) {
+      out[probe.key] = { present: false, count: 0, text: "", illegible: [] };
+      return;
+    }
+    var illegible = probe.values.filter(function (value) {
+      var needle = squash(value);
+      var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (var n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (squash(n.textContent).indexOf(needle) !== -1 && legible(n)) return false;
+      }
+      return true;
+    });
+    out[probe.key] = { present: true, count: matches.length, text: el.innerText, illegible: illegible };
+  });
+  return out;
+}`;
+
 export const readSectionsVisibly: VisibleSectionReader = async (
   html,
   probes,
 ) => {
-  const { value } = await withHardenedPage(html, async (page) => {
-    const out = {} as Record<ComplianceSectionKey, VisibleSectionReport>;
-    for (const { key, values } of probes) {
-      const loc = page.locator(`.sec--${key}`).first();
-      const present = (await page.locator(`.sec--${key}`).count()) > 0;
-      const text = present ? await loc.innerText() : "";
-      const illegible = present
-        ? await loc.evaluate((el, vals) => {
-            // For each value, take the parent element of the first text node
-            // whose text contains it, and walk up to (and including) the
-            // section: any element with opacity < 0.1 or font-size < 6px on
-            // the way makes the value illegible.
-            const squash = (t: string) => t.replace(/\s+/g, " ").trim();
-            const illegibleAt = (start: Element): boolean => {
-              let node: Element | null = start;
-              while (node) {
-                const style = getComputedStyle(node);
-                if (
-                  Number.parseFloat(style.opacity) < 0.1 ||
-                  Number.parseFloat(style.fontSize) < 6
-                ) {
-                  return true;
-                }
-                if (node === el) break;
-                node = node.parentElement;
-              }
-              return false;
-            };
-            return vals.filter((v) => {
-              const needle = squash(v);
-              const walker = document.createTreeWalker(
-                el,
-                NodeFilter.SHOW_TEXT,
-              );
-              for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-                if (squash(n.textContent ?? "").includes(needle)) {
-                  const parent = n.parentElement;
-                  return parent ? illegibleAt(parent) : false;
-                }
-              }
-              return false;
-            });
-          }, values as string[])
-        : [];
-      out[key] = { present, text, illegible };
-    }
-    return out;
-  });
+  const { value } = await withHardenedPage(html, (page) =>
+    page.evaluate<Record<ComplianceSectionKey, VisibleSectionReport>>(
+      `(${READ_SECTIONS_SCRIPT})(${JSON.stringify(probes)})`,
+    ),
+  );
   return value;
 };

@@ -124,5 +124,124 @@ describe.skipIf(!run)(
       },
       60_000,
     );
+
+    // Code review fixes (2026-10-25) — each was reproduced against the first
+    // reader; each now fails (or, for the last two, passes) as it should.
+    async function visibleOf(files: Map<string, Buffer>) {
+      const staticResult = staticComplianceProblems(
+        layoutFilesFromVerified(files),
+      );
+      expect(staticResult.problems).toEqual([]);
+      return visibleComplianceProblems(
+        staticResult.renders,
+        readSectionsVisibly,
+      );
+    }
+
+    function standardWithShell(from: string, to: string): Map<string, Buffer> {
+      const files = packageFiles("INVTPL-STD-A4/v1");
+      const shell = files.get("shell.hbs")!.toString("utf8");
+      expect(shell).toContain(from);
+      files.set("shell.hbs", Buffer.from(shell.replace(from, to)));
+      return files;
+    }
+
+    const TIN_PROBLEM = expect.objectContaining({
+      message: expect.stringMatching(/^section header .*the supplier TIN/),
+    });
+
+    it("a hidden copy of the TIN cannot vouch for an opacity:0 copy", async () => {
+      const problems = await visibleOf(
+        standardWithTinLine(
+          '<div hidden>{{company.tin}}</div><div style="opacity:0">TIN {{company.tin}}</div>',
+        ),
+      );
+      expect(problems).toContainEqual(TIN_PROBLEM);
+    }, 60_000);
+
+    it("an off-screen .sec--header decoy is not read in place of the real section", async () => {
+      const files = standardWithShell(
+        '<div class="sheet">',
+        '<div class="sec--header" style="position:absolute;left:-9999px">{{company.name}} {{company.registrationNo}} {{company.tin}} {{company.sstRegNo}} {{company.addressLine1}}</div>\n  <div class="sheet">',
+      );
+      const header = files.get("partials/header.hbs")!.toString("utf8");
+      files.set(
+        "partials/header.hbs",
+        Buffer.from(
+          header.replace(
+            TIN_LINE,
+            '<div class="mono" style="display:none">TIN {{company.tin}}</div>',
+          ),
+        ),
+      );
+      expect(await visibleOf(files)).toContainEqual(TIN_PROBLEM);
+    }, 60_000);
+
+    it("CSS that hides the TIN only when Payment is hidden fails", async () => {
+      const files = standardWithShell(
+        "</style>",
+        "  .tin { display: none; }\n  [[if sections.payment]].tin { display: block; }[[/if]]\n</style>",
+      );
+      const header = files.get("partials/header.hbs")!.toString("utf8");
+      files.set(
+        "partials/header.hbs",
+        Buffer.from(
+          header.replace(
+            TIN_LINE,
+            '<div class="tin">TIN {{company.tin}}</div>',
+          ),
+        ),
+      );
+      expect(await visibleOf(files)).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringMatching(
+            /^section header .*the supplier TIN.*\(with Payment hidden\)$/,
+          ),
+        }),
+      );
+    }, 60_000);
+
+    it("stacked opacity is multiplied (three nested 0.3 = 0.027)", async () => {
+      const problems = await visibleOf(
+        standardWithTinLine(
+          '<div style="opacity:.3"><div style="opacity:.3"><div style="opacity:.3">TIN {{company.tin}}</div></div></div>',
+        ),
+      );
+      expect(problems).toContainEqual(TIN_PROBLEM);
+    }, 60_000);
+
+    it("a near-transparent .sheet in the shell makes every required value illegible", async () => {
+      const problems = await visibleOf(
+        standardWithShell(
+          '<div class="sheet">',
+          '<div class="sheet" style="opacity:0.02">',
+        ),
+      );
+      expect(problems).toContainEqual(TIN_PROBLEM);
+      expect(problems).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringMatching(/^section amountDue .*illegibly/),
+        }),
+      );
+    }, 60_000);
+
+    it("uppercase text-transform is not a false failure", async () => {
+      const problems = await visibleOf(
+        standardWithShell(
+          "</style>",
+          "  .supplier { text-transform: uppercase; }\n</style>",
+        ),
+      );
+      expect(problems).toEqual([]);
+    }, 60_000);
+
+    it("a font-size:0 container with sized children is not a false failure", async () => {
+      const problems = await visibleOf(
+        standardWithTinLine(
+          '<div style="font-size:0"><span style="font-size:12px">TIN {{company.tin}}</span></div>',
+        ),
+      );
+      expect(problems).toEqual([]);
+    }, 60_000);
   },
 );

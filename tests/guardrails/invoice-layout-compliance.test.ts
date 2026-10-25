@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  COMPLIANCE_PROBE,
   COMPLIANCE_SECTION_KEYS,
   lintLayoutTemplates,
   PROBE_RENDER_INPUT,
@@ -174,13 +175,86 @@ describe("guardrail 72 (static tier) — layout compliance, plain CI", () => {
   it("requiredProbeValues() carries the amount due exactly as {{money totals.amountDue}} renders it", () => {
     const rendered = executeInvoiceTemplate(
       compileInvoiceTemplate("{{money totals.amountDue}}"),
-      PROBE_RENDER_INPUT,
+      COMPLIANCE_PROBE,
     ).trim();
     expect(requiredProbeValues()).toContainEqual({
       section: "amountDue",
       label: "the amount due",
       text: rendered,
     });
+  });
+
+  // Code review fixes (2026-10-25).
+  it("COMPLIANCE_PROBE's amount due differs from every other money total; PROBE_RENDER_INPUT is unchanged", () => {
+    const { amountDue, ...others } = COMPLIANCE_PROBE.totals;
+    expect(Object.values(others)).not.toContain(amountDue);
+    expect(COMPLIANCE_PROBE.company).toEqual(PROBE_RENDER_INPUT.company);
+    expect(PROBE_RENDER_INPUT.totals.amountDue).toBe("3.00");
+  });
+
+  it.each([
+    ["the subtotal", "{{money totals.subtotalExclTax}}"],
+    ["the gross total", "{{money totals.grossTotal}}"],
+    ["the total charges", "{{money totals.totalCharges}}"],
+  ])("amountDue printing %s (money-formatted) fails", (_name, swap) => {
+    const files = standardWith(
+      "partials/amountDue.hbs",
+      "{{money totals.amountDue}}",
+      swap,
+    );
+    expect(staticComplianceProblems(layoutOf(files)).problems).toContainEqual(
+      expect.objectContaining({
+        code: "LAYOUT_MISSING_REQUIRED_BLOCKS",
+        message: expect.stringContaining("section amountDue"),
+      }),
+    );
+  });
+
+  it("a footer that fails to execute is COMPILE_FAILED (the footer is probed like load.ts does)", () => {
+    const files = standardWith(
+      "footer.hbs",
+      "{{customer.billingAccountId}}",
+      "{{customer.billingAcountId}}",
+    );
+    expect(staticComplianceProblems(layoutOf(files)).problems).toContainEqual(
+      expect.objectContaining({
+        code: "COMPILE_FAILED",
+        message: expect.stringContaining("footer"),
+      }),
+    );
+  });
+
+  it("a nested <section> inside a compliance section does not cut its text short", () => {
+    const files = standardWith(
+      "partials/header.hbs",
+      "<h1>Invoice</h1>",
+      '<section class="brand"><h1>Invoice</h1></section>',
+    );
+    expect(staticComplianceProblems(layoutOf(files)).problems).toEqual([]);
+  });
+
+  it("a compliance section printed twice fails", () => {
+    const files = standardWith(
+      "partials/taxSummary.hbs",
+      "</section>",
+      '</section><section class="sec sec--taxSummary sec--full"><p>again</p></section>',
+    );
+    expect(staticComplianceProblems(layoutOf(files)).problems).toContainEqual(
+      expect.objectContaining({
+        code: "LAYOUT_MISSING_REQUIRED_BLOCKS",
+        message: expect.stringContaining("section taxSummary appears 2 times"),
+      }),
+    );
+  });
+
+  it("hands both probe renders (Payment on, off) to the visible tier", () => {
+    const result = staticComplianceProblems(
+      layoutOf(packageText(STANDARD_DIR)),
+    );
+    expect(result.renders).toHaveLength(2);
+    expect(result.renders[0]).toBe(result.html);
+    expect(result.renders[0]).toContain("sec--payment");
+    expect(result.renders[1]).not.toContain("sec--payment");
   });
 
   it("covers the seven compliance sections; only payment is optional", () => {

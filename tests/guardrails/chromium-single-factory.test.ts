@@ -16,7 +16,12 @@ const SOURCE_DIRS = ["app", "actions", "services", "lib", "db", "scripts"];
 
 const FACTORY_FILE = "services/billing/render-invoice.ts";
 
-const CHROMIUM_USE = /\bchromium\.launch\b|\.newContext\(|\bbrowser\.newPage\(/;
+// Any engine (chromium, firefox, webkit), by property or bracket access, any
+// launch* or connect* entry point (launchPersistentContext, connectOverCDP …),
+// and any context or page creation (code review fix 2026-10-25: the first
+// pattern missed all but `chromium.launch` and `browser.newPage(`).
+const CHROMIUM_USE =
+  /\b(?:chromium|firefox|webkit)\s*(?:\.|\[\s*["'`])\s*(?:launch|connect)\w*|\.newContext\s*\(|\.newPage\s*\(/;
 
 function listSourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -26,7 +31,7 @@ function listSourceFiles(dir: string): string[] {
       const child = resolve(abs, entry);
       if (statSync(child).isDirectory()) {
         walk(child);
-      } else if (/\.tsx?$/.test(entry)) {
+      } else if (/\.(?:tsx?|[cm]?js)$/.test(entry)) {
         out.push(relative(ROOT, child).split(sep).join("/"));
       }
     }

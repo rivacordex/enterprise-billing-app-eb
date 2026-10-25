@@ -189,4 +189,32 @@ describe("invoice layout lint (Styling rule 3)", () => {
   it("the typed-supplier rule passes a {{company.…}} placeholder", () => {
     expect(typedSupplierHits("<div>TIN {{company.tin}}</div>")).toEqual([]);
   });
+
+  // Code review fixes (2026-10-25) — the hardening re-ported from the editor's
+  // current gates.ts closes these bypasses, each reproduced against the
+  // spec-snapshot port.
+  it.each([
+    ['<div style="background:url(\\h\\t\\t\\p\\s://x.example/b.png)">'],
+    ['<div/onclick="x()">'],
+    ['<div title="a"onclick="x()">'],
+    ['<div title=">" onclick="x()">'],
+    ['<img src="&#104;ttps&#58;&#47;&#47;x.example/a.png">&#123;&#123;'],
+  ])("hardeningHits rejects the bypass %s", (snippet) => {
+    expect(hardeningHits(snippet)).not.toEqual([]);
+  });
+
+  it("an entity-encoded brace around a placeholder is printed text, not unescaped output", () => {
+    expect(
+      lintLayoutTemplates({
+        "partials/x.hbs": "<div>&#123;{{invoice.number}}&#125;</div>",
+      }),
+    ).toEqual([]);
+  });
+
+  it("reports one line per distinct message ({{> x}} is both a text and an AST hit)", () => {
+    const problems = lintLayoutTemplates({ "partials/x.hbs": "{{> foo}}" });
+    const messages = problems.map((p) => p.message);
+    expect(messages).toEqual([...new Set(messages)]);
+    expect(messages).toContain("partials {{> …}} are not allowed");
+  });
 });

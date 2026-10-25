@@ -38,12 +38,40 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (uncommitted), bm77 next. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes uncommitted), bm77 next. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
 
 Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+
+**bm75–76 code review fixes (2026-10-25):** owner decisions: re-port the editor's CURRENT hardening;
+a compliance-only probe.
+
+- **Visible tier:** the section is `section.sec.sec--<key>` and must appear exactly once (both tiers);
+  a value is legible only if one text node holding it is rendered (client rects + `checkVisibility`),
+  its effective opacity (product to the root) is ≥ 0.1 and its own computed font size ≥ 6px; matching
+  is case-insensitive (`text-transform`); both probe renders (Payment on and off) are read
+  (`staticComplianceProblems(...).renders`; `visibleComplianceProblems` takes one or both). The page
+  code is a plain string in one `page.evaluate` (no tsx `__name`). `VisibleSectionReport` gains
+  `count`. A value split across text nodes is reported illegible (conservative); off-screen
+  positioning, same colour and clipping stay undetected (accepted).
+- **Static tier:** renders `COMPLIANCE_PROBE` (PROBE_RENDER_INPUT with every money total distinct from
+  the amount due 3.04; PROBE_RENDER_INPUT, the load probe and the golden unchanged); the footer is
+  compiled and executed too; sections are cut at the MATCHING `</section>` (nested sections).
+- **Hardening:** `attributeNames`, `decodeCssEscapes`, `withoutMustaches` and `hardeningHits` re-ported
+  from the editor's current `gates.ts`, plus one app-side addition: Handlebars-only hits that appear
+  only after entity decoding are ignored (an encoded brace is text). One line per distinct lint
+  message.
+- **Sonar S5852:** `EXTERNAL_URL`, the external-URL attribute rule and the tag strip rewritten to
+  linear forms with the same matches (20k-char adversarial input: ~115 ms → 0 ms each); the section
+  opener now finds `<section…>` tags linearly and tests the class on the tag.
+- **Guardrail 74:** any engine, `launch*`/`connect*`, bracket access, any `.newContext(`/`.newPage(`,
+  and `.js`/`.mjs`/`.cjs` files.
+- **bm75 render e2e:** the Standard v1 case now counts the PDF's own pages, plain vs hardened (3 = 3).
+- **Spec drift:** bm76 spec §2 (signatures, `html` only) and §Hardening line refs are superseded by the
+  above. **Cross-repo (editor E7):** snapshot this `compliance.ts`; the editor's own `gates.ts` still
+  has the escaped-brace false positive and the super-linear lint regexes until then.
 
 **bm76 notes (2026-10-25):**
 
@@ -100,7 +128,8 @@ Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
 | --- | --- | --- |
 | bm74 | Type-scoped template catalog in the DB (migration `0053`, two Drizzle mirrors) | **Built** (2026-10-25, `d1fbb92`) — tsc/ESLint/Prettier clean; integration 124/0 on the disposable `ebill-test` DB (new types-catalog suite incl. precondition abort + the full §5 matrix; catalog, activate, save-draft, capture, seed-upload, migration, draft-stamps, posting-skip, template journey); unit 4564 passed, 1 failed (`ratecard-demo-seed-boundary`, pre-existing since `771d39b`, unrelated) + 8 files fail to load without an env file |
 | bm75 | Network-blocked, script-free Chromium rendering (`withHardenedPage`, guardrail 74 draft/final half) | **Built** (2026-10-25, `a2a74d3`) — tsc/ESLint/Prettier clean; `render-invoice.service` 15/0 (4 spec cases + a final-render blocked-fetch case); guardrail `chromium-single-factory` 2/0, mutation-checked (a scratch `chromium.launch()` under `services/` fails it); Chromium e2e 7/0 (`RUN_CHROMIUM_E2E=1`: zero stub-server hits, 4 URLs blocked, script not run, data: allowed, Standard v1 1 page as before, no blocked URL); unchanged: golden, `post-run.service`, `draft-invoice-route` (87/0 with the above) and the template journey 19/19 on the disposable DB |
-| bm76 | Layout rules module `compliance.ts` (static + visible tiers) and the `INVTPL-BASIC-A4` reference package | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; lint guardrail 55/0 (22 `.hbs` incl. BASIC, hardening + typed-supplier cases); static compliance guardrail 16/0 (both packages clean, BASIC checksums match, 5 negative fixtures, import scan); visible e2e 7/0 (`RUN_CHROMIUM_E2E=1`: both packages clean, all 5 hiding tricks pass static and fail visible); template + golden + seed-checksum + guardrail unit suites 564 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload integration 17/0 on the disposable DB. **PR note: "editor contract refresh needed"** (E7/E8) |
+| bm76 | Layout rules module `compliance.ts` (static + visible tiers) and the `INVTPL-BASIC-A4` reference package | **Built** (2026-10-25, `d7bbca4`) — tsc/ESLint/Prettier clean; lint guardrail 55/0 (22 `.hbs` incl. BASIC, hardening + typed-supplier cases); static compliance guardrail 16/0 (both packages clean, BASIC checksums match, 5 negative fixtures, import scan); visible e2e 7/0 (`RUN_CHROMIUM_E2E=1`: both packages clean, all 5 hiding tricks pass static and fail visible); template + golden + seed-checksum + guardrail unit suites 564 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload integration 17/0 on the disposable DB. **PR note: "editor contract refresh needed"** (E7/E8) |
+| bm75–76 code review fixes | xhigh review of `a2a74d3`+`d7bbca4` (15 findings) + Sonar S5852 (3 regexes) | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; lint guardrail 62/0; static compliance 24/0; visible e2e 14/0 and render e2e 7/0 (`RUN_CHROMIUM_E2E=1`); guardrail 74 2/0, mutation-checked against 5 bypasses (all passed the old pattern); billing + guardrail unit suites 1134 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload + template journey 36/0 on the disposable DB |
 
 ## Delivered units
 
