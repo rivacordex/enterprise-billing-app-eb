@@ -31,6 +31,10 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
     findActive: vi.fn(),
     findDefault: vi.fn(),
     findById: vi.fn(),
+    // bm78 — no settings DRAFT, so the sample preview keeps the existing
+    // preview-family path (the draft-layout branch is covered by
+    // tests/db/preview-invoice-template.integration.test.ts).
+    findDraft: vi.fn(async () => null),
   },
 }));
 vi.mock("@/db/repositories/billing/bill-template-family", () => ({

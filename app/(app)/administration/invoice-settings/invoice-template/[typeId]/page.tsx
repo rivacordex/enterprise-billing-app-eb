@@ -9,6 +9,7 @@ import { GeneratedHbsViewer } from "@/components/billing/invoice-settings/genera
 import { InvoiceSettingsTabs } from "@/components/billing/invoice-settings/invoice-settings-tabs";
 import { InvoiceStructureForm } from "@/components/billing/invoice-settings/invoice-structure-form";
 import { TEMPLATE_TYPE_MESSAGES } from "@/components/billing/invoice-settings/template-type-messages";
+import { UploadLayoutDialog } from "@/components/billing/invoice-settings/upload-layout-dialog";
 import { TemplateVersionStatusBadge } from "@/components/billing/invoice-settings/template-version-status-badge";
 import { VersionHistoryTable } from "@/components/billing/invoice-settings/version-history-table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -85,6 +86,18 @@ export default async function InvoiceTemplateTypePage({
   });
   if (!data) notFound();
 
+  // bm78 — EDIT holders upload a layout package to a non-retired type. While a
+  // layout DRAFT is open the trigger is disabled with a caption (bm80 adds
+  // the overwrite path).
+  const canUpload = canEdit && data.typeStatus !== "RETIRED";
+  const upload = (
+    <UploadLayoutDialog
+      familyId={data.typeId}
+      nextVersionNo={data.nextLayoutVersionNo}
+      openLayoutDraft={data.openLayoutDraft}
+    />
+  );
+
   const heading = (
     <div className="space-y-2">
       <Link
@@ -105,12 +118,12 @@ export default async function InvoiceTemplateTypePage({
             </>
           ) : null}
         </h2>
-        {data.current ? (
+        {!data.empty ? (
           <span className="font-mono text-mono text-foreground">
             v
             {
               (tab === "generated" && version === undefined
-                ? data.current
+                ? (data.current ?? data.shown)
                 : data.shown
               ).versionNo
             }
@@ -121,30 +134,34 @@ export default async function InvoiceTemplateTypePage({
           isDefault={data.isDefaultType}
         />
       </div>
-      <p className="text-body-sm text-muted-foreground">
-        Layout code{" "}
-        <span className="font-mono text-mono text-foreground">
-          {data.layoutCode}
-        </span>{" "}
-        · Next layout version{" "}
-        <span className="font-mono text-mono text-foreground">
-          v{data.nextLayoutVersionNo}
-        </span>
-      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-body-sm text-muted-foreground">
+          Layout code{" "}
+          <span className="font-mono text-mono text-foreground">
+            {data.layoutCode}
+          </span>{" "}
+          · Next layout version{" "}
+          <span className="font-mono text-mono text-foreground">
+            v{data.nextLayoutVersionNo}
+          </span>
+        </p>
+        {canUpload && !data.empty ? upload : null}
+      </div>
     </div>
   );
 
-  if (data.current === null) {
+  if (data.empty) {
     // Not yet usable: nothing uploaded. ui-context §10e Info alert; no tabs
-    // body. bm78 adds the Upload button here.
+    // body. bm78: the Upload trigger sits inside it for EDIT holders.
     return (
       <div className="space-y-4">
         <InvoiceSettingsTabs active="invoice-template" />
         {heading}
         <Alert>
           <Info aria-hidden />
-          <AlertDescription>
-            {TEMPLATE_TYPE_MESSAGES.emptyState}
+          <AlertDescription className="space-y-3">
+            <p>{TEMPLATE_TYPE_MESSAGES.emptyState}</p>
+            {canUpload ? upload : null}
           </AlertDescription>
         </Alert>
       </div>
@@ -157,8 +174,13 @@ export default async function InvoiceTemplateTypePage({
   // exception: a DRAFT has no files, so without an explicit `?version=` it
   // keeps showing the current version's files (as it did before drafts).
   const onGenerated = tab === "generated";
-  const defaultShown = onGenerated ? current : data.defaultShown;
-  const shown = onGenerated && version === undefined ? current : data.shown;
+  // bm78: an uploaded-but-not-activated type has no current version; its
+  // Generated tab then shows the draft (which has no files yet).
+  const defaultShown = onGenerated
+    ? (current ?? data.shown)
+    : data.defaultShown;
+  const shown =
+    onGenerated && version === undefined ? (current ?? data.shown) : data.shown;
   const viewingOther =
     shown.billTemplateVersionId !== defaultShown.billTemplateVersionId;
   const shownIsDraft = shown.status === "DRAFT";
@@ -244,7 +266,7 @@ export default async function InvoiceTemplateTypePage({
             canEdit &&
             (shownIsDraft ||
               (!draft &&
-                shown.billTemplateVersionId === current.billTemplateVersionId))
+                shown.billTemplateVersionId === current?.billTemplateVersionId))
           }
           expectedDraftToken={draft?.token ?? null}
           draftVersionId={draft?.billTemplateVersionId ?? null}

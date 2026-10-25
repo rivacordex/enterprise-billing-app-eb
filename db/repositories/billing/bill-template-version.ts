@@ -6,7 +6,7 @@ import { billTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { appuser } from "@/db/schema/identity";
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
-import type { TemplateKind } from "@/types/billing";
+import type { LayoutPageSetup, TemplateKind } from "@/types/billing";
 import type { InvoiceTemplateStructureInput } from "@/validation/billing/invoice-template-structure.schema";
 
 // bm50-spec §Design D9 — repository over `bill_template_version`. bm57 adds the
@@ -273,6 +273,74 @@ export const billTemplateVersionRepository = {
       });
     if (!row) throw new Error("insertDraft returned no row");
     return row;
+  },
+
+  // bm78 (Inv #59) — the layout DRAFT a package upload creates. Files are
+  // already stored write-once under `blobRef`; `checksum` is the sha256 of the
+  // package's `checksums.json`. Written ONLY by installLayoutPackage
+  // (guardrail 68).
+  async insertLayoutDraft(
+    tx: Database,
+    input: {
+      familyId: string;
+      layoutCode: string;
+      versionNo: number;
+      pageSetup: LayoutPageSetup;
+      blobRef: string;
+      checksum: string;
+      createdBy: string;
+    },
+  ): Promise<TemplateDraftRow> {
+    const [row] = await tx
+      .insert(billTemplateVersion)
+      .values({
+        refBillFormatId: INVOICE,
+        kind: "layout",
+        versionNo: input.versionNo,
+        status: "DRAFT",
+        isDefault: false,
+        layoutCode: input.layoutCode,
+        refBillTemplateFamilyId: input.familyId,
+        pageSetup: input.pageSetup,
+        blobRef: input.blobRef,
+        checksum: input.checksum,
+        checksumAlgorithm: "sha256",
+        createdBy: input.createdBy,
+        lastModifiedBy: input.createdBy,
+      })
+      .returning({
+        ...getTableColumns(billTemplateVersion),
+        token: draftToken,
+      });
+    if (!row) throw new Error("insertLayoutDraft returned no row");
+    return row;
+  },
+
+  // bm78 (Inv #62) — point the settings DRAFT at a new layout DRAFT. Bumps the
+  // draft's token (`last_modified_datetime`), so an editor holding the old token
+  // gets DRAFT_CONFLICT. bm74's guard allows a settings DRAFT to change
+  // `ref_layout_version_id`. Returns the new token, or `null` when the row is no
+  // longer a settings DRAFT.
+  async repointDraftLayout(
+    tx: Database,
+    input: { id: string; layoutVersionId: string; actorId: string },
+  ): Promise<string | null> {
+    const rows = await tx
+      .update(billTemplateVersion)
+      .set({
+        refLayoutVersionId: input.layoutVersionId,
+        lastModifiedBy: input.actorId,
+        lastModifiedDatetime: sql`now()`,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, input.id),
+          eq(billTemplateVersion.status, "DRAFT"),
+          eq(billTemplateVersion.kind, "generated"),
+        ),
+      )
+      .returning({ token: draftToken });
+    return rows[0]?.token ?? null;
   },
 
   // bm57 D1 — the only DRAFT update the guard trigger permits. Guarded by the

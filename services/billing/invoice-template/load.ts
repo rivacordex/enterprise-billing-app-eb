@@ -6,9 +6,9 @@ import {
   compileInvoiceTemplate,
   executeInvoiceTemplate,
 } from "@/services/billing/invoice-template/compile";
+import { checksumIndexSchema } from "@/services/billing/invoice-template/checksum-index";
 import { PROBE_RENDER_INPUT } from "@/services/billing/invoice-template/compliance";
 import {
-  CHECKSUM_ALGORITHMS,
   InvoiceRenderError,
   isChecksumAlgorithm,
   type InvoiceRenderInput,
@@ -55,14 +55,8 @@ export function clearLoadedTemplateMemo(): void {
 
 const INDEX_FILE = "checksums.json";
 
-// D2 step 4 — the canonical index written by
-// `scripts/invoice-templates/write-checksums.ts`.
-const checksumIndexSchema = z
-  .object({
-    algorithm: z.enum(CHECKSUM_ALGORITHMS),
-    files: z.record(z.string(), z.string().regex(/^[0-9a-f]{64}$/)),
-  })
-  .strict();
+// D2 step 4 — `checksumIndexSchema` (the canonical index) lives in
+// checksum-index.ts since bm78, shared with the layout upload gate.
 
 function mismatch(
   row: BillTemplateVersion,
@@ -259,6 +253,29 @@ export async function loadLayout(
   row: BillTemplateVersion,
 ): Promise<Map<string, Buffer>> {
   assertLoadable(row, "layout");
+  return verifyVersionFiles(row);
+}
+
+// bm78 (Inv #61) — the ONLY loader that accepts a DRAFT: preview, the upload gate's
+// re-checks, activation (bm79) and export (bm81). Verifies the row's CURRENT checksum
+// and every file, like loadLayout; never memoized. assertLoadable is unchanged, so
+// capture, posting, final render and reprint still refuse every DRAFT.
+export async function loadLayoutDraft(
+  row: BillTemplateVersion,
+): Promise<Map<string, Buffer>> {
+  if (
+    row.kind !== "layout" ||
+    row.status !== "DRAFT" ||
+    !row.blobRef ||
+    !row.checksum ||
+    !row.checksumAlgorithm
+  ) {
+    throw new InvoiceRenderError(
+      "TEMPLATE_VERSION_NOT_FOUND",
+      `template version ${row.billTemplateVersionId} is not a stored layout DRAFT`,
+      { versionId: row.billTemplateVersionId },
+    );
+  }
   return verifyVersionFiles(row);
 }
 

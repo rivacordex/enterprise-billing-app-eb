@@ -16,6 +16,10 @@ import {
   PROBE_RENDER_INPUT,
   probeGeneratedTemplate,
 } from "@/services/billing/invoice-template/load";
+import {
+  buildChecksumIndex,
+  sha256,
+} from "@/services/billing/invoice-template/checksum-index";
 import { parseSampleData } from "@/services/billing/invoice-template/sample-data";
 import {
   InvoiceRenderError,
@@ -98,25 +102,6 @@ class ActivationRollback extends Error {
   constructor(readonly code: "DRAFT_CONFLICT") {
     super(code);
   }
-}
-
-// The blob store's one checksum function, not a second implementation.
-function sha256(bytes: Buffer): string {
-  return blobStore.digest(bytes, "sha256");
-}
-
-const byCodePoint = (a: string, b: string): number =>
-  a < b ? -1 : a > b ? 1 : 0;
-
-// bm50 D3 canonical form: sorted keys, 2-space indent, LF, trailing newline.
-function buildChecksumIndex(files: ReadonlyMap<string, Buffer>): Buffer {
-  const index = { algorithm: "sha256", files: {} as Record<string, string> };
-  for (const [name, bytes] of [...files].sort(([a], [b]) =>
-    byCodePoint(a, b),
-  )) {
-    index.files[name] = sha256(bytes);
-  }
-  return Buffer.from(`${JSON.stringify(index, null, 2)}\n`, "utf-8");
 }
 
 function testRenderFailed(message: string): InvoiceRenderError {

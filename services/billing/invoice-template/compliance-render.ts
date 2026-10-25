@@ -59,14 +59,24 @@ const READ_SECTIONS_SCRIPT = String.raw`(probes) => {
   return out;
 }`;
 
-export const readSectionsVisibly: VisibleSectionReader = async (
-  html,
-  probes,
-) => {
-  const { value } = await withHardenedPage(html, (page) =>
+// bm78-spec §6 — ONE hardened render returning both the visible-tier report and
+// the URLs the page tried to fetch, so the upload gate's fetch check and visible
+// tier share a single Chromium launch.
+export async function renderAndReadSections(
+  html: string,
+  probes: Parameters<VisibleSectionReader>[1],
+): Promise<{
+  report: Record<ComplianceSectionKey, VisibleSectionReport>;
+  blockedUrls: string[];
+}> {
+  const { value, blockedUrls } = await withHardenedPage(html, (page) =>
     page.evaluate<Record<ComplianceSectionKey, VisibleSectionReport>>(
       `(${READ_SECTIONS_SCRIPT})(${JSON.stringify(probes)})`,
     ),
   );
-  return value;
-};
+  return { report: value, blockedUrls };
+}
+
+// The visible-tier reader alone (bm76): the report, without the fetch list.
+export const readSectionsVisibly: VisibleSectionReader = async (html, probes) =>
+  (await renderAndReadSections(html, probes)).report;

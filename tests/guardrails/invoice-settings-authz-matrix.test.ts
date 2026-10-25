@@ -31,6 +31,10 @@ vi.mock("@/services/billing/invoice-template/save-template-draft", () => ({
 vi.mock("@/services/billing/invoice-template/activate-template", () => ({
   activateTemplate: vi.fn(),
 }));
+// bm78 — the upload service, so an upload that slips past the guard is visible.
+vi.mock("@/services/billing/invoice-template/upload-layout-package", () => ({
+  uploadLayoutPackage: vi.fn(),
+}));
 vi.mock("@/lib/logger", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -38,8 +42,10 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { activateTemplateAction } from "@/actions/billing/invoice-settings/activate-template.action";
 import { saveTemplateDraftAction } from "@/actions/billing/invoice-settings/save-template-draft.action";
+import { uploadLayoutPackageAction } from "@/actions/billing/invoice-settings/upload-layout-package.action";
 import { activateTemplate } from "@/services/billing/invoice-template/activate-template";
 import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
+import { uploadLayoutPackage } from "@/services/billing/invoice-template/upload-layout-package";
 import { PERMISSION_NAMES } from "@/types/rbac";
 
 // bm55-spec §Tests — guardrail 56 (routes), code-standards Part 2 §8/§9 item
@@ -159,6 +165,13 @@ const MATRIX: MatrixRow[] = [
     level: "EDIT",
     kind: "action",
   },
+  {
+    // bm78 — upload a layout package as a new draft.
+    surface: "upload layout package (a mutation)",
+    file: "actions/billing/invoice-settings/upload-layout-package.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
 ];
 
 describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => {
@@ -268,7 +281,11 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(form).toContain("setDraftToken(expectedDraftToken)");
     expect(form).toContain("reset(toFormValues(adopted))");
     // The Generated .hbs tab defaults to the current version, not the file-less draft.
-    expect(src).toContain("onGenerated && version === undefined ? current");
+    // bm78: an uploaded-but-not-activated type has no current version and
+    // falls back to the shown draft (which then reports "no generated files").
+    expect(src).toContain(
+      "onGenerated && version === undefined ? (current ?? data.shown)",
+    );
     // A READ user gets no View link on a DRAFT history row.
     expect(src).toContain("canViewDrafts={canEdit}");
   });
@@ -480,5 +497,24 @@ describe("invoice-settings authz matrix — a READ user cannot change the footno
     });
     expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
     expect(vi.mocked(activateTemplate)).not.toHaveBeenCalled();
+  });
+});
+
+// bm78-spec §13 — a READ-only user's layout upload is refused server-side,
+// before any parse or service call (the dialog's trigger is show/hide only).
+describe("invoice-settings authz matrix — a READ user cannot upload a layout package (bm78)", () => {
+  it("the upload is FORBIDDEN with no problems and the service is never called", async () => {
+    const form = new FormData();
+    form.set("familyId", "BTF00000002");
+    form.set("expectedDraft", "none");
+    form.set(
+      "file",
+      new File([new Uint8Array([0x50, 0x4b, 0x05, 0x06])], "layout.zip", {
+        type: "application/zip",
+      }),
+    );
+    const result = await uploadLayoutPackageAction(form);
+    expect(result).toEqual({ ok: false, code: "FORBIDDEN", problems: [] });
+    expect(vi.mocked(uploadLayoutPackage)).not.toHaveBeenCalled();
   });
 });

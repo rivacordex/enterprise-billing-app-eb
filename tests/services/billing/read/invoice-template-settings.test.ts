@@ -211,7 +211,7 @@ describe("getInvoiceTemplatePageData: the working draft", () => {
     const data = await page(undefined, true);
     expect(data.shown.billTemplateVersionId).toBe("BTV00000004");
     expect(data.defaultShown.billTemplateVersionId).toBe("BTV00000004");
-    expect(data.current.billTemplateVersionId).toBe("BTV00000002");
+    expect(data.current?.billTemplateVersionId).toBe("BTV00000002");
     expect(data.draft).toEqual({
       billTemplateVersionId: "BTV00000004",
       versionNo: 2,

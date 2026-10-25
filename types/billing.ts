@@ -1401,3 +1401,40 @@ export interface TemplateTypeListRow {
   activeSince: Date | null; // its activated_datetime
   retiredAt: Date | null;
 }
+
+// bm78 — layout package upload limits and shape (code-standards › Invoice
+// Template Types, TS rules 6–7). The partial keys are `["header",
+// ...INVOICE_SECTION_KEYS]` — the same expression as LAYOUT_PART_KEYS in
+// layout-manifest.schema.ts, which imports this file (so it cannot be imported
+// back); a gate test pins the two equal.
+export const LAYOUT_PACKAGE_MAX_BYTES = 2 * 1024 * 1024; // compressed upload
+export const LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024; // streamed inflate cap
+export const LAYOUT_PACKAGE_MAX_ENTRIES = 64;
+
+export const LAYOUT_PACKAGE_REQUIRED_FILES = [
+  "manifest.json",
+  "shell.hbs",
+  "footer.hbs",
+  "sample-data.json",
+  "checksums.json",
+  ...["header", ...INVOICE_SECTION_KEYS].map((k) => `partials/${k}.hbs`),
+] as const;
+export const LAYOUT_PACKAGE_FONT_FILE =
+  /^fonts\/(?:[A-Za-z0-9._-]{1,64}\.woff2|OFL\.txt)$/;
+
+// TS rule 3 — the warned-about draft, never a boolean "confirmed" flag.
+export type ExpectedDraft =
+  | { none: true }
+  | { versionId: string; lastModified: string };
+
+export type LayoutUploadErrorCode =
+  | "FORBIDDEN"
+  | "VALIDATION_ERROR"
+  | "SERVER_ERROR"
+  | "TEMPLATE_TYPE_RETIRED"
+  | "DRAFT_CHANGED_SINCE_WARNING"
+  | "LAYOUT_REJECTED";
+
+export type UploadLayoutPackageResult =
+  | { ok: true; versionId: string; versionNo: number; replaced: false }
+  | { ok: false; code: LayoutUploadErrorCode; problems: LayoutProblem[] };

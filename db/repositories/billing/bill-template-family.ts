@@ -31,6 +31,21 @@ export const billTemplateFamilyRepository = {
     return row ?? null;
   },
 
+  // bm78 (Inv #66) — the one type-row lock. Always inside a db.transaction; when two
+  // types are locked, the caller locks them in ascending bill_template_family_id order.
+  async lockTemplateType(
+    tx: Database,
+    typeId: string,
+    mode: "update" | "share",
+  ): Promise<BillTemplateFamily | null> {
+    const [row] = await tx
+      .select()
+      .from(billTemplateFamily)
+      .where(eq(billTemplateFamily.billTemplateFamilyId, typeId))
+      .for(mode === "update" ? "update" : "share");
+    return row ?? null;
+  },
+
   // bm77 — every type, retired included: the default first, then by name.
   async listAll(db: Database): Promise<BillTemplateFamily[]> {
     return db

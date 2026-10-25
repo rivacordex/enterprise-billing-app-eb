@@ -19,4 +19,28 @@ export const TEMPLATE_TYPE_MESSAGES = {
     "No layout uploaded yet. Upload a layout package to create the first draft.",
   showRetired: "Show retired types",
   hideRetired: "Hide retired types",
+  // bm78 — the upload dialog.
+  uploadTrigger: "Upload layout package",
+  uploadTitle: "Upload layout package",
+  uploadFileLabel: "Layout package (.zip)",
+  uploadChecking: "Checking package…",
+  uploadRejected: "The layout package was refused.",
+  uploadFailed: "The layout package could not be uploaded. Try again.",
+  uploadForbidden: "You do not have permission to upload a layout package.",
+  uploadDraftChanged:
+    "This type's drafts changed since you opened the page. The page has been reloaded — check the draft and try again.",
+  uploadTypeRetired:
+    "This invoice template type has been retired, so a layout can no longer be uploaded to it.",
 } as const;
+
+// "A new draft v{n} will be created." / "Create draft v{n}" /
+// "This type already has a draft layout v{n}." (bm80 replaces the last).
+export function uploadCreatesDraft(n: number): string {
+  return `A new draft v${n} will be created.`;
+}
+export function uploadConfirm(n: number): string {
+  return `Create draft v${n}`;
+}
+export function uploadDraftOpen(n: number): string {
+  return `This type already has a draft layout v${n}.`;
+}

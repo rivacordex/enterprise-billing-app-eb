@@ -38,12 +38,38 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`), bm78 next. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (uncommitted; `fflate` to land as its own first commit). Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
 
 Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+
+**bm78 notes (2026-10-25):**
+
+- Gate (`upload-layout-package.ts`): stage 1 reads the zip in memory in two passes (central directory
+  via `unzipSync` filter → nothing inflated; then a streamed `Unzip` + `UnzipInflate` with a running
+  2 MiB cap and a per-entry allow-list re-check); stages 2–3 blocking, 4–7 collecting. Install
+  (`install-layout-package.ts`) writes blobs write-once under `layouts/<code>/v<n>-<digest12>/`, then
+  one transaction (`lockTemplateType` + the generated kind lock, re-checks, layout DRAFT, settings
+  DRAFT re-pointed or created, `INVOICE_TEMPLATE_LAYOUT_UPLOADED`). `loadLayoutDraft` is the only
+  DRAFT loader. `checksum-index.ts` holds the moved helpers (no behaviour change).
+- **Deviation 1 — stage 7 reads both probe renders** (Payment on and off; the bm75–76 review fix),
+  so a clean gate run is two Chromium launches, blocked URLs merged — not the spec's one.
+- **Deviation 2 — `LAYOUT_PACKAGE_REQUIRED_FILES`** is built from `["header", ...INVOICE_SECTION_KEYS]`
+  in `types/billing.ts` (importing `LAYOUT_PART_KEYS` would be a runtime cycle); a gate test pins it
+  to `LAYOUT_PART_KEYS`.
+- **Deviation 3 — a READ user with only a settings DRAFT** (uploaded, not activated) still sees the
+  empty state (drafts stay hidden from READ); EDIT users get the tabs on the draft. Page data gains
+  an explicit `empty` discriminator and `openLayoutDraft`.
+- **Deviation 4 — lockfile:** `npm install` also normalised unrelated lock entries (`@emnapi/*`,
+  `peer` flags); the lock was restored and only the fflate entries added, so the dependency diff is
+  8 lines.
+- Forced edits: the authz matrix's Generated-tab source check (`current ?? data.shown`), the preview
+  action test's repository mock (`findDraft`), bm77's page/read test fixtures.
+- **Finding (open, bm76 lint):** `url(http{{#if company}}{{/if}}://…)` passes the raw-text lint and
+  renders as an external URL. Stage 7 refuses it (`LAYOUT_EXTERNAL_FETCH`, no request leaves —
+  e2e-proven), so it is not exploitable, but the lint is weaker than it reads.
 
 **bm77 notes (2026-10-25):**
 
@@ -177,6 +203,7 @@ a compliance-only probe.
 | bm76 | Layout rules module `compliance.ts` (static + visible tiers) and the `INVTPL-BASIC-A4` reference package | **Built** (2026-10-25, `d7bbca4`) — tsc/ESLint/Prettier clean; lint guardrail 55/0 (22 `.hbs` incl. BASIC, hardening + typed-supplier cases); static compliance guardrail 16/0 (both packages clean, BASIC checksums match, 5 negative fixtures, import scan); visible e2e 7/0 (`RUN_CHROMIUM_E2E=1`: both packages clean, all 5 hiding tricks pass static and fail visible); template + golden + seed-checksum + guardrail unit suites 564 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload integration 17/0 on the disposable DB. **PR note: "editor contract refresh needed"** (E7/E8) |
 | bm75–76 code review fixes | xhigh review of `a2a74d3`+`d7bbca4` (15 findings) + Sonar S5852 (3 regexes) | **Built** (2026-10-25, `1abf17c`) — tsc/ESLint/Prettier clean; lint guardrail 62/0; static compliance 24/0; visible e2e 14/0 and render e2e 7/0 (`RUN_CHROMIUM_E2E=1`); guardrail 74 2/0, mutation-checked against 5 bypasses (all passed the old pattern); billing + guardrail unit suites 1134 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload + template journey 36/0 on the disposable DB |
 | bm77 | Invoice template type list, create type, per-type detail page (`[typeId]`), `app_runtime` grant | **Built** (2026-10-25, `e251953`) — tsc/ESLint/Prettier clean; unit 4735 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) — incl. new template-types 9/0, list page 6/0, detail page 6/0, read service 13/0, authz matrix + nav guard + audit filters 39/0; integration on the disposable DB: 22 template/grant/invoice suites 250+/0 incl. new create-type 10/0, save-draft + activate 31/0, template journey 19/0; admin browser e2e 5/0 after a fresh `next build` (`RUN_INVOICE_SETTINGS_E2E=1`; the first run had one company-profile `waitFor` timeout, passed on rerun) |
+| bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`, draft-layout preview) | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; unit 4797 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new gate 35/0, load-layout-draft 14/0, single-layout-writer 5/0 (mutation-checked), authz matrix 32/0; integration on the disposable DB 83/0 incl. new upload 9/0, preview 2/0, capture +1 DRAFT-only case; Chromium e2e 26/0 incl. new upload gate 3/0 |
 
 ## Delivered units
 

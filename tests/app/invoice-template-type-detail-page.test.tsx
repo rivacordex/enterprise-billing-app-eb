@@ -26,6 +26,18 @@ vi.mock("@/components/billing/invoice-settings/invoice-structure-form", () => ({
     return <div data-testid="structure-form" />;
   },
 }));
+// bm78 — the upload dialog's action pulls the db/service graph.
+vi.mock("@/components/billing/invoice-settings/upload-layout-dialog", () => ({
+  UploadLayoutDialog: (props: { openLayoutDraft: unknown }) => (
+    <button
+      type="button"
+      data-testid="upload-layout"
+      disabled={props.openLayoutDraft !== null}
+    >
+      Upload layout package
+    </button>
+  ),
+}));
 vi.mock("@/components/billing/invoice-settings/generated-hbs-viewer", () => ({
   GeneratedHbsViewer: () => <div data-testid="generated-viewer" />,
 }));
@@ -61,6 +73,8 @@ const STANDARD_DATA = {
   isDefaultType: true,
   layoutCode: "INVTPL-STD-A4",
   nextLayoutVersionNo: 2,
+  openLayoutDraft: null,
+  empty: false as const,
   current: SEEDED_GENERATED_ROW,
   shown: SEEDED_GENERATED_ROW,
   defaultShown: SEEDED_GENERATED_ROW,
@@ -77,6 +91,8 @@ const EMPTY_DATA = {
   isDefaultType: false,
   layoutCode: "INVTPL-WHOLESALE",
   nextLayoutVersionNo: 1,
+  openLayoutDraft: null,
+  empty: true as const,
   current: null,
   history: [] as [],
 };

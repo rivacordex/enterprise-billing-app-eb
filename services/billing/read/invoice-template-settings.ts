@@ -39,12 +39,18 @@ export interface InvoiceTemplateTypeHeader {
   layoutCode: string;
   // The version the type's next layout upload gets (bm78): max + 1, or 1.
   nextLayoutVersionNo: number;
+  // bm78 — the type's open layout DRAFT (an upload not yet activated). While
+  // one exists the Upload trigger is disabled (bm80 adds the overwrite path).
+  openLayoutDraft: { versionId: string; versionNo: number } | null;
 }
 
 // The type has settings: today's editor data.
 export interface InvoiceTemplateEditorData {
-  // The version new invoices use: the non-default ACTIVE ?? the default.
-  current: BillTemplateVersion;
+  empty: false;
+  // The version new invoices use: the non-default ACTIVE ?? the default. bm78:
+  // `null` for an uploaded-but-not-activated type (it has only a settings
+  // DRAFT, which the page then shows).
+  current: BillTemplateVersion | null;
   // The version the page shows: `?version=` when it names a stored generated
   // version of this type, else `defaultShown`.
   shown: BillTemplateVersion;
@@ -55,15 +61,18 @@ export interface InvoiceTemplateEditorData {
   // never see it on the edit tab; it is still listed in `history`).
   draft: TemplateDraftInfo | null;
   shownStructure: InvoiceTemplateStructure;
-  // `current`'s structure, parsed (the Activate dialog diffs against it).
-  currentStructure: InvoiceTemplateStructure;
+  // `current`'s structure, parsed (the Activate dialog diffs against it);
+  // `null` when there is no current version yet (bm78).
+  currentStructure: InvoiceTemplateStructure | null;
   history: TemplateVersionHistoryRow[];
 }
 
 // bm77 — a type with no settings at all ("Not yet usable": nothing uploaded
-// yet) renders the empty state instead of the editor.
+// yet) renders the empty state instead of the editor. bm78: a type with only a
+// settings DRAFT (uploaded, not activated) renders the editor on that draft for
+// an EDIT user; a READ user, who never sees drafts, still gets the empty state.
 export type InvoiceTemplatePageData = InvoiceTemplateTypeHeader &
-  (InvoiceTemplateEditorData | { current: null; history: [] });
+  (InvoiceTemplateEditorData | { empty: true; current: null; history: [] });
 
 function toHistoryRow(
   row: BillTemplateVersion & { usedByCount: number },
@@ -162,6 +171,7 @@ export async function getInvoiceTemplatePageData(
           })
         : Promise.resolve(null),
     ]);
+  const openLayout = layoutRows.find((l) => l.status === "DRAFT") ?? null;
 
   const current = active ?? fallback;
   const header: InvoiceTemplateTypeHeader = {
@@ -172,12 +182,21 @@ export async function getInvoiceTemplatePageData(
     layoutCode: type.layoutCode,
     nextLayoutVersionNo:
       layoutRows.reduce((max, l) => Math.max(max, l.versionNo), 0) + 1,
+    openLayoutDraft: openLayout
+      ? {
+          versionId: openLayout.billTemplateVersionId,
+          versionNo: openLayout.versionNo,
+        }
+      : null,
   };
   // A type with no settings yet (created empty; bm78 uploads the first
   // layout) — not an error, the page renders the empty state.
-  if (!current) return { ...header, current: null, history: [] };
-
+  // Nothing to show: no settings at all, or (for a READ user) only a draft.
   const defaultShown = draftRow ?? current;
+  if (!defaultShown) {
+    return { ...header, empty: true, current: null, history: [] };
+  }
+
   // A `?version=` from another type falls back too: the heading names this
   // type, and the history lists its versions only.
   const shown =
@@ -200,18 +219,19 @@ export async function getInvoiceTemplatePageData(
   const layoutLabels = new Map(
     layoutRows.map((l) => [
       l.billTemplateVersionId,
-      `${l.layoutCode ?? "layout"} v${l.versionNo}`,
+      `${l.layoutCode ?? "layout"} v${l.versionNo}${l.status === "DRAFT" ? " (draft)" : ""}`,
     ]),
   );
 
   return {
     ...header,
+    empty: false,
     current,
     shown,
     defaultShown,
     draft,
     shownStructure: parseStoredStructure(shown),
-    currentStructure: parseStoredStructure(current),
+    currentStructure: current ? parseStoredStructure(current) : null,
     history: generatedRows.map((r) => toHistoryRow(r, layoutLabels)),
   };
 }
