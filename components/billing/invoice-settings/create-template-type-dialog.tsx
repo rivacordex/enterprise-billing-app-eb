@@ -4,7 +4,8 @@
 // `CreateTemplateTypeDialog`: one Name field, Create (primary) and Cancel. It
 // keeps no server state: on success it navigates to the new type's detail
 // page; on `ok: false` it shows the name's field error under the input in
-// Danger `-fg` (or a generic message). The client-side trim + length check only
+// Danger `-fg` (or a generic message) and re-fetches the page
+// (`router.refresh()`). The client-side trim + length check only
 // enables Create (UX); the service normalizes and validates authoritatively.
 
 import { useRouter } from "next/navigation";
@@ -65,6 +66,10 @@ export function CreateTemplateTypeDialog(): React.JSX.Element {
             ? TEMPLATE_TYPE_MESSAGES.createForbidden
             : TEMPLATE_TYPE_MESSAGES.createFailed),
       );
+      // Next.js rule 4 — on any `ok: false`, re-fetch so the list behind the
+      // dialog reflects the server (e.g. the type that took this name). The
+      // refresh keeps client state, so the dialog and its error stay up.
+      router.refresh();
     } catch {
       setError(TEMPLATE_TYPE_MESSAGES.createFailed);
     } finally {

@@ -24,6 +24,19 @@ export type StatusLiteralAllowEntry = {
   reason: string;
 };
 
+// bm77 — an invoice template TYPE's `RETIRED` (its own derived
+// TemplateTypeStatus, never stored), with the shared reason wording.
+function templateTypeStatus(
+  file: string,
+  what: string,
+): StatusLiteralAllowEntry {
+  return {
+    file,
+    literal: "RETIRED",
+    reason: `billing invoice-settings (bm77): ${what} — the invoice template TYPE's own derived TemplateTypeStatus, unrelated to product lifecycle.`,
+  };
+}
+
 export const STATUS_LITERAL_ALLOWLIST: StatusLiteralAllowEntry[] = [
   // ── Product module's own home: db/** and services/product/** (guardrail 30 §9
   //    names both as allowed). Listed anyway because D3's sweep exclusion is
@@ -157,22 +170,16 @@ export const STATUS_LITERAL_ALLOWLIST: StatusLiteralAllowEntry[] = [
   // ── bm77 — invoice template TYPES: their own derived TemplateTypeStatus
   //    (USABLE | NOT_YET_USABLE | RETIRED), never stored, unrelated to product
   //    lifecycle.
-  {
-    file: "types/billing.ts",
-    literal: "RETIRED",
-    reason:
-      "billing invoice-settings (bm77): defines TEMPLATE_TYPE_STATUSES, the derived invoice template TYPE status union — its own TemplateTypeStatus, unrelated to product lifecycle.",
-  },
-  {
-    file: "services/billing/invoice-template/template-types.ts",
-    literal: "RETIRED",
-    reason:
-      "billing invoice-settings (bm77): `deriveTemplateTypeStatus` returns RETIRED for a retired invoice template type — its own derived TemplateTypeStatus, unrelated to product lifecycle.",
-  },
-  {
-    file: "components/billing/invoice-settings/template-type-list.tsx",
-    literal: "RETIRED",
-    reason:
-      "billing invoice-settings (bm77): hides and mutes RETIRED invoice template types in the type list — its own derived TemplateTypeStatus, unrelated to product lifecycle.",
-  },
+  templateTypeStatus(
+    "types/billing.ts",
+    "defines TEMPLATE_TYPE_STATUSES, the derived type status union",
+  ),
+  templateTypeStatus(
+    "services/billing/invoice-template/template-types.ts",
+    "`deriveTemplateTypeStatus` returns RETIRED for a retired type",
+  ),
+  templateTypeStatus(
+    "components/billing/invoice-settings/template-type-list.tsx",
+    "hides and mutes RETIRED types in the type list",
+  ),
 ];

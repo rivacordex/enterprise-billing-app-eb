@@ -67,6 +67,10 @@ type MatrixRow = {
   alsoBillrunView?: true;
 };
 
+// bm77 — the editor moved to the template type detail page.
+const TYPE_DETAIL_PAGE =
+  "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx";
+
 const MATRIX: MatrixRow[] = [
   {
     surface: "/administration/invoice-settings (redirect only)",
@@ -102,7 +106,7 @@ const MATRIX: MatrixRow[] = [
   {
     // bm77 — a type's detail page (today's editor, per type).
     surface: "/administration/invoice-settings/invoice-template/[typeId]",
-    file: "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx",
+    file: TYPE_DETAIL_PAGE,
     level: "READ",
     kind: "page",
   },
@@ -245,10 +249,7 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
   });
 
   it("while a working draft exists the draft is the only editable version, and the form adopts a newer draft token (bm57, bm72 review)", () => {
-    // bm77 — the editor moved to the type detail page.
-    const src = read(
-      "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx",
-    );
+    const src = read(TYPE_DETAIL_PAGE);
     // Another version is editable only when there is no draft to overwrite.
     expect(src).toMatch(
       /editable=\{\s*canEdit &&\s*\(shownIsDraft \|\|\s*\(!draft &&/,
@@ -402,10 +403,7 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
   });
 
   it("the page offers posted bills only to billrun_view holders", () => {
-    // bm77 — the editor moved to the type detail page.
-    const src = read(
-      "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx",
-    );
+    const src = read(TYPE_DETAIL_PAGE);
     expect(src).toMatch(
       /canPreviewBills = hasLevel\(\s*permissionMap,\s*PERMISSIONS\.BILLRUN_VIEW,\s*LEVELS\.READ,?\s*\)/,
     );
