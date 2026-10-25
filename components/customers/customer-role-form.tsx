@@ -270,7 +270,6 @@ export function CustomerRoleForm({
                 type="button"
                 disabled={specSubmitting}
                 onClick={() => void handleSaveSpecification()}
-                className="bg-[color:var(--action-cta-bg)] text-white hover:bg-[color:var(--action-cta-bg)]/90"
               >
                 Save specification
               </Button>

@@ -29,11 +29,11 @@ The primary flow — a MANAGER onboards a new enterprise customer and activates 
 9. Save. The server compares the loaded `last_modified_datetime`; if another user changed the customer meanwhile, the save is rejected with a reload prompt. On success, audit rows record actor, timestamp, and before/after values.
 10. Any USER can now open **View Customer**, search for the customer, and see the three read-only sections: Party – Organization, Role – Customer, Customer – Contact Details (on the Profile and Contacts tabs since cm19).
 
-Billing accounts follow-on (Invoice Template Binding update, cm17–cm22):
+Billing accounts follow-on (Invoice Template Binding update, cm17–cm22; delivered, signed off 2026-10-25):
 
 11. While the customer is INITIALIZED, a user holding `customers : EDIT` and `accounts_transactions : EDIT` onboards it from Manage Customer through the onboarding wizard. The wizard shows a read-only **Invoice template — Follow active template** field after Currency; submitting moves the customer to VALIDATED and creates the Financial Account and its Billing Account (BAN) with no template reference (follow the active template).
 12. On **View Customer**, the **Accounts** tab (`?tab=accounts`, needs `accounts_view : READ`) shows the Financial Account summary, each BAN with state, bill cycle, payment term, live receivable and its template label ("Follows active template (currently: <name> vN), as of now"), and a paginated read-only document list that links into the Accounts module.
-13. On **Manage Customer**, the **Billing account** panel lists each BAN with its template label. A user who also holds `accounts_transactions : EDIT` can **Reset to follow active template**; otherwise the panel is read-only.
+13. On **Manage Customer**, the **Billing account** panel lists each BAN with its template label. A user who also holds `accounts_transactions : EDIT` can **Reset to follow active template** on an open BAN that holds a non-`NULL` reference; otherwise the panel is read-only. In v1 every BAN already follows the active template, so the button is disabled with "Already following the active template".
 
 ## Features
 
@@ -44,13 +44,15 @@ Billing accounts follow-on (Invoice Template Binding update, cm17–cm22):
 - Read-only detail page with three sections: Party – Organization, Role – Customer (including read-only account reference and JSONB specification), Customer – Contact Details. Since the Invoice Template Binding update (cm19) they sit on URL-driven tabs (`?tab=`): **Profile** (Organization + Customer Role, the default), **Contacts** (Contact Details) and **Accounts** (billing accounts, cm20); the inconsistency banner shows above the tabs on every tab.
 - Inconsistency warning banner when statuses conflict (e.g. ACTIVE customer on a SUSPENDED organization) — warn only, no cascade.
 
-### Billing accounts and invoice template (Invoice Template Binding update, built 2026-10-13)
+### Billing accounts and invoice template (Invoice Template Binding update, delivered cm17–cm22, signed off 2026-10-25)
 
 - **Tabs (cm19):** View Customer detail is a server-rendered tab strip — Profile (default), Contacts, Accounts — driven by `?tab=`; an unknown value falls back to Profile.
 - **Accounts tab (cm20):** read-only. Four states: locked (no `accounts_view : READ`; nothing is fetched), not onboarded, onboarded with no documents, and the normal view (Financial Account summary, one card per BAN with state chip, bill cycle, resolved payment term, live receivable and template label, and a paginated document list per Financial Account). Document ids link to the Accounts Transactions page when the viewer holds `accounts_transactions : READ`. Data loads only on this tab, under Suspense; a failed read stays inside the tab.
 - **Onboarding field (cm18):** the onboarding wizard shows a read-only "Invoice template — Follow active template" field with help text; the BAN is created with no template reference.
-- **Billing account panel (cm21):** Manage Customer lists every BAN with its template label and a **Reset to follow active template** button, enabled only with `accounts_transactions : EDIT`. The reset is audited (`BILLING_ACCOUNT_TEMPLATE_CHANGED`), locks the BAN rather than the customer, and writes nothing when the BAN already follows the active template.
+- **Billing account panel (cm21):** Manage Customer lists every BAN with its template label and a **Reset to follow active template** button. The button is enabled only with `accounts_transactions : EDIT` on an open BAN with a non-`NULL` reference, so it is always disabled in v1. A failed accounts read shows an "unavailable" card inside the panel and leaves the rest of the page editable. The reset is audited (`BILLING_ACCOUNT_TEMPLATE_CHANGED`), locks the BAN rather than the customer, and writes nothing when the BAN already follows the active template.
 - **Plumbing only:** in this release a BAN can only follow the active template, and posting does not read the BAN's reference. Choosing a specific template is Phase 3.
+
+  > **In flight (2026-10-25):** the Invoice Template Types update (`custmgmt-update-overview.md`) replaces the version reference with a **template type**. It turns the Reset button into a type dropdown and makes the bill run's capture use the BAN's type. Steps 11–13 above and the bullets here describe the delivered state until that update ships.
 
 ### Customer lifecycle
 
@@ -112,3 +114,58 @@ Done means all of the following are true:
 7. Every create, update, delete, and status change produces an audit row with actor, timestamp, and before/after values, and `last_modified_by` reflects the true last editor.
 8. Search returns correct partial matches on name and trading name, capped by the `system_config` value, defaulting to 5.
 9. `npm run typecheck`, `npm run lint`, and the full vitest suite (unit + integration) pass; the module follows the existing `context/` documentation conventions with a progress tracker kept current.
+
+---
+
+## Invoice Template Binding update — delivered scope (cm17–cm22; signed off 2026-10-25)
+
+_Folded from `custmgmt-update-overview.md` at sign-off. The flows and features are in **Core user flow** steps 11–13 and **Features › Billing accounts and invoice template** above. This section keeps the rest of the update's record. The in-flight Invoice Template Types update supersedes the NULL-only rule, the version column and the Reset control (see `custmgmt-update-overview.md`)._
+
+### Goals (as delivered)
+
+1. A nullable `billing.billing_account.ref_bill_template_version_id` (FK to `billing.bill_template_version`), added in one migration with no backfill. `NULL` = follow the current ACTIVE template, else the default.
+2. Onboarding confirms the BAN's template inside the existing atomic onboarding transaction.
+3. Manage Customer resets a BAN's binding through an audited, concurrency-safe action needing `customers : EDIT` and `accounts_transactions : EDIT`.
+4. View Customer shows each BAN's template: "Follows active template (currently: <name> vN), as of now".
+5. View Customer becomes three URL-driven tabs (`?tab=profile|contacts|accounts`).
+6. An Accounts tab shows the Financial Account summary, each BAN's state, cycle, payment term, live receivable and template, and a paginated document list linking into the Accounts module.
+7. The tripwire: any non-`NULL` binding is rejected, so the screen never shows a binding posting ignores.
+8. Posting and rendering stay unchanged.
+
+### Data model, access and audit
+
+- **Data model:** one nullable column on `billing.billing_account` (Accounts-owned table). No new tables; no change to `customer_bill`, `bill_run_invoices` or rating tables. Existing BANs read back `NULL`.
+- **Access:** no new permission. View page `customers : READ`; Accounts tab content `accounts_view : READ`; onboarding and the reset `customers : EDIT` + `accounts_transactions : EDIT`.
+- **Audit:** a new event type `BILLING_ACCOUNT_TEMPLATE_CHANGED` (before/after values). `ACCOUNTS_ONBOARDED` gains the template field.
+
+### In scope (delivered)
+
+- **The column:** its migration, Drizzle mirror and FK.
+- **Onboarding:** the schema, service, action and wizard field.
+- **The write path:** `assertBindableTemplate` (NULL-only), the `set-billing-account-template` service and action, and the audit event.
+- **Manage Customer:** the Billing account panel, greyed by permission.
+- **View Customer:** the three-tab shell and the Accounts tab, with its four states, the template label, deep links and the `accounts_view : READ` sub-gate.
+- **Tests and docs:** the rewritten page test and the binding test matrix; updated `cm05`, `ac04`, architecture, UI-context and authz-sweep docs.
+
+### Out of scope (as delivered)
+
+- **Choosing a template:** a template catalog or any selectable template; saving a non-`NULL` binding; posting or rendering reading the binding.
+- **Other bindings:** CSV or layout template binding; a template-line identifier; version pinning.
+- **Transactions:** posting, reversal, payment or other transaction actions in the Accounts tab; reproducing Accounts module screens.
+- **Other changes:** additional-BAN creation and BAN filters; new permissions; editing the binding from Accounts screens; backfilling BANs or changing `customer_bill` rows; invoice template editor or company profile changes.
+
+### Success criteria (met at the cm22 ship gate; evidence in `custmgmt-progress-tracker.md` cm22)
+
+1. The column exists, is nullable, has its FK, and every existing BAN reads `NULL`.
+2. Onboarding creates the BAN with `NULL`; `ACCOUNTS_ONBOARDED` records the field; the V7 rollback test still leaves nothing behind.
+3. A non-`NULL` id to onboarding or the reset returns `TEMPLATE_NOT_BINDABLE` and writes nothing.
+4. The reset returns `BAN_NOT_FOUND`, `BAN_CLOSED` and `CONFLICT` in their cases. It writes nothing when the value is already `NULL`, and is rejected without either permission.
+5. A `customers : EDIT`-only user sees the panel read-only. With both permissions, the reset applies only to an open, non-`NULL` BAN.
+6. Tabs deep-link and fall back to `profile`; the inconsistency banner shows above the strip on every tab.
+7. The Accounts tab's locked, not-onboarded and empty states behave; no account query runs without `accounts_view : READ`.
+8. The Accounts tab shows the summary, every BAN and the paginated documents; Profile and Contacts run no ledger query.
+9. A `NULL` BAN's label reads "Follows active template (currently: <name> vN), as of now".
+10. Posting stamps exactly the same versions as before; the bm18, bm19 and bm54 stamp tests pass.
+11. The rewritten page test and the matrix tests, including the service-level journey, pass.
+12. Typecheck, lint and vitest pass on a disposable Postgres.
+13. The `cm05`, `ac04`, architecture and UI-context docs moved with the code.

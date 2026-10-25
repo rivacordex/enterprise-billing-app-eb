@@ -11,8 +11,17 @@ Archive of delivered work for the Rating Management module. Compacted 2026-10-15
 | A–F   | rm01–rm13    | Rating engine v1 (schema, engine, PRP/RP/RL, recovery, completeness) | rm13 (`072a37f`) | Completed; live Kestra execution never run |
 | G     | rm14–rm23    | PER_UNIT RAN-usage update                         | rm22 (`8882008`)              | Completed (2026-10-05); rm23 delivered as billing bm48 (`b4d28e4`) |
 | H     | rm24–rm29    | Raw `udr_key` + `udr_resource` cell label         | rm29 (`1ab2bd1`, fixes `f1d6550`) | Completed, DB-verified (2026-10-15); image tag release PENDING OPS |
+| I     | rm30         | Card-driven `usage_rate` → product-rate fallback  | rm30 (single unit)            | Completed (2026-10-22)                   |
 
 Trust `git log` / `git show` over this file if they disagree.
+
+---
+
+# Phase I — Card-driven product-rate fallback (rm30) — COMPLETED 2026-10-22
+
+**rm30** — Owner decision 2026-10-22: a card-driven `usage_rate` whose card supplies no rate takes the product's `ratePerUnit`. `rp.py`: `_RESOLVE_SQL` projects `rate_card_lookup`; new `card_rated_cells()` (one query per distinct card name per batch, cached across chunks) counts non-NULL `rate_per_unit` on the named card's ACTIVE version; `derive_rate_type` → `PER_UNIT` when that count is 0, else `CARD_DRIVEN_RATING_UNSUPPORTED` with the reason in the message (empty `rateCardLookUp` / no ACTIVE version / N cell rates) and `card_name` in `additional_info`. Rated row shape, rm17 detail schema, event catalog, PRP and RL untouched. Inv 23/24, code-standards §0, workflow rules §0.4 and §3.1, overview, build plan amended; rm19 forward banner. New `rm30-rp-card-driven-fallback` suite (fallback rates, card-with-rate refused, missing card refused). Legacy rm08 OFF5 case still expects a refusal (its card name has no ACTIVE version) and is left untouched. **Latent bug fixed in passing:** `_RESOLVE_SQL` read `rateCardLookUp` top-level (`price_component->>'rateCardLookUp'`), but it lives under `params`; it was provenance-only before rm30, so it was always NULL unnoticed — now `#>> '{params,rateCardLookUp}'`. **Verified:** disposable `postgres:17` via `rmtest-runner:local` — rm30 3/3, rm27 5/5; live re-rate of the eMBB feed (`_v9`, UDRBAT00000007) COMPLETE, 3,600/3,600 rated `PER_UNIT` at 100.000000 on PRDOFP00000018, 0 process_log events.
+
+**rm30 decisions (2026-10-22, user):** the card check is card-wide (any cell rate refuses the whole batch, never a silent fallback); the price's `rateCardLookUp` is the card checked; the card version is whichever is ACTIVE when RP runs; `productCardLookUp` and the card's `card_name` are both `RATECARD_RAN_USAGE_LKP` by convention.
 
 ---
 

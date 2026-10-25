@@ -66,7 +66,7 @@ variables:
   # pin) + its udrType / productCardLookUp specs. Output-affecting (it decides
   # which product every record must rate against), so a flow variable from git
   # that moves with `rating_flow_revision`.
-  subscription_product_name: "Sample 5G Services"
+  subscription_product_name: "eMBB Wholesale 5G Network"
   # rm21 §5 — ratecard→input completeness enforcement. HARD_STOP (default) refuses
   # the whole batch on a ratecard cell absent from the input; WARN rates the file
   # and logs RATECARD_COVERAGE_GAP_WARN. Output-affecting → a flow variable.

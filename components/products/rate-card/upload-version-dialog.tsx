@@ -225,7 +225,7 @@ export function UploadVersionDialog({
               <input
                 id="ratecard-card-name"
                 name="cardName"
-                placeholder="RAN_USAGE"
+                placeholder="RATECARD_RAN_USAGE_LKP"
                 disabled={pending}
                 className="h-9 w-full rounded-sm border border-border bg-card px-3 text-body text-foreground focus:outline-none focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-50"
               />

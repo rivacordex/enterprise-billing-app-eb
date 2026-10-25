@@ -13,7 +13,13 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 2. The rewritten layout v1 replaces the Usage annex with per-type, per-State-District detail pages and a Total Amount page. It reuses the §10c `--inv-*` print palette and adds **no** layout variable (§10d).
 3. New park/skip reasons surface on existing surfaces with existing families (§10d).
 
-Sources: `billmgmt-project-overview.md` › Invoice Template Phase 3 (folded from the update overview at bm73), `billmgmt-architecture.md` › Invoice Template Phase 3 deltas, `billmgmt-code-standards.md` › Invoice Template Phase 3 deltas.
+**Invoice Template Types delta (minimal, 2026-10-25; planned, not built):** **no** new app color, type, radius, shadow or accent token, still **no AI**, and the Deep Petrol CTA (§7) stays on **Activate** only. Four UI touches, all on existing families:
+1. Invoice Settings › Invoice template becomes a **type list** with a per-type detail page. Type statuses (Usable / Not yet usable / Retired) map onto the version families (§10a). The Standard-only heading is corrected (§10b).
+2. **Upload layout package**, **overwrite warning**, **retire** and **export** controls (§10e). Destructive confirms use the danger role **inside their dialog only** (§7).
+3. Upload rejections render as one Danger alert listing every problem, never a toast (§10e).
+4. Customer Management's BAN type select and labels are specified in `custmgmt-ui-context.md` §9.5, not here.
+
+Sources: `billmgmt-update-overview.md` (the in-flight design), `billmgmt-architecture.md` › Invoice Template Types deltas, `billmgmt-code-standards.md` › Invoice Template Types deltas (Styling rules 1–6). Earlier deltas: `billmgmt-project-overview.md` › Invoice Template Phase 3, and the matching architecture and code-standards sections.
 
 **Rendering rule (shared §8):** every badge/pill renders the dark `-fg` text on the light `-bg` tint (never white-on-tint) and always pairs color with an icon **and** label, so meaning never depends on colour alone. Match the component names in `billmgmt-code-standards.md` §4.
 
@@ -186,6 +192,8 @@ No new color, typography, radius, or shadow token — the appendix is print CSS 
 | Featured **Run** CTA (one per screen)                     | `--billrun-cta-bg` `#006975` → hover `#00525C`, active `#003E46`, text `#FFFFFF` | **Deep Petrol** — a toned-down, premium jewel tone. Use **once** per screen — the "Run" action on an operable run card. Every other action (Rerun, Check status, tab controls) uses the quieter primary/secondary/ghost treatment. |
 | Featured **Activate** (Invoice Settings, one per screen) | `--billrun-cta-*` (same Deep Petrol values) | Activation changes the invoices of every bill run started after it, including the bank details customers pay into, so it carries the same weight as Run. It uses petrol, not the platform magenta. **Save draft** is secondary, and **Upload logo** is secondary. The dialog's confirm button is primary indigo, enabled only once a change note is entered. |
 | Primary buttons (Trigger/Rerun dialog confirm, Save)      | `--action-primary-bg` `#2E45A9`                                                  | Standard indigo primary — the featured petrol outranks it, so a screen has at most one petrol button and any number of indigo ones.                                                                                                |
+| **Invoice Template Types:** Create type, Upload layout package, Export | `--action-primary-bg` `#2E45A9` (Create, Upload); Export is an outline/secondary link in Version history | Primary indigo, never petrol. On a type's detail page **Activate stays the one petrol button**, because it is what changes customers' invoices; Upload only creates a DRAFT. |
+| **Invoice Template Types:** Overwrite draft, Retire type (confirms) | Danger role, `--color-danger-500` `#D92D2D`, **inside the `AlertDialog` only** | The page-level triggers ("Upload layout package", "Retire type…") are not danger-styled; only the confirm inside the dialog is. Retire's confirm stays disabled until the typed name matches. Same rule as Cancel run. |
 | **Approve & Post** confirm (irreversible)                 | Danger role — `--color-danger-500` `#D92D2D`                                     | The money-gate confirm sits in the danger role **inside its confirmation dialog only**; the self-approval block renders disabled with its reason.                                                                                  |
 | Cancel run confirm                                        | Danger role, inside the spelled-out confirm dialog                               | Never a bare row action.                                                                                                                                                                                                           |
 | AI accent (`--ai-*`, `--gradient-ai`)                     | —                                                                                | **Not used** — this module has no AI features (architecture §5).                                                                                                                                                                   |
@@ -202,6 +210,7 @@ No new color, typography, radius, or shadow token — the appendix is print CSS 
 | Dates (`gl_event_at`, `period_*`, `payment_due_date`, timeline `*_at`)                     | `--text-body-sm` / `--text-caption`                                        | Via `formatDatetime`; `<time dateTime>` stays ISO-8601 UTC.                                                                         |
 | Table headers, badge labels                                                                | `--text-overline`                                                          | Unchanged from shared.                                                                                                              |
 | Invoice Settings IDs and values: layout code (`INVTPL-STD-A4`), version IDs (`INVASV…`, `v{n}`), checksums, `#RRGGBB` colour inputs, the Generated .hbs viewer | `--text-mono`                                                              | Mono, like every other ID. Checksums are truncated with a copy button. "Used by N invoices" uses tabular-nums. |
+| **Invoice Template Types:** type code (`WHOLESALE`), layout code (`INVTPL-WHOLESALE`), "Next layout version" (`v{n}`), export file name (`INVTPL-WHOLESALE-v3-s4.zip`), upload problem file paths and codes (`partials/billTo.hbs`, `LAYOUT_EXTERNAL_FETCH`) | `--text-mono` | Mono, like every other ID. The type **name** is ordinary text (`--text-body`; `--text-h2` in the detail heading). |
 
 ## 9. Border radius delta (inherits shared §6)
 
@@ -218,6 +227,9 @@ No new color, typography, radius, or shadow token — the appendix is print CSS 
 | Live preview frame (`InvoicePreviewFrame`), Version history table       | `--radius-none` `0` (the frame is a sheet of paper, and the table is a data grid)                     |
 | Generated .hbs viewer                                                   | `--radius-sm` `4px` on `--surface-sunken`                                                             |
 | `ActivateVersionDialog`                                                 | `rounded-xl` `12px` — inherited from the shared `DialogContent` (`components/ui/dialog.tsx`)          |
+| **Invoice Template Types:** type list table                             | `--radius-none` `0` (data grid)                                                                       |
+| **Invoice Template Types:** Create type, Upload, Overwrite, Retire dialogs | `rounded-xl` `12px`, inherited from `components/ui/dialog.tsx` / `alert-dialog.tsx` as built; never overridden |
+| **Invoice Template Types:** upload problems alert                       | `rounded-lg` `8px`, inherited from `components/ui/alert.tsx` as built                                 |
 | Invoice **document** (print)                                            | Square throughout (`0`); the logo is never clipped or rounded                                         |
 
 No new radius, shadow, or elevation tokens — shared §6/§7 apply as-is.
@@ -237,6 +249,17 @@ One badge serves both template and company-profile versions (code-standards › 
 
 `RETIRED` is muted, never danger: retiring a version is the normal result of activating its successor.
 
+**Invoice Template Types (planned): type status on the type list and detail heading.** The same `TemplateVersionStatusBadge`, with three more states. Never a second badge component.
+
+| Type state (derived, never stored) | Family (reuses the row above) | Base / hex | Text (`-fg`) / hex | Tint (`-bg`) / hex |
+| --- | --- | --- | --- | --- |
+| `USABLE` (has an ACTIVE version, not retired) | Success, as `ACTIVE` | `--color-success-500` `#1F9D57` | `--color-success-700` `#0F5C32` | `--color-success-50` `#E6F6EC` |
+| `NOT_YET_USABLE` (no ACTIVE version yet) | Neutral outline, as `DRAFT` | `--color-neutral-500` `#6A7283` | `--color-neutral-700` `#353B46` | `--surface-card` `#FFFFFF` (outline only) |
+| `RETIRED` (type retired; history kept) | Neutral muted, as `RETIRED` | `--text-disabled` `#99A1B0` | `--color-neutral-600` `#4C5462` | `--color-neutral-100` `#EEF0F4` |
+| `Default` chip on Standard | Primary outline + `Lock` icon, as the `Default` chip above | `--color-primary-500` `#2E45A9` | `--color-primary-700` `#1B2A68` | `--surface-card` `#FFFFFF` (outline only) |
+
+A retired **type** is muted, never danger: it is a deliberate, completed action.
+
 ### 10b. Editor and profile screen elements
 
 | Element                                                   | Treatment                                                                                                                                                                                     |
@@ -253,7 +276,7 @@ One badge serves both template and company-profile versions (code-standards › 
 | Read-only view (READ without EDIT)                        | Fields render as text, with no disabled-input grey wash. Save, Activate and Upload are not rendered                                                                                          |
 | Company profile empty state (no ACTIVE profile) | **Info** alert, no action for READ: "No company profile is active. Invoices are issued without the issuer and payment blocks until a profile is activated." EDIT users get a "Create a draft" outline button (built in bm59) that focuses the empty edit form below the alert |
 | Preview loading, queued and error states                  | Reuse the §6c PDF skeleton and captions as they are                                                                                                                                           |
-| **Phase 3:** page heading                                 | "Invoice template — Standard (default)" in `--text-h2`; "(default)" in `--text-muted`. No family switcher: only Standard exists (D45) |
+| **Phase 3:** page heading                                 | "Invoice template — Standard (default)" in `--text-h2`; "(default)" in `--text-muted`. No family switcher: only Standard exists (D45). **Superseded by Invoice Template Types (§10e):** the page becomes a type list, and each type's detail page is headed "Invoice template type — {name}", with "(default)" only on Standard |
 | **Phase 3:** section toggles                              | One optional checkbox, **Payment information**. The Usage annex and Notes rows and all four column toggles are removed (D56); the mandatory sections keep the locked row above |
 | **Phase 3:** Footnote field                               | Group label "Footnote", hint "Printed after Total Amount on the last page" in `--text-muted`. 1–5 single-line inputs (`--radius-sm`), each with a visible label "Line 1"…"Line 5" and a `0/200` counter in `--text-caption`; an outline **Add line** button (`Plus`) is hidden at 5 lines, and a ghost icon button (`X`, `aria-label="Remove line N"`) is hidden at 1 line. Errors show under the line in Danger `-fg` |
 | **Phase 3:** footnote in READ view                        | The lines render as plain text in a list, with no inputs |
@@ -436,6 +459,28 @@ No colour signals sign or status on the invoice. Unutilised is a normal amount, 
 | `TEMPLATE_VERSION_NOT_FOUND` (`FAMILY_HAS_NO_ACTIVE_VERSION`) | Draft preview error; at posting, the account shows the existing `SKIPPED` `AccountStatusBadge` with this reason (D58) | Danger `-fg`: "This account's invoice template has no active version. Activate one in Invoice Settings, then rerun this account." |
 
 **As built (bm66; review fix 2026-10-16):** the `TEMPLATE_VERSION_NOT_FOUND` copy above is shown only for its D55 reason (`detail.reason = FAMILY_HAS_NO_ACTIVE_VERSION`); any other cause (a missing blob, an uncaptured row) keeps the generic text. The route computes the message from the code and reason, and the modal shows the route's message. Posting progress lists an account posting skipped (zero total, or this reason at posting) with a neutral **Skipped** badge and its `error_detail`, counts it apart from "{n}/{N} posted", and its completion line names the skipped count. The approve page's blocking `template_versions_captured` check uses the existing failed-check row. The draft-preview copy lives in one map, `describeInvoiceRenderCode(code)` (`lib/invoice-render-messages.ts`), shared by the draft route's `422 { error: { code, message } }` body and `InvoicePreviewModal`. Any code without its own row keeps the generic "Could not render the draft invoice. Please try again." The modal keeps its existing error layout (Danger `-fg` text and Retry). bm70 and bm71 add the two `INVOICE_*` polygon/utilised rows to the map.
+
+### 10e. Invoice template types — list, detail, upload, retire, export (Invoice Template Types update, planned)
+
+Existing families only; strings are owned by `components/billing/invoice-settings/template-type-messages.ts` (code-standards › Invoice Template Types, Styling rule 6).
+
+| Element | Treatment |
+| --- | --- |
+| Type list (`TemplateTypeList`) | Data grid (`--radius-none`). Columns: Name (`--text-body`), Status (§10a badge), Default chip on Standard, Bound BANs (tabular numerals), Active version (`v{n}` mono) and its date. A "Retired" filter toggle (shadcn `Toggle`, existing styling). |
+| Type detail heading | "Invoice template type — {name}" in `--text-h2`, then the §10a status badge. Below it, a key–value row in `--text-body-sm`: **Layout code** and **Next layout version** (both mono). |
+| Not-yet-usable type empty state | **Info** alert (`--color-info-50` / `--color-info-700`): "No layout uploaded yet. Upload a layout package to create the first draft." EDIT users see the **Upload layout package** button (primary) inside it. |
+| Upload dialog, no open draft | Plain `Dialog`; confirm button "Create draft v{n}" (primary indigo). |
+| Upload dialog, open draft (overwrite warning) | `AlertDialog` with a **Warning** family callout (`--color-warning-50` / `--color-warning-700`, `alert-triangle` icon) holding the exact warning text; confirm "Overwrite draft" in the danger role (§7). |
+| Restore note (export with `settings.json`) | **Info** line inside the upload dialog: "The package's settings (Payment and footnote) will replace the draft settings." and "Restored from v{n}" (mono). |
+| Upload problems | One **Danger** `Alert` (`--color-danger-50` / `--color-danger-700`, `alert-circle` icon), grouped by file (mono), each line `code` (mono) + message. Never a toast; it stays until the next upload attempt. |
+| Draft changed since the warning | Same Danger alert pattern with the reason; the dialog reloads its draft data and shows the warning again. |
+| "Layout was replaced by an upload" (settings save conflict) | **Warning** inline alert above the settings form with the exact text; the unsaved values stay in the inputs. |
+| Retire dialog | `AlertDialog`: the bound-BAN count prominent (`--text-h3`, tabular numerals), a paginated BAN list (mono ids), a target `Select` (usable types; Standard first and preselected), a typed-name `Input`; confirm "Retire type" in the danger role, disabled until the name matches. |
+| Retired type, detail page | **Info** status line "Retired {date}. History and exports remain available."; no Upload, Save, Activate or Retire control. Export stays available. |
+| Export link in Version history | Outline/ghost link "Export" per version row; downloads `{layout_code}-v{n}-s{m}.zip`. |
+| READ-only user | Every EDIT control absent (not greyed); export visible. |
+
+No new color, type, radius or shadow token. No AI accent. Status is never shown by color alone.
 
 ## 11. Implemented UI not covered above (as built, dev1 614743a)
 

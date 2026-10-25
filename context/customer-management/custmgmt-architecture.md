@@ -1,8 +1,8 @@
 # Customer Management — Architecture (Module)
 
-This document builds on `context/architecture.md`, which owns the platform-wide design — stack, folder ownership, multi-module database design, the auth/authorization platform, and platform invariants — and records **only what the Customer Management module adds or changes**. Anything not stated here is inherited unchanged. Key decisions are canonical in `_newmodule-customer-mgmt-plan.md`; the product spec (user flows, data model, features) is in `custmgmt-project-overview.md`; the planned Invoice Template Binding update is in `custmgmt-update-overview.md` and `_updatemodule-customer-accounts-invoice-template-binding-plan.md`.
+This document builds on `context/architecture.md`, which owns the platform-wide design — stack, folder ownership, multi-module database design, the auth/authorization platform, and platform invariants — and records **only what the Customer Management module adds or changes**. Anything not stated here is inherited unchanged. Key decisions are canonical in `_newmodule-customer-mgmt-plan.md`; the product spec (user flows, data model, features) is in `custmgmt-project-overview.md`; the delivered Invoice Template Binding update is folded into `custmgmt-project-overview.md`; the in-flight **Invoice Template Types** update (Customer Management part) is in `custmgmt-update-overview.md`, and its owning design is `context/billing-management/billmgmt-update-overview.md`.
 
-**Status:** PLANNED — decisions agreed 2026-07-06, amended 2026-07-09 (flattened contact model), pre-implementation. Changes to _Module Invariants_ require a documented design review. **Update delivered (cm17–cm22, ship gate 2026-10-13; signed off 2026-10-14):** Invoice Template Binding, see §7 and `custmgmt-update-overview.md`.
+**Status:** PLANNED — decisions agreed 2026-07-06, amended 2026-07-09 (flattened contact model), pre-implementation. Changes to _Module Invariants_ require a documented design review. **Update delivered (cm17–cm22, ship gate 2026-10-13; signed off 2026-10-25):** Invoice Template Binding, see §7 and `custmgmt-project-overview.md`. **In flight (planned 2026-10-25):** Invoice Template Types, Customer Management part, see §8 and `custmgmt-update-overview.md`; new invariants #19–#22.
 
 **Scope:** v1 is full CRUD (create/update/soft-delete) for enterprise customers behind two pages — **View Customer** (search + read-only detail, USER + MANAGER + ADMIN) and **Manage Customer** (search + edit + add new, MANAGER + ADMIN) — under a new "Customer" nav section. No accounts, invoicing, credit checks, external/TMF APIs, or merge tooling this release.
 
@@ -108,16 +108,40 @@ Platform Invariants (`architecture.md` §7) all apply. Additional rules this mod
 14. **View Customer tabs are URL state on a server component.** `?tab=profile|contacts|accounts` (default `profile`; an unknown value falls back to `profile`). The page stays guard-first with one all-or-nothing not-found state, the three existing section components and `metadata.title` are unchanged, and the `InconsistencyBanner` renders **above** the tab strip so it shows on every tab under the unchanged `isStatusInconsistent` rule.
 15. **Accounts data loads only for the active Accounts tab, and balances are never cached or stored.** The queries run in an async child under Suspense when `tab=accounts`; Profile and Contacts issue no ledger, balance or document query. Per-BAN receivables come from one grouped `pgledger_accounts_view` read (no per-BAN loop); the FA receivable is the sum of those per-BAN values, so the FA total always equals the sum of the BAN cards; unapplied cash and deposits come via `getFinancialAccountDetail`. All are always read live (platform Inv. #15). A failed read renders an in-tab "unavailable" card; the header, tab strip and other tabs survive.
 16. **The Manage Customer "Billing account" panel is UX; the action is the gate.** The page guard stays `customers : EDIT`. The panel is enabled only when the viewer holds `accounts_transactions : EDIT` and is otherwise read-only with the `EDIT_DISABLED_TITLE` tooltip. `set-billing-account-template` re-checks **both** `customers : EDIT` and `accounts_transactions : EDIT` server-side (platform Inv. #3).
+
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** The panel's control becomes a per-BAN **Invoice template type** select with **Save**, replacing the Reset button. The gate is unchanged: the same page guard, the same dual re-check in the action, greying for UX only.
 17. **A template reset is a BAN change, not a customer-record change** (decided 2026-10-10). It is guarded by the BAN's own lock (a compare-and-set on `billing_account.last_modified` in `billingAccountRepository.setTemplateRef`, the ac16 `close` shape), writes its own audit event, and does **not** bump `party_role.last_modified_datetime`. Inv. #6 keeps governing org, role, status and contact mutations; onboarding still locks the party role because it changes the customer's status.
+
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** Unchanged in principle: binding a BAN to a type is still a BAN change under the BAN's own compare-and-set, with its own audit event, and never bumps `party_role.last_modified_datetime`. The one addition is the type-row lock (Inv. #20).
 18. **The customer screen never implies a template binding the invoice does not use.** In v1 the column accepts `NULL` only and posting ignores it. The screen shows `NULL` as "Follows active template (currently: <name> vN), as of now" (a live lookup, never persisted or cached) and any non-`NULL` value as "Template reference not supported yet", offers no choice beyond *Follow active template*, and a non-`NULL` value is rejected server-side (`TEMPLATE_NOT_BINDABLE`). Lifting that rule is part of one indivisible Phase 3 change owned with Billing (the Billing architecture's Inv. #51–#54 define the column's meaning).
+
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** **This invariant is replaced by Inv. #19–#21** once the update ships. The binding becomes real: the column holds a template **type** (`ref_bill_template_family_id`), Billing's run-start capture uses it, and the screen shows the type the next run will capture. The NULL-only rule and the "Template reference not supported yet" label are removed. Until the update ships, the delivered rule below stands.
 
     > **Note 2026-10-15 (billing bm65).** Posting still never reads this column. Billing's run-start capture (`billRunAccountRepository.listBanFamilies`, billing Inv #54) is the one sanctioned reader: it maps the BAN's reference to a template family when a run is triggered or rerun. No Customer Management file changed.
 
+**Added — Invoice Template Types update (2026-10-25; planned; rules for §8):**
+
+19. **A BAN's invoice template is a type reference, and `NULL` means Standard.** `billing.billing_account.ref_bill_template_family_id` (FK to `billing.bill_template_family`) is the only template reference on a BAN; `ref_bill_template_version_id` no longer exists. Standard is stored **only** as `NULL`. There are exactly three writers:
+    - `setBillingAccountTemplate`, through `assertBindableTemplate`
+    - onboarding, which always writes `NULL`
+    - Billing's retire bulk switch (billing Inv #66)
+
+    No other code path writes the column. _(Planned.)_
+20. **[CRITICAL] Binding is serialised against retire, inside the binding transaction.** `assertBindableTemplate(tx, typeId | null)` accepts `null` without a lock. For a type id it calls Billing's `lockTemplateType(tx, typeId, 'share')` and accepts only a type that exists, isn't retired and has an ACTIVE settings version, within the **same** transaction as the BAN update. An explicit Standard id is rejected (`TEMPLATE_NOT_BINDABLE`). A bind racing a retire therefore either commits before the retire (and is switched by it) or fails; it never leaves a BAN on a retired type. _(Planned.)_
+21. **The customer screen shows the type the next bill run will capture, read live.** `resolveBanTemplateLabel` derives the label from the BAN's current type and that type's ACTIVE version on every request, and never caches or stores it:
+    - `NULL` → "Standard (default) · vN"
+    - a usable type → "{name} · vN"
+    - a type that isn't usable → "{name} · not usable", as a warning
+
+    A binding never touches a bill run's captured stamps; the screen states that changes apply from the next run start or rerun. _(Planned; replaces Inv. #18 on ship.)_
+22. **Customer Management reads the type catalog; it never manages it.** The customer tree reads types only through `listBindableTemplateTypes` and `resolveBanTemplateLabel` in `services/accounts/`. These call Billing's **repositories** (`bill-template-family`, `bill-template-version`), never `services/billing/**` or `actions/billing/**` (Inv. #11 unchanged). No customer screen creates, uploads, activates, retires or exports a type, or reads layout files. _(Planned.)_
+
+
 ---
 
-## 7. Invoice Template Binding update — architecture deltas (2026-10-10; built 2026-10-13)
+## 7. Invoice Template Binding update — architecture deltas (2026-10-10; delivered cm17–cm22, signed off 2026-10-25)
 
-**Built** by cm17–cm22 (ship gate cm22, `custmgmt-progress-tracker.md`); the update moves to Delivered on sign-off (`custmgmt-update-overview.md` Status). The tables below describe the code as built.
+**Delivered** by cm17–cm22 (ship gate cm22, `custmgmt-progress-tracker.md`) and **signed off 2026-10-25**. The tables below describe the code as built. §8 (Invoice Template Types, planned) supersedes the NULL-only rule, the version column and the Reset control.
 
 Per the convention at the top of this document, this section extends `context/architecture.md` and §1–§6 and records **only** what the Invoice Template Binding update changes or adds (`_updatemodule-customer-accounts-invoice-template-binding-plan.md`, decisions D1–D16; scope in `custmgmt-update-overview.md`). It is **Phase 2 of invoice-template management** and is **plumbing only**: the customer record can show, confirm at onboarding, and reset a per-BAN template reference, and the View Customer page becomes tabbed with an Accounts tab. It introduces **no new technology, no new table, no new permission, no new M2M path and no background job**. New rules are Module Invariants **#11–#18** (§6). The template catalog and the resolver belong to Billing (`billmgmt-architecture.md` §6, Inv. #41–#44); the BAN table and its write services belong to the Accounts module (`acctmgmt-architecture.md`).
 
@@ -148,8 +172,8 @@ No new components. Usage notes:
 | Path                                                          | Delta                                                                                                                                                                                                                  |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `app/(app)/customers/view/[id]/page.tsx`                      | Becomes the tab shell (Inv. #14). Guard stays `customers : READ`. Reads accounts data only through the services below (Inv. #11).                                                                                       |
-| `app/(app)/customers/manage/[id]/page.tsx`                    | Guard stays `customers : EDIT`. Loads the customer's BANs and renders the new Billing account panel; passes whether `accounts_transactions : EDIT` is held, for greying only (Inv. #16).                                |
-| `components/customers/**`                                     | `onboard-accounts-wizard.tsx` (rendered by `customer-role-form.tsx`) gains the single-option *Invoice template* field; new Billing account panel and Accounts-tab components. Presentational: no DB access, no permission **decisions**. |
+| `app/(app)/customers/manage/[id]/page.tsx`                    | Guard stays `customers : EDIT`. Loads the customer's BANs (`listCustomerBillingAccounts`, in the existing `Promise.all`) and renders the new Billing account panel after `ContactManagerPanel`; passes whether `accounts_transactions : EDIT` is held, for greying only (Inv. #16). A failed BAN read is caught in the page and renders `AccountsUnavailableCard` inside the panel, so org, role and contact editing survive. |
+| `components/customers/**`                                     | `onboard-accounts-wizard.tsx` (rendered by `customer-role-form.tsx`) gains the read-only *Invoice template* field ("Follow active template", no picker in v1); new Billing account panel and Accounts-tab components. Presentational: no DB access, no permission **decisions**. |
 | `actions/accounts/set-billing-account-template.ts`            | New. `requirePermission(customers : EDIT)` → `accounts_transactions : EDIT` from the returned `permissionMap` (else `FORBIDDEN`) → Zod (`VALIDATION_ERROR`) → service → `revalidatePath` (manage and view routes).                |
 | `services/accounts/set-billing-account-template.ts`           | New. One `db.transaction`; result codes `BAN_NOT_FOUND`, `BAN_CLOSED`, `CONFLICT`, `TEMPLATE_NOT_BINDABLE`; no write and no audit event when the value is unchanged (Inv. #17).                                        |
 | `services/accounts/assert-bindable-template.ts`               | New, shared by onboarding and the reset action; v1 accepts `null` only (Inv. #18).                                                                                                                                      |
@@ -192,5 +216,79 @@ Role effect: ADMIN and MANAGER (who hold `customers : EDIT`) can reset a BAN's t
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | O3  | **Closed (cm20):** `customer` / `CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE`, default `20`, capped at `100`. | Closed. |
 | O4  | **Closed (cm21):** `BILLING_ACCOUNT_TEMPLATE_CHANGED`, category `Change`, in the audit catalog. | Closed. |
-| O6  | Phase 3: template-line identifier, CSV binding, mid-run activation behaviour, and lifting the `NULL`-only rule together with the posting change (`TODOS.md`).                               | Phase 3, owned with Billing.      |
+| O6  | Phase 3: template-line identifier, CSV binding, mid-run activation behaviour, and lifting the `NULL`-only rule together with the posting change (`TODOS.md`). **Being closed by the Invoice Template Types update (§8):** the template **type** is the line identifier, the `NULL`-only rule is lifted, and Billing's run-start capture reads the binding. Mid-run activation is answered by Billing's run-start freeze. CSV binding stays out of scope. | Invoice Template Types (planned). |
 | —   | Test baseline: `billmgmt-known-issues.md` §21 and §13 (DB-gated suites rewrite cluster-level role passwords). New tests run only on a throwaway Postgres marked disposable. cm22 ran the posting stamp, default-resolution, version-pinning and render suites green and unchanged; the full-run result is recorded in `custmgmt-progress-tracker.md` (cm22). | Checked at cm22.                  |
+
+---
+
+## 8. Invoice Template Types update — architecture deltas (2026-10-25; planned, not built)
+
+_**Planned.** The Customer Management part is in `custmgmt-update-overview.md`. The owning design (template types, upload, activation, retire, export) is Billing's: `context/billing-management/billmgmt-update-overview.md` and `billmgmt-architecture.md` (Invoice Template Types deltas, Inv #59–#68)._
+
+Per the convention at the top of this document, this section extends `context/architecture.md` and §1–§7, and records **only** what the Invoice Template Types update changes for Customer Management. It turns the delivered plumbing into a real binding: a BAN references a **template type**, RevOps chooses it on Manage Customer, and Billing's run-start capture uses it. It adds **no new technology, no new table, no new permission, no new audit event type, no M2M path and no background job**. New rules are Module Invariants **#19–#22** (§6), and Inv. **#16, #17 and #18** carry dated notes.
+
+### Platform-level deltas (against `context/architecture.md`)
+
+None changes a Platform Invariant.
+
+| `architecture.md` | Says | What this update does for Customer Management |
+| --- | --- | --- |
+| §2 Boundaries (inward-only deps) | UI → actions/routes → services → data-access → DB. | Unchanged direction. `services/accounts/**` now reads two more **Billing repositories** (the type and version repositories) and calls Billing's `lockTemplateType` inside its own transaction. That's a repository-level dependency, the same pattern as the delivered label resolver. No customer file imports a Billing service or action (Inv. #11, #22). |
+| §4 Migrations / Inv. #10 | Committed, ordered migrations. | The `billing_account` change is a **new additive migration** that drops `ref_bill_template_version_id` only after asserting every value is `NULL`. The delivered `0050` is never edited. |
+
+### 1. Technology stack: deltas
+
+**None.** The panel uses the existing shadcn/ui `Select` and `Button`; validation stays Zod; tests stay vitest.
+
+### 2. System boundaries: deltas
+
+| Path | Delta |
+| --- | --- |
+| `db/migrations/` (new migration) and `db/schema/billing/accounts.ts` | `billing_account`: add `ref_bill_template_family_id` (FK to `bill_template_family`), abort on any non-`NULL` `ref_bill_template_version_id`, then drop that column and its FK. The Drizzle mirror follows. It ships in **one merge** with Billing's capture change (`listBanFamilies` stops reading the dropped column). |
+| `services/accounts/assert-bindable-template.ts` | Accepts `null` or a usable non-default type id under `lockTemplateType(tx, id, 'share')` (Inv. #20). Still the one validator, called by onboarding and `setBillingAccountTemplate` only. |
+| `services/accounts/set-billing-account-template.ts` + `actions/accounts/set-billing-account-template.ts` + `validation/accounts/set-billing-account-template.schema.ts` | The value becomes `typeId: string \| null`. Guards, the BAN compare-and-set, result codes and the no-write-on-unchanged rule are unchanged. The audit before/after carries type id and name. |
+| `services/accounts/onboard-customer-accounts.ts` + `validation/accounts/onboard-customer-accounts.schema.ts` | The field is renamed to the type reference and always `null`. The atomic transaction is unchanged. |
+| `services/accounts/list-bindable-template-types.ts` | **New** read: "Standard (default)" (`typeId: null`) first, then usable non-default types by name, from Billing's type repository (Inv. #22). |
+| `services/accounts/resolve-ban-template-label.ts` | Rewritten to the type label (Inv. #21). It no longer calls `findActive ?? findDefault` on the global version list. |
+| `services/accounts/list-customer-billing-accounts.ts`, `services/accounts/get-customer-accounts-summary.ts` | Return the BAN's type id and the new label in place of the version reference. |
+| `components/customers/**` | `BillingAccountPanel`: the Reset button is replaced by a per-BAN type `Select` + **Save**, the retired-type message and the "next bill run" caption. `BillingAccountCard`: the "Invoice template type" label. `onboard-accounts-wizard.tsx`: new field wording. All presentational; no DB access and no permission decisions. |
+| `app/(app)/customers/manage/[id]/page.tsx` | Loads `listBindableTemplateTypes()` alongside the BANs, in the existing `Promise.all`. The guard is unchanged. |
+| `tests/**` | Bind gate, panel, labels, migration abort, the CM half of the bind-vs-retire race, and the updated boundary guardrails (code-standards §9). |
+
+### 3. Storage model: deltas
+
+| Data | Where | Delta |
+| --- | --- | --- |
+| BAN template reference | Postgres, `billing.billing_account` (Accounts-owned) | `ref_bill_template_version_id` (version FK) is **replaced** by `ref_bill_template_family_id` (type FK; `NULL` = Standard). No backfill (all `NULL`). No index. |
+| Customer tables | Postgres, `customer` schema | **No change.** |
+| Audit | `core.AUDIT_LOG` | No new event type. `BILLING_ACCOUNT_TEMPLATE_CHANGED` before/after now carries the type id and name, plus an optional `reason`, which Billing's retire switch sets. |
+| Type list and labels | Read live from Postgres | Never cached or stored (Inv. #21). |
+| File storage / cache | None | **Unchanged.** Customer Management reads no layout file and no blob. |
+
+### 4. Authentication & access model: deltas
+
+| Surface | Guard | Notes |
+| --- | --- | --- |
+| Manage Customer panel: type select + Save | `customers : EDIT` + `accounts_transactions : EDIT`, re-checked in the action | Greyed for a `customers : EDIT`-only user (Inv. #16, as amended). |
+| View Customer Accounts tab: type label | `customers : READ` + `accounts_view : READ` | Unchanged sub-gate (Inv. #12). |
+| Onboarding field | Existing dual guard | Still writes `NULL`. |
+
+No new permission and no role change. **Data ownership:**
+- **Billing** owns the type catalog.
+- **The Accounts module** owns the `billing_account` table.
+- **Customer Management** owns the bind service and the screens. The column is written only by the three writers in Inv. #19.
+
+### 5. Background tasks & AI: deltas
+
+**None.** Binding runs synchronously in a Server Action; the usable-type list and labels load in the request.
+
+### Contradictions with existing rules, and how they are resolved
+
+| # | Existing rule | Conflict with this update | Resolution |
+| --- | --- | --- | --- |
+| C1 | Inv. #18: the column accepts `NULL` only; posting ignores it; "Template reference not supported yet". | Binding to a type is the update's purpose, and Billing's capture uses it. | Inv. #18 is replaced by Inv. #19–#21 on ship (dated note under #18). |
+| C2 | §7 storage: `ref_bill_template_version_id`, "follow the line", kind `generated`. | The reference becomes a type. | A new migration replaces the column; the type **is** the line. `0050` is untouched. |
+| C3 | Inv. #16 / UI: a "Reset to follow active template" button. | Binding needs a choice, not only a reset. | The select + Save replaces the button; "Standard (default)" is the reset. |
+| C4 | Inv. #11: customer files never import `services/billing/**`. | The panel needs the usable types, and the bind gate needs Billing's lock. | Reads and the lock go through Billing **repositories** from `services/accounts/` (Inv. #22), the precedent the delivered label resolver set. |
+| C5 | Guardrail 10: no Billing file references the BAN's template column. | Billing's capture reads the new column, and its retire switch writes it. | Guardrail 10 is rewritten (code-standards §9): it pins exactly those two Billing references. |
+| C6 | Open item O6 "Phase 3 … owned with Billing". | This update is that change. | O6 is closed by this update (row note). |

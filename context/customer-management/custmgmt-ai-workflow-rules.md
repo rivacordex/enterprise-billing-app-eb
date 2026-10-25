@@ -5,11 +5,13 @@ This document supplements `../ai-workflow-rules.md` (binding for all modules —
 **Companion docs (authoritative — do not restate or contradict):**
 
 - `custmgmt-project-overview.md` — product spec: user flows, two pages (View/Manage Customer), 3-table data model, lifecycle maps, in/out of scope, success criteria.
-- `custmgmt-architecture.md` — technical design deltas: `customer` schema, permission matrix (§4), 18 numbered **Module Invariants** (§6; #11–#18 belong to the Invoice Template Binding update), update deltas (§7).
-- `custmgmt-code-standards.md` — module coding conventions, file tree (§7), permission map (§8), guardrail tests (§9).
-- `custmgmt-update-overview.md` + `_updatemodule-customer-accounts-invoice-template-binding-plan.md` — the planned **Invoice Template Binding update**: scope, user flows, decisions **D1–D16**, test matrix (plan §11). Its units are cm17–cm22 in `specs/cm00-build-plan.md` Phase 2; workflow rules for it are in §9 below.
+- `custmgmt-architecture.md` — technical design deltas: `customer` schema, permission matrix (§4), 22 numbered **Module Invariants** (§6; #11–#18 belong to the delivered Invoice Template Binding update, #19–#22 to the planned Invoice Template Types update), update deltas (§7 delivered, §8 planned).
+- `custmgmt-code-standards.md` — module coding conventions, file tree (§7), permission map (§8), guardrail tests (§9), and the Invoice Template Types deltas (§10, guardrails 11–13).
+- `custmgmt-update-overview.md` — **the authoritative design of the in-flight Invoice Template Types update, Customer Management part** (bind a BAN to a template type). Its owning design (types, upload, activation, retire, export, capture) is `context/billing-management/billmgmt-update-overview.md`. Workflow rules for it are in **§10** below.
+- The **Invoice Template Binding update** (cm17–cm22) is **delivered and signed off (2026-10-25)** and folded into `custmgmt-project-overview.md`. §9 below is its record; the rules §10 supersedes are listed at the top of §9.
+- `context/billing-management/billmgmt-ai-workflow-rules.md` — **binding on you** for every Billing-owned file this update touches.
 
-**Precedence** per the general doc: module architecture **Invariants** → overview → architecture → code-standards → this supplement → general workflow rules. For the Invoice Template Binding update: Invariants #11–#18 → binding plan decisions D1–D16 → `custmgmt-update-overview.md` → architecture §7 → code-standards → §9 of this supplement.
+**Precedence** per the general doc: module architecture **Invariants** → overview → architecture → code-standards → this supplement → general workflow rules. For the Invoice Template Types update: Invariants #19–#22 (and Billing's #59–#68 for shared pieces) → `custmgmt-update-overview.md` for Customer Management screens and `billmgmt-update-overview.md` for everything Billing owns → architecture §8 → code-standards §10 → §10 of this supplement. **If the two update overviews disagree, stop and ask; never pick one yourself.** Planning documents (`_updatemodule-*.md`) are background only and never override these docs.
 
 ---
 
@@ -23,7 +25,7 @@ Read the following files in order before implementing or making any architectura
 4. `context/customer-management/custmgmt-code-standards.md` — implementation rules and conventions
 5. `context/customer-management/custmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach (this document)
 6. `context/customer-management/custmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
-7. For Invoice Template Binding work only: `context/customer-management/custmgmt-update-overview.md`, then `_updatemodule-customer-accounts-invoice-template-binding-plan.md` (decisions D1–D16, §9 tripwire, §11 test matrix)
+7. For Invoice Template Types work: `context/customer-management/custmgmt-update-overview.md`, then `context/billing-management/billmgmt-update-overview.md` (the owning design), then §10 of this document
 
 Update `context/customer-management/custmgmt-progress-tracker.md` after each meaningful implementation change.
 
@@ -35,14 +37,14 @@ If implementation changes the architecture, scope, or standards documented in th
 
 1. **Build full CRUD in v1** — unlike Product Management's read-only v1, `actions/customer/**` ships from day one: create, update, status-transition, contact add/update/delete, and set-preferred (contact and method) are all in scope now (overview _In Scope_, architecture §1).
 2. **Cite the authorizing section before coding**, per the general doc §1.1 — an overview flow/feature, an architecture §2 folder row or Module Invariant, or a code-standards rule. No section, no mandate.
-3. **Every mutation is one transaction: validate → mutate → audit → bump the optimistic lock** (architecture Inv. #6, code-standards §1.5). A mutation unit that lands only part of this chain is not done. **Lock scope:** customer-record mutations (organization, role/status, contacts, set-preferred) compare and bump `party_role.last_modified_datetime`; a Billing Account (BAN) change made from a customer screen, such as the template reset, compares and bumps the BAN's own `billing_account.last_modified` and never the customer's lock (architecture Inv. #17, decided 2026-10-10).
+3. **Every mutation is one transaction: validate → mutate → audit → bump the optimistic lock** (architecture Inv. #6, code-standards §1.5). A mutation unit that lands only part of this chain is not done. **Lock scope:** customer-record mutations (organization, role/status, contacts, set-preferred) compare and bump `party_role.last_modified_datetime`; a Billing Account (BAN) change made from a customer screen, such as binding its template type, compares and bumps the BAN's own `billing_account.last_modified` and never the customer's lock (architecture Inv. #17, decided 2026-10-10).
 4. **Transition maps are the single source of truth.** `ORGANIZATION_TRANSITIONS` / `CUSTOMER_TRANSITIONS` in `validation/customer/transitions.ts` are the only place next-states are declared; no page, component, or action hand-authors a status option list (code-standards §1.4, §2.2).
 
 ---
 
 ## 2. Units — One at a Time
 
-> **Phase 1 — delivered (cm01–cm16).** The unit list below is the record of the original "simple customer" build and is kept for history. Do not rebuild these units. The active unit list for the Invoice Template Binding update is **§9.2**. Item 4 (Nav) is also **superseded** by the platform navigation rule: pages register in `NAV_REGISTRY` (`lib/nav-registry.ts`) with a `NAV_ICONS` glyph, and a page the viewer cannot access is **hidden**, not greyed (`context/architecture.md` §2, general doc §7.6).
+> **Phase 1 — delivered (cm01–cm16).** The unit list below is the record of the original "simple customer" build and is kept for history. Do not rebuild these units. §9 records the delivered Invoice Template Binding update; the active rules for the Invoice Template Types update are **§10**. Item 4 (Nav) is also **superseded** by the platform navigation rule: pages register in `NAV_REGISTRY` (`lib/nav-registry.ts`) with a `NAV_ICONS` glyph, and a page the viewer cannot access is **hidden**, not greyed (`context/architecture.md` §2, general doc §7.6).
 
 Deliver these as separate units, in this dependency order (general doc §2). Do not start a unit until the previous one passes verification (§8 below) and is committed.
 
@@ -154,7 +156,9 @@ If any item fails, the unit isn't done. Fix it before moving on; never defer a f
 
 ## 9. Invoice Template Binding update — workflow rules (2026-10-10)
 
-These rules apply only to the Invoice Template Binding update (`custmgmt-update-overview.md`, binding plan D1–D16). They add to §1–§8 above and to `../ai-workflow-rules.md`; nothing above is relaxed. The update is **plumbing only**: the customer record shows, confirms at onboarding, and resets a per-BAN template reference that posting ignores, and View Customer becomes tabbed with a read-only Accounts tab.
+> **Delivered and signed off (2026-10-25). This section is the record.** Do not rebuild cm17–cm22. **Superseded by §10 (Invoice Template Types) — do not follow these items any more:** §9.3 items 1 and 2 (NULL-only, no catalog), §9.5 item 2 (non-`NULL` meaning is "Phase 3"), §9.6 items 1 and 7 (Billing files and docs off limits), and §9.8 items 1, 2 and 8 (NULL-only holds, Billing never references the column, the "Follows active template" label). Everything else in §9 stays true for the delivered code.
+
+These rules applied to the Invoice Template Binding update (binding plan D1–D16; folded into `custmgmt-project-overview.md`). They add to §1–§8 above and to `../ai-workflow-rules.md`; nothing above is relaxed. The update is **plumbing only**: the customer record shows, confirms at onboarding, and resets a per-BAN template reference that posting ignores, and View Customer becomes tabbed with a read-only Accounts tab.
 
 ### 9.1 Operating approach
 
@@ -246,3 +250,101 @@ Run §8 and the general doc §8, then confirm each of these for the unit:
 8. **The label is honest.** `NULL` renders "Follows active template (currently: <name> vN), as of now" from a live lookup.
 9. **Tests ran on a disposable database** and the plan §11 rows for the unit are present and green.
 10. **Docs moved with the code** per §9.7; no Billing or Accounts doc edited without approval.
+
+---
+
+## 10. Invoice Template Types update — workflow rules (2026-10-25; planned)
+
+These rules apply to the Customer Management part of the cross-module **Invoice Template Types** update: bind a BAN to a template type. They add to §1–§8 and to `../ai-workflow-rules.md`. They **supersede** the §9 items listed at the top of §9. Billing owns the update; its rules are in `billmgmt-ai-workflow-rules.md`, and both supplements bind you.
+
+### 10.1 Operating approach
+
+1. **Cite an invariant or an overview section for every change:** Inv. #19–#22 (or #16–#17 as amended), a section of `custmgmt-update-overview.md`, or a code-standards §10 rule. For a shared piece, cite Billing's invariant (#59–#68). Never cite a planning document as the authority.
+2. **Do not write code before its spec exists.** Write the cm23 and cm24 specs (`cm00` Phase 3), each naming its Billing counterpart ("Counterpart: bm82" / "bm85") both ways.
+3. **Work cross-domain only through the named seams:**
+   - Billing's **repositories** (`bill-template-family`, `bill-template-version`) for reads and `lockTemplateType`
+   - the shared column migration, together with Billing's capture change
+
+   Never import a Billing service or action, and never edit a Billing file outside §10.6 item 2.
+4. **Assume a populated database.** The column migration runs on environments with real BANs and bills. Never edit `0050`, and never empty a table to make a test pass.
+5. **Run DB-gated tests on a disposable Postgres** (§9.1 item 4 still applies).
+
+### 10.2 Units — deliver in this order, one at a time
+
+The unit list of record is `specs/cm00-build-plan.md` Phase 3 (written 2026-10-25). Build each unit exactly as it is described there; this table is the index. Do not renumber, merge, split or reorder them without owner approval.
+
+| Unit | Visible result | Depends on |
+|---|---|---|
+| cm23 | Bind a BAN to a template type: `0054`, the type-aware bind gate, the panel select + Save, type labels, onboarding wording. **One merge with Billing bm82** (capture reads the type) | Billing bm74, bm77, bm78, bm79 |
+| cm24 | Ship gate pointer, joint with Billing bm85 | cm23; Billing bm83, bm84 |
+
+### 10.3 Scoping — do not build these
+
+1. **Do not create, upload, activate, retire, export or preview template types** from a customer screen. That is Billing's Invoice Settings.
+2. **Do not offer a type choice in onboarding.** The wizard writes `null`.
+3. **Do not add a bulk-bind,** a "bind all BANs of this customer", or binding from Accounts-module screens.
+4. **Do not pin a version.** A BAN references a type only.
+5. **Do not add a permission,** an audit event type, a column on `customer` tables, or an index on the new column.
+6. **Do not read or show layout files,** versions beyond the label's "vN", or a preview on customer screens.
+7. **Do not touch bill-run stamps** (`bill_run_account`, `customer_bill`) or anything under `services/billing/**`.
+8. **Do not change** the customer lock, the transition maps, `OrganizationSection`, `CustomerRoleSection`, `ContactDetailsSection` or the tab shell.
+
+### 10.4 When to split
+
+Apply §4 and the general doc §3, plus:
+
+1. **cm23 and Billing's bm82 form one merge.** Inside cm23, commit in order (migration → gate → reads → panel), keeping every commit green, and land the merge only when bm82's capture read is in it.
+2. **Inside cm23, build read before write:** the labels and type list first, then the select and Save.
+3. **Keep the bind-gate lock test in cm23,** using Billing's lock helper. The full parallel run against retire lands with Billing's bm83.
+
+### 10.5 Missing or ambiguous requirements — stop and ask
+
+1. **Stop and ask** if a unit seems to need:
+   - a Billing service or action import
+   - a write to `billing_account` outside the three writers of Inv. #19
+   - a new result code
+   - a copy change beyond `billing-account-messages.ts`
+   - a type list that includes retired or not-yet-usable types
+2. **Never resolve a disagreement between `custmgmt-update-overview.md` and `billmgmt-update-overview.md` yourself.** Flag both citations.
+3. **Record every resolution** in the owning doc in the same change: the screen → `custmgmt-update-overview.md`; a rule → `custmgmt-architecture.md`; a convention → `custmgmt-code-standards.md`.
+
+### 10.6 Protected files for this update
+
+In addition to §6, do not modify without explicit instruction:
+
+1. **Authorized Customer Management and Accounts-side files only:**
+   - `services/accounts/assert-bindable-template.ts`, `set-billing-account-template.ts`, `onboard-customer-accounts.ts`, `list-customer-billing-accounts.ts`, `get-customer-accounts-summary.ts`, `resolve-ban-template-label.ts`
+   - the new `list-bindable-template-types.ts`
+   - their `validation/accounts/` schemas, `actions/accounts/set-billing-account-template.ts`
+   - `components/customers/` (`billing-account-panel.tsx`, `billing-account-card.tsx`, `onboard-accounts-wizard.tsx`, the new `template-type-select.tsx` and `billing-account-messages.ts`)
+   - `app/(app)/customers/manage/[id]/page.tsx`
+   - `db/schema/billing/accounts.ts` and the new migration
+2. **Billing-owned files: authorized only as the shared merge requires,** under `billmgmt-ai-workflow-rules.md`: Billing's capture read (`listBanFamilies`), changed in the same merge as the column migration. Every other Billing file, including the type repository and `lockTemplateType`, is built by Billing's units; consume it, never edit it.
+3. **Applied migrations,** including `0050_billing_account_template_ref.sql`. The column change is a new forward migration.
+4. **`components/ui/`, `auth/guard.ts`, `auth/permission-constants.ts`** — no new permission constant.
+5. **Docs:** the `billmgmt-*` and `acctmgmt-*` context docs. Propose changes and get approval before editing. `TODOS.md`'s "Phase 3: catalog + posting reads the BAN binding" entry is closed by the update's ship gate, not by a feature unit.
+
+### 10.7 Keep documentation in sync
+
+Update in the same change set as the code:
+
+1. **`custmgmt-architecture.md`:** Inv. #19–#22 markers ("planned" → "built (cmNN)") and the §8 tables.
+2. **`custmgmt-code-standards.md` §10:** the permission map rows, file tree and guardrails 11–13.
+3. **`custmgmt-ui-context.md` §10:** the label, panel and onboarding tokens.
+4. **`cm05` (View Customer spec) and `ac04` (onboarding spec):** wherever they quote the old label, Reset button or wizard wording.
+5. **`custmgmt-progress-tracker.md`:** after every unit.
+6. **At the ship gate:** fold `custmgmt-update-overview.md` into `custmgmt-project-overview.md` and delete the update overview, in the same change as Billing's fold. Invariant **#18** is then marked replaced by #19–#21, and guardrail **10** by guardrail 11.
+
+### 10.8 Verification checklist — before the next unit
+
+Run §8 and the general doc §8, then confirm for the unit:
+
+1. **Standard is `NULL`.** Choosing "Standard (default)" writes `null`; Standard's id is rejected; no code compares against Standard's id.
+2. **The bind gate locks.** `assertBindableTemplate` takes `FOR SHARE` on the type inside the caller's transaction. Retired, not-yet-usable and unknown types return `TEMPLATE_NOT_BINDABLE` and write nothing.
+3. **The boundary holds** (guardrail 11). No `ref_bill_template_version_id` remains. Billing references the new column only in the capture read and the retire switch. No customer-tree import of a Billing service or action exists.
+4. **The migration is safe:** it applies on a populated database and aborts on a non-`NULL` version value.
+5. **Locks and audit:** the BAN's `last_modified` is bumped and `party_role.last_modified_datetime` untouched; one `BILLING_ACCOUNT_TEMPLATE_CHANGED` per real change, none for an unchanged value.
+6. **Labels are honest and live.** The four removed strings are gone; labels come from a live read; the "next bill run" caption shows.
+7. **Permissions compose.** The page guards are unchanged; the action rejects a user missing either permission with the UI bypassed; the Accounts tab shows nothing without `accounts_view : READ`.
+8. **Onboarding is still atomic:** the V7 rollback test passes, and the BAN starts `NULL`.
+9. **Docs moved with the code** per §10.7.

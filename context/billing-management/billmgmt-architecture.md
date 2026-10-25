@@ -2,15 +2,16 @@
 
 This document **extends `context/architecture.md`** (the platform-wide architecture every module inherits — stack, folder boundaries, storage principles, multi-module DB design, the auth platform, and the 18 platform invariants) and records **only what the Bill Run module adds or does differently**. User flows and the functional design live in `billmgmt-project-overview.md` (delivered) and `billmgmt-update-overview.md` (in-flight updates); the bill run's own phase-3 design decisions (bm14–bm35; not Invoice Template Phase 3) are in `_updatemodule-billing-billrun-phase3-plan.md`; the workflow/rating seam is in `_newmodule-billrun-rating-workflow-plan.md`; the shared engine platform is in `workflow-management/wfm-architecture.md`; the invoice template decisions are in `_updatemodule-billing-invoice-template-merged-plan.md` (§15 is authoritative over its §§1–14).
 
-**Status:** Phases 1–4 (bm01–bm39) delivered. Three updates are delivered and folded into `billmgmt-project-overview.md` (Part 1 fully rolled up 2026-10-15; Invoice Template Phase 3 folded by the bm73 ship gate, 2026-10-17). `billmgmt-update-overview.md` holds pointers only until the next update:
+**Status:** Phases 1–4 (bm01–bm39) delivered. Three updates are delivered and folded into `billmgmt-project-overview.md` (Part 1 fully rolled up 2026-10-15; Invoice Template Phase 3 folded by the bm73 ship gate, 2026-10-17). `billmgmt-update-overview.md` holds the in-flight **Invoice Template Types** update (planned, not built):
 
 | Update | Plan | State | Deltas | New invariants |
 | --- | --- | --- | --- | --- |
 | Part 1 — Target Capacity Pricing | `_updatemodule-billing-billrun-target-capacity-plan.md` | **Delivered (bm40–bm46 + bm42a)**; DB-gated suites and the 5 vitest failures closed by later green runs; still OPEN: TC54 harness, O-TC7 | Dated section after §6 | **#29–#38** |
 | Part 2 — Invoice Template | `_updatemodule-billing-invoice-template-merged-plan.md` | **Delivered (bm47–bm63)**; ship gate bm63 signed off 2026-10-11 | Dated section after Part 1's | **#39–#50** |
-| Invoice Template Phase 3 — bill run uses the BAN's template | `_updatemodule-billing-invoice-template-phase3-billrun-plan.md` (D1–D60) | **Delivered (bm64–bm72), signed off by bm73** (2026-10-17; units per D59) | Dated section at the end of this document | **#51–#58**; amends #36, #40, #41, #42, #44, #46 |
+| Invoice Template Phase 3 — bill run uses the BAN's template | `_updatemodule-billing-invoice-template-phase3-billrun-plan.md` (D1–D60) | **Delivered (bm64–bm72), signed off by bm73** (2026-10-17; units per D59) | Dated section after Part 2's | **#51–#58**; amends #36, #40, #41, #42, #44, #46 |
+| Invoice Template Types — editor upload, type catalog, BAN binding, retire, export | `billmgmt-update-overview.md` | **Planned** (2026-10-25); specs not yet written | Dated section at the end of this document | **#59–#68** (planned); amends #44, #45, #46, #47, #49, #54 |
 
-Every platform invariant in `architecture.md` §7 is inherited unchanged; the rules in §6 below are additional and module-specific. Module invariants run 1–58 (#51–#58 built, Invoice Template Phase 3, audited at bm73); **#15 is a retired tombstone** (D31) and is never reused. The Part 1 / Part 2 usage-appendix geo-source conflict (X1) is **resolved as R9** (bm48: geo persisted onto `udr_rated` at rating, Inv #36 amended); the usage-section scope/bound conflict (X2) is **resolved as R9's design, delivered by bm49** (every billed `udr_rated` row, state → district, bounded to Part 1's 10,000-row cap); the `is_default`-vs-one-ACTIVE conflict (X3) is **resolved and delivered by bm50** (the one-ACTIVE partial unique index excludes the default; resolution pinned → non-default ACTIVE → default). X4 (same-file two-rewrites) was settled by bm47–bm49; it is kept as the historical record in _Cross-update conflicts (all resolved)_.
+Every platform invariant in `architecture.md` §7 is inherited unchanged; the rules in §6 below are additional and module-specific. Module invariants run 1–68 (#51–#58 built, Invoice Template Phase 3, audited at bm73; #59–#68 planned, Invoice Template Types); **#15 is a retired tombstone** (D31) and is never reused. The Part 1 / Part 2 usage-appendix geo-source conflict (X1) is **resolved as R9** (bm48: geo persisted onto `udr_rated` at rating, Inv #36 amended); the usage-section scope/bound conflict (X2) is **resolved as R9's design, delivered by bm49** (every billed `udr_rated` row, state → district, bounded to Part 1's 10,000-row cap); the `is_default`-vs-one-ACTIVE conflict (X3) is **resolved and delivered by bm50** (the one-ACTIVE partial unique index excludes the default; resolution pinned → non-default ACTIVE → default). X4 (same-file two-rewrites) was settled by bm47–bm49; it is kept as the historical record in _Cross-update conflicts (all resolved)_.
 
 **One-line summary of the deltas:** the module introduces (1) an **external workflow engine** (Kestra OSS) that orchestrates the pipeline and drives the app through the platform's first **machine-to-machine ingest path**, (2) **partitioned high-volume record tables** maintained by `pg_partman`/`pg_cron`, (3) a **two-writer boundary** in which a least-privilege engine role computes bill data while the app remains sole writer of run-state and posting, and (4) **`billing.customer_bill_line` as the bill's stored charge record**, assembled from more than one source.
 
@@ -225,17 +226,27 @@ Rules this module must never violate, **in addition to** the platform invariants
 
     > **Amended 2026-10-15 (Invoice Template Phase 3; Inv #57). The family uniqueness, the identity column and its guard are built (bm64).** For `kind = generated`, uniqueness is **per family**: at most one non-default ACTIVE and one DRAFT per `ref_bill_template_family_id`, beside the default version in the default family. `ref_bill_template_family_id` is an identity column covered by the guard trigger. Layout and CSV keep the (`ref_bill_format_id`, `kind`) scope. The one-time in-place rewrite of v1's seed files on the fresh-DB round is the only exception to write-once, and it is pinned afterwards (Inv #57).
 
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** Uniqueness becomes **per type** for `layout` and `generated` (one ACTIVE and at most one DRAFT per type and kind; layout rows carry the type id). CSV keeps the (`ref_bill_format_id`, `kind`) scope. Layout versions are now **born DRAFT** by upload. A **DRAFT** layout row may be overwritten in place: its `blob_ref`, `checksum`, `checksum_algorithm` and `page_setup` change, and its id and `version_no` do not. That is safe because a DRAFT is never captured, posted or reprinted (Inv #61). The blobs themselves stay write-once: an overwrite writes new objects under a new content-digest folder and the replaced objects are kept. ACTIVE and RETIRED rows stay immutable exactly as above (Inv #59, #61).
+
 45. **[CRITICAL] Every stored template and logo is checksum-verified on every load.** `loadGenerated(version)` (`services/billing/invoice-template/load.ts`) verifies the blob against the stored checksum before `Handlebars.compile`; the logo is verified before it is inlined. A mismatch fails the render (Inv #40) — it never renders with a substitute.
+
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** The rule also covers DRAFT layouts: `loadLayoutDraft` verifies a DRAFT's files against the row's **current** checksum on every load and is never memoized, and export reads only verified bytes (Inv #61, #68).
 46. **Admin input can never become template code.** Admins only toggle structure booleans; they never author markup. Handlebars runs with auto-escaping on, **triple-stash forbidden**, `knownHelpersOnly`, and no eval-style helpers. Generated `.hbs` contains only `{{ }}` placeholders — no `[[ ]]` generation directive survives generation. A CI layout lint rejects raw `<img src>` and any external URL; images enter only via `{{company.logoUrl}}` / `{{asset}}`.
 
     > **Amended 2026-10-15 (Invoice Template Phase 3; D20, D38).** One admin-authored **text** field is added: the template version's `structure.footnote`. It is plain text only (no markup, no Handlebars syntax interpreted), length-capped, validated by zod with the rest of the manifest, and rendered with auto-escaping on. Admins still never author markup or layout. **Built (bm72):** `invoiceTemplateStructureSchema` holds `footnote` as 1–5 trimmed plain-text lines of at most 200 characters; the save and activate actions and the editor's React Hook Form resolver share it. The layout prints the lines with the built-in `{{#each}}` and auto-escaping, so no new helper is needed. `notes` and its partial are removed, and Payment information is the only section toggle. Proven by `generate.test.ts` (guardrail 67), `save-template-draft.action.test.ts` (server-side limits) and the golden's `<script>` line case (guardrail 50).
+
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** **This invariant now has one sanctioned exception: an uploaded layout package.** A MANAGER/ADMIN can upload a complete layout (Handlebars and CSS). It becomes template code only after the upload gate accepts it (Inv #60), and only goes live on Activate. The settings form is unchanged: admins still toggle Payment and edit the footnote, and never author markup there. The compile settings stay (auto-escaping on, triple-stash forbidden, `knownHelpersOnly`, strict).
 
 47. **The render makes no network fetch and no ratecard query.** The logo is inlined as a data URI (so Playwright's `networkidle` is deterministic), and usage-section geo is a value already frozen before render — never looked up from `product.ratecard_ran_usage_lkp` at render time. (The frozen value lives on `rating.udr_rated.state/district`, captured at rating — X1 resolved as R9 by bm48.)
 
     > **Amended 2026-10-14 (rating raw-key update, rm24–rm29; reworded 2026-10-15).** The invariant stands: the render makes no network fetch and no ratecard query. Only the SOURCE of the frozen geo moves: once rating Phase H is deployed (rm29) and billing slice 2 ships, the invoice reads the polygon from the `polygon_id=` segment of the raw `udr_key` and State, District and the start date from `udr_resource` (billing plan D8, D31), both written at rating time. Until billing slice 2 ships, bm49 still reads `udr_rated.state/district`. The flow's appendix is no longer read (bm49) and is removed in billing slice 2.
 
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** The rule is now **enforced by the renderer**, not only by the lint and the data-URI convention: every Chromium render blocks the network and runs no script (Inv #64).
+
 48. **Uploaded logos are validated and sanitized before they are stored.** PNG/JPEG/SVG only, ≤ 500 KB, ≥ 300 px, MIME checked against magic bytes; SVG with `<script>`, event handlers, `<foreignObject>` or external references is **rejected, never stripped** (bm60; code-standards data rule 9). Validation runs server-side in the action/service path, not only in the browser.
 49. **Structure and activation rules are enforced server-side, and every save/activation is audited.** Mandatory sections cannot be hidden, activation requires a change note, and profile activation requires a logo — checked in the service, not only by locked checkboxes. Both screens require `invoice_settings` (READ to view, EDIT to save/activate); every save and activation writes `core.AUDIT_LOG`.
+
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** "Mandatory sections cannot be hidden" is now checked on the **rendered output**, not on manifest flags (which the generator ignores): the visible-text compliance check (Inv #63) runs at upload and again at activation. Upload, create type, retire and export are audited too.
 50. **"Amount due" is this invoice's current charges only, and tax is bill-level only.** No balance brought forward (R2) and no per-line tax column or allocation (R6); tax renders from `customer_bill_tax_item` as a bill-level summary. The template must state that the amount due covers current charges only.
 
 **Added — Invoice Template Phase 3, bill run uses the BAN's template (2026-10-15); built bm64–bm72, audited by the bm73 ship gate (2026-10-17):**
@@ -248,6 +259,8 @@ Rules this module must never violate, **in addition to** the platform invariants
     - a version id → **that version's family** → its non-default ACTIVE version, else its default version (follow-the-line, matching `0050`'s column comment).
 
     A BAN never pins an exact version; the bill records the exact version used. _(D10, D46.)_
+
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** The reference moves to **`billing_account.ref_bill_template_family_id`** (a type, FK; NULL = Standard), and the version column is dropped. Capture reads the type directly: NULL → Standard; a type → that type's ACTIVE `generated` version (NULL if it has none, Inv #58). The bill run still only reads the column. It is written by Customer Management's bind gate, and by Billing's retire bulk switch (Inv #66).
 55. **Capacity Utilised and Unutilised are derived from the bill line, never stored, and Utilised is never negative.** Per capacity line:
     - Unutilised = `gross_amount − rated_amount` (the commitment top-up);
     - Utilised = `net_amount − Unutilised` (= `rated_amount − discount_amount`, after discount);
@@ -276,6 +289,25 @@ Rules this module must never violate, **in addition to** the platform invariants
     - **Recovery:** activating a version and rerunning the BAN re-captures and bills it (Inv #52).
 
     _(D24, D55, D58.)_
+
+59. **[CRITICAL] A layout version enters the app only by upload, and only through one write path.** `installLayoutPackage` is the only code that inserts or overwrites a layout DRAFT, its blobs and its settings DRAFT. The seed installs no layout rows beyond the fixed default versions, and no migration or script adds one. _(Planned, Invoice Template Types.)_
+60. **[CRITICAL] An upload is fully validated before anything is written, and a rejection writes nothing.** In order:
+    1. the zip is read in memory (never written to disk), and its central directory is checked **before any inflate**: total uncompressed size ≤ 2 MiB, ≤ 64 entries, every name on a fixed allow-list (`manifest.json`, `shell.hbs`, `footer.hbs`, `sample-data.json`, `checksums.json`, the eight `partials/<key>.hbs`, `fonts/*.woff2`, `fonts/OFL.txt`, and an optional export `settings.json`)
+    2. `checksums.json` verifies every file
+    3. the manifest passes `layoutManifestSchema`, its `layoutCode` equals the type's `layout_code`, and its `layoutVersion` equals the version to be written (except an app export carrying a valid `settings.json`)
+    4. the `compliance.ts` rules pass (lint, hardening, visible-text compliance; Inv #63)
+    5. strict compile and execute against the probe input and the sample data, with Payment on and off
+    6. one network-blocked Chromium render attempts no fetch (Inv #64)
+
+    A failure returns every problem and leaves no row, blob or audit change. Acceptance is by content only; the origin of a package is never trusted or checked. _(Planned.)_
+61. **[CRITICAL] A DRAFT never reaches a bill.** Capture, draft-in-run, posting, final render and reprint load versions only through `assertLoadable`, which refuses every DRAFT. Only preview, the upload gate, activation and export may load a DRAFT, through `loadLayoutDraft`, which verifies the row's current checksum and is never cached by version id (the compiled-template memo stays keyed by immutable, non-DRAFT version ids). _(Planned.)_
+62. **[CRITICAL] Activate promotes only what was last previewed.** Every write to a type's layout DRAFT (upload or overwrite) also updates that type's settings DRAFT row, so its optimistic token changes. Activation re-checks the token under lock, so a layout replaced after the preview fails Activate and promotes nothing. An overwrite also carries the DRAFT it was warned about, and fails `DRAFT_CHANGED_SINCE_WARNING` if that DRAFT changed before commit. _(Planned.)_
+63. **[CRITICAL] A layout is compliant only if the required values print as visible text, and the rules have one home.** `services/billing/invoice-template/compliance.ts` holds every layout rule: the lint, the hardening rules, the typed-supplier rule and the visible-text check. The check renders the probe input and requires the probe supplier name, registration no, TIN, SST no and address line 1, the buyer name, the invoice number and the amount due in the rendered **text** — not inside an HTML comment or a hidden element of a compliance section. CI (over `INVTPL-STD-A4` and the `INVTPL-BASIC-A4` reference package), the upload gate and activation all call it; no rule lives only in a test or only in the editor. The editor snapshots this file verbatim. **Two tiers (owner, 2026-10-25):** the static tier (lint, hardening, typed-supplier, strict compile and execute, required values in each section's HTML) runs everywhere, plain CI included. The visible tier (rendered `innerText` plus opacity and font-size, through the hardened page) needs Chromium: it runs in the opt-in `RUN_CHROMIUM_E2E` suite and always at runtime in the upload gate and activation (the production image ships Chromium). _(Planned.)_
+64. **[CRITICAL] Every Chromium render runs with the network blocked and no script.** The browser context has `javaScriptEnabled: false` and `offline: true`, and `page.route('**/*')` aborts every request except `data:` and `about:`. The upload gate's render **fails** on any attempted fetch (`LAYOUT_EXTERNAL_FETCH`). Draft and final PDF renders **log** each blocked URL with the version id and never throw, so a posted invoice is never failed by it. Preview is sandboxed HTML (`<iframe sandbox="">`), not Chromium. _(Planned.)_
+65. **A type's identity is fixed at creation, and every version belongs to exactly one type.** `bill_template_family.name`, `code` and `layout_code` never change (guard trigger). Each type has one `layout_code`, and layout rows must carry their type's `layout_code` (composite FK). A settings version must point at a layout version of the **same** type (composite FK). Names are unique case- and space-insensitively, including retired names, and contain no doubled or surrounding spaces (unique index plus CHECKs). Standard is the permanent default: it is never retired, and its v1 rows stay immutable (Inv #57). _(Planned.)_
+66. **[CRITICAL] Binding and retire are serialised on the type row, and a retired type has no BANs.** NULL means Standard, and Standard is stored **only** as NULL: an explicit Standard id is rejected (`TEMPLATE_NOT_BINDABLE`). The bind gate takes `FOR SHARE` on the type through `lockTemplateType` and requires it to be usable (not retired, has an ACTIVE settings version). Retire locks the retired type (`FOR UPDATE`) and the target (`FOR SHARE`) in **ascending id order**, re-checks the target is usable, moves every BAN in one set-based UPDATE (one `BILLING_ACCOUNT_TEMPLATE_CHANGED` per BAN), re-checks that zero BANs remain, and only then sets `retired_datetime`, all in one transaction. A binding or a switch never touches `bill_run_account` stamps; it applies from the next run start or rerun. An SQL bypass is still caught at capture (Inv #58). _(Planned.)_
+67. **Retiring a type changes only the type row, and it is one-way.** Its layout and settings versions (ACTIVE, DRAFT, RETIRED) are untouched, so posted bills, reprints and in-flight stamps keep resolving. Save, upload, preview and activate refuse a retired type (`TEMPLATE_TYPE_RETIRED`). There is no un-retire. _(Planned.)_
+68. **Export reads only verified stored bytes, and a restore re-enters through the full gate.** An export zips a version's files byte for byte through the checksum-verifying loader (a mismatch fails the export) plus a `settings.json` that `checksums.json` does not list. Restoring it is an ordinary upload (Inv #60). The only difference is that a valid export skips the version-number check; the type-code check still applies. "Valid" means `settings.json` passes its schema **and** its `source.layoutChecksum` equals the package's own `checksums.json` digest. _(Planned.)_
 
 ---
 
@@ -529,3 +561,125 @@ Reviewed 2026-10-15 against `context/architecture.md` and every section above.
 | P9 | Inv #36: the trace is database-only, "the bm45 `additional_info.appendix` snapshot is still written"; "rows rated before bm48 carry NULL geo and are shown, not dropped". | D31 stops writing `appendix`. Inv #56 makes a row with no polygon data **fail** (`INVOICE_POLYGON_DATA_MISSING`), not show. | **Inv #36 amended:** `appendix` is no longer written; the per-polygon detail follows Inv #56. "Shown, not dropped" applied only to the bm49 annex until bm71 shipped; since bm71 (built), missing polygon data parks the account. "Unassigned region" remains only for a row whose `udr_resource` is present but has blank State and District segments (D21). |
 | P10 | Inv #50: the template "must state that the amount due covers current charges only". | The new v1 has two headline figures: page-1 **Grand Total** and last-page **Total Amount** (Σ Utilised only, D22). | Not a rule change, but a build check: the page-1 Grand Total is the amount due and carries the "current charges only" statement. The last-page Total Amount is labelled as utilised capacity charges and is never presented as the amount due. The mandatory sections (Inv #49) stay present in the rewritten manifest. |
 | P11 | This document's header cites `_updatemodule-billing-billrun-phase3-plan.md` as "the phase-3 design decisions". | Name collision with this update. | Named "Invoice Template Phase 3" throughout (see _Naming_ above). |
+
+---
+
+## Invoice Template Types — editor upload, type catalog, BAN binding — architecture deltas (2026-10-25; planned, not built)
+
+_**Planned.** The functional design is in `billmgmt-update-overview.md`. Everything below is the target design; once built, the invariants carry "Built (bmNN)" notes, as Phase 3's do._
+
+Per the convention at the top of this document, this section extends `context/architecture.md` and everything above, and records **only** what the Invoice Template Types update changes or adds. The update:
+- lets a MANAGER/ADMIN **upload a layout package** (one zip exported by the external Invoice Template Editor) that becomes a DRAFT of a template type, validated server-side before anything is written;
+- turns the single "Standard" family into a **catalog of template types**, each with its own layout and version history;
+- lets RevOps **bind a BAN to a type** (moving the BAN column from a version to a type);
+- adds **retire with a bulk switch**, and **export / restore** of any version.
+
+It adds **one library** (`fflate`), **no new permission, no new machine credential and no background job**. It changes **one database grant**. New rules are invariants **#59–#68** (§6). It amends **#44, #45, #46, #47, #49 and #54** (dated notes under each). The contradictions it resolves are listed at the end of this section.
+
+### Platform-level deltas (against `context/architecture.md`)
+
+No platform invariant changes. Four platform rules are applied in a way later readers should know about.
+
+| `architecture.md` | Says | What this update does |
+| --- | --- | --- |
+| §3 User-uploaded files | "None in v1. Later: binary → Azure Blob, DB stores a reference." | The module already stores uploaded logos (Inv #48). It now also accepts **uploaded layout packages**, which contain **executable template content** (Handlebars and CSS). The zip is parsed in memory and never written to the app container's disk. Its files are stored write-once in Azure Blob (`invoice-templates/`, a content-digest folder per package), and the DB row holds the blob reference and checksum. The upload gate (Inv #60) is the security boundary, because uploaded layouts skip code review. |
+| Inv #18 Financially significant rows are immutable | Rows that feed billing are never UPDATEd; corrections insert a successor. | A **DRAFT** layout row may be overwritten in place (new files, same id and version number), because a DRAFT never feeds a bill (Inv #61). ACTIVE and RETIRED template rows stay immutable. Overwritten blobs are kept, and the audit row records the previous and new checksum. |
+| §4 Migrations / Inv #10 | Committed migrations in a gated step. | `0053` (catalog) and `0054` (BAN column) are **additive**, and run on a database holding real runs and bills, unlike Phase 3's one-time in-place edit of `0046`. **One-time exception inside `0053`:** Standard's default layout row is guarded against every UPDATE, so its new type id is set by disabling `bill_template_version_guard_trg` for exactly that one row, inside the migration transaction. The migration asserts exactly one row changed, then re-enables the trigger, and a migration test asserts the trigger is enabled afterwards. Not a precedent. |
+| §3 Cache: "None" | No cache tier. | Unchanged at platform level. The module's compiled-template memo (keyed by immutable version id) **never** holds a DRAFT, because a DRAFT's bytes can change under the same id (Inv #61). |
+
+### Stack (module additions)
+
+| Layer | Technology | Change |
+| --- | --- | --- |
+| Zip parsing | **`fflate`** (new dependency; the editor already uses it) | Reads the uploaded zip **in memory**. The central directory (sizes, entry count, names) is checked **before** any entry is inflated (Inv #60). No temp files and no extraction to disk. |
+| Document rendering | Playwright 1.63 Chromium | Every render now uses a browser context with `javaScriptEnabled: false` and `offline: true`, and `page.route('**/*')` aborting all but `data:` / `about:` (Inv #64). The upload gate adds one probe render per upload, which shares the existing render semaphore (at most 2 concurrent renders). |
+| Template engine | Handlebars 4.7.10 | Unchanged settings (auto-escaping on, `knownHelpersOnly`, `strict`, triple-stash forbidden), now also applied to **uploaded** layouts. |
+| Validation | Zod | New schemas for the upload request (type id, the DRAFT it was warned about), the export `settings.json`, and the create-type / retire inputs. `layoutManifestSchema` and `invoiceTemplateStructureSchema` are reused unchanged. |
+| External authoring tool | Invoice Template Editor (`F:\Projects\invoice-editor`, GrapesJS) | **Not part of the app runtime**: no shared runtime, DB or network. It snapshots app files verbatim, including `compliance.ts`, and must be refreshed whenever those change. |
+
+### System boundaries (deltas)
+
+| Path | Delta |
+| --- | --- |
+| `services/billing/invoice-template/compliance.ts` | **New.** The one home of every layout rule: lint, hardening, typed-supplier rule, `COMPLIANCE_SECTION_KEYS`, the visible-text check (Inv #63). `tests/guardrails/invoice-layout-lint.test.ts` becomes a thin caller. |
+| `services/billing/invoice-template/` (upload, install, export) | **New services.** The upload gate (zip checks, checksums, manifest, compliance, compile, probe render); `installLayoutPackage`, the **only** writer of layout DRAFTs, their blobs and the settings DRAFT (Inv #59); export (verified bytes + `settings.json`, Inv #68). All DB access goes through `db/repositories/billing/` (platform Inv #9). |
+| `services/billing/invoice-template/load.ts` | Gains `loadLayoutDraft` for preview, gate, activation and export. `assertLoadable` and the memo are unchanged (Inv #61). |
+| `services/billing/invoice-template/activate-template.ts`, `save-template-draft.ts`, `preview.ts` | Scoped to a type. Activation promotes the pair (settings + layout) in one transaction and re-runs the compliance check. |
+| `services/billing/render-invoice.ts` | The network-blocked, script-off browser context. Draft and final renders log blocked URLs and never throw (Inv #64). |
+| `db/repositories/billing/bill-run-account.repository.ts` (`listBanFamilies`, called by `capture-template-stamps.ts`) | `listBanFamilies` reads `billing_account.ref_bill_template_family_id` instead of mapping the version column. It ships in the same merge as `0054`, so no caller reads the dropped column. |
+| Retire service (Billing) | The bulk switch writes `billing_account` (Inv #66). This is the one Billing write to a Customer Management table, done under Billing's `invoice_settings` EDIT gate. |
+| `db/repositories/billing/` | Type repository, and `lockTemplateType(tx, typeId, 'update' \| 'share')`, shared with Customer Management's bind gate. |
+| `actions/billing/invoice-settings/`, `app/(app)/…/invoice-settings/`, `components/billing/invoice-settings/` | Type list, create type, type detail (Layout code / Next layout version), upload dialog (create vs overwrite warning), export, retire dialog. |
+| `services/accounts/assert-bindable-template.ts`, `services/accounts/onboard-customer-accounts.ts`, `services/accounts/set-billing-account-template.ts`, `components/customers/**` (Customer Management) | **Now touched; Phase 3 left them alone.** The bind gate accepts a usable type under `FOR SHARE`, and rejects an explicit Standard id. Onboarding keeps writing NULL. The BAN panel gets a type dropdown, and the Accounts tab shows the type name. |
+| `components/billing/rerun-dialog.tsx` | Shows "Invoice template type changed since run start: old → new" per affected BAN. |
+| `db/migrations/0053_*`, `db/migrations/0054_*` | `0053`: catalog DDL, guards, `last_modified_by`, the Standard backfill. `0054`: the BAN column change. |
+| `db/seeds/invoice-templates/INVTPL-BASIC-A4/v1/` | **New reference package**: repo files only, with **no catalog row and no blob upload**. Checked by CI, and offered by the editor as a starting point. The seed itself is unchanged: it still only verifies and uploads the fixed default rows. |
+| `db/bootstrap/bootstrap-db-roles.sql` | The `app_runtime` grant change below. |
+
+### Storage model (deltas)
+
+| Store | Delta |
+| --- | --- |
+| **Postgres — `billing.bill_template_family`** | Adds `layout_code` (NOT NULL, unique; Standard backfilled to `INVTPL-STD-A4` through `ADD COLUMN … DEFAULT` then `DROP DEFAULT`, which fires no UPDATE trigger). Adds `UNIQUE (bill_template_family_id, layout_code)` for the composite FK; the unique index `btf_name_ci_uq ON (lower(btrim(name)))` (covers retired rows); `CHECK (name ~ '^[A-Za-z0-9 \-&()]{3,60}$')` and `CHECK (name = btrim(name) AND name !~ '\s{2}')`. The guard trigger freezes `name`, `code` and `layout_code`, and still allows only `retired_datetime` NULL → value on a non-default row. Rows are now **inserted by the app** (create type). |
+| **Postgres — `billing.bill_template_version`** | Layout rows require `ref_bill_template_family_id`. Uniqueness becomes per (type, kind): `version_no` unique per (type, kind) for layout and generated, and per (format, kind) for CSV; one ACTIVE and one DRAFT per (type, kind). `btv_draft_only_generated` is dropped, and `btv_draft_has_no_files` is relaxed for layout. Adds `UNIQUE (bill_template_version_id, ref_bill_template_family_id)`, plus composite FKs: settings → a layout of the same type; layout → its type's `layout_code`. Adds **`last_modified_by`** (FK `core.appuser`, nullable), set on every DRAFT write. The guard additionally allows DRAFT → RETIRED (discard), and DRAFT → DRAFT changes to `blob_ref`/`checksum`/`checksum_algorithm`/`page_setup` (layout) and `ref_layout_version_id` (generated). |
+| **Postgres — `billing.billing_account`** (Customer Management) | `0054` adds `ref_bill_template_family_id` (FK to `bill_template_family`; NULL = Standard). It aborts if any `ref_bill_template_version_id` is non-NULL, then drops that column. **No index** (about 5 BANs in total; revisit above 10,000 per type). |
+| **Postgres — `billing.bill_run_account`, `billing.customer_bill`** | **No change.** The stamps already carry type + version. |
+| **Postgres — `core.audit_log`** | New events: `INVOICE_TEMPLATE_TYPE_CREATED`, `INVOICE_TEMPLATE_TYPE_RETIRED`, `INVOICE_TEMPLATE_DRAFT_DISCARDED`, `INVOICE_TEMPLATE_LAYOUT_UPLOADED` (`replaced`, previous/new `blob_ref` + `checksum`, optional `restoredFrom`), `INVOICE_TEMPLATE_EXPORTED`. `BILLING_ACCOUNT_TEMPLATE_CHANGED` now carries the type and an optional `reason`. A **rejected** upload writes no audit row. |
+| **File storage — `invoice-templates/`** | Uploaded packages are written write-once under a **content-digest folder**, so the same package always lands in the same folder and a retry reuses it. Files of an overwritten DRAFT are **kept**. A transaction failure after the blob write leaves only orphan blobs, never a row. |
+| **File storage — the app container's disk** | **Never used** for uploads (in-memory zip). |
+| **Cache** | Unchanged: the compiled-template memo holds only immutable, non-DRAFT versions (Inv #61). |
+
+### Authentication, authorization & data ownership (deltas)
+
+- **No new permission or credential.**
+
+  | Action | Permission |
+  | --- | --- |
+  | View types and versions; **export** a version (a file download) | `invoice_settings` READ |
+  | Create type; upload; settings; preview; activate; discard; retire with bulk switch | `invoice_settings` EDIT (ADMIN, MANAGER) |
+  | Bind or reset a BAN | `customers` EDIT + `accounts_transactions` EDIT (cm21) |
+  | Rerun | `billrun_operate` |
+
+  One EDIT holder may both upload and activate. `last_modified_by` makes a later "uploader ≠ activator" rule a single check.
+- **One database-grant change.** Phase 3 limited `app_runtime` to SELECT on `bill_template_family` (`REVOKE INSERT, UPDATE, DELETE`, and no USAGE on `bill_template_family_seq`), because the table was seed-fixed. Create type and retire now need **INSERT, UPDATE and USAGE on the sequence**. **DELETE stays revoked.** The guard trigger, not the grant, enforces which columns may change. `billrun_runtime` gets nothing new.
+- **Trust is by content, never by origin.** The app can't prove a package came from the editor, so there is no signing. Every package passes the full gate (Inv #60).
+- **Ownership.**
+  - **Customer Management** owns `billing_account.ref_bill_template_family_id` and writes it through the bind gate.
+  - **Billing** reads it at capture (Inv #54), and writes it only in the retire bulk switch, under its own gate (Inv #66).
+  - Billing owns the type catalog, the layouts and the upload.
+  - The external editor owns nothing in the app.
+
+### Background tasks & AI (deltas)
+
+- **No AI/ML. No new scheduler or background job.** Upload validation, export and the retire switch all run synchronously in the request.
+- **Accepted risk:** the upload gate compiles and executes uploaded Handlebars in the request thread, with no worker and no timeout. Only ADMIN/MANAGER can upload. The risk is an accidentally heavy template stalling a replica for the request's duration, not data harm.
+- **Volume:** about 5 BANs in total, so the bulk switch is one set-based UPDATE plus chunked audit inserts (500 per statement) in one transaction. A package is about 200 KB, within the existing 5 MB Server Action body limit.
+
+### Superseded or narrowed by this update
+
+| Item | Was | Now |
+| --- | --- | --- |
+| Phase 3 boundary "Not touched: `services/accounts/**`, `components/customers/**`, `0050`" | Customer Management unchanged; `assertBindableTemplate` NULL-only. | Customer Management is changed: the type-aware bind gate, the BAN dropdown, and `0054` replacing `0050`'s column. |
+| Phase 3 storage "`billing.billing_account` — no change" | The version column, NULL-only. | `ref_bill_template_family_id` (a type); the version column is dropped. |
+| Phase 3 grant "`app_runtime` SELECT-only on `bill_template_family`" | The table was seed-fixed. | INSERT, UPDATE and sequence USAGE; DELETE still revoked. |
+| Inv #44 "only `kind = generated` may be DRAFT; layout versions are born ACTIVE" | Layouts were shipped in releases. | Layouts are **born DRAFT** by upload, and a DRAFT layout row may be overwritten in place. |
+| Inv #46 "Admins never author markup" | Layout code came only from developers. | An ADMIN/MANAGER may **upload** layout code, gated by Inv #60. The settings form still takes no markup. |
+| Inv #49 "Mandatory sections cannot be hidden" (manifest flags) | Checked through the manifest's `mandatory` flags. | Checked on the rendered **visible text** (Inv #63). The generator never read the flags. |
+| Seeded layouts as the delivery channel | New layout versions arrived through a release seed. | The seed is unchanged and installs no new layout; **upload is the only channel** (Inv #59). |
+
+### Contradictions with existing rules, and how they are resolved
+
+Reviewed 2026-10-25 against `context/architecture.md` and every section above.
+
+| # | Existing rule | Conflict with this update | Resolution |
+| --- | --- | --- | --- |
+| T1 | Inv #44: versions are write-once; their blobs are written `writeOnce`. | An upload over an open DRAFT replaces its files under the same row and version number. | **Inv #44 amended.** Only a **DRAFT** row changes, and only its file columns and `page_setup`. Blobs stay write-once: new objects go under a new content-digest folder, and old ones are kept. ACTIVE and RETIRED rows are untouched. |
+| T2 | The compiled-template memo is safe "because a non-DRAFT version is immutable". | An overwritten DRAFT keeps its id while its bytes change. | DRAFTs are loaded only by `loadLayoutDraft`, which verifies the current checksum and is never memoized (Inv #61). |
+| T3 | Inv #46: admin input never becomes template code. | MANAGER/ADMIN uploads Handlebars and CSS. | **Inv #46 amended** with one sanctioned exception, the uploaded package, gated by Inv #60, with Handlebars compile settings unchanged and activation still required. |
+| T4 | Inv #47: the render makes no network fetch, by convention (lint + data URIs). | Uploaded layouts skip code review, and pattern lints can be evaded (entities, CSS escapes, `image-set()`). | **Inv #47 amended:** enforced by the renderer (Inv #64). The upload gate fails on a fetch; draft and final renders log, never throw, so posting is never failed by it. |
+| T5 | Inv #49 / manifest `mandatory` flags as the compliance control. | The generator decides visibility in code and ignores the flags, so a flag check proves nothing. | **Inv #49 amended:** compliance is the visible-text check on the rendered output (Inv #63). |
+| T6 | Inv #54: the BAN's reference is a version column, and a version id maps to its family. | Binding is to a type, and the version column is dropped. | **Inv #54 amended:** capture reads the type column directly. The capture read and the column change ship together. |
+| T7 | Phase 3 bootstrap: `app_runtime` has no DML on `bill_template_family`. | Create type and retire write the table from the app. | Grant INSERT, UPDATE and sequence USAGE; DELETE stays revoked. The guard trigger keeps identity frozen and allows only retirement on existing rows. |
+| T8 | Platform Inv #18: financially significant rows are immutable. | DRAFT overwrite in place. | A DRAFT never feeds a bill (Inv #61), so it is not financially significant. ACTIVE and RETIRED rows stay immutable (T1). |
+| T9 | Inv #57: layout v1 is frozen from go-live. | Standard gets new designs. | No conflict. Standard evolves by **new versions** uploaded as DRAFT (v2 and up) above its immutable default v1. No BAN is rebound. |
+| T10 | Inv #42: a default always exists. | A non-default type can be bound while it has no ACTIVE version (by SQL bypass), or be retired. | The default still always exists for the **default** type. Binding requires a usable type (Inv #66), and retire switches every BAN first. A bypass is caught at capture, which blocks approval (Inv #58). |
