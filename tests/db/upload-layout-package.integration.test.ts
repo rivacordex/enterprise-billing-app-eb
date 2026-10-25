@@ -110,7 +110,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       [
         "ZIP_UNEXPECTED_FILE",
         wholesalePackageFixture({
-          override: (f) => f.set("settings.json", Buffer.from("{}")),
+          // bm81: settings.json is now an allowed optional file.
+          override: (f) => f.set("notes.txt", Buffer.from("{}")),
         }),
         cleanRender(),
       ],

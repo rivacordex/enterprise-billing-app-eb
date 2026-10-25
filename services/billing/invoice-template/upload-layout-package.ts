@@ -28,6 +28,7 @@ import {
   LAYOUT_PACKAGE_FONT_FILE,
   LAYOUT_PACKAGE_MAX_ENTRIES,
   LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES,
+  LAYOUT_PACKAGE_OPTIONAL_FILES,
   LAYOUT_PACKAGE_REQUIRED_FILES,
   type ExpectedDraft,
   type LayoutProblem,
@@ -38,6 +39,10 @@ import {
   layoutManifestSchema,
   type LayoutManifest,
 } from "@/validation/billing/layout-manifest.schema";
+import {
+  templateExportSettingsSchema,
+  type TemplateExportSettings,
+} from "@/validation/billing/template-export-settings.schema";
 
 // bm78-spec §7 (Inv #60, code-standards › Invoice Template Types, General
 // rule 2) — the layout package GATE and the upload orchestration. The gate owns
@@ -58,6 +63,8 @@ export type GateResult =
       files: Map<string, Buffer>;
       manifest: LayoutManifest;
       indexDigest: string;
+      // bm81 — a schema-valid `settings.json` bound to these files (a restore).
+      restore: TemplateExportSettings | null;
     }
   | { ok: false; problems: LayoutProblem[] };
 
@@ -65,6 +72,7 @@ type Render = typeof renderAndReadSections;
 
 const INDEX_FILE = "checksums.json";
 const MANIFEST_FILE = "manifest.json";
+const SETTINGS_FILE = "settings.json";
 const RENDER_FILE = "(render)";
 const PACKAGE_FILE = "(package)";
 const MAX_LISTED_URLS = 10;
@@ -75,6 +83,7 @@ const MAX_LISTED_URLS = 10;
 // 1 MiB is inflated past the cap before pushing stops.
 const INFLATE_PUSH_BYTES = 1024;
 const REQUIRED = new Set<string>(LAYOUT_PACKAGE_REQUIRED_FILES);
+const OPTIONAL = new Set<string>(LAYOUT_PACKAGE_OPTIONAL_FILES);
 
 function problem(
   file: string,
@@ -99,12 +108,17 @@ function isUnsafePath(name: string): boolean {
   );
 }
 
-// The exact allow-list: the required files and `fonts/<name>.woff2` /
-// `fonts/OFL.txt`. Anything else — `*.editor.json`, `settings.json` (bm81
-// restore), another partial — is refused.
+// The exact allow-list (LAYOUT_PACKAGE_FILES): the required files, the
+// optional `settings.json` (bm81 restore) and `fonts/<name>.woff2` /
+// `fonts/OFL.txt`. Anything else — `*.editor.json`, another partial — is
+// refused.
 function isAllowedName(name: string): boolean {
   if (isUnsafePath(name)) return false;
-  return REQUIRED.has(name) || LAYOUT_PACKAGE_FONT_FILE.test(name);
+  return (
+    REQUIRED.has(name) ||
+    OPTIONAL.has(name) ||
+    LAYOUT_PACKAGE_FONT_FILE.test(name)
+  );
 }
 
 const isDirectory = (name: string): boolean => name.endsWith("/");
@@ -299,7 +313,16 @@ function checkChecksums(
   const problems: LayoutProblem[] = [];
   for (const [name, digest] of Object.entries(index.files)) {
     const bytes = files.get(name);
-    if (bytes === undefined) {
+    // bm81 — an export never lists its settings.json.
+    if (name === SETTINGS_FILE) {
+      problems.push(
+        problem(
+          name,
+          "CHECKSUM_MISMATCH",
+          "must not be listed in checksums.json",
+        ),
+      );
+    } else if (bytes === undefined) {
       problems.push(
         problem(
           name,
@@ -318,7 +341,11 @@ function checkChecksums(
     }
   }
   for (const name of files.keys()) {
-    if (name !== INDEX_FILE && !(name in index.files)) {
+    if (
+      name !== INDEX_FILE &&
+      name !== SETTINGS_FILE &&
+      !(name in index.files)
+    ) {
       problems.push(
         problem(name, "CHECKSUM_MISMATCH", "is not listed in checksums.json"),
       );
@@ -329,13 +356,72 @@ function checkChecksums(
     : { ok: true, indexDigest: sha256(indexBytes) };
 }
 
+// bm81 — an export's settings.json counts only when it parses with the one
+// schema AND its `source.layoutChecksum` is the digest of THIS package's
+// checksums.json, so one export's settings can't skip the version check for
+// other files. No code reads where a zip came from (General rule 3).
+function checkRestoreSettings(
+  files: ReadonlyMap<string, Buffer>,
+  indexDigest: string,
+):
+  | { ok: true; restore: TemplateExportSettings | null }
+  | { ok: false; problems: LayoutProblem[] } {
+  const bytes = files.get(SETTINGS_FILE);
+  if (bytes === undefined) return { ok: true, restore: null };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(bytes.toString("utf-8"));
+  } catch {
+    return {
+      ok: false,
+      problems: [
+        problem(SETTINGS_FILE, "SETTINGS_INVALID", "is not valid JSON"),
+      ],
+    };
+  }
+  const parsed = templateExportSettingsSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      problems: parsed.error.issues.map((i) =>
+        problem(
+          SETTINGS_FILE,
+          "SETTINGS_INVALID",
+          `${i.path.join(".") || "(root)"}: ${i.message}`,
+        ),
+      ),
+    };
+  }
+  if (parsed.data.source.layoutChecksum !== indexDigest) {
+    return {
+      ok: false,
+      problems: [
+        problem(
+          SETTINGS_FILE,
+          "SETTINGS_INVALID",
+          "settings.json does not belong to these layout files",
+        ),
+      ],
+    };
+  }
+  return { ok: true, restore: parsed.data };
+}
+
 // Stage 3 — the manifest, the type's layout code and the computed version.
+// bm81: a valid restore skips the version comparison; the code check always runs.
 function checkManifest(
   files: ReadonlyMap<string, Buffer>,
   ctx: GateContext,
+  indexDigest: string,
 ):
-  | { ok: true; manifest: LayoutManifest }
+  | {
+      ok: true;
+      manifest: LayoutManifest;
+      restore: TemplateExportSettings | null;
+    }
   | { ok: false; problems: LayoutProblem[] } {
+  const settings = checkRestoreSettings(files, indexDigest);
+  if (!settings.ok) return settings;
   let manifest: LayoutManifest;
   try {
     const parsed = layoutManifestSchema.safeParse(
@@ -372,7 +458,10 @@ function checkManifest(
       ),
     );
   }
-  if (manifest.layoutVersion !== ctx.expectedVersionNo) {
+  if (
+    settings.restore === null &&
+    manifest.layoutVersion !== ctx.expectedVersionNo
+  ) {
     problems.push(
       problem(
         MANIFEST_FILE,
@@ -381,7 +470,9 @@ function checkManifest(
       ),
     );
   }
-  return problems.length > 0 ? { ok: false, problems } : { ok: true, manifest };
+  return problems.length > 0
+    ? { ok: false, problems }
+    : { ok: true, manifest, restore: settings.restore };
 }
 
 // Stages 4–7 alone, over already-verified files. checkLayoutPackage calls it;
@@ -462,7 +553,7 @@ export async function checkLayoutPackage(
   if (!read.ok) return read;
   const checksums = checkChecksums(read.files);
   if (!checksums.ok) return checksums;
-  const manifest = checkManifest(read.files, ctx);
+  const manifest = checkManifest(read.files, ctx, checksums.indexDigest);
   if (!manifest.ok) return manifest;
 
   const problems = await checkLayoutFiles(read.files, render);
@@ -472,6 +563,7 @@ export async function checkLayoutPackage(
     files: read.files,
     manifest: manifest.manifest,
     indexDigest: checksums.indexDigest,
+    restore: manifest.restore,
   };
 }
 
@@ -527,6 +619,7 @@ export async function uploadLayoutPackage(
     files: gate.files,
     manifest: gate.manifest,
     indexDigest: gate.indexDigest,
+    restore: gate.restore,
     actorId,
     mode,
     expectedDraft: input.expectedDraft,

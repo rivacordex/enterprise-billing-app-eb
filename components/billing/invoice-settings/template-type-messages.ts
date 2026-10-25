@@ -52,6 +52,8 @@ export const TEMPLATE_TYPE_MESSAGES = {
   discardConfirm: "Discard draft",
   discardFailed: "The draft could not be discarded. Please try again.",
   discardForbidden: "You do not have permission to discard a draft.",
+  // bm81 — Export (Version history) and the restore note (upload dialog).
+  exportLink: "Export",
 } as const;
 
 // "A new draft v{n} will be created." / "Create draft v{n}".
@@ -81,6 +83,15 @@ export function OVERWRITE_WARNING(
 }
 export const LAYOUT_REPLACED_SAVE_MESSAGE =
   TEMPLATE_TYPE_MESSAGES.layoutReplacedSave;
+
+// bm81 (code-standards › Invoice Template Types, Styling rule 6; ui-context
+// §10e) — the upload dialog's restore note, shown when the chosen zip carries a
+// schema-valid settings.json. Advisory only: the server decides.
+export const RESTORE_NOTE =
+  "The package's settings (Payment and footnote) will replace the draft settings.";
+export function RESTORED_FROM(n: number): string {
+  return `Restored from v${n}`;
+}
 
 // bm79 — the Activate dialog's layout line: "Layout: <code> v<old> → v<new>",
 // or "Layout: <code> v<n> (first version)" for a type with no ACTIVE layout.

@@ -38,7 +38,7 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**; **bm80 built**. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**; **bm80 built**; **bm81 built**. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
@@ -99,6 +99,35 @@ fix (15 findings); owner decisions on the draft preview and the upload message.
   capture and preview to import a live resolver.
 - Results: unit 4848 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); integration 166/0
   (16 template suites + journey); Chromium e2e 27/0; admin browser e2e 5/0 after `next build`.
+
+**bm81 notes (2026-10-25):**
+
+- Export: `exportTemplateVersion` (settings version → its layout + type) zips `loadLayoutForExport`'s verified
+  bytes (every file + `checksums.json`; DRAFT rows via `loadLayoutDraft`, `verifyVersionFiles`'
+  `includeIndex`) plus `settings.json` written through `templateExportSettingsSchema`, then audits
+  `INVOICE_TEMPLATE_EXPORTED` ("Additive") before returning. Route Handler on the `files/[file]` shape
+  (401/403/422/404/500 with no bytes). Version history gains an Export link per viewable row.
+- Restore: the gate allows the optional `settings.json` (`LAYOUT_PACKAGE_OPTIONAL_FILES`), skips it in
+  stage 2 (and refuses it when listed in `checksums.json`), and in stage 3 accepts it only when it parses
+  and its `layoutChecksum` is this package's index digest (`SETTINGS_INVALID` otherwise); a valid one
+  skips only the version comparison. Install never stores it as a blob, applies its `structure` on create
+  or in the re-point UPDATE (`repointDraftLayout` gains an optional `structure`), and audits
+  `restoredFrom`. The upload dialog reads the note client-side (only `settings.json`, ≤ 64 KiB).
+- **Review findings applied (owner, during the build):** (1) a discarded pair (RETIRED, never activated)
+  exports for EDIT only — what `isShowable` already does since the bm79 review; spec §Design and the
+  checklist amended. (2) The restore round trip previews with `draft: true` (bm79's preview path); spec
+  amended. (3) The suite uses the shared `template-type-db-harness.ts`; spec wording amended. Not done
+  here: the bm83 spec's note that the retired-type preview check also applies on the draft path (outside
+  bm81's boundary).
+- **Deviation 1 — `isShowable` / `isDraftLike` moved to `services/billing/invoice-template/version-visibility.ts`**
+  (behaviour unchanged), imported by the read service and the export service.
+- **Deviation 2 — guardrail-driven equivalents:** the route's `canEdit` uses `hasLevel(…, EDIT)` rather than
+  `meetsLevel` (guardrail 56 requires EDIT on a READ surface to be a `hasLevel` show/hide gate; same
+  result); the schema's `status` is `z.enum(CONFIG_STATUSES)` (the `TemplateVersionStatus` source, same
+  three values) instead of an inline enum that the status-literal sweep refused.
+- **Deviation 3 — small additions:** `LAYOUT_PACKAGE_FILES` is an object grouping the required, optional and
+  font rules; the audit's `fileCount` counts layout files only (not `settings.json`); bm78's gate and
+  upload tests that used `settings.json` as the "unexpected file" now use `notes.txt` (it is allowed now).
 
 **bm80 notes (2026-10-25):**
 
@@ -334,6 +363,7 @@ a compliance-only probe.
 | bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`, draft-layout preview) | **Built** (2026-10-25, `6366487` fflate, `1f1c895`) — tsc/ESLint/Prettier clean; unit 4797 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new gate 35/0, load-layout-draft 14/0, single-layout-writer 5/0 (mutation-checked), authz matrix 32/0; integration on the disposable DB 83/0 incl. new upload 9/0, preview 2/0, capture +1 DRAFT-only case; Chromium e2e 26/0 incl. new upload gate 3/0 |
 | bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4829 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new discard action 15/0, Discard + discarded-row component cases, pair form cases 5/0, authz matrix + discard READ refusal; integration on the disposable DB 163/0 across 16 template suites incl. new pair activation 8/0 (guardrail 71 activation half, interleaved upload, compliance re-run, retired type, frozen files, Standard untouched), new discard 6/0, bm58 activate suite on the `STANDARD/` path, template journey; Chromium e2e 27/0 incl. new activation re-run 1/0; admin browser e2e 5/0 after a fresh `next build` |
 | bm80 | Overwrite an open layout draft by upload, with the warning (`overwriteLayoutDraft`, `DRAFT_LAYOUT_REPLACED`) | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4877 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 46/0 (`matchExpectedDraft` table + stage 3 at the DRAFT's number), upload dialog 12/0, structure form 54/0, upload + save-draft actions, read service 14/0, single-layout-writer (`overwriteLayoutDraft` added); integration on the disposable DB 179/0 across 19 template suites incl. new overwrite 7/0 (in place, stale warning, same bytes, stale Activate, activated meanwhile, two guardrail-71 races), upload +1 overwrite case, preview +1 (guardrail 70), save-draft +2 (`DRAFT_LAYOUT_REPLACED` / `DRAFT_CONFLICT`). Chromium and admin browser e2e not re-run (no gate, render or route change) |
+| bm81 | Export a version pair and restore it by upload (export Route Handler, `settings.json` schema, restore path) | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4907 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 52/0 (6 restore cases), load-layout-draft 19/0 (`loadLayoutForExport`), new export route 9/0, upload dialog 19/0 (restore note, 64 KiB cap), Version history Export 27/0, authz matrix + export row, status-literal sweep, audit filters 92; integration on the disposable DB 191/0 across 20 template suites incl. new export/restore 12/0 (byte identity for ACTIVE, Standard v1, DRAFT (EDIT only) and RETIRED pairs; tamper; four refusals writing nothing; fresh-environment round trip with equal preview HTML; restore over an open DRAFT). Chromium and admin browser e2e not re-run (no render or compliance change) |
 
 ## Delivered units
 

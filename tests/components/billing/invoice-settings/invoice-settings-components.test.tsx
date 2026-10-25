@@ -502,3 +502,74 @@ describe("InvoiceSettingsTabs", () => {
     expect(links[1]).toHaveAttribute("aria-current", "page");
   });
 });
+
+describe("VersionHistoryTable: Export (bm81)", () => {
+  const EXPORT_BASE =
+    "/administration/invoice-settings/invoice-template/versions";
+  const RETIRED: TemplateVersionHistoryRow = {
+    ...ROW,
+    billTemplateVersionId: "BTV00000005",
+    versionNo: 2,
+    status: "RETIRED",
+    isDefault: false,
+    retiredAt: new Date("2026-10-20T00:00:00Z"),
+  };
+  const DRAFT: TemplateVersionHistoryRow = {
+    ...ROW,
+    billTemplateVersionId: "BTV00000006",
+    versionNo: 3,
+    status: "DRAFT",
+    isDefault: false,
+    activatedAt: null,
+  };
+  const DISCARDED: TemplateVersionHistoryRow = {
+    ...DRAFT,
+    billTemplateVersionId: "BTV00000007",
+    versionNo: 4,
+    status: "RETIRED",
+    retiredAt: new Date("2026-10-25T00:00:00Z"),
+  };
+
+  function exportOf(id: string): HTMLElement | null {
+    const row = screen.getByText(id).closest("tr")!;
+    return within(row).queryByRole("link", { name: "Export" });
+  }
+
+  function renderTable(canViewDrafts: boolean) {
+    return render(
+      <VersionHistoryTable
+        rows={[DISCARDED, DRAFT, RETIRED, ROW]}
+        shownVersionId="BTV00000002"
+        canViewDrafts={canViewDrafts}
+        locale="en-MY"
+        timezone="Asia/Kuala_Lumpur"
+      />,
+    );
+  }
+
+  it("a READ user gets Export on ACTIVE and RETIRED rows, never on the DRAFT or a discarded row", () => {
+    renderTable(false);
+    for (const id of ["BTV00000002", "BTV00000005"]) {
+      const link = exportOf(id)!;
+      expect(link).toHaveAttribute("href", `${EXPORT_BASE}/${id}/export`);
+      expect(link).toHaveAttribute("download");
+    }
+    expect(exportOf("BTV00000006")).toBeNull();
+    expect(exportOf("BTV00000007")).toBeNull();
+  });
+
+  it("an EDIT user also gets Export on the DRAFT and the discarded row", () => {
+    renderTable(true);
+    for (const id of [
+      "BTV00000002",
+      "BTV00000005",
+      "BTV00000006",
+      "BTV00000007",
+    ]) {
+      expect(exportOf(id)).toHaveAttribute(
+        "href",
+        `${EXPORT_BASE}/${id}/export`,
+      );
+    }
+  });
+});

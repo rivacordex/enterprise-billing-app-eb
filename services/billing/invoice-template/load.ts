@@ -114,10 +114,12 @@ function assertLoadable(row: BillTemplateVersion, kind: TemplateKind): void {
 
 // D2 steps 2–5 — verify the index against the row, then each requested file
 // against the index. `files` omitted ⇒ every file the index lists (a layout).
-// Returns the verified bytes keyed by index name.
+// Returns the verified bytes keyed by index name. bm81: `includeIndex` adds
+// `checksums.json` itself — the bytes already verified against `row.checksum`.
 async function verifyVersionFiles(
   row: BillTemplateVersion,
   files?: readonly string[],
+  opts: { includeIndex?: boolean } = {},
 ): Promise<Map<string, Buffer>> {
   const algorithm = row.checksumAlgorithm!;
   if (!isChecksumAlgorithm(algorithm)) {
@@ -164,7 +166,9 @@ async function verifyVersionFiles(
       return [name, bytes] as const;
     }),
   );
-  return new Map(entries);
+  const verified = new Map(entries);
+  if (opts.includeIndex) verified.set(INDEX_FILE, indexBytes);
+  return verified;
 }
 
 // D2 step 6 — the load-time probe fixture lives in `compliance.ts` since bm76
@@ -262,6 +266,7 @@ export async function loadLayout(
 // capture, posting, final render and reprint still refuse every DRAFT.
 export async function loadLayoutDraft(
   row: BillTemplateVersion,
+  opts: { includeIndex?: boolean } = {},
 ): Promise<Map<string, Buffer>> {
   if (
     row.kind !== "layout" ||
@@ -276,7 +281,19 @@ export async function loadLayoutDraft(
       { versionId: row.billTemplateVersionId },
     );
   }
-  return verifyVersionFiles(row);
+  return verifyVersionFiles(row, undefined, opts);
+}
+
+// bm81 (Inv #68) — an export's layout bytes: every file plus checksums.json, verified.
+// DRAFT rows go through loadLayoutDraft, so it stays the only DRAFT-accepting loader.
+export async function loadLayoutForExport(
+  row: BillTemplateVersion,
+): Promise<Map<string, Buffer>> {
+  if (row.status === "DRAFT") {
+    return loadLayoutDraft(row, { includeIndex: true });
+  }
+  assertLoadable(row, "layout");
+  return verifyVersionFiles(row, undefined, { includeIndex: true });
 }
 
 // For bm62 (CSV export): the verified, parsed column map. Not memoized.

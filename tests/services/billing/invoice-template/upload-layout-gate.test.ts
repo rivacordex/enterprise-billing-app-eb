@@ -323,7 +323,8 @@ describe("bm78 layout package gate — stage 1, zip shape and size (blocking)", 
     "/abs",
     "C:\\x",
     "x.editor.json",
-    "settings.json",
+    // bm81: `settings.json` is now an allowed optional file.
+    "notes.txt",
     "fonts/x.ttf",
     "partials/extra.hbs",
   ])("ZIP_UNEXPECTED_FILE: %s is refused before any inflate", async (name) => {
@@ -392,7 +393,7 @@ describe("bm78 layout package gate — stage 1, zip shape and size (blocking)", 
   it("stage 1 stops at its own stage: an unexpected file plus an edited file (a checksum mismatch) reports only the zip problem", async () => {
     const built = pkg({
       override: (f) => {
-        f.set("settings.json", Buffer.from("{}"));
+        f.set("notes.txt", Buffer.from("{}"));
         replaceInFile(
           f,
           "partials/header.hbs",
@@ -513,6 +514,127 @@ describe("bm78 layout package gate — stage 3, manifest (blocking)", () => {
     );
     expect(codes(problems)).toEqual(["MANIFEST_INVALID"]);
     expect(render).not.toHaveBeenCalled();
+  });
+});
+
+describe("bm81 — restore: an export's settings.json", () => {
+  // A schema-valid settings.json bound to `files`' own checksums.json.
+  function exportSettings(
+    files: Map<string, Buffer>,
+    edit: (s: Record<string, unknown>) => void = () => {},
+  ): Buffer {
+    const settings: Record<string, unknown> = {
+      exportFormat: 1,
+      source: {
+        typeCode: "BASIC",
+        typeName: "Basic",
+        layoutVersion: 3,
+        settingsVersion: 4,
+        status: "ACTIVE",
+        layoutChecksum: sha256(files.get("checksums.json")!),
+        exportedAt: "2026-10-25T01:02:03.000Z",
+        exportedBy: "Exporter",
+      },
+      structure: {
+        sections: { payment: false },
+        columns: {},
+        footnote: ["Restored footnote"],
+      },
+    };
+    edit(settings);
+    return Buffer.from(`${JSON.stringify(settings, null, 2)}\n`, "utf-8");
+  }
+
+  it("a valid, bound settings.json skips the version check and is returned as `restore`", async () => {
+    // The package says v3; the type expects v1.
+    const built = pkg({
+      layoutVersion: 3,
+      override: (f) => f.set("settings.json", exportSettings(f)),
+    });
+    const result = await gate(built.zip);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.restore).toMatchObject({
+      source: { layoutVersion: 3, settingsVersion: 4 },
+      structure: { footnote: ["Restored footnote"] },
+    });
+  });
+
+  it("without settings.json the same package keeps the version check, and `restore` is null when clean", async () => {
+    const v3 = problemsOf(await gate(pkg({ layoutVersion: 3 }).zip));
+    expect(codes(v3)).toEqual(["LAYOUT_VERSION_MISMATCH"]);
+    const v1 = await gate(pkg().zip);
+    expect(v1.ok && v1.restore).toBeNull();
+  });
+
+  it("SETTINGS_INVALID: a settings.json that fails the schema, with the issue paths; stages 4–7 never run", async () => {
+    const render = cleanRender();
+    const built = pkg({
+      layoutVersion: 3,
+      override: (f) =>
+        f.set(
+          "settings.json",
+          exportSettings(f, (s) => {
+            s.exportFormat = 2;
+          }),
+        ),
+    });
+    const problems = problemsOf(
+      await checkLayoutPackage(built.zip, CTX, render),
+    );
+    expect(problems).toEqual([
+      expect.objectContaining({
+        file: "settings.json",
+        code: "SETTINGS_INVALID",
+        message: expect.stringContaining("exportFormat"),
+      }),
+    ]);
+    expect(render).not.toHaveBeenCalled();
+  });
+
+  it("SETTINGS_INVALID: a settings.json bound to other files (another layoutChecksum)", async () => {
+    const built = pkg({
+      layoutVersion: 3,
+      override: (f) =>
+        f.set(
+          "settings.json",
+          exportSettings(f, (s) => {
+            (s.source as Record<string, unknown>).layoutChecksum = "0".repeat(
+              64,
+            );
+          }),
+        ),
+    });
+    expect(problemsOf(await gate(built.zip))).toEqual([
+      {
+        file: "settings.json",
+        code: "SETTINGS_INVALID",
+        message: "settings.json does not belong to these layout files",
+      },
+    ]);
+  });
+
+  it("CHECKSUM_MISMATCH: a settings.json listed in checksums.json", async () => {
+    const built = pkg({
+      edit: (f) => f.set("settings.json", Buffer.from("{}")),
+    });
+    expect(problemsOf(await gate(built.zip))).toEqual([
+      expect.objectContaining({
+        file: "settings.json",
+        code: "CHECKSUM_MISMATCH",
+      }),
+    ]);
+  });
+
+  it("LAYOUT_CODE_MISMATCH still applies with a valid settings.json", async () => {
+    const built = pkg({
+      layoutCode: "INVTPL-OTHER",
+      layoutVersion: 3,
+      override: (f) => f.set("settings.json", exportSettings(f)),
+    });
+    expect(codes(problemsOf(await gate(built.zip)))).toEqual([
+      "LAYOUT_CODE_MISMATCH",
+    ]);
   });
 });
 

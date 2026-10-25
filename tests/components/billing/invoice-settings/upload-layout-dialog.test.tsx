@@ -6,6 +6,7 @@
 // data, and the request names the warned-about DRAFT.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { zipSync } from "fflate";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const refresh = vi.hoisted(() => vi.fn());
@@ -21,6 +22,7 @@ import { toast } from "sonner";
 import { uploadLayoutPackageAction } from "@/actions/billing/invoice-settings/upload-layout-package.action";
 import {
   OVERWRITE_WARNING,
+  RESTORE_NOTE,
   TEMPLATE_TYPE_MESSAGES,
 } from "@/components/billing/invoice-settings/template-type-messages";
 import { UploadLayoutDialog } from "@/components/billing/invoice-settings/upload-layout-dialog";
@@ -270,5 +272,90 @@ describe("UploadLayoutDialog — overwrite an open draft (bm80)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       TEMPLATE_TYPE_MESSAGES.overwriteStale,
     );
+  });
+});
+
+describe("UploadLayoutDialog — restore note (bm81)", () => {
+  const SETTINGS = {
+    exportFormat: 1,
+    source: {
+      typeCode: "WHOLESALE",
+      typeName: "Wholesale",
+      layoutVersion: 3,
+      settingsVersion: 4,
+      status: "ACTIVE",
+      layoutChecksum: "a".repeat(64),
+      exportedAt: "2026-10-25T01:02:03.000Z",
+      exportedBy: "Exporter",
+    },
+    structure: {
+      sections: { payment: true },
+      columns: {},
+      footnote: ["Restored footnote"],
+    },
+  };
+  const enc = (text: string) => new TextEncoder().encode(text);
+
+  function zipWith(settings: string | null): File {
+    const entries: Record<string, Uint8Array> = {
+      "manifest.json": enc("{}"),
+    };
+    if (settings !== null) entries["settings.json"] = enc(settings);
+    return new File([zipSync(entries)], "export.zip", {
+      type: "application/zip",
+    });
+  }
+
+  async function choose(file: File): Promise<void> {
+    await act(async () => {
+      fireEvent.change(
+        screen.getByLabelText(TEMPLATE_TYPE_MESSAGES.uploadFileLabel),
+        { target: { files: [file] } },
+      );
+    });
+    // Let the browser-side read settle, so a "no note" is not vacuous.
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+  }
+
+  it.each([
+    ["the create Dialog", null],
+    ["the overwrite AlertDialog", OPEN_DRAFT],
+  ] as const)(
+    "a zip with a valid settings.json shows the note and 'Restored from v3' in %s",
+    async (_c, openLayoutDraft) => {
+      render(
+        <UploadLayoutDialog {...PROPS} openLayoutDraft={openLayoutDraft} />,
+      );
+      openTrigger();
+      await choose(zipWith(JSON.stringify(SETTINGS)));
+      const note = await screen.findByTestId("restore-note");
+      expect(note).toHaveTextContent(RESTORE_NOTE);
+      expect(note).toHaveTextContent("Restored from v3");
+    },
+  );
+
+  it.each([
+    ["no settings.json", null],
+    [
+      "an invalid settings.json",
+      JSON.stringify({ ...SETTINGS, exportFormat: 2 }),
+    ],
+    ["a settings.json that is not JSON", "{not json"],
+    [
+      "a valid settings.json over 64 KiB (never inflated)",
+      JSON.stringify(SETTINGS) + " ".repeat(64 * 1024),
+    ],
+  ])("a zip with %s shows no note", async (_c, settings) => {
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={null} />);
+    openTrigger();
+    await choose(zipWith(settings));
+    expect(screen.queryByTestId("restore-note")).toBeNull();
+  });
+
+  it("a non-zip file shows no note", async () => {
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={null} />);
+    openTrigger();
+    await choose(new File([enc("not a zip")], "layout.zip"));
+    expect(screen.queryByTestId("restore-note")).toBeNull();
   });
 });

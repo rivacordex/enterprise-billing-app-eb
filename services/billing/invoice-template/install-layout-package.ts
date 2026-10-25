@@ -16,12 +16,15 @@ import type {
 } from "@/types/billing";
 import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-template-structure.schema";
 import type { LayoutManifest } from "@/validation/billing/layout-manifest.schema";
+import type { TemplateExportSettings } from "@/validation/billing/template-export-settings.schema";
 
 // bm78 (Inv #59) — the ONLY writer of layout DRAFT rows, their blobs and the settings
 // DRAFT that points at them. bm80 adds the in-place overwrite: the open layout
 // DRAFT the warning named keeps its row and version_no and takes the new files
 // (a new content-addressed folder; the replaced files stay in the blob store),
-// and the settings DRAFT is kept with its token bumped (Inv #59, #62).
+// and the settings DRAFT is kept with its token bumped (Inv #59, #62). bm81 adds
+// the restore: an export's `settings.json` (validated and bound by the gate) is
+// never stored as a layout blob; its `structure` replaces the settings DRAFT's.
 //
 // Blobs first, rows second: every file is written write-once under a
 // content-addressed directory (the digest of the package's own checksums.json),
@@ -30,6 +33,8 @@ import type { LayoutManifest } from "@/validation/billing/layout-manifest.schema
 // reuses them (`onExists: "returnExisting"`).
 
 const CONTAINER = "invoice-templates" as const;
+// bm81 — the restore's settings, consumed here and never stored as a blob.
+const SETTINGS_FILE = "settings.json";
 
 function contentTypeFor(name: string): string {
   if (name.endsWith(".hbs")) return "text/x-handlebars-template; charset=utf-8";
@@ -80,6 +85,8 @@ export async function installLayoutPackage(args: {
   files: Map<string, Buffer>;
   manifest: LayoutManifest;
   indexDigest: string;
+  // bm81 — the gate's validated, checksum-bound `settings.json`, or null.
+  restore?: TemplateExportSettings | null;
   actorId: string;
   mode: "create" | "overwrite";
   expectedDraft: ExpectedDraft;
@@ -91,13 +98,15 @@ export async function installLayoutPackage(args: {
     files,
     manifest,
     indexDigest,
+    restore = null,
     actorId,
     mode,
     expectedDraft,
   } = args;
+  const layoutFiles = [...files].filter(([name]) => name !== SETTINGS_FILE);
   const dir = `layouts/${layoutCode}/v${versionNo}-${indexDigest.slice(0, 12)}`;
 
-  for (const [name, bytes] of files) {
+  for (const [name, bytes] of layoutFiles) {
     const put = await blobStore.putObject(
       CONTAINER,
       `${dir}/${name}`,
@@ -198,7 +207,8 @@ export async function installLayoutPackage(args: {
         }
 
         // The settings DRAFT: re-point the open one (bumping its token, Inv #62),
-        // or create one from known values.
+        // or create one from known values. bm81: a restore's structure replaces
+        // the draft settings, in the same UPDATE or INSERT.
         let settingsDraftId: string;
         const settings = await billTemplateVersionRepository.findDraft(tx, {
           kind: "generated",
@@ -211,6 +221,7 @@ export async function installLayoutPackage(args: {
               id: settings.billTemplateVersionId,
               layoutVersionId: layout.billTemplateVersionId,
               actorId,
+              structure: restore?.structure,
             },
           );
           if (token === null)
@@ -232,7 +243,7 @@ export async function installLayoutPackage(args: {
               familyId,
             }));
           const fromBase = invoiceTemplateStructureSchema.safeParse(
-            base?.structure,
+            restore?.structure ?? base?.structure,
           );
           const parsed = fromBase.success
             ? fromBase
@@ -276,8 +287,9 @@ export async function installLayoutPackage(args: {
             blobRef: layout.blobRef,
             checksum: indexDigest,
             pageSetup: manifest.pageSetup,
-            fileCount: files.size,
+            fileCount: layoutFiles.length,
             settingsDraftId,
+            restoredFrom: restore?.source ?? null,
             previousBlobRef: previous?.blobRef ?? null,
             previousChecksum: previous?.checksum ?? null,
           },

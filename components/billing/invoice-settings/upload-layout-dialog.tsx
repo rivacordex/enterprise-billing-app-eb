@@ -14,15 +14,23 @@
 // DRAFT (`expectedDraftVersionId` + `expectedDraftToken`); a stale warning
 // shows the reason and re-fetches, and the dialog re-renders with the new
 // server data and warns again.
+//
+// bm81 (ui-context §10e, General rule 3) — when the chosen zip carries a
+// schema-valid `settings.json` (an export), an Info note says its settings will
+// replace the draft settings. The note is read in the browser and is display
+// only: the server re-parses and decides everything.
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { AlertCircle, AlertTriangle } from "lucide-react";
+import { unzipSync } from "fflate";
+import { AlertCircle, AlertTriangle, Info } from "lucide-react";
 import { toast } from "sonner";
 
 import { uploadLayoutPackageAction } from "@/actions/billing/invoice-settings/upload-layout-package.action";
 import {
   OVERWRITE_WARNING,
+  RESTORED_FROM,
+  RESTORE_NOTE,
   TEMPLATE_TYPE_MESSAGES,
   uploadConfirm,
   uploadCreatedToast,
@@ -55,6 +63,34 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { formatDatetime } from "@/lib/formatters";
 import type { LayoutProblem, OpenLayoutDraftInfo } from "@/types/billing";
+import {
+  templateExportSettingsSchema,
+  type TemplateExportSettings,
+} from "@/validation/billing/template-export-settings.schema";
+
+const SETTINGS_FILE = "settings.json";
+const RESTORE_NOTE_MAX_BYTES = 64 * 1024;
+
+// bm81 — the chosen zip's export settings, or `null`: only `settings.json` is
+// inflated, and only when it is at most 64 KiB. Any error is `null` (no note).
+export async function readRestoreNote(
+  file: File,
+): Promise<TemplateExportSettings | null> {
+  try {
+    const entries = unzipSync(new Uint8Array(await file.arrayBuffer()), {
+      filter: (f) =>
+        f.name === SETTINGS_FILE && f.originalSize <= RESTORE_NOTE_MAX_BYTES,
+    });
+    const bytes = entries[SETTINGS_FILE];
+    if (!bytes) return null;
+    const parsed = templateExportSettingsSchema.safeParse(
+      JSON.parse(new TextDecoder().decode(bytes)),
+    );
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface UploadLayoutDialogProps {
   familyId: string;
@@ -79,6 +115,16 @@ export function UploadLayoutDialog({
   const [problems, setProblems] = useState<LayoutProblem[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // The note for the file it was read from; shown only while that file is
+  // still the chosen one.
+  const [restoreNote, setRestoreNote] = useState<{
+    file: File;
+    settings: TemplateExportSettings;
+  } | null>(null);
+  const restore =
+    restoreNote !== null && restoreNote.file === file
+      ? restoreNote.settings
+      : null;
 
   function handleOpenChange(next: boolean): void {
     if (submitting) return;
@@ -181,12 +227,30 @@ export function UploadLayoutDialog({
           accept=".zip"
           disabled={submitting}
           onChange={(e) => {
-            setFile(e.target.files?.[0] ?? null);
+            const chosen = e.target.files?.[0] ?? null;
+            setFile(chosen);
             setProblems([]);
             setMessage(null);
+            if (chosen) {
+              void readRestoreNote(chosen).then((settings) =>
+                setRestoreNote(settings ? { file: chosen, settings } : null),
+              );
+            }
           }}
         />
       </Field>
+
+      {restore ? (
+        <Alert data-testid="restore-note">
+          <Info aria-hidden />
+          <AlertDescription className="space-y-1">
+            <p>{RESTORE_NOTE}</p>
+            <p className="font-mono text-mono">
+              {RESTORED_FROM(restore.source.layoutVersion)}
+            </p>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {problems.length > 0 ? (
         <LayoutProblemsAlert

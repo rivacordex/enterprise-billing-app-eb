@@ -1450,6 +1450,15 @@ export const LAYOUT_PACKAGE_REQUIRED_FILES = [
 ] as const;
 export const LAYOUT_PACKAGE_FONT_FILE =
   /^fonts\/(?:[A-Za-z0-9._-]{1,64}\.woff2|OFL\.txt)$/;
+// bm81 (TS rule 6) — the export's `settings.json`, never listed in
+// `checksums.json`. With the required files and the font rule it forms
+// LAYOUT_PACKAGE_FILES, the gate's allow-list.
+export const LAYOUT_PACKAGE_OPTIONAL_FILES = ["settings.json"] as const;
+export const LAYOUT_PACKAGE_FILES = {
+  required: LAYOUT_PACKAGE_REQUIRED_FILES,
+  optional: LAYOUT_PACKAGE_OPTIONAL_FILES,
+  font: LAYOUT_PACKAGE_FONT_FILE,
+} as const;
 
 // TS rule 3 — the warned-about draft, never a boolean "confirmed" flag.
 export type ExpectedDraft =

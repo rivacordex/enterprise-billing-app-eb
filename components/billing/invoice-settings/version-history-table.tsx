@@ -9,9 +9,10 @@
 // discarded row is RETIRED with no activation ("—") and no files.
 
 import Link from "next/link";
-import { Download, Eye, History } from "lucide-react";
+import { Download, Eye, FileArchive, History } from "lucide-react";
 
 import { DiscardDraftDialog } from "@/components/billing/invoice-settings/discard-draft-dialog";
+import { TEMPLATE_TYPE_MESSAGES } from "@/components/billing/invoice-settings/template-type-messages";
 import { TemplateVersionStatusBadge } from "@/components/billing/invoice-settings/template-version-status-badge";
 import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -62,6 +63,9 @@ interface NormalizedRow {
   usedByCount: number;
   viewParam: string;
   downloadHref: string | null;
+  // bm81 (ui-context §10e) — the pair's export, for every row the viewer may
+  // open: READ and EDIT; a DRAFT or discarded row only for EDIT.
+  exportHref: string | null;
   // bm58 D5: "In use for new runs" on the non-default ACTIVE version,
   // "Fallback" on the default while a non-default version is in use.
   caption: string | null;
@@ -96,6 +100,7 @@ function normalize(props: VersionHistoryTableProps): NormalizedRow[] {
       usedByCount: row.usedByCount,
       viewParam: String(row.versionNo),
       downloadHref: null,
+      exportHref: null,
       caption: null,
     }));
   }
@@ -122,6 +127,11 @@ function normalize(props: VersionHistoryTableProps): NormalizedRow[] {
         : row.isDefault && nonDefaultInUse
           ? "Fallback"
           : null,
+    exportHref:
+      (row.status === "DRAFT" || row.activatedAt === null) &&
+      !props.canViewDrafts
+        ? null
+        : `${INVOICE_TEMPLATE_FILES_BASE}/${row.billTemplateVersionId}/export`,
     // A DRAFT, or a discarded one (RETIRED, never activated), has no files.
     downloadHref:
       row.status === "DRAFT" || row.activatedAt === null
@@ -260,6 +270,12 @@ export function VersionHistoryTable(
                           <a href={row.downloadHref} download className={LINK}>
                             <Download size={14} aria-hidden />
                             Download .hbs
+                          </a>
+                        ) : null}
+                        {row.exportHref ? (
+                          <a href={row.exportHref} download className={LINK}>
+                            <FileArchive size={14} aria-hidden />
+                            {TEMPLATE_TYPE_MESSAGES.exportLink}
                           </a>
                         ) : null}
                         {discard &&

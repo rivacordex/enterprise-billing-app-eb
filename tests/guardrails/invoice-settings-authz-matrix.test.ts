@@ -135,6 +135,13 @@ const MATRIX: MatrixRow[] = [
     kind: "route",
   },
   {
+    // bm81 — export a version pair (READ; EDIT only shows a DRAFT pair).
+    surface: "GET …/invoice-template/versions/[versionId]/export",
+    file: "app/(app)/administration/invoice-settings/invoice-template/versions/[versionId]/export/route.ts",
+    level: "READ",
+    kind: "route",
+  },
+  {
     surface: "live preview (sample, or a bill with billrun_view)",
     file: "actions/billing/invoice-settings/preview-invoice-template.action.ts",
     level: "READ",

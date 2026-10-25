@@ -400,15 +400,24 @@ export const billTemplateVersionRepository = {
   // draft's token (`last_modified_datetime`), so an editor holding the old token
   // gets DRAFT_CONFLICT. bm74's guard allows a settings DRAFT to change
   // `ref_layout_version_id`. Returns the new token, or `null` when the row is no
-  // longer a settings DRAFT.
+  // longer a settings DRAFT. bm81: a restore also sets `structure` in the same
+  // UPDATE (the guard allows `structure` on a settings DRAFT).
   async repointDraftLayout(
     tx: Database,
-    input: { id: string; layoutVersionId: string; actorId: string },
+    input: {
+      id: string;
+      layoutVersionId: string;
+      actorId: string;
+      structure?: InvoiceTemplateStructureInput | undefined;
+    },
   ): Promise<string | null> {
     const rows = await tx
       .update(billTemplateVersion)
       .set({
         refLayoutVersionId: input.layoutVersionId,
+        ...(input.structure === undefined
+          ? {}
+          : { structure: input.structure }),
         lastModifiedBy: input.actorId,
         lastModifiedDatetime: sql`now()`,
       })

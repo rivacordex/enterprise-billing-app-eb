@@ -8,6 +8,7 @@ import {
   type GeneratedVersionFile,
 } from "@/services/billing/invoice-template/load";
 import { deriveTemplateTypeStatus } from "@/services/billing/invoice-template/template-types";
+import { isShowable } from "@/services/billing/invoice-template/version-visibility";
 import {
   InvoiceRenderError,
   type InvoiceErrorCode,
@@ -125,23 +126,6 @@ function parseStoredStructure(
     );
   }
   return parsed.data;
-}
-
-// A version the page may show: a stored generated version, or a draft for an
-// EDIT user (bm57 D4). Review fix (bm79) — a discarded draft (RETIRED, never
-// activated) has no files and is still a draft: only EDIT users may open it,
-// and it is never a stored version (no file download, no Generated files).
-function isDraftLike(row: BillTemplateVersion): boolean {
-  return row.status === "DRAFT" || row.activatedDatetime === null;
-}
-
-function isShowable(
-  row: BillTemplateVersion | null,
-  canEdit: boolean,
-): row is BillTemplateVersion {
-  return (
-    row !== null && row.kind === "generated" && (!isDraftLike(row) || canEdit)
-  );
 }
 
 export async function getInvoiceTemplatePageData(
