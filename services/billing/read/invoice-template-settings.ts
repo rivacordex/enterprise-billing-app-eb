@@ -7,12 +7,15 @@ import {
   loadGeneratedFiles,
   type GeneratedVersionFile,
 } from "@/services/billing/invoice-template/load";
+import { deriveTemplateTypeStatus } from "@/services/billing/invoice-template/template-types";
 import {
   InvoiceRenderError,
   type InvoiceErrorCode,
   type InvoiceTemplateStructure,
   type RecentPostedBill,
   type TemplateDraftInfo,
+  type TemplateTypeListRow,
+  type TemplateTypeStatus,
   type TemplateVersionHistoryRow,
   type TemplateVersionStatus,
 } from "@/types/billing";
@@ -26,11 +29,24 @@ import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-tem
 // The preview source select lists this many posted bills (D4).
 const RECENT_POSTED_BILLS_LIMIT = 20;
 
-export interface InvoiceTemplatePageData {
+// bm77 — the type the `[typeId]` page shows, whatever its state.
+export interface InvoiceTemplateTypeHeader {
+  typeId: string;
+  // ui-context §10b — the type named in the page heading.
+  typeName: string;
+  typeStatus: TemplateTypeStatus;
+  isDefaultType: boolean;
+  layoutCode: string;
+  // The version the type's next layout upload gets (bm78): max + 1, or 1.
+  nextLayoutVersionNo: number;
+}
+
+// The type has settings: today's editor data.
+export interface InvoiceTemplateEditorData {
   // The version new invoices use: the non-default ACTIVE ?? the default.
   current: BillTemplateVersion;
   // The version the page shows: `?version=` when it names a stored generated
-  // version, else `current`.
+  // version of this type, else `defaultShown`.
   shown: BillTemplateVersion;
   // bm57 D4: the version the page opens on when no `?version=` names one: the
   // working DRAFT for an EDIT user who has one, else `current`.
@@ -42,11 +58,12 @@ export interface InvoiceTemplatePageData {
   // `current`'s structure, parsed (the Activate dialog diffs against it).
   currentStructure: InvoiceTemplateStructure;
   history: TemplateVersionHistoryRow[];
-  // bm66-spec §4 — the Standard (default) family the live preview renders.
-  standardFamilyId: string;
-  // bm72 (D45, ui-context §10b) — the family named in the page heading.
-  standardFamilyName: string;
 }
+
+// bm77 — a type with no settings at all ("Not yet usable": nothing uploaded
+// yet) renders the empty state instead of the editor.
+export type InvoiceTemplatePageData = InvoiceTemplateTypeHeader &
+  (InvoiceTemplateEditorData | { current: null; history: [] });
 
 function toHistoryRow(
   row: BillTemplateVersion & { usedByCount: number },
@@ -106,22 +123,16 @@ function isShowable(
 }
 
 export async function getInvoiceTemplatePageData(
+  typeId: string,
   versionId: string | undefined,
   { canEdit }: { canEdit: boolean },
-): Promise<InvoiceTemplatePageData> {
-  // Review fix (known-issues §24c) — the page shows the Standard (default)
-  // family (D45), so its current version, draft and history are scoped to it.
-  const standardFamily = await billTemplateFamilyRepository.findDefault(db);
-  if (!standardFamily) {
-    // The seeded default family is trigger-protected (bm64), like the default
-    // rows below.
-    throw new InvoiceRenderError(
-      "TEMPLATE_VERSION_NOT_FOUND",
-      "no default template family",
-      { reason: "FAMILY_NOT_FOUND" },
-    );
-  }
-  const familyId = standardFamily.billTemplateFamilyId;
+): Promise<InvoiceTemplatePageData | null> {
+  // bm77 — the type comes from the URL, never `findDefault`. Its current
+  // version, draft and history are scoped to it (review fix §24c). An unknown
+  // type is `null`: the page calls `notFound()`.
+  const type = await billTemplateFamilyRepository.findById(db, typeId);
+  if (!type) return null;
+  const familyId = type.billTemplateFamilyId;
   const [active, fallback, selected, generatedRows, layoutRows, draftRow] =
     await Promise.all([
       billTemplateVersionRepository.findActive(db, {
@@ -142,6 +153,7 @@ export async function getInvoiceTemplatePageData(
       billTemplateVersionRepository.listForKind(db, {
         kind: "layout",
         withUsage: false,
+        familyId,
       }),
       canEdit
         ? billTemplateVersionRepository.findDraft(db, {
@@ -152,19 +164,22 @@ export async function getInvoiceTemplatePageData(
     ]);
 
   const current = active ?? fallback;
-  if (!current) {
-    // The default rows are trigger-protected (bm50); a missing one is a
-    // corrupted catalog, surfaced through error.tsx — never a blank page.
-    throw new InvoiceRenderError(
-      "TEMPLATE_VERSION_NOT_FOUND",
-      "no ACTIVE or default generated template version",
-      { kind: "generated" },
-    );
-  }
+  const header: InvoiceTemplateTypeHeader = {
+    typeId: familyId,
+    typeName: type.name,
+    typeStatus: deriveTemplateTypeStatus(type, current !== null),
+    isDefaultType: type.isDefault,
+    layoutCode: type.layoutCode,
+    nextLayoutVersionNo:
+      layoutRows.reduce((max, l) => Math.max(max, l.versionNo), 0) + 1,
+  };
+  // A type with no settings yet (created empty; bm78 uploads the first
+  // layout) — not an error, the page renders the empty state.
+  if (!current) return { ...header, current: null, history: [] };
 
   const defaultShown = draftRow ?? current;
-  // A `?version=` from another family falls back too: the heading names the
-  // Standard family, and the history lists its versions only.
+  // A `?version=` from another type falls back too: the heading names this
+  // type, and the history lists its versions only.
   const shown =
     isShowable(selected, canEdit) &&
     selected.refBillTemplateFamilyId === familyId
@@ -190,6 +205,7 @@ export async function getInvoiceTemplatePageData(
   );
 
   return {
+    ...header,
     current,
     shown,
     defaultShown,
@@ -197,9 +213,28 @@ export async function getInvoiceTemplatePageData(
     shownStructure: parseStoredStructure(shown),
     currentStructure: parseStoredStructure(current),
     history: generatedRows.map((r) => toHistoryRow(r, layoutLabels)),
-    standardFamilyId: standardFamily.billTemplateFamilyId,
-    standardFamilyName: standardFamily.name,
   };
+}
+
+// bm77 — the type list: every type, the default first, with its derived
+// status and the settings version new invoices of that type use.
+export async function listTemplateTypes(): Promise<TemplateTypeListRow[]> {
+  const [types, activeByType] = await Promise.all([
+    billTemplateFamilyRepository.listAll(db),
+    billTemplateVersionRepository.listActiveSettingsByFamily(db),
+  ]);
+  return types.map((t) => {
+    const active = activeByType.get(t.billTemplateFamilyId) ?? null;
+    return {
+      billTemplateFamilyId: t.billTemplateFamilyId,
+      name: t.name,
+      isDefault: t.isDefault,
+      status: deriveTemplateTypeStatus(t, active !== null),
+      activeVersionNo: active?.versionNo ?? null,
+      activeSince: active?.activatedDatetime ?? null,
+      retiredAt: t.retiredDatetime,
+    };
+  });
 }
 
 export type GeneratedHbsSources =

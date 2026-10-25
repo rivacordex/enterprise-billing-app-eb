@@ -1,5 +1,6 @@
 // bm55-spec §Implementation 4 — the §6c PDF-shaped skeleton beside the form
-// column, captioned as the preview's loading state.
+// column. bm77: this route is now the type list, so the caption says so (the
+// `[typeId]` detail page keeps the "Rendering draft invoice…" copy).
 export default function Loading(): React.JSX.Element {
   return (
     <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
@@ -21,7 +22,7 @@ export default function Loading(): React.JSX.Element {
           <div className="mt-4 h-2 w-1/3 rounded bg-[color:var(--color-neutral-100)]" />
         </div>
         <p className="text-body-sm text-muted-foreground">
-          Rendering draft invoice…
+          Loading invoice template types…
         </p>
       </div>
     </div>

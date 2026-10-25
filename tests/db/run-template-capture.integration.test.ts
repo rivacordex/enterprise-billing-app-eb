@@ -154,6 +154,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         {
           structure: structure("bm65 activation footnote"),
           expectedDraftToken: null,
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -163,6 +164,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: saved.versionId,
           expectedDraftToken: saved.draftToken,
           changeNote: note,
+          familyId: "BTF00000001",
         },
         ACTOR,
       );

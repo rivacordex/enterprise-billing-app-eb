@@ -68,6 +68,8 @@ export const saveTemplateDraftInputSchema = z
   .object({
     structure: invoiceTemplateStructureSchema,
     expectedDraftToken: z.string().regex(DRAFT_TOKEN_RE).nullable(),
+    // bm77 — the type being edited (from the `[typeId]` page), never the default.
+    familyId: templateFamilyIdSchema,
   })
   .strict();
 

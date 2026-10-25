@@ -340,6 +340,7 @@ describe("InvoiceStructureForm — Footnote (bm72)", () => {
         footnote: [ALL_ON.footnote[0], "Billed inclusive of USP"],
       },
       expectedDraftToken: null,
+      familyId: "BTF00000001",
     });
     expect(screen.getByLabelText("Line 2")).toHaveValue(
       "Billed inclusive of USP",
@@ -528,6 +529,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       draftId: "BTV00000004",
       expectedDraftToken: TOKEN,
       changeNote: "Show the usage annex",
+      familyId: "BTF00000001",
     });
     expect(toast.success).toHaveBeenCalledWith("Template v2 activated");
     // The action revalidates the layout; the form adopts the refreshed page.
@@ -635,6 +637,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       draftId: "BTV00000009",
       expectedDraftToken: "2026-10-10T02:00:00.000001Z",
       changeNote: "n",
+      familyId: "BTF00000001",
     });
   });
 });
@@ -682,6 +685,7 @@ describe("InvoiceStructureForm — Save draft (bm57)", () => {
         sections: { ...ALL_ON.sections, payment: false },
       },
       expectedDraftToken: TOKEN,
+      familyId: "BTF00000001",
     });
     expect(toast.success).toHaveBeenCalledWith(
       "Draft v2 saved — not used on invoices",

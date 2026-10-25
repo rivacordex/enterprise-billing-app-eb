@@ -154,4 +154,25 @@ export const STATUS_LITERAL_ALLOWLIST: StatusLiteralAllowEntry[] = [
     reason:
       "billing invoice-settings (bm61): the retired company-profile version's `meta.retired_at` row is written with status RETIRED (its own ConfigStatus), unrelated to product lifecycle.",
   },
+  // ── bm77 — invoice template TYPES: their own derived TemplateTypeStatus
+  //    (USABLE | NOT_YET_USABLE | RETIRED), never stored, unrelated to product
+  //    lifecycle.
+  {
+    file: "types/billing.ts",
+    literal: "RETIRED",
+    reason:
+      "billing invoice-settings (bm77): defines TEMPLATE_TYPE_STATUSES, the derived invoice template TYPE status union — its own TemplateTypeStatus, unrelated to product lifecycle.",
+  },
+  {
+    file: "services/billing/invoice-template/template-types.ts",
+    literal: "RETIRED",
+    reason:
+      "billing invoice-settings (bm77): `deriveTemplateTypeStatus` returns RETIRED for a retired invoice template type — its own derived TemplateTypeStatus, unrelated to product lifecycle.",
+  },
+  {
+    file: "components/billing/invoice-settings/template-type-list.tsx",
+    literal: "RETIRED",
+    reason:
+      "billing invoice-settings (bm77): hides and mutes RETIRED invoice template types in the type list — its own derived TemplateTypeStatus, unrelated to product lifecycle.",
+  },
 ];

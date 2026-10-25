@@ -16,7 +16,9 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 // four tables and lost INSERT/UPDATE on the two reserved customer_bill stamp
 // columns (Inv #41). Runs the real bootstrap SQL (no hand-copied grant list).
 // bm64 adds bill_template_family: SELECT only for app_runtime, nothing for
-// billrun_runtime (Inv #23).
+// billrun_runtime (Inv #23). bm77 (Inv #65, guardrail 79 grant half) widens it
+// to SELECT/INSERT/UPDATE + USAGE on its sequence (create type, retire type);
+// DELETE stays revoked.
 const databaseUrl = process.env.DATABASE_URL;
 
 const CATALOG_TABLES = [
@@ -132,9 +134,11 @@ describe.skipIf(!databaseUrl)(
       }
     });
 
-    it("bm64 — app_runtime: SELECT only on bill_template_family; billrun_runtime: nothing", async () => {
+    it("bm77 — app_runtime: SELECT/INSERT/UPDATE (no DELETE) on bill_template_family; billrun_runtime: nothing", async () => {
       expect(await tablePrivs("app_runtime", "bill_template_family")).toEqual([
+        "INSERT",
         "SELECT",
+        "UPDATE",
       ]);
       expect(
         await tablePrivs("billrun_runtime", "bill_template_family"),
@@ -187,7 +191,9 @@ describe.skipIf(!databaseUrl)(
         "SELECT",
       ]);
       expect(await tablePrivs("app_runtime", "bill_template_family")).toEqual([
+        "INSERT",
         "SELECT",
+        "UPDATE",
       ]);
       for (const t of [
         "bill_template_version",

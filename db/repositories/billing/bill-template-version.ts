@@ -151,13 +151,16 @@ export const billTemplateVersionRepository = {
     );
   },
 
-  // `max(version_no) + 1` for the kind, under the kind lock. `btv_version_uq`
-  // (per (type, kind) since bm74) is the backstop against a lost race.
+  // `max(version_no) + 1` under the kind lock. bm77: layout and generated
+  // numbers are per TYPE (`familyId` required), matching bm74's
+  // `btv_version_uq` per (type, kind); CSV keeps the per-format max
+  // (`btv_version_csv_uq`). The unique index is the backstop against a lost
+  // race; the global per-kind lock is coarser than needed, and safe.
   async nextVersionNo(
     tx: Database,
-    { kind }: { kind: TemplateKind },
+    scope: { kind: "csv" } | { kind: "layout" | "generated"; familyId: string },
   ): Promise<number> {
-    await this.lockKind(tx, { kind });
+    await this.lockKind(tx, { kind: scope.kind });
     const [row] = await tx
       .select({
         maxNo: sql<number>`COALESCE(max(${billTemplateVersion.versionNo}), 0)::int`,
@@ -166,10 +169,50 @@ export const billTemplateVersionRepository = {
       .where(
         and(
           eq(billTemplateVersion.refBillFormatId, INVOICE),
-          eq(billTemplateVersion.kind, kind),
+          eq(billTemplateVersion.kind, scope.kind),
+          scope.kind === "csv" ? undefined : familyScope(scope.familyId),
         ),
       );
     return (row?.maxNo ?? 0) + 1;
+  },
+
+  // bm77 — per type, its non-default ACTIVE `generated` version, else its
+  // default: the settings version new invoices of that type use. One query,
+  // for the type list (version no + since when).
+  async listActiveSettingsByFamily(
+    db: Database,
+  ): Promise<
+    Map<string, { versionNo: number; activatedDatetime: Date | null }>
+  > {
+    const rows = await db
+      .selectDistinctOn([billTemplateVersion.refBillTemplateFamilyId], {
+        familyId: billTemplateVersion.refBillTemplateFamilyId,
+        versionNo: billTemplateVersion.versionNo,
+        activatedDatetime: billTemplateVersion.activatedDatetime,
+      })
+      .from(billTemplateVersion)
+      .where(
+        and(
+          eq(billTemplateVersion.refBillFormatId, INVOICE),
+          eq(billTemplateVersion.kind, "generated"),
+          eq(billTemplateVersion.status, "ACTIVE"),
+        ),
+      )
+      // Within a type the non-default ACTIVE (is_default false) sorts first.
+      .orderBy(
+        billTemplateVersion.refBillTemplateFamilyId,
+        billTemplateVersion.isDefault,
+      );
+    return new Map(
+      rows
+        .filter(
+          (r): r is typeof r & { familyId: string } => r.familyId !== null,
+        )
+        .map((r) => [
+          r.familyId,
+          { versionNo: r.versionNo, activatedDatetime: r.activatedDatetime },
+        ]),
+    );
   },
 
   // bm57 D1 — the working DRAFT of the kind (at most one, `btv_one_draft_uq`),
@@ -221,6 +264,8 @@ export const billTemplateVersionRepository = {
         refBillTemplateFamilyId: input.refBillTemplateFamilyId,
         structure: input.structure,
         createdBy: input.createdBy,
+        // bm77 (D128) — every DRAFT write records its last writer.
+        lastModifiedBy: input.createdBy,
       })
       .returning({
         ...getTableColumns(billTemplateVersion),
@@ -240,11 +285,16 @@ export const billTemplateVersionRepository = {
       id: string;
       structure: InvoiceTemplateStructureInput;
       expectedToken: string;
+      actorId: string;
     },
   ): Promise<string | null> {
     const rows = await tx
       .update(billTemplateVersion)
-      .set({ structure: input.structure, lastModifiedDatetime: sql`now()` })
+      .set({
+        structure: input.structure,
+        lastModifiedBy: input.actorId,
+        lastModifiedDatetime: sql`now()`,
+      })
       .where(
         and(
           eq(billTemplateVersion.billTemplateVersionId, input.id),

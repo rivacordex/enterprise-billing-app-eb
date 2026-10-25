@@ -93,10 +93,24 @@ const MATRIX: MatrixRow[] = [
     kind: "route",
   },
   {
+    // bm77 — the invoice template TYPE list.
     surface: "/administration/invoice-settings/invoice-template",
     file: "app/(app)/administration/invoice-settings/invoice-template/page.tsx",
     level: "READ",
     kind: "page",
+  },
+  {
+    // bm77 — a type's detail page (today's editor, per type).
+    surface: "/administration/invoice-settings/invoice-template/[typeId]",
+    file: "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx",
+    level: "READ",
+    kind: "page",
+  },
+  {
+    surface: "create invoice template type (a mutation)",
+    file: "actions/billing/invoice-settings/create-template-type.action.ts",
+    level: "EDIT",
+    kind: "action",
   },
   {
     surface: "GET …/invoice-template/versions/[versionId]/files/[file]",
@@ -231,8 +245,9 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
   });
 
   it("while a working draft exists the draft is the only editable version, and the form adopts a newer draft token (bm57, bm72 review)", () => {
+    // bm77 — the editor moved to the type detail page.
     const src = read(
-      "app/(app)/administration/invoice-settings/invoice-template/page.tsx",
+      "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx",
     );
     // Another version is editable only when there is no draft to overwrite.
     expect(src).toMatch(
@@ -387,8 +402,9 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
   });
 
   it("the page offers posted bills only to billrun_view holders", () => {
+    // bm77 — the editor moved to the type detail page.
     const src = read(
-      "app/(app)/administration/invoice-settings/invoice-template/page.tsx",
+      "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx",
     );
     expect(src).toMatch(
       /canPreviewBills = hasLevel\(\s*permissionMap,\s*PERMISSIONS\.BILLRUN_VIEW,\s*LEVELS\.READ,?\s*\)/,

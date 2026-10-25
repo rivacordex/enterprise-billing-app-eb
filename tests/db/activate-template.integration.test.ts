@@ -122,7 +122,11 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         kind: "generated",
       });
       const saved = await saveTemplateDraft(
-        { structure: s, expectedDraftToken: existing?.token ?? null },
+        {
+          structure: s,
+          expectedDraftToken: existing?.token ?? null,
+          familyId: "BTF00000001",
+        },
         ACTOR,
       );
       if (!saved.ok) throw new Error(`save draft failed: ${saved.code}`);
@@ -214,6 +218,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: NOTE,
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -334,6 +339,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: "v3",
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -386,6 +392,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: "boom",
+            familyId: "BTF00000001",
           },
           ACTOR,
         ),
@@ -413,6 +420,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: "retry",
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -441,6 +449,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: "stale",
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -452,6 +461,45 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       ).toHaveLength(0);
     }, 120_000);
 
+    it.each([
+      ["another existing type", "BTF00000078"],
+      ["an unknown type", "BTF00009999"],
+    ])(
+      "bm77 — activating with a familyId of %s (not the draft's) is DRAFT_CONFLICT and changes nothing",
+      async (_case, familyId) => {
+        await sql`
+          INSERT INTO billing.bill_template_family (bill_template_family_id, code, name, layout_code, kind)
+          VALUES ('BTF00000078', 'BM77_OTHER', 'BM77 Other', 'INVTPL-BM77_OTHER', 'generated')
+          ON CONFLICT DO NOTHING`;
+        const draft = await ensureDraft(
+          structure({ footnote: ["Wrong type footnote"] }),
+        );
+        const auditBefore = (await activatedAudit()).length;
+        const activeBefore = await nonDefaultActive();
+
+        const result = await activateTemplate(
+          {
+            draftId: draft.id,
+            expectedDraftToken: draft.token,
+            changeNote: "wrong type",
+            familyId,
+          },
+          ACTOR,
+        );
+        expect(result).toEqual({ ok: false, code: "DRAFT_CONFLICT" });
+        expect(await nonDefaultActive()).toEqual(activeBefore);
+        expect(await activatedAudit()).toHaveLength(auditBefore);
+        const [still] = await sql<{ status: string }[]>`
+          SELECT status FROM billing.bill_template_version
+          WHERE bill_template_version_id = ${draft.id}`;
+        expect(still?.status).toBe("DRAFT");
+        expect(
+          await blobNames(`generated/INVOICE/v${draft.versionNo}-`),
+        ).toHaveLength(0);
+      },
+      120_000,
+    );
+
     it.each(["", "   \n\t"])(
       "an empty change note (%j) is CHANGE_NOTE_REQUIRED and writes nothing",
       async (note) => {
@@ -462,6 +510,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: note,
+            familyId: "BTF00000001",
           },
           ACTOR,
         );
@@ -494,6 +543,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: fresh.token,
             changeNote: "x",
+            familyId: "BTF00000001",
           },
           ACTOR,
         ),
@@ -514,6 +564,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: "BTV00000002",
           expectedDraftToken: draft.token,
           changeNote: "x",
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -537,6 +588,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: "t",
+            familyId: "BTF00000001",
           },
           ACTOR,
         );
@@ -596,6 +648,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       await sql`ALTER TABLE billing.bill_template_version ENABLE TRIGGER USER`;
       const nextNo = await billTemplateVersionRepository.nextVersionNo(db, {
         kind: "generated",
+        familyId: "BTF00000001",
       });
       await sql`
         INSERT INTO billing.bill_template_version
@@ -612,6 +665,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.billTemplateVersionId,
           expectedDraftToken: draft.token,
           changeNote: "bad",
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -641,6 +695,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: "first",
+            familyId: "BTF00000001",
           },
           ACTOR,
         ),
@@ -657,6 +712,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
           draftId: draft.id,
           expectedDraftToken: draft.token,
           changeNote: "retry",
+          familyId: "BTF00000001",
         },
         ACTOR,
       );
@@ -682,6 +738,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
             draftId: draft.id,
             expectedDraftToken: draft.token,
             changeNote: note,
+            familyId: "BTF00000001",
           },
           ACTOR,
         );

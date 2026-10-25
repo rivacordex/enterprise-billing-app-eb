@@ -240,7 +240,8 @@ export interface InvoiceStructureFormProps {
   draftVersionId?: string | null;
   draftVersionNo?: number | null;
   activeStructure?: InvoiceTemplateStructure | null;
-  // bm66: the template family (Standard) the live preview renders with.
+  // bm66/bm77: the template type (from the `[typeId]` page) the live
+  // preview renders with and the save/activate actions write to.
   familyId: string;
 }
 
@@ -466,6 +467,7 @@ export function InvoiceStructureForm({
       const result = await saveTemplateDraftAction({
         structure: next,
         expectedDraftToken: draftToken,
+        familyId,
       });
       if (result.ok) {
         setSaved(next);
@@ -503,6 +505,7 @@ export function InvoiceStructureForm({
       draftId,
       expectedDraftToken: draftToken,
       changeNote,
+      familyId,
     });
     if (result.ok) {
       // No `router.refresh()`: the action revalidates the Invoice Settings layout

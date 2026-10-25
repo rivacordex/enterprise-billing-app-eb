@@ -38,12 +38,43 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`), bm77 next. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (uncommitted), bm78 next. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
 
 Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+
+**bm77 notes (2026-10-25):**
+
+- The type comes from the URL everywhere: `getInvoiceTemplatePageData(typeId, versionId, { canEdit })`
+  (`findById`; unknown → `null` → `notFound()`; a type with no settings → `current: null`, the
+  empty state, never a throw), `saveTemplateDraft` / `activateTemplate` take `familyId` (an unknown
+  type, or a draft of another type, is `DRAFT_CONFLICT`). No family `findDefault` call remains in
+  production code. `nextVersionNo` requires `familyId` for layout/generated (per-type `max + 1`);
+  CSV keeps the per-format max. Every settings-DRAFT write sets `last_modified_by` (D128).
+- Create type: `services/billing/invoice-template/template-types.ts` (normalize → validate →
+  case/space-insensitive taken check, retired included → derived code with `_2`… suffix, up to 5
+  attempts on a lost race → row + `INVOICE_TEMPLATE_TYPE_CREATED` in one transaction; no version rows).
+  `listUsable` ships for cm23/bm83. Grant: `app_runtime` SELECT/INSERT/UPDATE + sequence USAGE,
+  DELETE revoked.
+- **Deviation 1 — the page tests are new, not moved.** The spec says today's page tests move to the
+  `[typeId]` test; there were none (only source checks in the authz matrix, which now read the
+  detail page). `invoice-template-types-page.test.tsx` and `invoice-template-type-detail-page.test.tsx`
+  are written from scratch (6 + 6 cases).
+- **Deviation 2 — forced edits outside the spec's list:** the grants guardrail (it pinned SELECT
+  only); the save/activate action unit tests and the structure-form test (exact call shapes, plus
+  new missing/malformed `familyId` cases); the route manifest (`[typeId]`); the status-literal
+  allow-list (guardrail 30: the type status's `RETIRED`); the template journey's action calls (the
+  actions take `unknown`, so `tsc` cannot see a missing `familyId`); the opt-in admin browser e2e
+  (its editor steps go to Standard's detail page; heading text). And one bm76 follow-up: the
+  `grep-gates` money gate bans `parseFloat(` anywhere outside `money.ts`, and the visible-tier
+  reader used it on CSS values — now `Number(…)`.
+- **Deviation 3 — UI details:** there is no shadcn `Table` in this repo, so `TemplateTypeList` reuses
+  `VersionHistoryTable`'s Administration table markup; it takes `locale`/`timezone` props for
+  `formatDatetime`. "Danger `-fg`" is `--color-danger-700` (the ui-context foreground column).
+- Not done here (by design): the Upload button (bm78), the "Bound BANs" column (bm82 with cm23),
+  per-type generated blob paths (bm79).
 
 **bm75–76 code review fixes (2026-10-25):** owner decisions: re-port the editor's CURRENT hardening;
 a compliance-only probe.
@@ -69,7 +100,7 @@ a compliance-only probe.
 - **Guardrail 74:** any engine, `launch*`/`connect*`, bracket access, any `.newContext(`/`.newPage(`,
   and `.js`/`.mjs`/`.cjs` files.
 - **bm75 render e2e:** the Standard v1 case now counts the PDF's own pages, plain vs hardened (3 = 3).
-- **Follow-up (2026-10-25, uncommitted):** Sonar S5852 second scan — the re-ported mustache strip
+- **Follow-up (2026-10-25, `2aaec90`):** Sonar S5852 second scan — the re-ported mustache strip
   `/\{\{[\s\S]*?\}\}/g` (in `attributeNames`, `withoutMustaches`) replaced by a linear
   `replaceMustaches` scan with identical output (edge cases + 2,000 random strings; 20k unclosed
   `{{`: 180 ms → 0 ms). Review comment on `INVTPL-BASIC-A4/v1/shell.hbs`: the render e2e now renders
@@ -137,6 +168,7 @@ a compliance-only probe.
 | bm75 | Network-blocked, script-free Chromium rendering (`withHardenedPage`, guardrail 74 draft/final half) | **Built** (2026-10-25, `a2a74d3`) — tsc/ESLint/Prettier clean; `render-invoice.service` 15/0 (4 spec cases + a final-render blocked-fetch case); guardrail `chromium-single-factory` 2/0, mutation-checked (a scratch `chromium.launch()` under `services/` fails it); Chromium e2e 7/0 (`RUN_CHROMIUM_E2E=1`: zero stub-server hits, 4 URLs blocked, script not run, data: allowed, Standard v1 1 page as before, no blocked URL); unchanged: golden, `post-run.service`, `draft-invoice-route` (87/0 with the above) and the template journey 19/19 on the disposable DB |
 | bm76 | Layout rules module `compliance.ts` (static + visible tiers) and the `INVTPL-BASIC-A4` reference package | **Built** (2026-10-25, `d7bbca4`) — tsc/ESLint/Prettier clean; lint guardrail 55/0 (22 `.hbs` incl. BASIC, hardening + typed-supplier cases); static compliance guardrail 16/0 (both packages clean, BASIC checksums match, 5 negative fixtures, import scan); visible e2e 7/0 (`RUN_CHROMIUM_E2E=1`: both packages clean, all 5 hiding tricks pass static and fail visible); template + golden + seed-checksum + guardrail unit suites 564 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload integration 17/0 on the disposable DB. **PR note: "editor contract refresh needed"** (E7/E8) |
 | bm75–76 code review fixes | xhigh review of `a2a74d3`+`d7bbca4` (15 findings) + Sonar S5852 (3 regexes) | **Built** (2026-10-25, `1abf17c`) — tsc/ESLint/Prettier clean; lint guardrail 62/0; static compliance 24/0; visible e2e 14/0 and render e2e 7/0 (`RUN_CHROMIUM_E2E=1`); guardrail 74 2/0, mutation-checked against 5 bypasses (all passed the old pattern); billing + guardrail unit suites 1134 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload + template journey 36/0 on the disposable DB |
+| bm77 | Invoice template type list, create type, per-type detail page (`[typeId]`), `app_runtime` grant | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; unit 4735 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) — incl. new template-types 9/0, list page 6/0, detail page 6/0, read service 13/0, authz matrix + nav guard + audit filters 39/0; integration on the disposable DB: 22 template/grant/invoice suites 250+/0 incl. new create-type 10/0, save-draft + activate 31/0, template journey 19/0; admin browser e2e 5/0 after a fresh `next build` (`RUN_INVOICE_SETTINGS_E2E=1`; the first run had one company-profile `waitFor` timeout, passed on rerun) |
 
 ## Delivered units
 

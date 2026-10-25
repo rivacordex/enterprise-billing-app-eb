@@ -214,16 +214,17 @@ FROM app_runtime;
 --> statement-breakpoint
 REVOKE INSERT, UPDATE ON TABLE "billing"."bill_format" FROM app_runtime;
 --> statement-breakpoint
--- bm64 (Inv #23) — bill_template_family is seed-fixed in this phase: SELECT
--- only. The explicit GRANT mirrors bill_format (robust when the migration ran
--- as a superuser); the REVOKE strips the DML the app_migrate default-privilege
--- path would otherwise hand app_runtime. No USAGE on bill_template_family_seq
--- until a create-family screen exists. billrun_runtime gets nothing.
-GRANT SELECT ON TABLE
+-- bm77 (Inv #65) — app_runtime creates template types (create type) and retires them
+-- (bm83). INSERT + UPDATE + sequence USAGE; DELETE stays revoked (rows are never deleted).
+-- bill_template_family_guard (0053) decides which columns may change: only
+-- retired_datetime, never name / code / layout_code. billrun_runtime gets nothing.
+GRANT SELECT, INSERT, UPDATE ON TABLE
   "billing"."bill_template_family"
 TO app_runtime;
 --> statement-breakpoint
-REVOKE INSERT, UPDATE, DELETE ON TABLE "billing"."bill_template_family" FROM app_runtime;
+REVOKE DELETE ON TABLE "billing"."bill_template_family" FROM app_runtime;
+--> statement-breakpoint
+GRANT USAGE ON SEQUENCE "billing"."bill_template_family_seq" TO app_runtime;
 --> statement-breakpoint
 GRANT SELECT ON TABLE
   "billing"."pgledger_accounts_view",

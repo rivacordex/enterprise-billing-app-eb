@@ -1377,3 +1377,27 @@ export interface LayoutProblem {
   code: LayoutProblemCode;
   message: string; // human-readable, shown verbatim in the upload problems list
 }
+
+// bm77 — invoice template type status, DERIVED by `deriveTemplateTypeStatus`
+// (code-standards › Invoice Template Types, TS rule 4); never stored.
+export const TEMPLATE_TYPE_STATUSES = [
+  "USABLE",
+  "NOT_YET_USABLE",
+  "RETIRED",
+] as const;
+export type TemplateTypeStatus = (typeof TEMPLATE_TYPE_STATUSES)[number];
+
+// code-standards › Invoice Template Types, TS rule 2 (later units add their codes).
+export type TemplateTypeErrorCode =
+  | "TEMPLATE_TYPE_NAME_TAKEN"
+  | "TEMPLATE_TYPE_NAME_INVALID";
+
+export interface TemplateTypeListRow {
+  billTemplateFamilyId: string;
+  name: string;
+  isDefault: boolean;
+  status: TemplateTypeStatus;
+  activeVersionNo: number | null; // the ACTIVE (or default) settings version
+  activeSince: Date | null; // its activated_datetime
+  retiredAt: Date | null;
+}

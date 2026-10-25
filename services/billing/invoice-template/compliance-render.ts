@@ -31,10 +31,10 @@ const READ_SECTIONS_SCRIPT = String.raw`(probes) => {
     range.selectNodeContents(textNode);
     if (range.getClientRects().length === 0) return false;
     if (!parent.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return false;
-    if (parseFloat(getComputedStyle(parent).fontSize) < 6) return false;
+    if (Number(getComputedStyle(parent).fontSize.replace("px", "")) < 6) return false;
     var opacity = 1;
     for (var node = parent; node; node = node.parentElement) {
-      opacity *= parseFloat(getComputedStyle(node).opacity);
+      opacity *= Number(getComputedStyle(node).opacity);
     }
     return opacity >= 0.1;
   };

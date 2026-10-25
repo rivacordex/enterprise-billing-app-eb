@@ -31,6 +31,8 @@ const INPUT = {
   draftId: "BTV00000004",
   expectedDraftToken: TOKEN,
   changeNote: "Hide notes",
+  // bm77 — the type whose draft is activated.
+  familyId: "BTF00000001",
 };
 
 function redirectError(): Error & { digest: string } {
@@ -100,7 +102,13 @@ describe("activateTemplateAction", () => {
     ["a malformed draft id", { ...INPUT, draftId: "BTV2" }],
     ["a non-BTV id", { ...INPUT, draftId: "CBL00000001" }],
     ["a malformed token", { ...INPUT, expectedDraftToken: "yesterday" }],
-    ["a missing token", { draftId: INPUT.draftId, changeNote: "x" }],
+    [
+      "a missing token",
+      { draftId: INPUT.draftId, changeNote: "x", familyId: INPUT.familyId },
+    ],
+    // bm77 — the type is required, and must be a template type id.
+    ["a missing familyId", { ...INPUT, familyId: undefined }],
+    ["a malformed familyId", { ...INPUT, familyId: "standard" }],
     ["an unknown key", { ...INPUT, label: "x" }],
   ])("rejects %s with VALIDATION_ERROR", async (_label, input) => {
     const result = await activateTemplateAction(input);

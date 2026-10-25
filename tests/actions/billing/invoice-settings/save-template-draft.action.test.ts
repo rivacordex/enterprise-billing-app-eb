@@ -58,6 +58,7 @@ describe("saveTemplateDraftAction", () => {
     await saveTemplateDraftAction({
       structure: STRUCTURE,
       expectedDraftToken: null,
+      familyId: "BTF00000001",
     });
     expect(mockGuard).toHaveBeenCalledWith(
       PERMISSIONS.INVOICE_SETTINGS,
@@ -70,6 +71,7 @@ describe("saveTemplateDraftAction", () => {
     const result = await saveTemplateDraftAction({
       structure: STRUCTURE,
       expectedDraftToken: null,
+      familyId: "BTF00000001",
     });
     expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
     expect(mockService).not.toHaveBeenCalled();
@@ -81,6 +83,7 @@ describe("saveTemplateDraftAction", () => {
     const result = await saveTemplateDraftAction({
       structure: STRUCTURE,
       expectedDraftToken: null,
+      familyId: "BTF00000001",
     });
     expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
     expect(mockService).not.toHaveBeenCalled();
@@ -94,6 +97,7 @@ describe("saveTemplateDraftAction", () => {
     const result = await saveTemplateDraftAction({
       structure: crafted,
       expectedDraftToken: null,
+      familyId: "BTF00000001",
     });
     expect(result).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
     expect(mockService).not.toHaveBeenCalled();
@@ -113,6 +117,7 @@ describe("saveTemplateDraftAction", () => {
       const result = await saveTemplateDraftAction({
         structure: { ...STRUCTURE, footnote },
         expectedDraftToken: null,
+        familyId: "BTF00000001",
       });
       expect(result).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
       expect(
@@ -132,6 +137,7 @@ describe("saveTemplateDraftAction", () => {
         ? { ...STRUCTURE, sections: { ...STRUCTURE.sections, ...sections } }
         : { ...STRUCTURE, columns: { showDiscountColumn: true } },
       expectedDraftToken: null,
+      familyId: "BTF00000001",
     });
     expect(result).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
     expect(mockService).not.toHaveBeenCalled();
@@ -146,17 +152,33 @@ describe("saveTemplateDraftAction", () => {
           sections: { ...STRUCTURE.sections, header: "<b>x</b>" },
         },
         expectedDraftToken: null,
+        familyId: "BTF00000001",
       },
     ],
     [
       "an unknown top-level key",
-      { structure: STRUCTURE, expectedDraftToken: null, label: "x" },
+      {
+        structure: STRUCTURE,
+        expectedDraftToken: null,
+        label: "x",
+        familyId: "BTF00000001",
+      },
     ],
     [
       "a malformed token",
-      { structure: STRUCTURE, expectedDraftToken: "yesterday" },
+      {
+        structure: STRUCTURE,
+        expectedDraftToken: "yesterday",
+        familyId: "BTF00000001",
+      },
     ],
-    ["a missing token", { structure: STRUCTURE }],
+    ["a missing token", { structure: STRUCTURE, familyId: "BTF00000001" }],
+    // bm77 — the type is required, and must be a template type id.
+    ["a missing familyId", { structure: STRUCTURE, expectedDraftToken: null }],
+    [
+      "a malformed familyId",
+      { structure: STRUCTURE, expectedDraftToken: null, familyId: "standard" },
+    ],
   ])("rejects %s with VALIDATION_ERROR", async (_label, input) => {
     const result = await saveTemplateDraftAction(input);
     expect(result).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
@@ -173,6 +195,7 @@ describe("saveTemplateDraftAction", () => {
     const result = await saveTemplateDraftAction({
       structure: STRUCTURE,
       expectedDraftToken: null,
+      familyId: "BTF00000001",
     });
     expect(result).toEqual({
       ok: true,
@@ -181,7 +204,11 @@ describe("saveTemplateDraftAction", () => {
       draftToken: TOKEN,
     });
     expect(mockService).toHaveBeenCalledWith(
-      { structure: STRUCTURE, expectedDraftToken: null },
+      {
+        structure: STRUCTURE,
+        expectedDraftToken: null,
+        familyId: "BTF00000001",
+      },
       "actor-1",
     );
     expect(mockRevalidate).toHaveBeenCalledWith(
@@ -195,6 +222,7 @@ describe("saveTemplateDraftAction", () => {
     const result = await saveTemplateDraftAction({
       structure: STRUCTURE,
       expectedDraftToken: TOKEN,
+      familyId: "BTF00000001",
     });
     expect(result).toEqual({ ok: false, code: "DRAFT_CONFLICT" });
     expect(mockRevalidate).not.toHaveBeenCalled();
@@ -205,6 +233,7 @@ describe("saveTemplateDraftAction", () => {
     const result = await saveTemplateDraftAction({
       structure: STRUCTURE,
       expectedDraftToken: null,
+      familyId: "BTF00000001",
     });
     expect(result).toEqual({ ok: false, code: "SERVER_ERROR" });
     expect(mockRevalidate).not.toHaveBeenCalled();

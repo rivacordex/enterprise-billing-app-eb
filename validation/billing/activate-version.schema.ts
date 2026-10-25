@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { DRAFT_TOKEN_RE } from "@/validation/billing/invoice-template-structure.schema";
+import { templateFamilyIdSchema } from "@/validation/billing/template-family-id.schema";
 import { billTemplateVersionIdSchema } from "@/validation/billing/template-version-id.schema";
 
 // bm58-spec §Design D1/D2 step 1 (Inv #49): the template activation input. The
@@ -28,6 +29,8 @@ export const activateTemplateInputSchema = z
     draftId: billTemplateVersionIdSchema,
     expectedDraftToken: z.string().regex(DRAFT_TOKEN_RE),
     changeNote: changeNoteSchema,
+    // bm77 — the type whose draft is activated; must be the draft's own.
+    familyId: templateFamilyIdSchema,
   })
   .strict();
 

@@ -197,11 +197,11 @@ export async function activateTemplate(
       code: noteMissing ? "CHANGE_NOTE_REQUIRED" : "VALIDATION_ERROR",
     };
   }
-  const { draftId, expectedDraftToken, changeNote } = parsed.data;
+  const { draftId, expectedDraftToken, changeNote, familyId } = parsed.data;
 
-  // Step 2: the draft, as the form last saw it — the Standard (default)
-  // family's working draft (D45; review fix §24c).
-  const family = await billTemplateFamilyRepository.findDefault(db);
+  // Step 2: the draft, as the form last saw it — the working draft of the
+  // type named by the `[typeId]` page (bm77; review fix §24c).
+  const family = await billTemplateFamilyRepository.findById(db, familyId);
   const draft = family
     ? await billTemplateVersionRepository.findDraft(db, {
         kind: "generated",
@@ -307,22 +307,26 @@ export async function activateTemplate(
         tx,
         draftId,
       );
-      if (!locked || locked.token !== expectedDraftToken) {
+      if (
+        !locked ||
+        locked.token !== expectedDraftToken ||
+        // bm77 — the draft must belong to the type the page named.
+        locked.refBillTemplateFamilyId !== familyId
+      ) {
         throw new ActivationRollback("DRAFT_CONFLICT");
       }
 
       // Review fix (§24c) — retire only within the draft's own family, so a
       // second family's ACTIVE version is never touched.
-      const familyId = locked.refBillTemplateFamilyId ?? undefined;
       const retired = await billTemplateVersionRepository.retireActive(tx, {
         kind: "generated",
-        ...(familyId !== undefined ? { familyId } : {}),
+        familyId,
       });
       const previous =
         retired ??
         (await billTemplateVersionRepository.findDefault(tx, {
           kind: "generated",
-          ...(familyId !== undefined ? { familyId } : {}),
+          familyId,
         }));
 
       const promoted = await billTemplateVersionRepository.promoteDraft(tx, {
