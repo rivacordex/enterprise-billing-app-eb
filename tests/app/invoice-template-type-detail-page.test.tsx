@@ -26,14 +26,11 @@ vi.mock("@/components/billing/invoice-settings/invoice-structure-form", () => ({
     return <div data-testid="structure-form" />;
   },
 }));
-// bm78 — the upload dialog's action pulls the db/service graph.
+// bm78 — the upload dialog's action pulls the db/service graph. bm80: the
+// trigger is never disabled (an open draft gets the overwrite warning).
 vi.mock("@/components/billing/invoice-settings/upload-layout-dialog", () => ({
-  UploadLayoutDialog: (props: { openLayoutDraft: unknown }) => (
-    <button
-      type="button"
-      data-testid="upload-layout"
-      disabled={props.openLayoutDraft !== null}
-    >
+  UploadLayoutDialog: () => (
+    <button type="button" data-testid="upload-layout">
       Upload layout package
     </button>
   ),

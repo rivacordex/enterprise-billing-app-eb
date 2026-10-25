@@ -27,7 +27,15 @@ export type SaveTemplateDraftResult =
       versionNo: number;
       draftToken: string;
     }
-  | { ok: false; code: TemplateDraftErrorCode | "VALIDATION_ERROR" };
+  // bm80 — the settings DRAFT's last write was an upload; `draftToken` is its
+  // current token, so the form can adopt it and keep its unsaved values.
+  | { ok: false; code: "DRAFT_LAYOUT_REPLACED"; draftToken: string }
+  | {
+      ok: false;
+      code:
+        | Exclude<TemplateDraftErrorCode, "DRAFT_LAYOUT_REPLACED">
+        | "VALIDATION_ERROR";
+    };
 
 const UNIQUE_VIOLATION = "23505";
 // Only a lost race on the draft itself is a conflict. A 23505 from anywhere
@@ -94,6 +102,19 @@ export async function saveTemplateDraft(
 
         if (draft) {
           if (expectedDraftToken !== draft.token) {
+            const layoutDraft = await billTemplateVersionRepository.findDraft(
+              tx,
+              { kind: "layout", familyId },
+            );
+            // Equal tokens = install wrote both rows in one transaction (one now()), so the last
+            // write to this settings DRAFT was an upload, not another manager's save (bm80).
+            if (layoutDraft && layoutDraft.token === draft.token) {
+              return {
+                ok: false,
+                code: "DRAFT_LAYOUT_REPLACED",
+                draftToken: draft.token,
+              };
+            }
             return { ok: false, code: "DRAFT_CONFLICT" };
           }
           const token =

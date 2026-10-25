@@ -1,19 +1,27 @@
 import { db } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
-import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
+import {
+  billTemplateVersionRepository,
+  type TemplateDraftRow,
+} from "@/db/repositories/billing/bill-template-version";
 import { logger } from "@/lib/logger";
 import { blobStore } from "@/services/billing/blob-store";
 import { sha256 } from "@/services/billing/invoice-template/checksum-index";
 import type {
+  ExpectedDraft,
   InvoiceTemplateStructure,
+  LayoutPageSetup,
   UploadLayoutPackageResult,
 } from "@/types/billing";
 import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-template-structure.schema";
 import type { LayoutManifest } from "@/validation/billing/layout-manifest.schema";
 
 // bm78 (Inv #59) — the ONLY writer of layout DRAFT rows, their blobs and the settings
-// DRAFT that points at them. bm80 adds the in-place overwrite branch here.
+// DRAFT that points at them. bm80 adds the in-place overwrite: the open layout
+// DRAFT the warning named keeps its row and version_no and takes the new files
+// (a new content-addressed folder; the replaced files stay in the blob store),
+// and the settings DRAFT is kept with its token bumped (Inv #59, #62).
 //
 // Blobs first, rows second: every file is written write-once under a
 // content-addressed directory (the digest of the package's own checksums.json),
@@ -43,6 +51,28 @@ class InstallRollback extends Error {
   }
 }
 
+// bm80 — the expected draft against the type's open layout DRAFT (read with
+// its token). `"stale"` is DRAFT_CHANGED_SINCE_WARNING: a draft appeared since
+// the dialog opened, someone overwrote the warned-about one, or it was
+// activated, discarded or replaced. The service checks without a lock and
+// install re-checks under the type lock.
+export function matchExpectedDraft(
+  openLayoutDraft: Pick<
+    TemplateDraftRow,
+    "billTemplateVersionId" | "token"
+  > | null,
+  expectedDraft: ExpectedDraft,
+): "create" | "overwrite" | "stale" {
+  if ("none" in expectedDraft) {
+    return openLayoutDraft === null ? "create" : "stale";
+  }
+  return openLayoutDraft !== null &&
+    openLayoutDraft.billTemplateVersionId === expectedDraft.versionId &&
+    openLayoutDraft.token === expectedDraft.lastModified
+    ? "overwrite"
+    : "stale";
+}
+
 export async function installLayoutPackage(args: {
   familyId: string;
   layoutCode: string;
@@ -51,6 +81,8 @@ export async function installLayoutPackage(args: {
   manifest: LayoutManifest;
   indexDigest: string;
   actorId: string;
+  mode: "create" | "overwrite";
+  expectedDraft: ExpectedDraft;
 }): Promise<UploadLayoutPackageResult> {
   const {
     familyId,
@@ -60,6 +92,8 @@ export async function installLayoutPackage(args: {
     manifest,
     indexDigest,
     actorId,
+    mode,
+    expectedDraft,
   } = args;
   const dir = `layouts/${layoutCode}/v${versionNo}-${indexDigest.slice(0, 12)}`;
 
@@ -99,21 +133,37 @@ export async function installLayoutPackage(args: {
         // Serialises with save-draft, which takes only this advisory lock.
         await billTemplateVersionRepository.lockKind(tx, { kind: "generated" });
 
-        const openLayout = await billTemplateVersionRepository.findDraft(tx, {
+        // Re-read the type's layout DRAFT under a row lock, with its token: the
+        // request must still match the mode the service chose (bm80).
+        const found = await billTemplateVersionRepository.findDraft(tx, {
           kind: "layout",
           familyId,
         });
-        const next = await billTemplateVersionRepository.nextVersionNo(tx, {
-          kind: "layout",
-          familyId,
-        });
-        if (openLayout || next !== versionNo) {
+        const current = found
+          ? await billTemplateVersionRepository.findDraftForUpdate(
+              tx,
+              found.billTemplateVersionId,
+            )
+          : null;
+        if (matchExpectedDraft(current, expectedDraft) !== mode) {
           throw new InstallRollback("DRAFT_CHANGED_SINCE_WARNING");
         }
 
-        const layout = await billTemplateVersionRepository.insertLayoutDraft(
-          tx,
-          {
+        let layout: { billTemplateVersionId: string; blobRef: string | null };
+        let previous: {
+          blobRef: string | null;
+          checksum: string | null;
+          pageSetup: LayoutPageSetup | null;
+        } | null = null;
+        if (mode === "create") {
+          const next = await billTemplateVersionRepository.nextVersionNo(tx, {
+            kind: "layout",
+            familyId,
+          });
+          if (next !== versionNo) {
+            throw new InstallRollback("DRAFT_CHANGED_SINCE_WARNING");
+          }
+          layout = await billTemplateVersionRepository.insertLayoutDraft(tx, {
             familyId,
             layoutCode,
             versionNo,
@@ -121,8 +171,31 @@ export async function installLayoutPackage(args: {
             blobRef: `${CONTAINER}/${dir}/`,
             checksum: indexDigest,
             createdBy: actorId,
-          },
-        );
+          });
+        } else {
+          // matchExpectedDraft returned "overwrite": both are set.
+          if (!current || "none" in expectedDraft) {
+            throw new InstallRollback("DRAFT_CHANGED_SINCE_WARNING");
+          }
+          const overwritten =
+            await billTemplateVersionRepository.overwriteLayoutDraft(tx, {
+              id: current.billTemplateVersionId,
+              expectedToken: expectedDraft.lastModified,
+              blobRef: `${CONTAINER}/${dir}/`,
+              checksum: indexDigest,
+              pageSetup: manifest.pageSetup,
+              actorId,
+            });
+          if (overwritten === null) {
+            throw new InstallRollback("DRAFT_CHANGED_SINCE_WARNING");
+          }
+          layout = overwritten.row;
+          previous = {
+            blobRef: current.blobRef,
+            checksum: current.checksum,
+            pageSetup: current.pageSetup,
+          };
+        }
 
         // The settings DRAFT: re-point the open one (bumping its token, Inv #62),
         // or create one from known values.
@@ -195,15 +268,18 @@ export async function installLayoutPackage(args: {
           actorUserId: actorId,
           targetEntity: "BILL_TEMPLATE_VERSION",
           targetId: layout.billTemplateVersionId,
-          beforeData: null,
+          beforeData: previous,
           afterData: {
             familyId,
             versionNo,
-            replaced: false,
+            replaced: mode === "overwrite",
             blobRef: layout.blobRef,
             checksum: indexDigest,
+            pageSetup: manifest.pageSetup,
             fileCount: files.size,
             settingsDraftId,
+            previousBlobRef: previous?.blobRef ?? null,
+            previousChecksum: previous?.checksum ?? null,
           },
         });
 
@@ -211,7 +287,7 @@ export async function installLayoutPackage(args: {
           ok: true,
           versionId: layout.billTemplateVersionId,
           versionNo,
-          replaced: false,
+          replaced: mode === "overwrite",
         };
       },
     );

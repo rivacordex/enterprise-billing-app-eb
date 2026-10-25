@@ -16,6 +16,7 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
     findDefault: vi.fn(),
     findById: vi.fn(),
     findDraft: vi.fn(),
+    findDraftWithModifier: vi.fn(),
     findLatestDraftSaver: vi.fn(),
     listForKind: vi.fn(),
     listActiveSettingsByFamily: vi.fn(),
@@ -111,6 +112,8 @@ beforeEach(() => {
         : null,
   );
   repo.findDraft.mockResolvedValue(DRAFT_ROW);
+  // bm80 — no open layout DRAFT unless a case adds one.
+  repo.findDraftWithModifier.mockResolvedValue(null);
   repo.findLatestDraftSaver.mockResolvedValue("Draft Saver");
   familyRepo.findById.mockImplementation(async (_db, id) =>
     id === STANDARD ? STANDARD_FAMILY : null,
@@ -144,6 +147,31 @@ describe("getInvoiceTemplatePageData: the type from the URL (bm66, bm77)", () =>
       isDefaultType: true,
       layoutCode: "INVTPL-STD-A4",
       nextLayoutVersionNo: 2,
+    });
+  });
+
+  it("bm80 — carries the open layout DRAFT's version, token, last change and author (the overwrite warning's server data)", async () => {
+    const modified = new Date("2026-10-25T03:04:05.000Z");
+    repo.findDraftWithModifier.mockResolvedValue({
+      ...SEEDED_LAYOUT_ROW,
+      billTemplateVersionId: "BTV00000010",
+      versionNo: 2,
+      status: "DRAFT",
+      lastModifiedDatetime: modified,
+      token: "2026-10-25T03:04:05.123456Z",
+      lastModifiedByName: "a deleted user",
+    });
+    const data = await page(undefined, true);
+    expect(data?.openLayoutDraft).toEqual({
+      versionId: "BTV00000010",
+      versionNo: 2,
+      token: "2026-10-25T03:04:05.123456Z",
+      lastModifiedDatetime: modified,
+      lastModifiedByName: "a deleted user",
+    });
+    expect(repo.findDraftWithModifier).toHaveBeenCalledWith(expect.anything(), {
+      kind: "layout",
+      familyId: STANDARD,
     });
   });
 

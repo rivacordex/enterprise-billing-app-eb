@@ -1,14 +1,16 @@
 // bm78 review fix (code-standards › Invoice Template Types, Next.js rule 4) —
 // `UploadLayoutDialog` re-fetches the page on EVERY `ok: false`, keeping each
 // code's message / problem list; a refusal whose re-fetch reveals an open
-// layout DRAFT (the Dialog unmounts) keeps its message visible.
+// layout DRAFT keeps its message visible. bm80: an open layout DRAFT turns the
+// dialog into the overwrite `AlertDialog` with the exact warning from server
+// data, and the request names the warned-about DRAFT.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const refresh = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
-vi.mock("sonner", () => ({ toast: { warning: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { warning: vi.fn(), success: vi.fn() } }));
 vi.mock(
   "@/actions/billing/invoice-settings/upload-layout-package.action",
   () => ({ uploadLayoutPackageAction: vi.fn() }),
@@ -17,16 +19,39 @@ vi.mock(
 import { toast } from "sonner";
 
 import { uploadLayoutPackageAction } from "@/actions/billing/invoice-settings/upload-layout-package.action";
-import { TEMPLATE_TYPE_MESSAGES } from "@/components/billing/invoice-settings/template-type-messages";
+import {
+  OVERWRITE_WARNING,
+  TEMPLATE_TYPE_MESSAGES,
+} from "@/components/billing/invoice-settings/template-type-messages";
 import { UploadLayoutDialog } from "@/components/billing/invoice-settings/upload-layout-dialog";
+import { formatDatetime } from "@/lib/formatters";
+import type { OpenLayoutDraftInfo } from "@/types/billing";
 
 const mockUpload = vi.mocked(uploadLayoutPackageAction);
-const PROPS = { familyId: "BTF00000002", nextVersionNo: 1 };
+const PROPS = {
+  familyId: "BTF00000002",
+  nextVersionNo: 1,
+  locale: "en-MY",
+  timezone: "Asia/Kuala_Lumpur",
+};
+const MODIFIED = new Date("2026-10-25T03:04:05.000Z");
+const OPEN_DRAFT: OpenLayoutDraftInfo = {
+  versionId: "BTV00000010",
+  versionNo: 1,
+  token: "2026-10-25T03:04:05.123456Z",
+  lastModifiedDatetime: MODIFIED,
+  lastModifiedByName: "Aisyah",
+};
+const FORMATTED = formatDatetime(MODIFIED, PROPS.locale, PROPS.timezone);
 
-async function submit(): Promise<void> {
+function openTrigger(): void {
   fireEvent.click(
     screen.getByRole("button", { name: TEMPLATE_TYPE_MESSAGES.uploadTrigger }),
   );
+}
+
+async function submit(confirm = "Create draft v1"): Promise<void> {
+  openTrigger();
   fireEvent.change(
     screen.getByLabelText(TEMPLATE_TYPE_MESSAGES.uploadFileLabel),
     {
@@ -36,14 +61,21 @@ async function submit(): Promise<void> {
     },
   );
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Create draft v1" }));
+    fireEvent.click(screen.getByRole("button", { name: confirm }));
   });
+}
+
+function sentForm(): FormData {
+  const call = mockUpload.mock.calls[0];
+  if (!call) throw new Error("the action was not called");
+  return call[0];
 }
 
 beforeEach(() => {
   refresh.mockReset();
   mockUpload.mockReset();
   vi.mocked(toast.warning).mockReset();
+  vi.mocked(toast.success).mockReset();
 });
 
 describe("UploadLayoutDialog — refusals (bm78 review fix)", () => {
@@ -89,7 +121,7 @@ describe("UploadLayoutDialog — refusals (bm78 review fix)", () => {
     },
   );
 
-  it("DRAFT_CHANGED_SINCE_WARNING stays visible after the re-fetch reveals an open layout draft", async () => {
+  it("DRAFT_CHANGED_SINCE_WARNING stays visible after the re-fetch reveals an open layout draft, which turns the dialog into the warning (bm80)", async () => {
     mockUpload.mockResolvedValue({
       ok: false,
       code: "DRAFT_CHANGED_SINCE_WARNING",
@@ -101,16 +133,21 @@ describe("UploadLayoutDialog — refusals (bm78 review fix)", () => {
     await submit();
     expect(refresh).toHaveBeenCalledOnce();
     // The refreshed page now carries another user's layout DRAFT.
-    rerender(
-      <UploadLayoutDialog
-        {...PROPS}
-        openLayoutDraft={{ versionId: "BTV00000010", versionNo: 1 }}
-      />,
+    rerender(<UploadLayoutDialog {...PROPS} openLayoutDraft={OPEN_DRAFT} />);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByTestId("overwrite-warning")).toHaveTextContent(
+      OVERWRITE_WARNING(1, FORMATTED, "Aisyah"),
     );
-    expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent(
       TEMPLATE_TYPE_MESSAGES.uploadDraftChanged,
     );
+    // The selected file belonged to the old state: the confirm waits for a
+    // new one.
+    expect(
+      screen.getByRole("button", {
+        name: TEMPLATE_TYPE_MESSAGES.overwriteConfirm,
+      }),
+    ).toBeDisabled();
     // Owner decision — also a Warning toast, which survives a remount (an
     // empty type's dialog moves from the empty-state alert to the heading).
     expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
@@ -118,37 +155,7 @@ describe("UploadLayoutDialog — refusals (bm78 review fix)", () => {
     );
   });
 
-  it("review fix — once the revealed draft is gone, the Dialog does not re-open by itself, and a new open starts clean", async () => {
-    mockUpload.mockResolvedValue({
-      ok: false,
-      code: "DRAFT_CHANGED_SINCE_WARNING",
-      problems: [],
-    });
-    const { rerender } = render(
-      <UploadLayoutDialog {...PROPS} openLayoutDraft={null} />,
-    );
-    await submit();
-    rerender(
-      <UploadLayoutDialog
-        {...PROPS}
-        openLayoutDraft={{ versionId: "BTV00000010", versionNo: 1 }}
-      />,
-    );
-    // That draft is discarded: the trigger is back, and nothing pops open.
-    rerender(<UploadLayoutDialog {...PROPS} openLayoutDraft={null} />);
-    expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: TEMPLATE_TYPE_MESSAGES.uploadTrigger,
-      }),
-    );
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Create draft v1" }),
-    ).toBeDisabled();
-  });
-
-  it("success closes and re-fetches", async () => {
+  it("success closes, toasts the created draft and re-fetches", async () => {
     mockUpload.mockResolvedValue({
       ok: true,
       versionId: "BTV00000010",
@@ -159,5 +166,109 @@ describe("UploadLayoutDialog — refusals (bm78 review fix)", () => {
     await submit();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(refresh).toHaveBeenCalledOnce();
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Draft v1 created");
+  });
+
+  it("bm80 — without an open draft the FormData carries no expected-draft fields", async () => {
+    mockUpload.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000010",
+      versionNo: 1,
+      replaced: false,
+    });
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={null} />);
+    await submit();
+    expect(sentForm().has("expectedDraftVersionId")).toBe(false);
+    expect(sentForm().has("expectedDraftToken")).toBe(false);
+  });
+});
+
+describe("UploadLayoutDialog — overwrite an open draft (bm80)", () => {
+  it("shows the exact warning (version, formatted date, user) in an AlertDialog with the Overwrite draft confirm in the danger role", () => {
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={OPEN_DRAFT} />);
+    openTrigger();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByTestId("overwrite-warning")).toHaveTextContent(
+      `This type already has a draft (layout v1, last changed ${FORMATTED} by Aisyah). Uploading will overwrite the existing draft layout. Your draft settings (Payment and footnote) are kept.`,
+    );
+    const confirm = screen.getByRole("button", { name: "Overwrite draft" });
+    expect(confirm).toHaveAttribute("data-variant", "destructive");
+    expect(confirm).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Create draft v1" }),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["a deleted uploader", "a deleted user", "a deleted user"],
+    ["no recorded writer", null, "an unknown user"],
+  ] as const)("%s shows %s", (_c, name, shown) => {
+    render(
+      <UploadLayoutDialog
+        {...PROPS}
+        openLayoutDraft={{ ...OPEN_DRAFT, lastModifiedByName: name }}
+      />,
+    );
+    openTrigger();
+    expect(screen.getByTestId("overwrite-warning")).toHaveTextContent(
+      OVERWRITE_WARNING(1, FORMATTED, shown),
+    );
+  });
+
+  it("the FormData carries both expected fields from the prop; success toasts the replace", async () => {
+    mockUpload.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000010",
+      versionNo: 1,
+      replaced: true,
+    });
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={OPEN_DRAFT} />);
+    await submit("Overwrite draft");
+    expect(sentForm().get("familyId")).toBe("BTF00000002");
+    expect(sentForm().get("expectedDraftVersionId")).toBe("BTV00000010");
+    expect(sentForm().get("expectedDraftToken")).toBe(OPEN_DRAFT.token);
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Draft v1 replaced");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("DRAFT_CHANGED_SINCE_WARNING shows the reason, re-fetches, and warns again with the new server data", async () => {
+    mockUpload.mockResolvedValue({
+      ok: false,
+      code: "DRAFT_CHANGED_SINCE_WARNING",
+      problems: [],
+    });
+    const { rerender } = render(
+      <UploadLayoutDialog {...PROPS} openLayoutDraft={OPEN_DRAFT} />,
+    );
+    await submit("Overwrite draft");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The draft changed since this warning was shown. Review the updated warning and try again.",
+    );
+    expect(refresh).toHaveBeenCalledOnce();
+    // Another manager overwrote it meanwhile: a newer token, another author.
+    const later = new Date("2026-10-25T05:00:00.000Z");
+    rerender(
+      <UploadLayoutDialog
+        {...PROPS}
+        openLayoutDraft={{
+          ...OPEN_DRAFT,
+          token: "2026-10-25T05:00:00.654321Z",
+          lastModifiedDatetime: later,
+          lastModifiedByName: "Ben",
+        }}
+      />,
+    );
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByTestId("overwrite-warning")).toHaveTextContent(
+      OVERWRITE_WARNING(
+        1,
+        formatDatetime(later, PROPS.locale, PROPS.timezone),
+        "Ben",
+      ),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      TEMPLATE_TYPE_MESSAGES.overwriteStale,
+    );
   });
 });

@@ -63,6 +63,7 @@ import { COMPLIANCE_SECTION_KEYS } from "@/services/billing/invoice-template/com
 import type { renderAndReadSections } from "@/services/billing/invoice-template/compliance-render";
 import {
   checkLayoutPackage,
+  matchExpectedDraft,
   readZip,
 } from "@/services/billing/invoice-template/upload-layout-package";
 import {
@@ -512,6 +513,76 @@ describe("bm78 layout package gate — stage 3, manifest (blocking)", () => {
     );
     expect(codes(problems)).toEqual(["MANIFEST_INVALID"]);
     expect(render).not.toHaveBeenCalled();
+  });
+});
+
+describe("bm80 — stage 3 against an open DRAFT's own number (overwrite)", () => {
+  // The type has an open layout DRAFT v2: an overwrite expects v2 again, not
+  // max + 1.
+  const OVERWRITE_CTX = { layoutCode: CODE, expectedVersionNo: 2 };
+
+  it("a package exported as v2 passes stage 3", async () => {
+    const built = pkg({ layoutVersion: 2 });
+    const result = await checkLayoutPackage(
+      built.zip,
+      OVERWRITE_CTX,
+      cleanRender(),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("a package numbered max + 1 is LAYOUT_VERSION_MISMATCH", async () => {
+    const built = pkg({ layoutVersion: 3 });
+    const problems = problemsOf(
+      await checkLayoutPackage(built.zip, OVERWRITE_CTX, cleanRender()),
+    );
+    expect(problems).toEqual([
+      expect.objectContaining({
+        code: "LAYOUT_VERSION_MISMATCH",
+        message: expect.stringMatching(/3.*2/),
+      }),
+    ]);
+  });
+});
+
+describe("bm80 — matchExpectedDraft (the expected-draft table)", () => {
+  const TOKEN = "2026-10-25T01:02:03.123456Z";
+  const DRAFT = { billTemplateVersionId: "BTV00000010", token: TOKEN };
+
+  it.each([
+    ["{ none } and no layout DRAFT → create", null, { none: true }, "create"],
+    [
+      "{ none } and a layout DRAFT → stale (one appeared)",
+      DRAFT,
+      { none: true },
+      "stale",
+    ],
+    [
+      "that DRAFT with that token → overwrite",
+      DRAFT,
+      { versionId: "BTV00000010", lastModified: TOKEN },
+      "overwrite",
+    ],
+    [
+      "that DRAFT with a newer token → stale (overwritten since the warning)",
+      { ...DRAFT, token: "2026-10-25T01:02:04.000001Z" },
+      { versionId: "BTV00000010", lastModified: TOKEN },
+      "stale",
+    ],
+    [
+      "no layout DRAFT → stale (activated or discarded)",
+      null,
+      { versionId: "BTV00000010", lastModified: TOKEN },
+      "stale",
+    ],
+    [
+      "another DRAFT → stale (replaced)",
+      { ...DRAFT, billTemplateVersionId: "BTV00000011" },
+      { versionId: "BTV00000010", lastModified: TOKEN },
+      "stale",
+    ],
+  ] as const)("%s", (_c, open, expected, mode) => {
+    expect(matchExpectedDraft(open, expected)).toBe(mode);
   });
 });
 

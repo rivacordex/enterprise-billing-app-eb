@@ -12,6 +12,7 @@ import {
   InvoiceRenderError,
   type InvoiceErrorCode,
   type InvoiceTemplateStructure,
+  type OpenLayoutDraftInfo,
   type RecentPostedBill,
   type TemplateDraftInfo,
   type TemplateTypeListRow,
@@ -39,9 +40,9 @@ export interface InvoiceTemplateTypeHeader {
   layoutCode: string;
   // The version the type's next layout upload gets (bm78): max + 1, or 1.
   nextLayoutVersionNo: number;
-  // bm78 — the type's open layout DRAFT (an upload not yet activated). While
-  // one exists the Upload trigger is disabled (bm80 adds the overwrite path).
-  openLayoutDraft: { versionId: string; versionNo: number } | null;
+  // bm78 — the type's open layout DRAFT (an upload not yet activated). bm80:
+  // with its token and last writer, the overwrite warning's server data.
+  openLayoutDraft: OpenLayoutDraftInfo | null;
 }
 
 // The type has settings: today's editor data.
@@ -154,36 +155,46 @@ export async function getInvoiceTemplatePageData(
   const type = await billTemplateFamilyRepository.findById(db, typeId);
   if (!type) return null;
   const familyId = type.billTemplateFamilyId;
-  const [active, fallback, selected, generatedRows, layoutRows, draftRow] =
-    await Promise.all([
-      billTemplateVersionRepository.findActive(db, {
-        kind: "generated",
-        familyId,
-      }),
-      billTemplateVersionRepository.findDefault(db, {
-        kind: "generated",
-        familyId,
-      }),
-      versionId === undefined
-        ? Promise.resolve(null)
-        : billTemplateVersionRepository.findById(db, versionId),
-      billTemplateVersionRepository.listForKind(db, {
-        kind: "generated",
-        familyId,
-      }),
-      billTemplateVersionRepository.listForKind(db, {
-        kind: "layout",
-        withUsage: false,
-        familyId,
-      }),
-      canEdit
-        ? billTemplateVersionRepository.findDraft(db, {
-            kind: "generated",
-            familyId,
-          })
-        : Promise.resolve(null),
-    ]);
-  const openLayout = layoutRows.find((l) => l.status === "DRAFT") ?? null;
+  const [
+    active,
+    fallback,
+    selected,
+    generatedRows,
+    layoutRows,
+    draftRow,
+    openLayout,
+  ] = await Promise.all([
+    billTemplateVersionRepository.findActive(db, {
+      kind: "generated",
+      familyId,
+    }),
+    billTemplateVersionRepository.findDefault(db, {
+      kind: "generated",
+      familyId,
+    }),
+    versionId === undefined
+      ? Promise.resolve(null)
+      : billTemplateVersionRepository.findById(db, versionId),
+    billTemplateVersionRepository.listForKind(db, {
+      kind: "generated",
+      familyId,
+    }),
+    billTemplateVersionRepository.listForKind(db, {
+      kind: "layout",
+      withUsage: false,
+      familyId,
+    }),
+    canEdit
+      ? billTemplateVersionRepository.findDraft(db, {
+          kind: "generated",
+          familyId,
+        })
+      : Promise.resolve(null),
+    billTemplateVersionRepository.findDraftWithModifier(db, {
+      kind: "layout",
+      familyId,
+    }),
+  ]);
 
   const current = active ?? fallback;
   const header: InvoiceTemplateTypeHeader = {
@@ -198,6 +209,9 @@ export async function getInvoiceTemplatePageData(
       ? {
           versionId: openLayout.billTemplateVersionId,
           versionNo: openLayout.versionNo,
+          token: openLayout.token,
+          lastModifiedDatetime: openLayout.lastModifiedDatetime,
+          lastModifiedByName: openLayout.lastModifiedByName,
         }
       : null,
   };

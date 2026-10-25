@@ -236,6 +236,44 @@ export const billTemplateVersionRepository = {
     return row ? { ...row.version, token: row.token } : null;
   },
 
+  // bm80 — `findDraft` plus the name of the DRAFT's last writer, for the
+  // overwrite warning (code-standards › Invoice Template Types, Next.js rule
+  // 5). A LEFT join: a since-deleted writer is "a deleted user" (the
+  // `findLatestDraftSaver` wording); no recorded writer is `null`.
+  async findDraftWithModifier(
+    db: Database,
+    { kind, familyId }: { kind: TemplateKind; familyId?: string },
+  ): Promise<
+    (TemplateDraftRow & { lastModifiedByName: string | null }) | null
+  > {
+    const [row] = await db
+      .select({
+        version: billTemplateVersion,
+        token: draftToken,
+        name: appuser.userName,
+      })
+      .from(billTemplateVersion)
+      .leftJoin(
+        appuser,
+        sql`${appuser.id} = ${billTemplateVersion.lastModifiedBy}`,
+      )
+      .where(
+        and(
+          eq(billTemplateVersion.refBillFormatId, INVOICE),
+          eq(billTemplateVersion.kind, kind),
+          familyScope(familyId),
+          eq(billTemplateVersion.status, "DRAFT"),
+        ),
+      )
+      .limit(1);
+    if (!row) return null;
+    const lastModifiedByName =
+      row.version.lastModifiedBy === null
+        ? null
+        : (row.name ?? "a deleted user");
+    return { ...row.version, token: row.token, lastModifiedByName };
+  },
+
   // bm57 D1 — first save: insert the working DRAFT. No files
   // (`btv_draft_has_no_files`, which applies to settings DRAFTs only since
   // bm74), never the default. A concurrent first save is refused by
@@ -314,6 +352,48 @@ export const billTemplateVersionRepository = {
       });
     if (!row) throw new Error("insertLayoutDraft returned no row");
     return row;
+  },
+
+  // bm80 (Inv #59) — layout DRAFT → DRAFT, in place: same row and version_no, new files.
+  // Called only by install-layout-package.ts (guardrail 68). null → the token moved.
+  // The bm74 guard allows exactly these columns on a layout DRAFT → DRAFT;
+  // `change_note` stays NULL.
+  async overwriteLayoutDraft(
+    tx: Database,
+    input: {
+      id: string;
+      expectedToken: string;
+      blobRef: string;
+      checksum: string;
+      pageSetup: LayoutPageSetup;
+      actorId: string;
+    },
+  ): Promise<{ row: BillTemplateVersion; token: string } | null> {
+    const [row] = await tx
+      .update(billTemplateVersion)
+      .set({
+        blobRef: input.blobRef,
+        checksum: input.checksum,
+        checksumAlgorithm: "sha256",
+        pageSetup: input.pageSetup,
+        lastModifiedDatetime: sql`now()`,
+        lastModifiedBy: input.actorId,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, input.id),
+          eq(billTemplateVersion.kind, "layout"),
+          eq(billTemplateVersion.status, "DRAFT"),
+          sql`${draftToken} = ${input.expectedToken}`,
+        ),
+      )
+      .returning({
+        ...getTableColumns(billTemplateVersion),
+        token: draftToken,
+      });
+    if (!row) return null;
+    const { token, ...version } = row;
+    return { row: version, token };
   },
 
   // bm78 (Inv #62) — point the settings DRAFT at a new layout DRAFT. Bumps the

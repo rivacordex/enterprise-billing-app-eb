@@ -228,6 +228,22 @@ describe("saveTemplateDraftAction", () => {
     expect(mockRevalidate).not.toHaveBeenCalled();
   });
 
+  it("bm80 — maps DRAFT_LAYOUT_REPLACED through unchanged, with the current token, without revalidating", async () => {
+    const replaced = {
+      ok: false as const,
+      code: "DRAFT_LAYOUT_REPLACED" as const,
+      draftToken: "2026-10-25T04:05:06.654321Z",
+    };
+    mockService.mockResolvedValue(replaced);
+    const result = await saveTemplateDraftAction({
+      structure: STRUCTURE,
+      expectedDraftToken: TOKEN,
+      familyId: "BTF00000001",
+    });
+    expect(result).toEqual(replaced);
+    expect(mockRevalidate).not.toHaveBeenCalled();
+  });
+
   it("maps a service throw to SERVER_ERROR", async () => {
     mockService.mockRejectedValue(new Error("boom"));
     const result = await saveTemplateDraftAction({

@@ -18,7 +18,8 @@ import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 // preview is unchanged. bm79 review fix: without `draft` (a READ user, or a
 // version opened from history) the preview never shows the draft. The upload's probe render is injected clean (the e2e suite proves
 // the real one). The services use the `@/db/client` singleton, so it is
-// replaced with one built on the test client.
+// replaced with one built on the test client. bm80 (guardrail 70): after an
+// in-place overwrite of DRAFT v1, the same preview renders the NEW files.
 const databaseUrl = process.env.DATABASE_URL;
 const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
 
@@ -29,6 +30,7 @@ vi.mock("@/db/client", () => ({
   },
 }));
 
+import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
 import type {
   ComplianceSectionKey,
@@ -53,6 +55,8 @@ const ACTOR = "bm78-preview-actor";
 const STANDARD = "BTF00000001";
 // A marker only the uploaded Wholesale layout prints.
 const MARKER = "Wholesale draft layout";
+// bm80 — a marker only the overwriting package prints.
+const MARKER_2 = "Wholesale overwritten layout";
 
 const STRUCTURE: InvoiceTemplateStructure = {
   sections: { payment: true },
@@ -203,6 +207,54 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(result.templateLabel).not.toContain("(draft)");
       expect(result.templateLabel).not.toContain("INVTPL-WHOLESALE");
       expect(result.templateLabel).toContain("INVTPL-STD-A4");
+      expect(result.html).not.toContain(MARKER);
+    });
+
+    // Last: it replaces the draft the cases above preview.
+    it("bm80 (guardrail 70) — after an in-place overwrite of DRAFT v1 the preview renders the new files, not the replaced ones", async () => {
+      const db = hoisted.holder.db as Database;
+      const open = await billTemplateVersionRepository.findDraft(db, {
+        kind: "layout",
+        familyId: wholesaleId,
+      });
+      if (!open) throw new Error("no layout draft");
+      const overwritten = await uploadLayoutPackage(
+        {
+          familyId: wholesaleId,
+          zip: buildLayoutPackage({
+            layoutCode: "INVTPL-WHOLESALE",
+            layoutVersion: 1,
+            edit: (f) =>
+              replaceInFile(
+                f,
+                "partials/header.hbs",
+                "<h1>Invoice</h1>",
+                `<h1>Invoice</h1><p>${MARKER_2}</p>`,
+              ),
+          }).zip,
+          expectedDraft: {
+            versionId: open.billTemplateVersionId,
+            lastModified: open.token,
+          },
+        },
+        ACTOR,
+        { render: cleanRender },
+      );
+      expect(overwritten).toMatchObject({
+        ok: true,
+        versionId: open.billTemplateVersionId,
+        versionNo: 1,
+        replaced: true,
+      });
+
+      const result = await previewInvoiceTemplate({
+        structure: STRUCTURE,
+        source: "sample",
+        familyId: wholesaleId,
+        draft: true,
+      });
+      expect(result.templateLabel).toBe("INVTPL-WHOLESALE v1 (draft)");
+      expect(result.html).toContain(MARKER_2);
       expect(result.html).not.toContain(MARKER);
     });
   },

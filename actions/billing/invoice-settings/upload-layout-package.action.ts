@@ -32,7 +32,8 @@ export async function uploadLayoutPackageAction(
 
   const parsed = layoutUploadSchema.safeParse({
     familyId: formData.get("familyId"),
-    expectedDraft: formData.get("expectedDraft"),
+    expectedDraftVersionId: formData.get("expectedDraftVersionId"),
+    expectedDraftToken: formData.get("expectedDraftToken"),
     file: formData.get("file"),
   });
   if (!parsed.success) {

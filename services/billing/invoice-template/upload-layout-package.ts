@@ -19,7 +19,10 @@ import {
   generate,
   layoutFilesFromVerified,
 } from "@/services/billing/invoice-template/generate";
-import { installLayoutPackage } from "@/services/billing/invoice-template/install-layout-package";
+import {
+  installLayoutPackage,
+  matchExpectedDraft,
+} from "@/services/billing/invoice-template/install-layout-package";
 import { parseSampleData } from "@/services/billing/invoice-template/sample-data";
 import {
   LAYOUT_PACKAGE_FONT_FILE,
@@ -40,7 +43,8 @@ import {
 // rule 2) — the layout package GATE and the upload orchestration. The gate owns
 // no writes: only a fully clean package reaches `installLayoutPackage`, the one
 // writer (Inv #59). Stages 1–3 are blocking (later stages need valid files);
-// stages 4–7 collect every problem. The zip is read in memory with fflate,
+// stages 4–7 collect every problem. bm80: an upload over the type's open
+// layout DRAFT (the expected draft the warning named) overwrites it in place. The zip is read in memory with fflate,
 // never written to disk, in two passes: the central directory (no inflate),
 // then a streamed inflate with a running byte cap that trusts no declared size.
 
@@ -471,6 +475,10 @@ export async function checkLayoutPackage(
   };
 }
 
+// bm80 — `matchExpectedDraft` lives beside its second caller, install (an
+// import from here would be a cycle: this module imports install).
+export { matchExpectedDraft };
+
 export async function uploadLayoutPackage(
   input: { familyId: string; zip: Uint8Array; expectedDraft: ExpectedDraft },
   actorId: string,
@@ -482,22 +490,26 @@ export async function uploadLayoutPackage(
     return { ok: false, code: "TEMPLATE_TYPE_RETIRED", problems: [] };
   }
 
-  // One open layout draft at a time until bm80 adds the overwrite path. The
-  // expected version is computed, never typed: max over every layout row of
-  // the type (RETIRED included) + 1. Review fix — a plain read, no lock: an
-  // advisory xact lock here would run in autocommit and protect nothing;
-  // install re-checks both under its locks.
-  const layoutRows = await billTemplateVersionRepository.listForKind(db, {
+  // Review fix — plain reads, no lock: an advisory xact lock here would run
+  // in autocommit and protect nothing; install re-checks under its locks.
+  const openLayoutDraft = await billTemplateVersionRepository.findDraft(db, {
     kind: "layout",
-    withUsage: false,
     familyId: input.familyId,
   });
-  const openLayoutDraft = layoutRows.some((l) => l.status === "DRAFT");
-  if (openLayoutDraft && "none" in input.expectedDraft) {
+  const mode = matchExpectedDraft(openLayoutDraft, input.expectedDraft);
+  if (mode === "stale") {
     return { ok: false, code: "DRAFT_CHANGED_SINCE_WARNING", problems: [] };
   }
+  // The expected version is computed, never typed: an overwrite keeps the
+  // open DRAFT's number (the editor exports vN again to replace draft vN); a
+  // create is max over every layout row of the type (RETIRED included) + 1.
   const expectedVersionNo =
-    layoutRows.reduce((max, l) => Math.max(max, l.versionNo), 0) + 1;
+    mode === "overwrite" && openLayoutDraft
+      ? openLayoutDraft.versionNo
+      : await billTemplateVersionRepository.nextVersionNo(db, {
+          kind: "layout",
+          familyId: input.familyId,
+        });
 
   const gate = await checkLayoutPackage(
     input.zip,
@@ -516,5 +528,7 @@ export async function uploadLayoutPackage(
     manifest: gate.manifest,
     indexDigest: gate.indexDigest,
     actorId,
+    mode,
+    expectedDraft: input.expectedDraft,
   });
 }

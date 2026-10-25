@@ -38,7 +38,7 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**; **bm80 built**. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
@@ -99,6 +99,41 @@ fix (15 findings); owner decisions on the draft preview and the upload message.
   capture and preview to import a live resolver.
 - Results: unit 4848 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); integration 166/0
   (16 template suites + journey); Chromium e2e 27/0; admin browser e2e 5/0 after `next build`.
+
+**bm80 notes (2026-10-25):**
+
+- Upload over an open layout DRAFT: the FormData carries `expectedDraftVersionId` + `expectedDraftToken`
+  (both or neither); `matchExpectedDraft` (create / overwrite / stale) runs in the service without a lock and
+  again in install under the type lock on a `findDraftForUpdate` row; stage 3 expects the DRAFT's own
+  `version_no`. `overwriteLayoutDraft` changes only the files, checksum, page setup and `last_modified_*`,
+  guarded by kind, status and token; files land in a new `v<N>-<digest12>/` folder and the old ones stay.
+  The settings DRAFT is re-pointed as in bm78 (token bumped, structure kept). One
+  `INVOICE_TEMPLATE_LAYOUT_UPLOADED` with `replaced: true`, `beforeData` = previous `blobRef`/`checksum`/
+  `pageSetup`, `afterData.previousBlobRef`/`previousChecksum`.
+- Save draft: a stale token whose settings DRAFT token equals the layout DRAFT's is `DRAFT_LAYOUT_REPLACED`
+  with the current token; the form adopts it with no `reset`/`refresh`, shows the Warning alert and bumps
+  the preview. UI: `UploadLayoutDialog` is an `AlertDialog` with the exact warning (server data via
+  `findDraftWithModifier`, formatted with the app locale/timezone) and a danger "Overwrite draft"; bm78's
+  disabled trigger, its caption and `uploadDraftOpen` are gone.
+- **Deviation 1 — `matchExpectedDraft` is defined in `install-layout-package.ts`** and re-exported from
+  `upload-layout-package.ts`: defining it in the upload module made install import it back — the import
+  cycle bm79 Deviation 1 removed. Callers and tests import it from the upload module as specified.
+- **Deviation 2 — dialog behaviour on new server data:** when a refusal's re-fetch changes the open DRAFT
+  (appears, replaced, gone), the dialog stays open on the new data (warning or plain create form), keeps the
+  refusal message and drops the selected file — replacing bm78's review fix that closed it beside a
+  disabled trigger (that trigger no longer exists). bm78's two tests for it were rewritten accordingly.
+  The create path also toasts "Draft v{n} created" (bm78 had no success toast to reuse).
+- **Deviation 3 — small additions:** the form also clears the layout-replaced alert when it adopts a newer
+  server state (a Reload), not only on the next successful save; `ActivateTemplateErrorCode` excludes
+  `DRAFT_LAYOUT_REPLACED` (activation never returns it; the Activate message map is exhaustive); the
+  save-draft suite (DB-only, no Azurite) stands in for an upload by writing the layout DRAFT and the
+  re-point in one transaction through the repositories — the real upload's equal tokens are asserted in
+  the overwrite suite; the preview-after-overwrite case passes `draft: true` (bm79 review fix).
+- **Finding (resolved, owner decision) — a NULL author reads "an unknown user", as specified:**
+  `last_modified_by` is `ON DELETE SET NULL`, so a deleted uploader leaves NULL (layout DRAFTs are only
+  created by upload, which always records the writer) and the spec'd join-miss → "a deleted user" branch
+  can't occur. The owner kept "an unknown user" (`TEMPLATE_TYPE_MESSAGES.overwriteNoAuthor`) — accurate
+  in every NULL case, unlike "a deleted user" or "default seed"; the repository still returns `null`.
 
 **bm79 notes (2026-10-25):**
 
@@ -298,6 +333,7 @@ a compliance-only probe.
 | bm77 | Invoice template type list, create type, per-type detail page (`[typeId]`), `app_runtime` grant | **Built** (2026-10-25, `e251953`) — tsc/ESLint/Prettier clean; unit 4735 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) — incl. new template-types 9/0, list page 6/0, detail page 6/0, read service 13/0, authz matrix + nav guard + audit filters 39/0; integration on the disposable DB: 22 template/grant/invoice suites 250+/0 incl. new create-type 10/0, save-draft + activate 31/0, template journey 19/0; admin browser e2e 5/0 after a fresh `next build` (`RUN_INVOICE_SETTINGS_E2E=1`; the first run had one company-profile `waitFor` timeout, passed on rerun) |
 | bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`, draft-layout preview) | **Built** (2026-10-25, `6366487` fflate, `1f1c895`) — tsc/ESLint/Prettier clean; unit 4797 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new gate 35/0, load-layout-draft 14/0, single-layout-writer 5/0 (mutation-checked), authz matrix 32/0; integration on the disposable DB 83/0 incl. new upload 9/0, preview 2/0, capture +1 DRAFT-only case; Chromium e2e 26/0 incl. new upload gate 3/0 |
 | bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4829 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new discard action 15/0, Discard + discarded-row component cases, pair form cases 5/0, authz matrix + discard READ refusal; integration on the disposable DB 163/0 across 16 template suites incl. new pair activation 8/0 (guardrail 71 activation half, interleaved upload, compliance re-run, retired type, frozen files, Standard untouched), new discard 6/0, bm58 activate suite on the `STANDARD/` path, template journey; Chromium e2e 27/0 incl. new activation re-run 1/0; admin browser e2e 5/0 after a fresh `next build` |
+| bm80 | Overwrite an open layout draft by upload, with the warning (`overwriteLayoutDraft`, `DRAFT_LAYOUT_REPLACED`) | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4877 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 46/0 (`matchExpectedDraft` table + stage 3 at the DRAFT's number), upload dialog 12/0, structure form 54/0, upload + save-draft actions, read service 14/0, single-layout-writer (`overwriteLayoutDraft` added); integration on the disposable DB 179/0 across 19 template suites incl. new overwrite 7/0 (in place, stale warning, same bytes, stale Activate, activated meanwhile, two guardrail-71 races), upload +1 overwrite case, preview +1 (guardrail 70), save-draft +2 (`DRAFT_LAYOUT_REPLACED` / `DRAFT_CONFLICT`). Chromium and admin browser e2e not re-run (no gate, render or route change) |
 
 ## Delivered units
 
@@ -584,7 +620,7 @@ logs, test runs and the Inv #51–#58 code ↔ test audit are in this file's git
 - **After pulling grant-file changes:** re-run `db:bootstrap-billrun-roles`.
 - **DB verification:** run DB-gated suites + `db:seed-sample` only against a disposable/CI
   Postgres — never the shared dev DB (see test-safety gotchas).
-- **Deferred from the bm77–bm79 review (owner, 2026-10-25):** (a) one shared server-action guard
+- **Deferred from the bm77–bm79 review (owner, 2026-10-25; known-issues §30, improvements):** (a) one shared server-action guard
   (`requirePermission` + `isRedirectError` → FORBIDDEN/SERVER_ERROR), repeated in ~84 action files across
   every domain — its own cross-domain unit; (b) move the older template DB suites (bm58 activation,
   preview, capture, upload-logo) and `load.test.ts`'s blob mock onto

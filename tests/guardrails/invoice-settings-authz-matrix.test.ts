@@ -496,7 +496,6 @@ describe("invoice-settings authz matrix — a READ user's mutation is FORBIDDEN 
   function layoutForm(): FormData {
     const form = new FormData();
     form.set("familyId", "BTF00000002");
-    form.set("expectedDraft", "none");
     form.set(
       "file",
       new File([new Uint8Array([0x50, 0x4b, 0x05, 0x06])], "layout.zip", {

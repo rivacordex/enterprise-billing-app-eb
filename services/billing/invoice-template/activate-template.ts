@@ -81,7 +81,8 @@ function isReturnedRenderCode(
 
 export type ActivateTemplateErrorCode =
   | TemplateActivationErrorCode
-  | TemplateDraftErrorCode
+  // bm80 — only a save tells an upload apart from another manager's save.
+  | Exclude<TemplateDraftErrorCode, "DRAFT_LAYOUT_REPLACED">
   | ReturnedRenderCode
   | TemplatePairActivationErrorCode
   | "VALIDATION_ERROR";

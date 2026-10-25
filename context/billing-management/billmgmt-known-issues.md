@@ -1196,3 +1196,23 @@ That usage is now final as "billed" but was never invoiced, and no later run can
 **Mitigated:** approval no longer runs the informational checks (`zero_total_bills`, `orphan_count`, `prior_period_usage`) under the run lock; it runs the blocking checks only and re-runs the full list just to return a failed checklist (`approve-run.ts`, `runPreApprovalChecks(…, { informational: false })`). The approval page and the Exceptions tab still run these reads.
 
 **Deferred (cross-domain, rating):** a partial index on unclaimed live `RATED` rows, e.g. `(udr_subscription_ref_id, start_datetime) WHERE status = 'RATED' AND billrun_ban_id IS NULL AND is_live`. It is a rating-schema migration, owned by rating, and should be designed together with the Revenue Ops earlier-period dashboard (§28), which reads the same rows.
+
+## 30. 🔵 IMPROVEMENT (deferred, owner decision, 2026-10-25): two codebase clean-ups from the bm77–bm79 reviews
+
+Not defects: the code behaves correctly and the guardrails pass. These are maintainability improvements the bm77–bm79 code review (batch 2) raised and the owner deferred, so each can be done as its own unit.
+
+### 30a. One shared server-action guard (cross-domain)
+
+**What:** almost every Server Action (about 84 files under `actions/**`, every domain) opens with the same block: `requirePermission(PERMISSION, LEVEL)` in a `try`, then `isRedirectError(error)` → `FORBIDDEN`, any other error → `SERVER_ERROR`. bm78's upload action used a copied `guardEdit` helper from `upload-logo.action.ts`; the Sonar duplication follow-up replaced it with the inline block its sibling actions use, which is still a copy of that pattern.
+
+**ELI5:** every door in the building has its own hand-built lock that works the same way. One standard lock, fitted everywhere, would be easier to keep right.
+
+**Recommendation:** one helper in `auth/` (e.g. `guardAction(permission, level): Promise<{ ok: true; actorId } | { ok: false; code: "FORBIDDEN" | "SERVER_ERROR" }>`), adopted action by action. It touches every domain (billing, customer, product, rating, identity), so it needs its own unit and owner sign-off. The static authz guardrails (e.g. `tests/guardrails/invoice-settings-authz-matrix.test.ts`, which reads `requirePermission(PERMISSIONS.…, LEVELS.…)` from each action's source) must learn to recognise the helper in the same change.
+
+### 30b. Move the older template DB suites onto the shared harness
+
+**What:** bm79's review added `tests/db/helpers/template-type-db-harness.ts` (fresh migrated + seeded DB, guarded blob cleanup, upload / settings-draft / audit helpers) and `tests/helpers/in-memory-blob-store.ts`. The upload, pair-activation and discard suites use them; the older template suites still carry their own copies: `tests/db/activate-template.integration.test.ts` (bm58), `preview-invoice-template`, `run-template-capture`, the upload-logo suite, and `load.test.ts`'s blob-store mock.
+
+**ELI5:** we built one good test workbench, but some older tests still use their own home-made ones. They work, but a fix to the workbench (like the blob-cleanup safety check) doesn't reach them.
+
+**Recommendation:** move them over in one test-only change. Notably, the harness only deletes blobs after both store guards pass (Vitest runs `afterAll` even when `beforeAll` fails); the older copies still clean up whenever a blob client exists. Only the global `DESTRUCTIVE_DB_OK` + disposable-sentinel preflight protects them today. No production code changes.

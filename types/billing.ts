@@ -1265,9 +1265,12 @@ export const INVOICE_PROFILE_FIELD_LABELS: Readonly<Record<string, string>> = {
 // action ones. `DRAFT_CONFLICT`: the shared working draft changed since the
 // form loaded it (optimistic token mismatch) — never last-writer-wins.
 // `MANDATORY_SECTION_HIDDEN` is the structure schema's binding issue code.
+// `DRAFT_LAYOUT_REPLACED`: the settings DRAFT's last write was an upload (the
+// layout and settings tokens are equal), bm80.
 export const TEMPLATE_DRAFT_ERROR_CODES = [
   "DRAFT_CONFLICT",
   "MANDATORY_SECTION_HIDDEN",
+  "DRAFT_LAYOUT_REPLACED",
 ] as const;
 export type TemplateDraftErrorCode =
   (typeof TEMPLATE_DRAFT_ERROR_CODES)[number];
@@ -1453,6 +1456,18 @@ export type ExpectedDraft =
   | { none: true }
   | { versionId: string; lastModified: string };
 
+// bm80 (code-standards › Invoice Template Types, Next.js rule 5) — the type's
+// open layout DRAFT as the page reads it: the overwrite warning's data and the
+// expected-draft token the upload sends back. `lastModifiedByName` is "a
+// deleted user" for a since-deleted writer, `null` when none was recorded.
+export interface OpenLayoutDraftInfo {
+  versionId: string;
+  versionNo: number;
+  token: string;
+  lastModifiedDatetime: Date;
+  lastModifiedByName: string | null;
+}
+
 export type LayoutUploadErrorCode =
   | "FORBIDDEN"
   | "VALIDATION_ERROR"
@@ -1462,5 +1477,5 @@ export type LayoutUploadErrorCode =
   | "LAYOUT_REJECTED";
 
 export type UploadLayoutPackageResult =
-  | { ok: true; versionId: string; versionNo: number; replaced: false }
+  | { ok: true; versionId: string; versionNo: number; replaced: boolean }
   | { ok: false; code: LayoutUploadErrorCode; problems: LayoutProblem[] };
