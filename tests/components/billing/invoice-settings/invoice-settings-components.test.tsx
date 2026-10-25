@@ -25,6 +25,7 @@ import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/dr
 import { GeneratedHbsViewer } from "@/components/billing/invoice-settings/generated-hbs-viewer";
 import { InvoicePreviewFrame } from "@/components/billing/invoice-settings/invoice-preview-frame";
 import { InvoiceSettingsTabs } from "@/components/billing/invoice-settings/invoice-settings-tabs";
+import { TEMPLATE_TYPE_MESSAGES } from "@/components/billing/invoice-settings/template-type-messages";
 import { TemplateVersionStatusBadge } from "@/components/billing/invoice-settings/template-version-status-badge";
 import { VersionHistoryTable } from "@/components/billing/invoice-settings/version-history-table";
 import type { TemplateVersionHistoryRow } from "@/types/billing";
@@ -532,7 +533,9 @@ describe("VersionHistoryTable: Export (bm81)", () => {
 
   function exportOf(id: string): HTMLElement | null {
     const row = screen.getByText(id).closest("tr")!;
-    return within(row).queryByRole("link", { name: "Export" });
+    return within(row).queryByRole("link", {
+      name: TEMPLATE_TYPE_MESSAGES.exportLink,
+    });
   }
 
   function renderTable(canViewDrafts: boolean) {

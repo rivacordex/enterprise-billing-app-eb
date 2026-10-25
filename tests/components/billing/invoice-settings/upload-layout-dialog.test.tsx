@@ -22,12 +22,17 @@ import { toast } from "sonner";
 import { uploadLayoutPackageAction } from "@/actions/billing/invoice-settings/upload-layout-package.action";
 import {
   OVERWRITE_WARNING,
+  RESTORED_FROM,
   RESTORE_NOTE,
   TEMPLATE_TYPE_MESSAGES,
 } from "@/components/billing/invoice-settings/template-type-messages";
 import { UploadLayoutDialog } from "@/components/billing/invoice-settings/upload-layout-dialog";
 import { formatDatetime } from "@/lib/formatters";
-import type { OpenLayoutDraftInfo } from "@/types/billing";
+import {
+  LAYOUT_PACKAGE_MAX_BYTES,
+  LAYOUT_PACKAGE_SETTINGS_MAX_BYTES,
+  type OpenLayoutDraftInfo,
+} from "@/types/billing";
 
 const mockUpload = vi.mocked(uploadLayoutPackageAction);
 const PROPS = {
@@ -35,6 +40,7 @@ const PROPS = {
   nextVersionNo: 1,
   locale: "en-MY",
   timezone: "Asia/Kuala_Lumpur",
+  settingsDraftToken: null,
 };
 const MODIFIED = new Date("2026-10-25T03:04:05.000Z");
 const OPEN_DRAFT: OpenLayoutDraftInfo = {
@@ -317,22 +323,31 @@ describe("UploadLayoutDialog — restore note (bm81)", () => {
     await act(() => new Promise((r) => setTimeout(r, 50)));
   }
 
-  it.each([
-    ["the create Dialog", null],
-    ["the overwrite AlertDialog", OPEN_DRAFT],
-  ] as const)(
-    "a zip with a valid settings.json shows the note and 'Restored from v3' in %s",
-    async (_c, openLayoutDraft) => {
-      render(
-        <UploadLayoutDialog {...PROPS} openLayoutDraft={openLayoutDraft} />,
-      );
-      openTrigger();
-      await choose(zipWith(JSON.stringify(SETTINGS)));
-      const note = await screen.findByTestId("restore-note");
-      expect(note).toHaveTextContent(RESTORE_NOTE);
-      expect(note).toHaveTextContent("Restored from v3");
-    },
-  );
+  it("in the create Dialog a zip with a valid settings.json shows the note and the source version", async () => {
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={null} />);
+    openTrigger();
+    await choose(zipWith(JSON.stringify(SETTINGS)));
+    const note = await screen.findByTestId("restore-note");
+    expect(note).toHaveTextContent(RESTORE_NOTE);
+    expect(note).toHaveTextContent(RESTORED_FROM(3));
+  });
+
+  it("review fix (#3, D127) — over an open draft the warning says the settings will be replaced, never 'kept'", async () => {
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={OPEN_DRAFT} />);
+    openTrigger();
+    const warning = screen.getByTestId("overwrite-warning");
+    expect(warning).toHaveTextContent(/are kept\.$/);
+    await choose(zipWith(JSON.stringify(SETTINGS)));
+    await screen.findByTestId("restore-note");
+    expect(warning).toHaveTextContent(
+      OVERWRITE_WARNING(1, FORMATTED, "Aisyah", true),
+    );
+    expect(warning).not.toHaveTextContent("are kept");
+    // The note carries only the source version (no repeated sentence).
+    const note = screen.getByTestId("restore-note");
+    expect(note).toHaveTextContent(RESTORED_FROM(3));
+    expect(note).not.toHaveTextContent(RESTORE_NOTE);
+  });
 
   it.each([
     ["no settings.json", null],
@@ -342,9 +357,11 @@ describe("UploadLayoutDialog — restore note (bm81)", () => {
     ],
     ["a settings.json that is not JSON", "{not json"],
     [
-      "a valid settings.json over 64 KiB (never inflated)",
-      JSON.stringify(SETTINGS) + " ".repeat(64 * 1024),
+      "a valid settings.json over the settings budget (never inflated)",
+      JSON.stringify(SETTINGS) + " ".repeat(LAYOUT_PACKAGE_SETTINGS_MAX_BYTES),
     ],
+    // Review fix (#10) — the server keeps a UTF-8 BOM and refuses the JSON.
+    ["a BOM-prefixed settings.json", "﻿" + JSON.stringify(SETTINGS)],
   ])("a zip with %s shows no note", async (_c, settings) => {
     render(<UploadLayoutDialog {...PROPS} openLayoutDraft={null} />);
     openTrigger();
@@ -357,5 +374,67 @@ describe("UploadLayoutDialog — restore note (bm81)", () => {
     openTrigger();
     await choose(new File([enc("not a zip")], "layout.zip"));
     expect(screen.queryByTestId("restore-note")).toBeNull();
+  });
+
+  it("review fix (#8) — a file over the upload limit is never read", async () => {
+    const big = zipWith(JSON.stringify(SETTINGS));
+    Object.defineProperty(big, "size", {
+      value: LAYOUT_PACKAGE_MAX_BYTES + 1,
+    });
+    const read = vi.spyOn(big, "arrayBuffer");
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={null} />);
+    openTrigger();
+    await choose(big);
+    expect(read).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("restore-note")).toBeNull();
+  });
+
+  it("review fix (#7) — a slower, superseded read never erases the current file's note", async () => {
+    const slow = zipWith(null);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const original = slow.arrayBuffer.bind(slow);
+    vi.spyOn(slow, "arrayBuffer").mockImplementation(async () => {
+      await gate;
+      return original();
+    });
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={null} />);
+    openTrigger();
+    await choose(slow);
+    await choose(zipWith(JSON.stringify(SETTINGS)));
+    await screen.findByTestId("restore-note");
+    // The first file's read finishes last (it has no settings.json).
+    await act(async () => {
+      release();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(screen.getByTestId("restore-note")).toBeInTheDocument();
+  });
+});
+
+describe("UploadLayoutDialog — the settings token (bm81 review fix #2)", () => {
+  it("sends the settings DRAFT token the page loaded, and omits it when there is none", async () => {
+    mockUpload.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000010",
+      versionNo: 1,
+      replaced: false,
+    });
+    const token = "2026-10-25T03:04:05.654321Z";
+    const { unmount } = render(
+      <UploadLayoutDialog
+        {...PROPS}
+        settingsDraftToken={token}
+        openLayoutDraft={null}
+      />,
+    );
+    await submit();
+    expect(sentForm().get("expectedSettingsToken")).toBe(token);
+    unmount();
+
+    mockUpload.mockClear();
+    render(<UploadLayoutDialog {...PROPS} openLayoutDraft={null} />);
+    await submit();
+    expect(sentForm().has("expectedSettingsToken")).toBe(false);
   });
 });

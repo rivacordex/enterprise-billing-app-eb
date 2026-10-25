@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ExpectedDraft } from "@/types/billing";
+import { DRAFT_TOKEN_RE } from "@/validation/billing/invoice-template-structure.schema";
 import { templateFamilyIdSchema } from "@/validation/billing/template-family-id.schema";
 import { billTemplateVersionIdSchema } from "@/validation/billing/template-version-id.schema";
 
@@ -22,6 +23,9 @@ export const layoutUploadSchema = z
     familyId: templateFamilyIdSchema,
     expectedDraftVersionId: optionalField(billTemplateVersionIdSchema),
     expectedDraftToken: optionalField(z.string().min(1)),
+    // bm81 review fix (#2) — the settings DRAFT token the page loaded (absent:
+    // no settings DRAFT). A restore that would replace changed settings fails.
+    expectedSettingsToken: optionalField(z.string().regex(DRAFT_TOKEN_RE)),
     file: z
       .instanceof(File)
       .refine((f) => f.size >= 1, "the file is empty")
@@ -37,7 +41,13 @@ export const layoutUploadSchema = z
     },
   )
   .transform(
-    ({ familyId, expectedDraftVersionId, expectedDraftToken, file }) => {
+    ({
+      familyId,
+      expectedDraftVersionId,
+      expectedDraftToken,
+      expectedSettingsToken,
+      file,
+    }) => {
       const expectedDraft: ExpectedDraft =
         expectedDraftVersionId !== undefined && expectedDraftToken !== undefined
           ? {
@@ -45,7 +55,12 @@ export const layoutUploadSchema = z
               lastModified: expectedDraftToken,
             }
           : { none: true };
-      return { familyId, expectedDraft, file };
+      return {
+        familyId,
+        expectedDraft,
+        expectedSettingsToken: expectedSettingsToken ?? null,
+        file,
+      };
     },
   );
 

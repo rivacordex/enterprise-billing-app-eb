@@ -8,6 +8,13 @@
 //
 // It serves EXACTLY the verified stored layout bytes plus `settings.json`. A
 // digest mismatch is a 500 with no bytes and no audit row (Inv #45, #68).
+//
+// bm81 review fix (owner, #6) — a GET that audits is a documented module
+// exception to platform rule §5.9 (billmgmt-code-standards › Invoice Template
+// Types, Next.js rule 2), so only a deliberate, same-site download may run it:
+// HEAD is refused (Next.js would otherwise answer it by running GET), and a
+// browser request from another site (`Sec-Fetch-Site` other than same-origin
+// or none) is refused before any read or audit write.
 
 import { headers } from "next/headers";
 import type { NextRequest } from "next/server";
@@ -26,9 +33,14 @@ import { hasLevel, meetsLevel } from "@/types/permissions";
 import { billTemplateVersionIdSchema } from "@/validation/billing/template-version-id.schema";
 
 const paramsSchema = z.object({ versionId: billTemplateVersionIdSchema });
+const ALLOWED_FETCH_SITES = new Set(["same-origin", "none"]);
+
+export function HEAD(): Response {
+  return new Response(null, { status: 405, headers: { Allow: "GET" } });
+}
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ versionId: string }> },
 ): Promise<Response> {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -43,6 +55,10 @@ export async function GET(
 
   const permissionMap = await resolveEffectivePermissions(user.id);
   if (!meetsLevel(permissionMap[PERMISSIONS.INVOICE_SETTINGS], LEVELS.READ)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite !== null && !ALLOWED_FETCH_SITES.has(fetchSite)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
   // EDIT only widens what is visible (a DRAFT pair) — a show/hide gate, never
@@ -68,8 +84,7 @@ export async function GET(
     if (!result.ok) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
-    // A plain `Uint8Array` copy satisfies `BodyInit` (see files/[file]).
-    return new Response(new Uint8Array(result.bytes), {
+    return new Response(result.bytes, {
       status: 200,
       headers: {
         "Content-Type": "application/zip",

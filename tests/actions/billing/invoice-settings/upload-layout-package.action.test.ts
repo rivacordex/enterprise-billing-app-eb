@@ -40,6 +40,7 @@ function form(
     familyId?: string;
     expectedDraftVersionId?: string;
     expectedDraftToken?: string;
+    expectedSettingsToken?: string;
     file?: File;
   } = {},
 ): FormData {
@@ -49,6 +50,8 @@ function form(
     f.set("expectedDraftVersionId", overrides.expectedDraftVersionId);
   if (overrides.expectedDraftToken !== undefined)
     f.set("expectedDraftToken", overrides.expectedDraftToken);
+  if (overrides.expectedSettingsToken !== undefined)
+    f.set("expectedSettingsToken", overrides.expectedSettingsToken);
   f.set(
     "file",
     overrides.file ??
@@ -148,7 +151,12 @@ describe("uploadLayoutPackageAction (bm78)", () => {
       replaced: false,
     });
     expect(mockService).toHaveBeenCalledWith(
-      { familyId: "BTF00000002", zip: ZIP, expectedDraft: { none: true } },
+      {
+        familyId: "BTF00000002",
+        zip: ZIP,
+        expectedDraft: { none: true },
+        expectedSettingsToken: null,
+      },
       "actor-1",
     );
     expect(mockRevalidate).toHaveBeenCalledWith(
@@ -176,9 +184,35 @@ describe("uploadLayoutPackageAction (bm78)", () => {
         familyId: "BTF00000002",
         zip: ZIP,
         expectedDraft: { versionId: "BTV00000010", lastModified: TOKEN },
+        expectedSettingsToken: null,
       },
       "actor-1",
     );
+  });
+
+  it("bm81 review fix (#2) — passes the settings DRAFT token through, and refuses a malformed one", async () => {
+    mockService.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000010",
+      versionNo: 1,
+      replaced: false,
+    });
+    const SETTINGS_TOKEN = "2026-10-25T04:05:06.654321Z";
+    await uploadLayoutPackageAction(
+      form({ expectedSettingsToken: SETTINGS_TOKEN }),
+    );
+    expect(mockService).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedSettingsToken: SETTINGS_TOKEN }),
+      "actor-1",
+    );
+
+    mockService.mockClear();
+    expect(
+      await uploadLayoutPackageAction(
+        form({ expectedSettingsToken: "not-a-token" }),
+      ),
+    ).toEqual({ ok: false, code: "VALIDATION_ERROR", problems: [] });
+    expect(mockService).not.toHaveBeenCalled();
   });
 
   it("returns a service refusal as-is without revalidating", async () => {

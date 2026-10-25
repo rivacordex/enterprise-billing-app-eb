@@ -435,7 +435,9 @@ describe.skipIf(!databaseUrl)(
       expect(isDraftRaceViolation(err)).toBe(true);
     });
 
-    it('reports the latest saver, and "a deleted user" when that user was removed, never an older saver', async () => {
+    // bm81 review fix (owner, #4) — the "saved by" banner reads the draft's
+    // last writer (`last_modified_by`), not the last DRAFT_SAVED audit row.
+    it("the draft's last writer is the latest saver; a removed user leaves no name (an unknown user on the page)", async () => {
       const OTHER = "bm57-other";
       await sql`
         INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
@@ -460,29 +462,16 @@ describe.skipIf(!databaseUrl)(
       );
       if (!second.ok) throw new Error("expected ok");
 
-      expect(
-        await billTemplateVersionRepository.findLatestDraftSaver(
-          db,
-          first.versionId,
-        ),
-      ).toBe("Second Saver");
+      const draft = () =>
+        billTemplateVersionRepository.findDraftWithModifier(db, {
+          kind: "generated",
+          familyId: "BTF00000001",
+        });
+      expect((await draft())?.lastModifiedByName).toBe("Second Saver");
 
+      // `last_modified_by` is ON DELETE SET NULL: no recorded writer.
       await sql`DELETE FROM core.appuser WHERE user_id = ${OTHER}`;
-      expect(
-        await billTemplateVersionRepository.findLatestDraftSaver(
-          db,
-          first.versionId,
-        ),
-      ).toBe("a deleted user");
-    });
-
-    it("findLatestDraftSaver is null when the draft has no audit row", async () => {
-      expect(
-        await billTemplateVersionRepository.findLatestDraftSaver(
-          db,
-          "BTV00009999",
-        ),
-      ).toBeNull();
+      expect((await draft())?.lastModifiedByName).toBeNull();
     });
 
     it("a saved DRAFT shows in the version history and the default is untouched", async () => {

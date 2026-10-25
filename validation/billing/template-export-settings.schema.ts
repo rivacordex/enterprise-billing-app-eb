@@ -20,8 +20,12 @@ export const templateExportSettingsSchema = z
         // TemplateVersionStatus (DRAFT | ACTIVE | RETIRED), from its one source.
         status: z.enum(CONFIG_STATUSES),
         layoutChecksum: z.string().regex(/^[0-9a-f]{64}$/),
-        exportedAt: z.string().datetime(),
-        exportedBy: z.string().min(1),
+        // bm81 review fix (owner, #9) — bounded, so a crafted settings.json
+        // can't put an unbounded string into the audit log's `restoredFrom`:
+        // the ISO form `Date#toISOString` writes (milliseconds), and the user
+        // name bound of create-user / update-user-details (255).
+        exportedAt: z.string().datetime({ precision: 3 }),
+        exportedBy: z.string().min(1).max(255),
       })
       .strict(),
     structure: invoiceTemplateStructureSchema,

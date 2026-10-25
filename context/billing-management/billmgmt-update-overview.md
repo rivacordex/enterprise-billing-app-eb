@@ -36,7 +36,7 @@ The same upload creates a **new version of an existing type** (Standard included
    - keep Standard as the permanent default
 4. **Bind any BAN to a usable type.** NULL stays Standard, and a binding takes effect at the next run start or rerun.
 5. **Retire a type safely:** one transaction that moves all its BANs to one usable target and then retires the type, one-way, with nothing deleted.
-6. **Export any version** (ACTIVE, RETIRED or DRAFT) byte-identical with its settings, and **restore** it by uploading it in another environment. A clean install holds only Standard v1.
+6. **Export any version** (ACTIVE, RETIRED or DRAFT) byte-identical with its settings, and **restore** it by uploading it in another environment. A clean install holds only Standard v1. _(Owner, 2026-10-26: a DRAFT or discarded pair exports for `invoice_settings` EDIT only, the rule for seeing a draft at all.)_
 7. **Keep every invoice a valid tax invoice.** No layout can go live unless the supplier block, buyer, invoice number, line items, tax breakdown, totals and amount due print as **visible text**.
 8. **Never let an unreviewed or draft layout reach a bill:**
    - capture, posting and reprint refuse DRAFT versions
@@ -155,7 +155,7 @@ The same upload creates a **new version of an existing type** (Standard included
 - No output changes: fonts are inline `data:` URIs, and the logo is converted to a `data:` URI.
 
 ### Export and restore
-- Export works on any version pair, Standard v1 included, with `invoice_settings` READ.
+- Export works on any version pair, Standard v1 included, with `invoice_settings` READ. A DRAFT or discarded pair needs EDIT, as viewing one does (owner, 2026-10-26).
 - It reads the files through the checksum-verifying loader, so a tampered blob fails the export and names the file.
 - `settings.json` = `{ exportFormat: 1, source: { typeCode, typeName, layoutVersion, settingsVersion, status, layoutChecksum, exportedAt, exportedBy }, structure }`.
 - **Restore by upload:** the settings replace the draft settings, the version-number check is skipped, the code check still applies, and the audit records `restoredFrom`.
@@ -200,7 +200,7 @@ The same upload creates a **new version of an existing type** (Standard included
 
 | Action | Permission | Roles |
 |---|---|---|
-| View types, versions and retired types; export a version | `invoice_settings` READ | all |
+| View types, versions and retired types; export a version (a DRAFT or discarded pair: EDIT) | `invoice_settings` READ | all |
 | Create type; upload; edit settings; preview; activate; discard; retire with bulk switch | `invoice_settings` EDIT | ADMIN, MANAGER |
 | Bind or reset one BAN | `customers` EDIT + `accounts_transactions` EDIT (cm21) | as today |
 | See the rerun warning; rerun | `billrun_operate` | as today |

@@ -1278,7 +1278,8 @@ export type TemplateDraftErrorCode =
 // bm57-spec §Design D4 — the working DRAFT the Invoice template page opens for
 // EDIT users. `token` is the draft's `last_modified_datetime` as a
 // microsecond-precision ISO string (a JS `Date` would truncate to ms and never
-// match the stored value); `savedBy` is the latest save's actor name.
+// match the stored value); `savedBy` is the draft's last writer's name
+// (`last_modified_by`, bm81 review fix: a save, an upload or a restore).
 export interface TemplateDraftInfo {
   billTemplateVersionId: string;
   versionNo: number;
@@ -1436,9 +1437,14 @@ export interface TemplateTypeListRow {
 // ...INVOICE_SECTION_KEYS]` — the same expression as LAYOUT_PART_KEYS in
 // layout-manifest.schema.ts, which imports this file (so it cannot be imported
 // back); a gate test pins the two equal.
-export const LAYOUT_PACKAGE_MAX_BYTES = 2 * 1024 * 1024; // compressed upload
-export const LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024; // streamed inflate cap
-export const LAYOUT_PACKAGE_MAX_ENTRIES = 64;
+// bm81 review fix (owner, #5/#9) — an export's `settings.json` has its own
+// budget, outside the layout's entry and byte caps (so a layout at a cap still
+// round-trips), and the compressed upload limit gains the same headroom.
+export const LAYOUT_PACKAGE_SETTINGS_MAX_BYTES = 64 * 1024;
+export const LAYOUT_PACKAGE_MAX_BYTES =
+  2 * 1024 * 1024 + LAYOUT_PACKAGE_SETTINGS_MAX_BYTES; // compressed upload
+export const LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024; // streamed inflate cap (layout files)
+export const LAYOUT_PACKAGE_MAX_ENTRIES = 64; // layout files
 
 export const LAYOUT_PACKAGE_REQUIRED_FILES = [
   "manifest.json",
@@ -1452,11 +1458,13 @@ export const LAYOUT_PACKAGE_FONT_FILE =
   /^fonts\/(?:[A-Za-z0-9._-]{1,64}\.woff2|OFL\.txt)$/;
 // bm81 (TS rule 6) — the export's `settings.json`, never listed in
 // `checksums.json`. With the required files and the font rule it forms
-// LAYOUT_PACKAGE_FILES, the gate's allow-list.
+// LAYOUT_PACKAGE_FILES: the single source of these names for the gate, the
+// install, the export and the upload dialog (review fix #15).
 export const LAYOUT_PACKAGE_OPTIONAL_FILES = ["settings.json"] as const;
 export const LAYOUT_PACKAGE_FILES = {
   required: LAYOUT_PACKAGE_REQUIRED_FILES,
   optional: LAYOUT_PACKAGE_OPTIONAL_FILES,
+  settings: LAYOUT_PACKAGE_OPTIONAL_FILES[0],
   font: LAYOUT_PACKAGE_FONT_FILE,
 } as const;
 

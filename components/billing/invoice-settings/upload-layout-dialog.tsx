@@ -21,7 +21,7 @@
 // only: the server re-parses and decides everything.
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { unzipSync } from "fflate";
 import { AlertCircle, AlertTriangle, Info } from "lucide-react";
 import { toast } from "sonner";
@@ -62,29 +62,40 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { formatDatetime } from "@/lib/formatters";
-import type { LayoutProblem, OpenLayoutDraftInfo } from "@/types/billing";
+import {
+  LAYOUT_PACKAGE_FILES,
+  LAYOUT_PACKAGE_MAX_BYTES,
+  LAYOUT_PACKAGE_SETTINGS_MAX_BYTES,
+  type LayoutProblem,
+  type OpenLayoutDraftInfo,
+} from "@/types/billing";
 import {
   templateExportSettingsSchema,
   type TemplateExportSettings,
 } from "@/validation/billing/template-export-settings.schema";
 
-const SETTINGS_FILE = "settings.json";
-const RESTORE_NOTE_MAX_BYTES = 64 * 1024;
+const SETTINGS_FILE = LAYOUT_PACKAGE_FILES.settings;
 
 // bm81 — the chosen zip's export settings, or `null`: only `settings.json` is
-// inflated, and only when it is at most 64 KiB. Any error is `null` (no note).
+// inflated, and only within the server's settings budget. Any error is `null`
+// (no note). Review fixes: a file over the upload limit is never read (#8; the
+// server refuses it anyway), and a UTF-8 BOM is kept, as the server's
+// `Buffer#toString` keeps it, so the note never promises what the gate refuses
+// (#10).
 export async function readRestoreNote(
   file: File,
 ): Promise<TemplateExportSettings | null> {
+  if (file.size > LAYOUT_PACKAGE_MAX_BYTES) return null;
   try {
     const entries = unzipSync(new Uint8Array(await file.arrayBuffer()), {
       filter: (f) =>
-        f.name === SETTINGS_FILE && f.originalSize <= RESTORE_NOTE_MAX_BYTES,
+        f.name === SETTINGS_FILE &&
+        f.originalSize <= LAYOUT_PACKAGE_SETTINGS_MAX_BYTES,
     });
     const bytes = entries[SETTINGS_FILE];
     if (!bytes) return null;
     const parsed = templateExportSettingsSchema.safeParse(
-      JSON.parse(new TextDecoder().decode(bytes)),
+      JSON.parse(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)),
     );
     return parsed.success ? parsed.data : null;
   } catch {
@@ -98,6 +109,10 @@ export interface UploadLayoutDialogProps {
   nextVersionNo: number;
   // bm80 — the type's open layout DRAFT as the page read it, or `null`.
   openLayoutDraft: OpenLayoutDraftInfo | null;
+  // bm81 review fix (#2) — the type's settings DRAFT token as the page read it
+  // (`null`: none). Sent with every upload; a restore that would replace
+  // settings changed since is refused DRAFT_CHANGED_SINCE_WARNING.
+  settingsDraftToken: string | null;
   locale: string;
   timezone: string;
 }
@@ -106,6 +121,7 @@ export function UploadLayoutDialog({
   familyId,
   nextVersionNo,
   openLayoutDraft,
+  settingsDraftToken,
   locale,
   timezone,
 }: UploadLayoutDialogProps): React.JSX.Element {
@@ -125,6 +141,9 @@ export function UploadLayoutDialog({
     restoreNote !== null && restoreNote.file === file
       ? restoreNote.settings
       : null;
+  // Review fix (#7) — the latest pick: a slower, superseded read never
+  // overwrites the current file's note.
+  const latestPick = useRef<File | null>(null);
 
   function handleOpenChange(next: boolean): void {
     if (submitting) return;
@@ -161,6 +180,9 @@ export function UploadLayoutDialog({
       if (openLayoutDraft) {
         form.set("expectedDraftVersionId", openLayoutDraft.versionId);
         form.set("expectedDraftToken", openLayoutDraft.token);
+      }
+      if (settingsDraftToken !== null) {
+        form.set("expectedSettingsToken", settingsDraftToken);
       }
       form.set("file", file);
       const result = await uploadLayoutPackageAction(form);
@@ -228,13 +250,15 @@ export function UploadLayoutDialog({
           disabled={submitting}
           onChange={(e) => {
             const chosen = e.target.files?.[0] ?? null;
+            latestPick.current = chosen;
             setFile(chosen);
             setProblems([]);
             setMessage(null);
             if (chosen) {
-              void readRestoreNote(chosen).then((settings) =>
-                setRestoreNote(settings ? { file: chosen, settings } : null),
-              );
+              void readRestoreNote(chosen).then((settings) => {
+                if (latestPick.current !== chosen) return;
+                setRestoreNote(settings ? { file: chosen, settings } : null);
+              });
             }
           }}
         />
@@ -244,7 +268,8 @@ export function UploadLayoutDialog({
         <Alert data-testid="restore-note">
           <Info aria-hidden />
           <AlertDescription className="space-y-1">
-            <p>{RESTORE_NOTE}</p>
+            {/* Over an open draft the warning already says it (D127). */}
+            {openLayoutDraft ? null : <p>{RESTORE_NOTE}</p>}
             <p className="font-mono text-mono">
               {RESTORED_FROM(restore.source.layoutVersion)}
             </p>
@@ -297,6 +322,7 @@ export function UploadLayoutDialog({
                     ),
                     openLayoutDraft.lastModifiedByName ??
                       TEMPLATE_TYPE_MESSAGES.overwriteNoAuthor,
+                    restore !== null,
                   )}
                 </p>
               </div>

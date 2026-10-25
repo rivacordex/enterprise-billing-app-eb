@@ -77,6 +77,7 @@ import {
   LAYOUT_PACKAGE_MAX_ENTRIES,
   LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES,
   LAYOUT_PACKAGE_REQUIRED_FILES,
+  LAYOUT_PACKAGE_SETTINGS_MAX_BYTES,
   type LayoutProblem,
 } from "@/types/billing";
 import { LAYOUT_PART_KEYS } from "@/validation/billing/layout-manifest.schema";
@@ -635,6 +636,101 @@ describe("bm81 — restore: an export's settings.json", () => {
     expect(codes(problemsOf(await gate(built.zip)))).toEqual([
       "LAYOUT_CODE_MISMATCH",
     ]);
+  });
+
+  it("review fix (#12) — an unbound settings.json no longer hides the manifest's code mismatch", async () => {
+    const built = pkg({
+      layoutCode: "INVTPL-OTHER",
+      layoutVersion: 3,
+      override: (f) =>
+        f.set(
+          "settings.json",
+          exportSettings(f, (s) => {
+            (s.source as Record<string, unknown>).layoutChecksum = "0".repeat(
+              64,
+            );
+          }),
+        ),
+    });
+    expect(codes(problemsOf(await gate(built.zip)))).toEqual([
+      "SETTINGS_INVALID",
+      "LAYOUT_CODE_MISMATCH",
+    ]);
+  });
+
+  it("review fix (#15) — a clean restore's `files` hold only the layout files", async () => {
+    const built = pkg({
+      layoutVersion: 3,
+      override: (f) => f.set("settings.json", exportSettings(f)),
+    });
+    const result = await gate(built.zip);
+    expect(result.ok && result.files.has("settings.json")).toBe(false);
+    expect(result.ok && result.files.size).toBe(built.files.size - 1);
+  });
+
+  describe("review fix (owner, #5/#9) — settings.json has its own budget", () => {
+    // Pad the layout with small font entries until it has exactly `entries`
+    // layout files (checksums.json included).
+    function atEntries(entries: number) {
+      return pkg({
+        layoutVersion: 3,
+        edit: (f) => {
+          for (let i = 0; f.size + 1 < entries; i++) {
+            f.set(`fonts/pad${i}.woff2`, Buffer.from(`font ${i}`));
+          }
+        },
+        override: (f) => f.set("settings.json", exportSettings(f)),
+      });
+    }
+
+    it(`a layout at ${LAYOUT_PACKAGE_MAX_ENTRIES} entries plus settings.json passes stage 1`, () => {
+      const built = atEntries(LAYOUT_PACKAGE_MAX_ENTRIES);
+      expect(built.files.size).toBe(LAYOUT_PACKAGE_MAX_ENTRIES + 1);
+      expect(readZip(built.zip).ok).toBe(true);
+    });
+
+    it("one layout entry more is still ZIP_TOO_MANY_ENTRIES", () => {
+      const read = readZip(atEntries(LAYOUT_PACKAGE_MAX_ENTRIES + 1).zip);
+      expect(read.ok ? [] : codes(read.problems)).toEqual([
+        "ZIP_TOO_MANY_ENTRIES",
+      ]);
+    });
+
+    it("a settings.json over LAYOUT_PACKAGE_SETTINGS_MAX_BYTES is ZIP_TOO_LARGE on that file", () => {
+      const built = pkg({
+        layoutVersion: 3,
+        override: (f) =>
+          f.set(
+            "settings.json",
+            Buffer.alloc(LAYOUT_PACKAGE_SETTINGS_MAX_BYTES + 1, 0x20),
+          ),
+      });
+      const read = readZip(built.zip);
+      expect(read.ok ? [] : read.problems).toEqual([
+        expect.objectContaining({
+          file: "settings.json",
+          code: "ZIP_TOO_LARGE",
+        }),
+      ]);
+    });
+
+    it("a source field over its bound is SETTINGS_INVALID", async () => {
+      const built = pkg({
+        layoutVersion: 3,
+        override: (f) =>
+          f.set(
+            "settings.json",
+            exportSettings(f, (s) => {
+              (s.source as Record<string, unknown>).exportedBy = "A".repeat(
+                256,
+              );
+            }),
+          ),
+      });
+      expect(codes(problemsOf(await gate(built.zip)))).toEqual([
+        "SETTINGS_INVALID",
+      ]);
+    });
   });
 });
 

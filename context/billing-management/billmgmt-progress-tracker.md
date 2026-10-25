@@ -100,6 +100,50 @@ fix (15 findings); owner decisions on the draft preview and the upload message.
 - Results: unit 4848 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); integration 166/0
   (16 template suites + journey); Chromium e2e 27/0; admin browser e2e 5/0 after `next build`.
 
+**bm81 code review fixes (2026-10-26):** max review of the bm81 build (15 findings, 5 cleanups). The owner
+decided the design items; the rest were unambiguous.
+
+- **#1 (owner: plain conflict):** restored settings are written with `clock_timestamp()` (`repointDraftLayout`'s
+  `restore`, `insertDraft`'s `distinctToken`), so their token differs from the layout row's and a stale
+  editor gets `DRAFT_CONFLICT`, not bm80's `DRAFT_LAYOUT_REPLACED`. Plain uploads are unchanged.
+- **#2 (owner: carry the settings token):** the page passes the settings DRAFT token to the upload dialog,
+  which sends `expectedSettingsToken`. Install checks it under the lock when a restore would replace the
+  settings, and the re-point UPDATE is token-guarded; a mismatch is `DRAFT_CHANGED_SINCE_WARNING`, with nothing
+  written. Plain uploads ignore it.
+- **#3 (plan D127):** over an open DRAFT, a detected restore swaps the warning's "are kept" sentence for the
+  restore note (`OVERWRITE_WARNING(…, settingsReplaced)`), and the Info note then carries only
+  "Restored from v{n}".
+- **#4 (owner: extend the upload audit):** `INVOICE_TEMPLATE_LAYOUT_UPLOADED` gains `settingsBefore` /
+  `settingsAfter` on a restore. The edit-tab banner's "saved by" now reads the settings DRAFT's
+  `last_modified_by` (`findDraftWithModifier`; NULL → "an unknown user"); `findLatestDraftSaver` is removed
+  (its integration tests were replaced). This changes bm57's banner, per the owner's choice.
+- **#5/#9 (owner: own 64 KiB budget):** `LAYOUT_PACKAGE_SETTINGS_MAX_BYTES = 64 KiB` sits outside the
+  layout's entry and byte caps (stage 1, both passes), and `LAYOUT_PACKAGE_MAX_BYTES` gains the same
+  headroom. The schema bounds `exportedAt` (`datetime({ precision: 3 })`) and `exportedBy` (`max(255)`, the
+  user-name bound; 120 would refuse real names).
+- **#6 (owner: GET + guards):** the export route refuses `HEAD` (405) and a browser request whose
+  `Sec-Fetch-Site` is not same-origin or none (403), before any read or audit. This is recorded as a module
+  exception to platform rule §5.9 in code-standards › Invoice Template Types, Next.js rule 2.
+- **#14 (owner: EDIT only, update the overview):** the overview (goal 6, Export and restore, the permission
+  table) and plan D126 now say a DRAFT or discarded pair exports for EDIT.
+- **Unambiguous:**
+  - #7: a ref guards the restore-note read against superseded picks.
+  - #8: files over the upload limit are never read.
+  - #10: a BOM is kept (`TextDecoder` `ignoreBOM`), so the note matches the server.
+  - #11: the export reads settings, layout and type in one read-only REPEATABLE READ snapshot.
+  - #12: `SETTINGS_INVALID` no longer hides the manifest's own problems.
+  - #13: the history table decides `draftLike` once per row, with the defaulted `canViewDrafts`.
+  - #15: `LAYOUT_PACKAGE_FILES.settings` is the one name source, and the gate splits `settings.json` off
+    before stages 4–7.
+  - Cleanups: woff2 is stored at level 0; there are no redundant payload copies; a restore skips install's
+    base reads; the tests use the message constants.
+- **Out of scope, logged:** known-issues §31 covers the "Next layout version" display (pre-existing), the
+  opaque `INTERNAL` route logging, bm83's spec note, and the order-dependent bm58 suite (four older
+  suites leave `generated/INVOICE/STANDARD/` blobs; test-only, since bm79).
+- **Test results:** in the 20-suite template batch, everything except the bm58 activation suite passes
+  (175/0). The bm58 suite passes 15/0 on its own (twice) but fails 11 cases when it runs after those
+  suites (known-issues §31d).
+
 **bm81 notes (2026-10-25):**
 
 - Export: `exportTemplateVersion` (settings version → its layout + type) zips `loadLayoutForExport`'s verified
@@ -364,6 +408,7 @@ a compliance-only probe.
 | bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4829 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new discard action 15/0, Discard + discarded-row component cases, pair form cases 5/0, authz matrix + discard READ refusal; integration on the disposable DB 163/0 across 16 template suites incl. new pair activation 8/0 (guardrail 71 activation half, interleaved upload, compliance re-run, retired type, frozen files, Standard untouched), new discard 6/0, bm58 activate suite on the `STANDARD/` path, template journey; Chromium e2e 27/0 incl. new activation re-run 1/0; admin browser e2e 5/0 after a fresh `next build` |
 | bm80 | Overwrite an open layout draft by upload, with the warning (`overwriteLayoutDraft`, `DRAFT_LAYOUT_REPLACED`) | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4877 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 46/0 (`matchExpectedDraft` table + stage 3 at the DRAFT's number), upload dialog 12/0, structure form 54/0, upload + save-draft actions, read service 14/0, single-layout-writer (`overwriteLayoutDraft` added); integration on the disposable DB 179/0 across 19 template suites incl. new overwrite 7/0 (in place, stale warning, same bytes, stale Activate, activated meanwhile, two guardrail-71 races), upload +1 overwrite case, preview +1 (guardrail 70), save-draft +2 (`DRAFT_LAYOUT_REPLACED` / `DRAFT_CONFLICT`). Chromium and admin browser e2e not re-run (no gate, render or route change) |
 | bm81 | Export a version pair and restore it by upload (export Route Handler, `settings.json` schema, restore path) | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4907 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 52/0 (6 restore cases), load-layout-draft 19/0 (`loadLayoutForExport`), new export route 9/0, upload dialog 19/0 (restore note, 64 KiB cap), Version history Export 27/0, authz matrix + export row, status-literal sweep, audit filters 92; integration on the disposable DB 191/0 across 20 template suites incl. new export/restore 12/0 (byte identity for ACTIVE, Standard v1, DRAFT (EDIT only) and RETIRED pairs; tamper; four refusals writing nothing; fresh-environment round trip with equal preview HTML; restore over an open DRAFT). Chromium and admin browser e2e not re-run (no render or compliance change) |
+| bm81 code review fixes | max review of bm81 (15 findings + 5 cleanups; owner decisions on #1, #2, #4, #5/#9, #6, #14) | **Built** (2026-10-26) — tsc/ESLint/Prettier clean; unit 4925 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 58/0 (settings budget, #12, #15), upload dialog 23/0 (D127 wording, race, size, BOM, settings token), export route 15/0 (HEAD 405, cross-site 403), action, read service; integration on the disposable DB: 19 template suites 175/0, bm58 activation 15/0 on its own (order-dependent in a batch, known-issues §31d), incl. export/restore 12/0 with the restore-over-draft case covering #1, #2 and #4 (mutation-checked: #1 fails with `now()`) |
 
 ## Delivered units
 

@@ -73,13 +73,19 @@ export function uploadReplacedToast(n: number): string {
 }
 
 // bm80 — the exact overwrite warning (code-standards › Invoice Template Types,
-// Styling rule 6), from the page's server data.
+// Styling rule 6), from the page's server data. bm81 review fix (#3, plan
+// D127): when the chosen package is an app export, its settings replace the
+// draft settings, so the last sentence becomes RESTORE_NOTE instead of "kept".
 export function OVERWRITE_WARNING(
   n: number,
   date: string,
   user: string,
+  settingsReplaced = false,
 ): string {
-  return `This type already has a draft (layout v${n}, last changed ${date} by ${user}). Uploading will overwrite the existing draft layout. Your draft settings (Payment and footnote) are kept.`;
+  const settings = settingsReplaced
+    ? RESTORE_NOTE
+    : "Your draft settings (Payment and footnote) are kept.";
+  return `This type already has a draft (layout v${n}, last changed ${date} by ${user}). Uploading will overwrite the existing draft layout. ${settings}`;
 }
 export const LAYOUT_REPLACED_SAVE_MESSAGE =
   TEMPLATE_TYPE_MESSAGES.layoutReplacedSave;

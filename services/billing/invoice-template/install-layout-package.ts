@@ -33,8 +33,8 @@ import type { TemplateExportSettings } from "@/validation/billing/template-expor
 // reuses them (`onExists: "returnExisting"`).
 
 const CONTAINER = "invoice-templates" as const;
-// bm81 — the restore's settings, consumed here and never stored as a blob.
-const SETTINGS_FILE = "settings.json";
+// bm81 — `files` holds only layout files: the gate splits the restore's
+// settings.json off, so it is never stored as a blob (review fix #15).
 
 function contentTypeFor(name: string): string {
   if (name.endsWith(".hbs")) return "text/x-handlebars-template; charset=utf-8";
@@ -87,6 +87,10 @@ export async function installLayoutPackage(args: {
   indexDigest: string;
   // bm81 — the gate's validated, checksum-bound `settings.json`, or null.
   restore?: TemplateExportSettings | null;
+  // bm81 review fix (#2) — the settings DRAFT token the dialog saw (`null`: no
+  // settings DRAFT). A restore replaces the draft settings, so it is refused
+  // DRAFT_CHANGED_SINCE_WARNING if they changed since; never last-writer-wins.
+  expectedSettingsToken?: string | null;
   actorId: string;
   mode: "create" | "overwrite";
   expectedDraft: ExpectedDraft;
@@ -99,14 +103,14 @@ export async function installLayoutPackage(args: {
     manifest,
     indexDigest,
     restore = null,
+    expectedSettingsToken = null,
     actorId,
     mode,
     expectedDraft,
   } = args;
-  const layoutFiles = [...files].filter(([name]) => name !== SETTINGS_FILE);
   const dir = `layouts/${layoutCode}/v${versionNo}-${indexDigest.slice(0, 12)}`;
 
-  for (const [name, bytes] of layoutFiles) {
+  for (const [name, bytes] of files) {
     const put = await blobStore.putObject(
       CONTAINER,
       `${dir}/${name}`,
@@ -214,6 +218,9 @@ export async function installLayoutPackage(args: {
           kind: "generated",
           familyId,
         });
+        if (restore && (settings?.token ?? null) !== expectedSettingsToken) {
+          throw new InstallRollback("DRAFT_CHANGED_SINCE_WARNING");
+        }
         if (settings) {
           const token = await billTemplateVersionRepository.repointDraftLayout(
             tx,
@@ -221,7 +228,14 @@ export async function installLayoutPackage(args: {
               id: settings.billTemplateVersionId,
               layoutVersionId: layout.billTemplateVersionId,
               actorId,
-              structure: restore?.structure,
+              ...(restore
+                ? {
+                    restore: {
+                      structure: restore.structure,
+                      expectedToken: settings.token,
+                    },
+                  }
+                : {}),
             },
           );
           if (token === null)
@@ -229,19 +243,22 @@ export async function installLayoutPackage(args: {
           settingsDraftId = settings.billTemplateVersionId;
         } else {
           // Review fix (Data rule 9) — the structure is validated before it is
-          // written: the type's current settings, else a Payment-on default
-          // with Standard's footnote. A catalog where neither passes (e.g. a
-          // stale seed with no footnote) needs the bm64 reset; nothing is
-          // written and the failure is logged.
-          const base =
-            (await billTemplateVersionRepository.findActive(tx, {
-              kind: "generated",
-              familyId,
-            })) ??
-            (await billTemplateVersionRepository.findDefault(tx, {
-              kind: "generated",
-              familyId,
-            }));
+          // written: a restore's (already gate-parsed), else the type's current
+          // settings, else a Payment-on default with Standard's footnote. A
+          // catalog where neither passes (e.g. a stale seed with no footnote)
+          // needs the bm64 reset; nothing is written and the failure is logged.
+          // bm81 review fix — a restore skips the base reads, which would run
+          // under the global kind lock for nothing.
+          const base = restore
+            ? null
+            : ((await billTemplateVersionRepository.findActive(tx, {
+                kind: "generated",
+                familyId,
+              })) ??
+              (await billTemplateVersionRepository.findDefault(tx, {
+                kind: "generated",
+                familyId,
+              })));
           const fromBase = invoiceTemplateStructureSchema.safeParse(
             restore?.structure ?? base?.structure,
           );
@@ -270,6 +287,10 @@ export async function installLayoutPackage(args: {
             refBillTemplateFamilyId: familyId,
             structure,
             createdBy: actorId,
+            // bm81 review fix (#1) — restored settings are a settings change:
+            // their token must differ from the layout row's, so a stale editor
+            // gets DRAFT_CONFLICT, not bm80's "layout replaced".
+            distinctToken: restore !== null,
           });
           settingsDraftId = created.billTemplateVersionId;
         }
@@ -287,9 +308,17 @@ export async function installLayoutPackage(args: {
             blobRef: layout.blobRef,
             checksum: indexDigest,
             pageSetup: manifest.pageSetup,
-            fileCount: layoutFiles.length,
+            fileCount: files.size,
             settingsDraftId,
             restoredFrom: restore?.source ?? null,
+            // bm81 review fix (#4) — a restore replaces the draft settings;
+            // their before/after belong in this action's one audit row.
+            ...(restore
+              ? {
+                  settingsBefore: settings?.structure ?? null,
+                  settingsAfter: restore.structure,
+                }
+              : {}),
             previousBlobRef: previous?.blobRef ?? null,
             previousChecksum: previous?.checksum ?? null,
           },

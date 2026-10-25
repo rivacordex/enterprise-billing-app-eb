@@ -148,10 +148,13 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       familyId: string,
       zip: Uint8Array,
       expectedDraft: ExpectedDraft = { none: true },
+      expectedSettingsToken: string | null = null,
     ): Promise<UploadLayoutPackageResult> {
-      return uploadLayoutPackage({ familyId, zip, expectedDraft }, ACTOR.id, {
-        render: cleanRender(),
-      });
+      return uploadLayoutPackage(
+        { familyId, zip, expectedDraft, expectedSettingsToken },
+        ACTOR.id,
+        { render: cleanRender() },
+      );
     }
 
     async function counts() {
@@ -466,41 +469,109 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         expect(preview.html).toBe(sourcePreviewHtml);
       });
 
-      it("restoring over the open DRAFT with the bm80 token overwrites it in place and replaces the settings structure", async () => {
-        const settings = await h.settingsDraft(freshWholesaleId);
-        const changed = await saveTemplateDraft(
-          {
-            structure: {
-              sections: { payment: true },
-              columns: {},
-              footnote: ["A manager's edit"],
+      it("restoring over the open DRAFT checks the settings token (#2), replaces the settings in place, audits before/after (#4), credits the restorer (#4) and makes a stale editor's save a plain conflict (#1)", async () => {
+        const EDITOR = "bm81-editor";
+        await h.sql`
+          INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
+          VALUES (${EDITOR}, 'Settings Editor', 'settings-editor@example.com', 'LOCAL', 'ACTIVE')`;
+        const edit = (footnote: string, token: string) =>
+          saveTemplateDraft(
+            {
+              structure: {
+                sections: { payment: true },
+                columns: {},
+                footnote: [footnote],
+              },
+              expectedDraftToken: token,
+              familyId: freshWholesaleId,
             },
-            expectedDraftToken: settings.token,
-            familyId: freshWholesaleId,
-          },
-          ACTOR.id,
-        );
-        expect(changed.ok).toBe(true);
+            EDITOR,
+          );
 
+        const first = await edit(
+          "A manager's edit",
+          (await h.settingsDraft(freshWholesaleId)).token,
+        );
+        if (!first.ok) throw new Error(`save failed: ${first.code}`);
+        // The uploader's page loads now: layout token and settings token.
         const open = await billTemplateVersionRepository.findDraft(db(), {
           kind: "layout",
           familyId: freshWholesaleId,
         });
-        const result = await upload(freshWholesaleId, exportZip, {
+        const warned: ExpectedDraft = {
           versionId: open!.billTemplateVersionId,
           lastModified: open!.token,
+        };
+        const seenSettingsToken = first.draftToken;
+
+        // Another manager saves after the dialog opened.
+        const second = await edit("A later edit", seenSettingsToken);
+        if (!second.ok) throw new Error(`save failed: ${second.code}`);
+        const auditBefore = (
+          await h.auditRows("INVOICE_TEMPLATE_LAYOUT_UPLOADED")
+        ).length;
+
+        // #2 — the restore would replace settings changed since: refused.
+        expect(
+          await upload(freshWholesaleId, exportZip, warned, seenSettingsToken),
+        ).toEqual({
+          ok: false,
+          code: "DRAFT_CHANGED_SINCE_WARNING",
+          problems: [],
         });
+        const untouched = await h.settingsDraft(freshWholesaleId);
+        expect(untouched.structure).toMatchObject({
+          footnote: ["A later edit"],
+        });
+        expect(
+          await h.auditRows("INVOICE_TEMPLATE_LAYOUT_UPLOADED"),
+        ).toHaveLength(auditBefore);
+
+        // Reloaded: the current settings token restores in place.
+        const result = await upload(
+          freshWholesaleId,
+          exportZip,
+          warned,
+          untouched.token,
+        );
         expect(result).toEqual({
           ok: true,
           versionId: open!.billTemplateVersionId,
           versionNo: 1,
           replaced: true,
         });
-        const after = await h.settingsDraft(freshWholesaleId);
-        expect(after.billTemplateVersionId).toBe(
-          settings.billTemplateVersionId,
+        const after = await billTemplateVersionRepository.findDraftWithModifier(
+          db(),
+          { kind: "generated", familyId: freshWholesaleId },
         );
-        expect(after.structure).toEqual(RESTORED_STRUCTURE);
+        expect(after!.billTemplateVersionId).toBe(
+          untouched.billTemplateVersionId,
+        );
+        expect(after!.structure).toEqual(RESTORED_STRUCTURE);
+        // #4 — the banner's "saved by" is the restorer, not the last editor.
+        expect(after!.lastModifiedByName).toBe(ACTOR.name);
+        const audit = await h.auditRows("INVOICE_TEMPLATE_LAYOUT_UPLOADED");
+        expect(audit).toHaveLength(auditBefore + 1);
+        expect(audit.at(-1)!.after_data).toMatchObject({
+          replaced: true,
+          settingsBefore: untouched.structure,
+          settingsAfter: RESTORED_STRUCTURE,
+        });
+
+        // #1 — restored settings are a settings change: the editor still
+        // holding the pre-restore token gets the plain conflict.
+        const layoutNow = await billTemplateVersionRepository.findDraft(db(), {
+          kind: "layout",
+          familyId: freshWholesaleId,
+        });
+        expect(layoutNow!.token).not.toBe(after!.token);
+        expect(await edit("A stale edit", untouched.token)).toEqual({
+          ok: false,
+          code: "DRAFT_CONFLICT",
+        });
+        expect((await h.settingsDraft(freshWholesaleId)).structure).toEqual(
+          RESTORED_STRUCTURE,
+        );
       });
     });
   },

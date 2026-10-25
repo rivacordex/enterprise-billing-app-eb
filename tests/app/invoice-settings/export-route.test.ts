@@ -22,7 +22,10 @@ vi.mock("@/services/billing/invoice-template/export-template-version", () => ({
   exportTemplateVersion: vi.fn(),
 }));
 
-import { GET } from "@/app/(app)/administration/invoice-settings/invoice-template/versions/[versionId]/export/route";
+import {
+  GET,
+  HEAD,
+} from "@/app/(app)/administration/invoice-settings/invoice-template/versions/[versionId]/export/route";
 import { auth } from "@/auth";
 import {
   findActiveUserById,
@@ -39,6 +42,14 @@ const mockExport = vi.mocked(exportTemplateVersion);
 
 const DRAFT_ID = "BTV00000010";
 const BYTES = new Uint8Array([0x50, 0x4b, 0x05, 0x06]);
+
+// A download request; `fetchSite` is the browser's Sec-Fetch-Site (null: not
+// sent, e.g. a non-browser client).
+function req(fetchSite: string | null = "same-origin") {
+  const headers = new Headers();
+  if (fetchSite !== null) headers.set("sec-fetch-site", fetchSite);
+  return { headers } as never;
+}
 
 function ctx(versionId = "BTV00000002") {
   return { params: Promise.resolve({ versionId }) };
@@ -65,18 +76,18 @@ beforeEach(() => {
 describe("GET …/invoice-template/versions/[versionId]/export", () => {
   it("401s without a session", async () => {
     mockGetSession.mockResolvedValue(null);
-    expect((await GET({} as never, ctx())).status).toBe(401);
+    expect((await GET(req(), ctx())).status).toBe(401);
     expect(mockExport).not.toHaveBeenCalled();
   });
 
   it("401s when the session's user is no longer active", async () => {
     mockFindActiveUserById.mockResolvedValue(null);
-    expect((await GET({} as never, ctx())).status).toBe(401);
+    expect((await GET(req(), ctx())).status).toBe(401);
   });
 
   it("403s without invoice_settings : READ", async () => {
     mockResolvePermissions.mockResolvedValue({ billrun_view: "EDIT" } as never);
-    expect((await GET({} as never, ctx())).status).toBe(403);
+    expect((await GET(req(), ctx())).status).toBe(403);
     expect(mockExport).not.toHaveBeenCalled();
   });
 
@@ -84,12 +95,12 @@ describe("GET …/invoice-template/versions/[versionId]/export", () => {
     ["a malformed version id", "BTV2"],
     ["a non-BTV id", "CBL00000001"],
   ])("422s for %s", async (_c, versionId) => {
-    expect((await GET({} as never, ctx(versionId))).status).toBe(422);
+    expect((await GET(req(), ctx(versionId))).status).toBe(422);
     expect(mockExport).not.toHaveBeenCalled();
   });
 
   it("404s for a DRAFT pair when the caller has READ only", async () => {
-    const response = await GET({} as never, ctx(DRAFT_ID));
+    const response = await GET(req(), ctx(DRAFT_ID));
     expect(response.status).toBe(404);
     expect(mockExport).toHaveBeenCalledWith(
       DRAFT_ID,
@@ -102,13 +113,13 @@ describe("GET …/invoice-template/versions/[versionId]/export", () => {
     mockResolvePermissions.mockResolvedValue({
       invoice_settings: "EDIT",
     } as never);
-    const response = await GET({} as never, ctx(DRAFT_ID));
+    const response = await GET(req(), ctx(DRAFT_ID));
     expect(response.status).toBe(200);
     expect(mockExport).toHaveBeenCalledWith(DRAFT_ID, expect.anything(), true);
   });
 
   it("serves the zip as an attachment named <layout_code>-v<N>-s<M>.zip", async () => {
-    const response = await GET({} as never, ctx());
+    const response = await GET(req(), ctx());
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("application/zip");
     expect(response.headers.get("Content-Disposition")).toBe(
@@ -127,7 +138,7 @@ describe("GET …/invoice-template/versions/[versionId]/export", () => {
         { versionId: "BTV00000001", file: "partials/header.hbs" },
       ),
     );
-    const response = await GET({} as never, ctx());
+    const response = await GET(req(), ctx());
     expect(response.status).toBe(500);
     expect(await response.text()).toBe("");
     expect(response.headers.get("Content-Disposition")).toBeNull();
@@ -140,4 +151,29 @@ describe("GET …/invoice-template/versions/[versionId]/export", () => {
       },
     );
   });
+
+  // bm81 review fix (owner, #6) — the audited GET runs only for a deliberate
+  // same-site download.
+  it("refuses HEAD with 405 and never runs the export", () => {
+    const response = HEAD();
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Allow")).toBe("GET");
+    expect(mockExport).not.toHaveBeenCalled();
+  });
+
+  it.each(["cross-site", "same-site"])(
+    "403s a %s browser request before any export or audit",
+    async (site) => {
+      const response = await GET(req(site), ctx());
+      expect(response.status).toBe(403);
+      expect(mockExport).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([["same-origin"], ["none"], [null]])(
+    "serves a Sec-Fetch-Site %s request",
+    async (site) => {
+      expect((await GET(req(site), ctx())).status).toBe(200);
+    },
+  );
 });

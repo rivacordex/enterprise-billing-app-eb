@@ -98,6 +98,9 @@ export default async function InvoiceTemplateTypePage({
       familyId={data.typeId}
       nextVersionNo={data.nextLayoutVersionNo}
       openLayoutDraft={data.openLayoutDraft}
+      // bm81 review fix (#2) — a restore must not replace settings changed
+      // since this page loaded (the draft is loaded for EDIT, as upload needs).
+      settingsDraftToken={data.empty ? null : (data.draft?.token ?? null)}
       locale={locale}
       timezone={timezone}
     />

@@ -1216,3 +1216,33 @@ Not defects: the code behaves correctly and the guardrails pass. These are maint
 **ELI5:** we built one good test workbench, but some older tests still use their own home-made ones. They work, but a fix to the workbench (like the blob-cleanup safety check) doesn't reach them.
 
 **Recommendation:** move them over in one test-only change. Notably, the harness only deletes blobs after both store guards pass (Vitest runs `afterAll` even when `beforeAll` fails); the older copies still clean up whenever a blob client exists. Only the global `DESTRUCTIVE_DB_OK` + disposable-sentinel preflight protects them today. No production code changes.
+
+## 31. 🟡 OPEN (logged 2026-10-26): items outside bm81's scope, found during the bm80–bm81 reviews
+
+Recorded so they are fixed in their own units. None blocks bm81: export, restore and the fixes from the bm81 review are built and tested.
+
+### 31a. The type page's "Next layout version" ignores an open layout DRAFT (pre-existing, bm77/bm78)
+
+**What:** the type detail heading shows max(`version_no`) + 1 even while a layout DRAFT is open. Plan D106 says it should show the open DRAFT's number when one exists, since an upload then overwrites that DRAFT (bm80), and the gate expects that number.
+
+**ELI5:** the label tells the layout author to export "v3", but the page actually wants "v2" again to replace the open draft.
+
+**Recommendation:** derive it from `openLayoutDraft?.versionNo ?? max + 1` in `services/billing/read/invoice-template-settings.ts`, with a read-service test. Small; billing-only.
+
+### 31b. The file and export Route Handlers log failures as an opaque `code: "INTERNAL"` (pre-existing pattern)
+
+**What:** `…/versions/[versionId]/files/[file]/route.ts` (bm55) logs any error that isn't an `InvoiceRenderError` as `code: "INTERNAL"` with no message, and bm81's export route copied the pattern. A blob-store outage or a DB error leaves no detail in the log.
+
+**Recommendation:** log `error.message` (and the error's class name) for the non-typed case in both handlers, together.
+
+### 31c. bm83's spec needs a note that the retired-type preview check applies on the draft path too
+
+**What:** since the bm79 review, `previewInvoiceTemplate` renders a working draft only with `draft: true` (for EDIT). bm83's retired-type check in preview should state that it also covers that draft path. Spec text only; to update when bm83 is picked up.
+
+### 31d. The bm58 activation suite fails when it runs after suites that activate Standard (test-only, since bm79)
+
+**What:** since bm79, activating Standard writes its generated files under `generated/INVOICE/STANDARD/`. Four older suites activate Standard and never clean that prefix: `draft-uses-run-stamps`, `run-template-capture`, `invoice-template-journey` and `invoice-version-pinning`. When one of them runs before `tests/db/activate-template.integration.test.ts` (bm58), which cleans that prefix only in `afterAll`, the bm58 orphan-count cases find extra blobs and 11 cases fail. Run alone, or first, it passes 15/0. It was seen in the bm80 batch and again in the bm81 review-fix batch; batch order decides the result. A batch without bm58 leaves 24 blobs under the prefix (6 versions × 4 files).
+
+**ELI5:** several tests leave their rubbish in a shared bin, and one test counts what's in the bin.
+
+**Recommendation:** fold into §30b. On the shared harness, every suite that activates Standard cleans `generated/INVOICE/STANDARD/` in `beforeAll` and `afterAll` (behind the blob-store guard), and bm58 also cleans it in `beforeAll`. Test-only, with no production change.

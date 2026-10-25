@@ -25,11 +25,10 @@ import {
 } from "@/services/billing/invoice-template/install-layout-package";
 import { parseSampleData } from "@/services/billing/invoice-template/sample-data";
 import {
-  LAYOUT_PACKAGE_FONT_FILE,
+  LAYOUT_PACKAGE_FILES,
   LAYOUT_PACKAGE_MAX_ENTRIES,
   LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES,
-  LAYOUT_PACKAGE_OPTIONAL_FILES,
-  LAYOUT_PACKAGE_REQUIRED_FILES,
+  LAYOUT_PACKAGE_SETTINGS_MAX_BYTES,
   type ExpectedDraft,
   type LayoutProblem,
   type LayoutProblemCode,
@@ -72,7 +71,7 @@ type Render = typeof renderAndReadSections;
 
 const INDEX_FILE = "checksums.json";
 const MANIFEST_FILE = "manifest.json";
-const SETTINGS_FILE = "settings.json";
+const SETTINGS_FILE = LAYOUT_PACKAGE_FILES.settings;
 const RENDER_FILE = "(render)";
 const PACKAGE_FILE = "(package)";
 const MAX_LISTED_URLS = 10;
@@ -82,8 +81,8 @@ const MAX_LISTED_URLS = 10;
 // bomb expand ~1000:1 before the cap ran. At 1 KiB per push, at most about
 // 1 MiB is inflated past the cap before pushing stops.
 const INFLATE_PUSH_BYTES = 1024;
-const REQUIRED = new Set<string>(LAYOUT_PACKAGE_REQUIRED_FILES);
-const OPTIONAL = new Set<string>(LAYOUT_PACKAGE_OPTIONAL_FILES);
+const REQUIRED = new Set<string>(LAYOUT_PACKAGE_FILES.required);
+const OPTIONAL = new Set<string>(LAYOUT_PACKAGE_FILES.optional);
 
 function problem(
   file: string,
@@ -117,11 +116,23 @@ function isAllowedName(name: string): boolean {
   return (
     REQUIRED.has(name) ||
     OPTIONAL.has(name) ||
-    LAYOUT_PACKAGE_FONT_FILE.test(name)
+    LAYOUT_PACKAGE_FILES.font.test(name)
   );
 }
 
 const isDirectory = (name: string): boolean => name.endsWith("/");
+// bm81 review fix (owner, #5/#9) — `settings.json` has its own budget
+// (LAYOUT_PACKAGE_SETTINGS_MAX_BYTES), outside the layout's entry and byte caps,
+// so a layout accepted at a cap still round-trips through its export.
+const isSettings = (name: string): boolean => name === SETTINGS_FILE;
+
+function settingsTooLarge(bytes: number): LayoutProblem {
+  return problem(
+    SETTINGS_FILE,
+    "ZIP_TOO_LARGE",
+    `is ${bytes} bytes; at most ${LAYOUT_PACKAGE_SETTINGS_MAX_BYTES} are allowed`,
+  );
+}
 
 // Stage 1 — the zip's shape and size.
 export function readZip(
@@ -150,12 +161,13 @@ export function readZip(
 
   const problems: LayoutProblem[] = [];
   const fileEntries = entries.filter((e) => !isDirectory(e.name));
-  if (fileEntries.length > LAYOUT_PACKAGE_MAX_ENTRIES) {
+  const layoutEntries = fileEntries.filter((e) => !isSettings(e.name));
+  if (layoutEntries.length > LAYOUT_PACKAGE_MAX_ENTRIES) {
     problems.push(
       problem(
         PACKAGE_FILE,
         "ZIP_TOO_MANY_ENTRIES",
-        `the package has ${fileEntries.length} entries; at most ${LAYOUT_PACKAGE_MAX_ENTRIES} are allowed`,
+        `the package has ${layoutEntries.length} entries; at most ${LAYOUT_PACKAGE_MAX_ENTRIES} are allowed`,
       ),
     );
   }
@@ -170,7 +182,15 @@ export function readZip(
       );
     }
   }
-  const declared = fileEntries.reduce((n, e) => n + e.originalSize, 0);
+  for (const e of fileEntries) {
+    if (
+      isSettings(e.name) &&
+      e.originalSize > LAYOUT_PACKAGE_SETTINGS_MAX_BYTES
+    ) {
+      problems.push(settingsTooLarge(e.originalSize));
+    }
+  }
+  const declared = layoutEntries.reduce((n, e) => n + e.originalSize, 0);
   if (declared > LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES) {
     problems.push(
       problem(
@@ -191,6 +211,7 @@ export function readZip(
   const seen = new Set<string>();
   let started = 0;
   let total = 0;
+  let settingsTotal = 0;
   let overCap = false;
   const unzip = new Unzip();
   unzip.register(UnzipInflate);
@@ -207,7 +228,7 @@ export function readZip(
       return;
     }
     seen.add(file.name);
-    started++;
+    if (!isSettings(file.name)) started++;
     // Review fix — the local header must name an entry the central directory
     // listed (pass 1 approved those names, not these).
     if (
@@ -234,6 +255,16 @@ export function readZip(
         return;
       }
       if (overCap) return;
+      if (isSettings(file.name)) {
+        settingsTotal += data.length;
+        if (settingsTotal > LAYOUT_PACKAGE_SETTINGS_MAX_BYTES) {
+          overCap = true;
+          problems.push(settingsTooLarge(settingsTotal));
+          return;
+        }
+        chunks.push(data);
+        return;
+      }
       total += data.length;
       if (total > LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES) {
         overCap = true;
@@ -272,7 +303,7 @@ export function readZip(
   for (const [name, chunks] of parts) {
     files.set(name, Buffer.concat(chunks));
   }
-  for (const name of LAYOUT_PACKAGE_REQUIRED_FILES) {
+  for (const name of LAYOUT_PACKAGE_FILES.required) {
     if (!files.has(name)) {
       problems.push(
         problem(name, "ZIP_MISSING_FILE", "is missing from the package"),
@@ -409,6 +440,9 @@ function checkRestoreSettings(
 
 // Stage 3 — the manifest, the type's layout code and the computed version.
 // bm81: a valid restore skips the version comparison; the code check always runs.
+// Review fix (#12) — an invalid settings.json no longer hides the manifest's
+// own problems (the code check included); the version comparison is skipped
+// for it, as the package claims to be a restore.
 function checkManifest(
   files: ReadonlyMap<string, Buffer>,
   ctx: GateContext,
@@ -421,7 +455,7 @@ function checkManifest(
     }
   | { ok: false; problems: LayoutProblem[] } {
   const settings = checkRestoreSettings(files, indexDigest);
-  if (!settings.ok) return settings;
+  const settingsProblems = settings.ok ? [] : settings.problems;
   let manifest: LayoutManifest;
   try {
     const parsed = layoutManifestSchema.safeParse(
@@ -430,13 +464,16 @@ function checkManifest(
     if (!parsed.success) {
       return {
         ok: false,
-        problems: parsed.error.issues.map((i) =>
-          problem(
-            MANIFEST_FILE,
-            "MANIFEST_INVALID",
-            `${i.path.join(".") || "(root)"}: ${i.message}`,
+        problems: [
+          ...settingsProblems,
+          ...parsed.error.issues.map((i) =>
+            problem(
+              MANIFEST_FILE,
+              "MANIFEST_INVALID",
+              `${i.path.join(".") || "(root)"}: ${i.message}`,
+            ),
           ),
-        ),
+        ],
       };
     }
     manifest = parsed.data;
@@ -444,11 +481,12 @@ function checkManifest(
     return {
       ok: false,
       problems: [
+        ...settingsProblems,
         problem(MANIFEST_FILE, "MANIFEST_INVALID", "is not valid JSON"),
       ],
     };
   }
-  const problems: LayoutProblem[] = [];
+  const problems: LayoutProblem[] = [...settingsProblems];
   if (manifest.layoutCode !== ctx.layoutCode) {
     problems.push(
       problem(
@@ -459,6 +497,7 @@ function checkManifest(
     );
   }
   if (
+    settings.ok &&
     settings.restore === null &&
     manifest.layoutVersion !== ctx.expectedVersionNo
   ) {
@@ -472,7 +511,7 @@ function checkManifest(
   }
   return problems.length > 0
     ? { ok: false, problems }
-    : { ok: true, manifest, restore: settings.restore };
+    : { ok: true, manifest, restore: settings.ok ? settings.restore : null };
 }
 
 // Stages 4–7 alone, over already-verified files. checkLayoutPackage calls it;
@@ -556,11 +595,15 @@ export async function checkLayoutPackage(
   const manifest = checkManifest(read.files, ctx, checksums.indexDigest);
   if (!manifest.ok) return manifest;
 
-  const problems = await checkLayoutFiles(read.files, render);
+  // bm81 review fix (#15) — settings.json is split off here, once: stages 4–7,
+  // install and every consumer of `files` see only the layout files.
+  const files = new Map(read.files);
+  files.delete(SETTINGS_FILE);
+  const problems = await checkLayoutFiles(files, render);
   if (problems.length > 0) return { ok: false, problems };
   return {
     ok: true,
-    files: read.files,
+    files,
     manifest: manifest.manifest,
     indexDigest: checksums.indexDigest,
     restore: manifest.restore,
@@ -572,7 +615,14 @@ export async function checkLayoutPackage(
 export { matchExpectedDraft };
 
 export async function uploadLayoutPackage(
-  input: { familyId: string; zip: Uint8Array; expectedDraft: ExpectedDraft },
+  input: {
+    familyId: string;
+    zip: Uint8Array;
+    expectedDraft: ExpectedDraft;
+    // bm81 review fix (#2) — the settings DRAFT token the dialog saw, checked
+    // under the lock when a restore would replace the draft settings.
+    expectedSettingsToken?: string | null;
+  },
   actorId: string,
   deps: { render?: Render } = {},
 ): Promise<UploadLayoutPackageResult> {
@@ -620,6 +670,7 @@ export async function uploadLayoutPackage(
     manifest: gate.manifest,
     indexDigest: gate.indexDigest,
     restore: gate.restore,
+    expectedSettingsToken: input.expectedSettingsToken ?? null,
     actorId,
     mode,
     expectedDraft: input.expectedDraft,

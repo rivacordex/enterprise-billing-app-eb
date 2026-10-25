@@ -169,7 +169,7 @@ export async function getInvoiceTemplatePageData(
       familyId,
     }),
     canEdit
-      ? billTemplateVersionRepository.findDraft(db, {
+      ? billTemplateVersionRepository.findDraftWithModifier(db, {
           kind: "generated",
           familyId,
         })
@@ -220,10 +220,10 @@ export async function getInvoiceTemplatePageData(
         versionNo: draftRow.versionNo,
         token: draftRow.token,
         savedAt: draftRow.lastModifiedDatetime,
-        savedBy: await billTemplateVersionRepository.findLatestDraftSaver(
-          db,
-          draftRow.billTemplateVersionId,
-        ),
+        // bm81 review fix (owner, #4) — the draft's last writer, recorded on
+        // every DRAFT write since bm77 (a save, an upload's re-point, a
+        // restore), not only the last form save's audit row.
+        savedBy: draftRow.lastModifiedByName ?? "an unknown user",
       }
     : null;
   const layoutById = new Map(

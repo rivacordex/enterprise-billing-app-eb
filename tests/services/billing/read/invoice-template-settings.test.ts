@@ -17,7 +17,6 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
     findById: vi.fn(),
     findDraft: vi.fn(),
     findDraftWithModifier: vi.fn(),
-    findLatestDraftSaver: vi.fn(),
     listForKind: vi.fn(),
     listActiveSettingsByFamily: vi.fn(),
   },
@@ -51,6 +50,12 @@ import {
 
 const repo = vi.mocked(billTemplateVersionRepository);
 const familyRepo = vi.mocked(billTemplateFamilyRepository);
+
+// The two DRAFTs findDraftWithModifier serves, by kind (set per case).
+const drafts: { generated: unknown; layout: unknown } = {
+  generated: null,
+  layout: null,
+};
 
 const DRAFT_ROW = {
   ...SEEDED_GENERATED_ROW,
@@ -111,10 +116,15 @@ beforeEach(() => {
         ? SEEDED_GENERATED_ROW
         : null,
   );
-  repo.findDraft.mockResolvedValue(DRAFT_ROW);
-  // bm80 — no open layout DRAFT unless a case adds one.
-  repo.findDraftWithModifier.mockResolvedValue(null);
-  repo.findLatestDraftSaver.mockResolvedValue("Draft Saver");
+  // bm81 review fix (#4) — the settings DRAFT (with its last writer) and the
+  // layout DRAFT both come from findDraftWithModifier; no open layout DRAFT
+  // unless a case adds one (bm80).
+  drafts.generated = { ...DRAFT_ROW, lastModifiedByName: "Draft Saver" };
+  drafts.layout = null;
+  repo.findDraftWithModifier.mockImplementation(
+    async (_db, { kind }) =>
+      (kind === "layout" ? drafts.layout : drafts.generated) as never,
+  );
   familyRepo.findById.mockImplementation(async (_db, id) =>
     id === STANDARD ? STANDARD_FAMILY : null,
   );
@@ -152,7 +162,7 @@ describe("getInvoiceTemplatePageData: the type from the URL (bm66, bm77)", () =>
 
   it("bm80 — carries the open layout DRAFT's version, token, last change and author (the overwrite warning's server data)", async () => {
     const modified = new Date("2026-10-25T03:04:05.000Z");
-    repo.findDraftWithModifier.mockResolvedValue({
+    drafts.layout = {
       ...SEEDED_LAYOUT_ROW,
       billTemplateVersionId: "BTV00000010",
       versionNo: 2,
@@ -160,7 +170,7 @@ describe("getInvoiceTemplatePageData: the type from the URL (bm66, bm77)", () =>
       lastModifiedDatetime: modified,
       token: "2026-10-25T03:04:05.123456Z",
       lastModifiedByName: "a deleted user",
-    });
+    };
     const data = await page(undefined, true);
     expect(data?.openLayoutDraft).toEqual({
       versionId: "BTV00000010",
@@ -193,7 +203,7 @@ describe("getInvoiceTemplatePageData: the type from the URL (bm66, bm77)", () =>
       isDefault: false,
     });
     repo.findDefault.mockResolvedValue(null);
-    repo.findDraft.mockResolvedValue(null);
+    drafts.generated = null;
     repo.listForKind.mockResolvedValue([]);
     const data = await getInvoiceTemplatePageData("BTF00000002", undefined, {
       canEdit: true,
@@ -257,7 +267,10 @@ describe("getInvoiceTemplatePageData: the working draft", () => {
 
   it("never loads or shows the DRAFT for a READ user", async () => {
     const data = await page(undefined, false);
-    expect(repo.findDraft).not.toHaveBeenCalled();
+    expect(repo.findDraftWithModifier).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "generated" }),
+    );
     expect(data.draft).toBeNull();
     expect(data.shown.billTemplateVersionId).toBe("BTV00000002");
     expect(data.defaultShown.billTemplateVersionId).toBe("BTV00000002");
@@ -278,11 +291,16 @@ describe("getInvoiceTemplatePageData: the working draft", () => {
   });
 
   it("opens on the current version when an EDIT user has no draft", async () => {
-    repo.findDraft.mockResolvedValue(null);
+    drafts.generated = null;
     const data = await page(undefined, true);
     expect(data.draft).toBeNull();
     expect(data.shown.billTemplateVersionId).toBe("BTV00000002");
-    expect(repo.findLatestDraftSaver).not.toHaveBeenCalled();
+  });
+
+  it("bm81 review fix (#4) — a draft with no recorded writer is saved by 'an unknown user'", async () => {
+    drafts.generated = { ...DRAFT_ROW, lastModifiedByName: null };
+    const data = await page(undefined, true);
+    expect(data.draft?.savedBy).toBe("an unknown user");
   });
 });
 

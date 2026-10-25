@@ -62,6 +62,10 @@ interface NormalizedRow {
   changeNote: string | null;
   usedByCount: number;
   viewParam: string;
+  // A DRAFT, or a discarded one (RETIRED, never activated): still a draft —
+  // no files, and only a viewer who may see drafts gets View / Export (bm79).
+  // Review fix (#13): decided once per row, here.
+  draftLike: boolean;
   downloadHref: string | null;
   // bm81 (ui-context §10e) — the pair's export, for every row the viewer may
   // open: READ and EDIT; a DRAFT or discarded row only for EDIT.
@@ -83,7 +87,15 @@ const BASE_HEADERS = [
   "Actions",
 ] as const;
 
-function normalize(props: VersionHistoryTableProps): NormalizedRow[] {
+const isDraftLikeRow = (row: {
+  status: TemplateVersionStatus;
+  activatedAt: Date | null;
+}): boolean => row.status === "DRAFT" || row.activatedAt === null;
+
+function normalize(
+  props: VersionHistoryTableProps,
+  canViewDrafts: boolean,
+): NormalizedRow[] {
   if (props.kind === "profile") {
     return props.rows.map((row) => ({
       key: String(row.versionNo),
@@ -99,6 +111,7 @@ function normalize(props: VersionHistoryTableProps): NormalizedRow[] {
       changeNote: row.changeNote,
       usedByCount: row.usedByCount,
       viewParam: String(row.versionNo),
+      draftLike: isDraftLikeRow(row),
       downloadHref: null,
       exportHref: null,
       caption: null,
@@ -107,37 +120,38 @@ function normalize(props: VersionHistoryTableProps): NormalizedRow[] {
   const nonDefaultInUse = props.rows.some(
     (r) => r.status === "ACTIVE" && !r.isDefault,
   );
-  return props.rows.map((row) => ({
-    key: row.billTemplateVersionId,
-    versionNo: row.versionNo,
-    idLabel: row.billTemplateVersionId,
-    status: row.status,
-    isDefault: row.isDefault,
-    layoutLabel: row.layoutLabel,
-    createdBy: row.createdBy,
-    createdAt: row.createdAt,
-    activatedAt: row.activatedAt,
-    retiredAt: row.retiredAt,
-    changeNote: row.changeNote,
-    usedByCount: row.usedByCount,
-    viewParam: row.billTemplateVersionId,
-    caption:
-      row.status === "ACTIVE" && !row.isDefault
-        ? "In use for new runs"
-        : row.isDefault && nonDefaultInUse
-          ? "Fallback"
-          : null,
-    exportHref:
-      (row.status === "DRAFT" || row.activatedAt === null) &&
-      !props.canViewDrafts
-        ? null
-        : `${INVOICE_TEMPLATE_FILES_BASE}/${row.billTemplateVersionId}/export`,
-    // A DRAFT, or a discarded one (RETIRED, never activated), has no files.
-    downloadHref:
-      row.status === "DRAFT" || row.activatedAt === null
+  return props.rows.map((row) => {
+    const draftLike = isDraftLikeRow(row);
+    return {
+      key: row.billTemplateVersionId,
+      versionNo: row.versionNo,
+      idLabel: row.billTemplateVersionId,
+      status: row.status,
+      isDefault: row.isDefault,
+      layoutLabel: row.layoutLabel,
+      createdBy: row.createdBy,
+      createdAt: row.createdAt,
+      activatedAt: row.activatedAt,
+      retiredAt: row.retiredAt,
+      changeNote: row.changeNote,
+      usedByCount: row.usedByCount,
+      viewParam: row.billTemplateVersionId,
+      caption:
+        row.status === "ACTIVE" && !row.isDefault
+          ? "In use for new runs"
+          : row.isDefault && nonDefaultInUse
+            ? "Fallback"
+            : null,
+      draftLike,
+      exportHref:
+        draftLike && !canViewDrafts
+          ? null
+          : `${INVOICE_TEMPLATE_FILES_BASE}/${row.billTemplateVersionId}/export`,
+      downloadHref: draftLike
         ? null
         : `${INVOICE_TEMPLATE_FILES_BASE}/${row.billTemplateVersionId}/files/invoice.hbs`,
-  }));
+    };
+  });
 }
 
 const MUTED = "text-[color:var(--text-muted)]";
@@ -159,7 +173,7 @@ export function VersionHistoryTable(
     discard = null,
   } = props;
   const isProfile = props.kind === "profile";
-  const rows = normalize(props);
+  const rows = normalize(props, canViewDrafts);
   const headers = isProfile
     ? BASE_HEADERS
     : ([
@@ -256,8 +270,7 @@ export function VersionHistoryTable(
                       <div className="flex items-center gap-3 whitespace-nowrap">
                         {/* A discarded draft (never activated) is still a
                             draft: no View link for READ users (bm79). */}
-                        {(row.status === "DRAFT" || row.activatedAt === null) &&
-                        !canViewDrafts ? null : (
+                        {row.draftLike && !canViewDrafts ? null : (
                           <Link
                             href={`?tab=edit&version=${row.viewParam}`}
                             className={LINK}
