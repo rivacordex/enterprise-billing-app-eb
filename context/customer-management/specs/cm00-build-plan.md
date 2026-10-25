@@ -1,6 +1,6 @@
 # CM00 — Customer Management Module Build Plan (Units in Build Order)
 
-**Sources:** `custmgmt-project-overview.md` (v1 features, flows, scope), `custmgmt-update-overview.md` + `_updatemodule-customer-accounts-invoice-template-binding-plan.md` (Invoice Template Binding update, decisions D1–D16, test matrix §11), `custmgmt-architecture.md` (stack = platform `architecture.md` §1 unchanged; §2 folders, §3 storage, §4 permission matrix, §6 Module Invariants #1–#18, §7 update deltas), `custmgmt-code-standards.md` (§7 file tree, §8 permission map, §9 guardrail tests), `custmgmt-ai-workflow-rules.md` (§2 Phase 1 units, §9 update rules).
+**Sources:** `custmgmt-project-overview.md` (v1 and the delivered binding update), `custmgmt-update-overview.md` (the in-flight **Invoice Template Types** update, Customer Management part; owning design `context/billing-management/billmgmt-update-overview.md`), `custmgmt-architecture.md` (stack = platform `architecture.md` §1 unchanged; §6 Module Invariants #1–#22; §7 and §8 update deltas), `custmgmt-code-standards.md` (§7 file tree, §8 permission map, §9 guardrails, §10 Types deltas), `custmgmt-ai-workflow-rules.md` (§9 binding record, §10 Types rules). The Billing units of the update are **bm74–bm85** in `context/billing-management/specs/bm00-build-plan.md` Part 6.
 
 ## How units are cut
 
@@ -10,118 +10,77 @@
 4. **Merge always-done-together units** — e.g. a page container with its first mutation; an action with the only UI that calls it.
 5. **Merge units with no standalone visible result** — e.g. Zod schemas, validators and read services merge into the first unit that renders or mutates with them.
 
-**Boundary key:** `DB` = `db/**` schema, migrations, seeds · `APP` = `app/(app)/customers/**`, `components/customers/**`, `actions/customer/**`, `services/customer/**`, `validation/customer/**`, and, for the binding update only, the Accounts-side files a customer screen calls (`actions/accounts/**`, `services/accounts/**`, `validation/accounts/onboard-customer-accounts.schema.ts`; the `billing_account` table is Accounts-owned, `custmgmt-architecture.md` §7) · `TESTS` = `tests/**` cross-cutting guardrail/authz sweep.
+**Boundary key:** `DB` = `db/**` schema, migrations, seeds · `APP` = `app/(app)/customers/**`, `components/customers/**`, `actions/customer/**`, `services/customer/**`, `validation/customer/**`, and, for the binding and Types updates, the Accounts-side files a customer screen calls (`actions/accounts/**`, `services/accounts/**`, `validation/accounts/onboard-customer-accounts.schema.ts`; the `billing_account` table is Accounts-owned, `custmgmt-architecture.md` §7) · `TESTS` = `tests/**` cross-cutting guardrail/authz sweep.
 
 ---
 
-## Phase 1 — v1 full CRUD (cm01–cm16) — DELIVERED
+## Delivered units (numbering record)
 
-_Compacted 2026-10-10. Per-unit detail lives in `specs/cm01.md`–`specs/cm16-authz-guardrail-sweep.md`; the build record is `custmgmt-progress-tracker.md`._
+_Per-unit detail lives in the spec files (`specs/cm01`–`specs/cm22`); the build record is `custmgmt-completed-tracker.md` (cm01–cm16) and `custmgmt-progress-tracker.md` (cm17–cm22). Product scope is in `custmgmt-project-overview.md`._
 
-| Unit | Name | Boundary | Visible result |
-|---|---|---|---|
-| cm01 | DB foundation: `customer` schema, 3 tables, constraints, `customers` permission (READ/EDIT) + `CUSTOMER_SEARCH_RESULT_LIMIT` seed | DB | Migration applies; constraint guardrails (one non-closed role per org, nullable-unique `registration_number`, composite preferred-contact FK) fail as designed |
-| cm02 | Validation schemas, transition maps, JSON-only specification check, read repositories, `search-customers`, `get-customer-detail` | APP | Search and detail assembly proven by unit tests |
-| cm03 | Nav: "Customer" section | APP | Sidebar shows View/Manage Customer _(nav now governed by the platform `NAV_REGISTRY` rule)_ |
-| cm04 | View Customer: search page | APP | READ user searches, capped results, `?q=` deep-link |
-| cm05 | View Customer: read-only detail page (three stacked sections + `InconsistencyBanner`) | APP | Full read-only profile; mismatch banner warns only |
-| cm06 | Manage Customer: search page | APP | EDIT user searches; USER rejected server-side |
-| cm07 | Create customer (org + role) + add-new page | APP | Customer created at REGISTERED/INITIALIZED, audited |
-| cm08 | Edit page container + update organization | APP | Org edit saves; stale save → `CONFLICT` reload prompt |
-| cm09 | Transition organization status | APP | Map-driven transitions with mandatory reason |
-| cm10 | Transition customer status | APP | INITIALIZED → VALIDATED → ACTIVE; no skipping |
-| cm11 | Add contact (auto-preferred contact + method) | APP | First contact and first method auto-preferred |
-| cm12 | Update contact | APP | Contact edits keep preferred pointers |
-| cm13 | Delete contact (the one physical delete) | APP | Non-preferred delete works; preferred delete blocked |
-| cm14 | Set preferred contact | APP | Preferred marker moves; audited |
-| cm15 | Set preferred contact method | APP | Preferred method switches between populated methods |
-| cm16 | Authz matrix + full guardrail sweep (ship gate) | TESTS | All eight code-standards §9 guardrails green |
+| Units | Phase | Names |
+| --- | --- | --- |
+| cm01–cm16 | Phase 1 — v1 full CRUD (delivered) | DB foundation (`customer` schema, `customers` permission, search-limit seed) · validation, transition maps and read services · nav · View Customer search · View Customer detail · Manage Customer search · create customer · edit page + update organization · organization status transition · customer status transition · add contact · update contact · delete contact · set preferred contact · set preferred contact method · authz + guardrail ship gate |
+| cm17–cm22 | Phase 2 — Invoice Template Binding (delivered, signed off 2026-10-25) | BAN template reference column · onboarding "Invoice template" field + `assertBindableTemplate` · View Customer tab shell · View Customer Accounts tab · Manage Customer Billing account panel + template reset · binding ship gate |
 
-**Phase 1 durable notes:** no `DELETE` permission level (READ/EDIT only); write-repository functions were introduced only in the mutation unit that first needed them; deferred and out of scope: shape validation on `party_role_specification`, MERGED-status migration tooling, multi-value contact fields, individual (person) customers, TMF/external APIs, merge tooling. `party_role.account` stays display-only (Inv. #9).
+**Durable facts from delivered units:**
+- **Permissions:** `customers` is READ/EDIT only; there is no `DELETE` level.
+- **Out of scope:** shape validation on `party_role_specification`, MERGED-status migration tooling, multi-value contact fields, individual (person) customers, TMF/external APIs.
+- **Account linkage:** `party_role.account` stays display-only (Inv. #9).
+- **Navigation:** governed by the platform `NAV_REGISTRY` rule.
+- **Locks and reads:** a BAN template change is guarded by the BAN lock, not the customer lock (Inv. #17); customer screens read accounting data read-only (Inv. #11).
+- **What Phase 3 replaces:** the NULL-only rule, the version column and the Reset control.
 
 ---
 
-## Phase 2 — Invoice Template Binding update (cm17–cm22) — PLANNED
+## Phase 3 — Invoice Template Types update, Customer Management part (cm23–cm24) — PLANNED
 
-Plumbing only: a per-BAN invoice template reference (v1 `NULL` = follow the active template), confirmed at onboarding, reset on Manage Customer, shown on a tabbed View Customer with a read-only Accounts tab. Posting ignores the reference (D4, Inv. #18). No new permission, table, technology or background job. Units follow `custmgmt-ai-workflow-rules.md` §9; every DB-gated test runs on a throwaway Postgres marked disposable.
+Bind a BAN to a **template type**: the BAN column moves from a version to a type (`NULL` = Standard), RevOps chooses the type on Manage Customer, and the labels show the type the next bill run will capture. A cross-module update owned by Billing (`bm00` Part 6, bm74–bm85). No new permission, table, audit event type, technology or background job. Units follow `custmgmt-ai-workflow-rules.md` §10. Every DB-gated test runs on a disposable Postgres. Specs written (2026-10-25): `cm23-bind-ban-to-template-type.md` (counterpart `bm82-capture-reads-ban-type.md`) and `cm24-template-types-ship-gate.md` (counterpart `bm85-template-types-ship-gate.md`).
 
-### Unit cm17 — Billing Account template reference column
+### Unit cm23 — Bind a BAN to a template type (**one merge with bm82**)
 
-- **Boundary:** DB
-- **Builds:** one forward migration adding nullable `billing.billing_account.ref_bill_template_version_id text` with a real FK to `billing.bill_template_version(bill_template_version_id)`; the Drizzle mirror in `db/schema/billing/accounts.ts`. No default literal, no backfill (D9, D10).
-- **Visible result:** the migration applies cleanly; the column and FK are inspectable; existing BANs read back `NULL`; inserting a non-existent template id is rejected by the FK (`tests/db/billing-account-template-column.integration.test.ts`).
-- **Dependencies:** delivered Accounts module (`billing.billing_account`, ac02) and the Billing template catalog (`billing.bill_template_version`, bm50 / migration `0046`).
+- **Boundary:** APP, including the Accounts-side files and the `billing_account` migration, as cm17 did.
+- **Builds:**
+  - Migration `0054`: add `billing.billing_account.ref_bill_template_family_id` (FK to `bill_template_family`, nullable, `NULL` = Standard), `RAISE EXCEPTION` if any `ref_bill_template_version_id` is non-`NULL`, then drop that column and its FK. The Drizzle mirror and the column comment follow.
+  - `assertBindableTemplate(tx, typeId | null)`: `null` is accepted; a type id goes through Billing's `lockTemplateType(tx, id, 'share')` and must be usable. Standard's id, unknown, retired or not-yet-usable types return `TEMPLATE_NOT_BINDABLE`.
+  - `setBillingAccountTemplate`, its action and schema take `typeId | null`. The guards, the BAN compare-and-set, the result codes and the no-write-on-unchanged rule are unchanged. The audit carries the type id and name before and after.
+  - **Just in time:** `listBindableTemplateTypes()` (Standard first, then usable types, via Billing's type repository) and the rewritten `resolveBanTemplateLabel`.
+  - `BillingAccountPanel`: a per-BAN `TemplateTypeSelect` + **Save** replaces Reset, with the "next bill run" caption, the retired-type message and reload. `BillingAccountCard`: the "Invoice template type" label. The onboarding wizard wording. `billing-account-messages.ts`.
+  - The `list-customer-billing-accounts` and `get-customer-accounts-summary` reads return the type id and label.
+- **Merged because:** the migration and the gate have no visible result without the panel. The panel has nothing to save without them. And `0054` must ship in the same merge as Billing's capture read (bm82).
+- **Visible result:**
+  - A user with both permissions picks "Wholesale" for BAN A on Manage Customer and saves. One audited update follows, and the label reads "Wholesale · v1".
+  - With bm82, the next Run drafts BAN A on Wholesale.
+  - "Standard (default)" writes `NULL`.
+  - A retired or not-yet-usable type is refused with the message.
+  - A `customers : EDIT`-only user sees the panel greyed.
+  - The View Customer Accounts tab shows the type label.
+  - Onboarding still creates `NULL`, with the new wording, and V7 stays green.
+  - `0054` aborts on a non-`NULL` version fixture.
+  - CM guardrails 11, 12 and 13.
+- **Dependencies:** Billing bm74 (type table), bm77 (type repository `listUsable`), bm78 (`lockTemplateType`), bm79 (a usable non-Standard type to bind). **Counterpart: bm82** (same merge).
 
-### Unit cm18 — Onboarding wizard: "Invoice template" field
+### Unit cm24 — Invoice Template Types ship gate pointer (**joint with bm85**)
 
-- **Boundary:** APP
-- **Builds:** the shared `assertBindableTemplate(tx, id | null)` validator, accepting `null` only (D13; introduced here, its first caller); optional `billTemplateVersionId` on `validation/accounts/onboard-customer-accounts.schema.ts`; `services/accounts/onboard-customer-accounts.ts` writing it on the BAN insert and adding it to `ACCOUNTS_ONBOARDED.afterData`; the single-option *Follow active template* select with help text in `components/customers/onboard-accounts-wizard.tsx` (D2, D11). Guard unchanged (`customers : EDIT` + `accounts_transactions : EDIT`).
-- **Merged because:** the validator and the service change have no visible result without the wizard field, and the field has nothing to submit without them.
-- **Visible result:** a MANAGER validating an `INITIALIZED` customer sees the Invoice template field; the created BAN has `ref_bill_template_version_id = NULL`; the audit event carries the field; a non-`NULL` id is rejected with `TEMPLATE_NOT_BINDABLE` and the whole onboarding transaction rolls back (V7 still green).
-- **Dependencies:** cm17 (column); delivered cm10 / ac04 onboarding wizard.
-
-### Unit cm19 — View Customer: tab shell (Profile · Contacts · Accounts)
-
-- **Boundary:** APP
-- **Builds:** `app/(app)/customers/view/[id]/page.tsx` as a URL-driven tab layout (`?tab=profile|contacts|accounts`, default `profile`, unknown → `profile`), a `validation/customer` tab enum and a link-strip tab component in `components/customers/` following the `run-detail-tabs.tsx` precedent; Profile = `OrganizationSection` + `CustomerRoleSection`, Contacts = `ContactDetailsSection`, Accounts = an empty placeholder; `InconsistencyBanner` above the strip (D5, Inv. #14). **Rewrites** `tests/app/customers-view-detail-page.test.tsx` to the tabbed contract in the same unit.
-- **Visible result:** a READ user opens a customer and switches Profile/Contacts tabs; `?tab=contacts` deep-links; an invalid tab falls back to Profile; the banner shows on every tab; not-found and guard behaviour unchanged; the rewritten page test passes.
-- **Dependencies:** delivered cm05 (detail page and sections). No dependency on cm17/cm18.
-
-### Unit cm20 — View Customer: Accounts tab
-
-- **Boundary:** APP
-- **Builds:** `services/accounts/get-customer-accounts-summary.ts` (Financial Account by party-role key, BANs, FA balances via `getFinancialAccountDetail`, per-BAN receivables in one grouped `pgledger_accounts_view` read; Inv. #13, #15) and the template-label resolver (`findActive ?? findDefault`, "Follows active template (currently: <name> vN), as of now"; D11) — both introduced here, their first caller; the Accounts tab content in `components/customers/`: FA summary card, one card per BAN (id, state chip, cycle, resolved term, live balance, tied template), paginated FA-level documents via `listTransactionDocuments` with deep-links into the Accounts module; four states — locked (no `accounts_view : READ`, nothing fetched), not onboarded, onboarded-empty, normal; loaded in an async child under Suspense only when `tab=accounts` (D6, D7, D8, D14, D16, Inv. #12); one new `system_config` page-size key `CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE` seeded by `db/seeds/customer.ts` (O3).
-- **Merged because:** the read service and label resolver have no visible result without the tab.
-- **Visible result:** a user with `accounts_view : READ` sees an onboarded customer's FA summary, BAN card with the template label, and paginated documents that link into Accounts; without the permission the tab shows the locked card; an `INITIALIZED` customer shows the not-onboarded state; Profile and Contacts issue no account query.
-- **Dependencies:** cm19 (tab shell), cm17 (column read by the label resolver).
-
-### Unit cm21 — Manage Customer: Billing account panel + template reset
-
-- **Boundary:** APP
-- **Builds:** `services/accounts/set-billing-account-template.ts` (one transaction: `findStateByIdForUpdate`, `last_modified` compare, `BAN_NOT_FOUND` / `BAN_CLOSED` / `CONFLICT` / `TEMPLATE_NOT_BINDABLE`, no write and no audit when unchanged, `last_edited_by`, `BILLING_ACCOUNT_TEMPLATE_CHANGED` before/after; does not touch `party_role.last_modified_datetime`, Inv. #17); `actions/accounts/set-billing-account-template.ts` re-checking `customers : EDIT` **and** `accounts_transactions : EDIT`, `revalidatePath` on manage and view; the "Billing account" panel on `app/(app)/customers/manage/[id]/page.tsx` listing the customer's BANs with the template label and a *Reset to follow active template* button, read-only with `EDIT_DISABLED_TITLE` for a user without `accounts_transactions : EDIT` (D3, D12, D15, Inv. #16); the audit event added to the audit category map; authz-matrix rows for the action (O4 name confirmed here).
-- **Merged because:** the service and action are only ever called from this panel, and the panel has nothing to do without them.
-- **Visible result:** a MANAGER with both permissions resets a BAN's template (audited, or a no-op with no audit when already `NULL`); a stale save shows the conflict message; a closed BAN is rejected; a user with `customers : EDIT` only sees the panel greyed; a direct action call missing either permission is rejected.
-- **Dependencies:** cm18 (`assertBindableTemplate`), cm20 (summary service + label resolver), cm17 (column).
-
-### Unit cm22 — Binding update ship gate: guardrails, end-to-end flow, docs
-
-- **Boundary:** TESTS
-- **Builds:** the two boundary guardrails — customer pages import no Accounts mutation, `post-document` or pgledger function (Inv. #11), and no file under `services/billing/**` reads `billing_account.ref_bill_template_version_id` (Inv. #18); a DB-gated service-level journey test onboard → accounts summary → template label → reset path (`tests/e2e/customer-accounts-journey.integration.test.ts`, following `customer-core-flow.integration.test.ts`; browser e2e deferred to `_newmodule-playwright-e2e-testing-plan.md`); a re-run of the posting stamp tests (bm18/bm19/bm54) proving posting is unchanged; the docs close-out per `custmgmt-ai-workflow-rules.md` §9.7 (`cm05` spec, overview Features, code-standards §7/§8, update overview → Delivered, progress tracker; Accounts-side doc edits by approval).
-- **Visible result:** CI green with the plan §11 matrix complete, both guardrails passing, the journey test passing, and posting stamps unchanged; `custmgmt-update-overview.md` status set to Delivered.
-- **Dependencies:** cm17–cm21.
-
-### Mapping to the plan
-
-| Unit | Plan task (§14) |
-|---|---|
-| cm17 | T1 |
-| cm18 | T3 (+ T2 validator) |
-| cm19 | T5 (tab shell) |
-| cm20 | T5 (Accounts tab) |
-| cm21 | T2 (service/action), T4 |
-| cm22 | T6, T7 |
+- **Boundary:** TESTS.
+- **Builds:**
+  - The Customer Management half of bm85's end-to-end journey: bind → run → retire switch → label shows the new type.
+  - The parallel bind-vs-retire run (with bm83).
+  - Guardrails 11–13 green, and the docs close-out per `custmgmt-ai-workflow-rules.md` §10.7: Inv. #19–#22 flipped to "built", #18 and guardrail 10 marked replaced, the `cm05`/`ac04` wording, the fold of `custmgmt-update-overview.md` into `custmgmt-project-overview.md` and its deletion, and the progress tracker.
+- **Visible result:** CM success criteria 1–11 pass; CI green; the CM update overview is folded and gone, in the same change as Billing's.
+- **Dependencies:** cm23; Billing bm83 (retire) and bm84. **Counterpart: bm85.**
 
 ---
 
 ## Dependency graph
 
 ```
-Phase 1 (delivered): cm01 ─► cm02 ─► cm04 ─► cm05      cm03 ─► cm04, cm06
-                                └─► cm06 ─► cm07 ─► cm08 ─► cm09, cm10, cm11 ─► cm12–cm15
-                     cm01–cm15 ─► cm16
-
-Phase 2 (planned):
-  cm17 (column + FK) ──► cm18 (onboarding field + validator) ──┐
-     │                                                          ├─► cm21 (Manage panel + reset)
-  cm05 ─► cm19 (tab shell) ──► cm20 (Accounts tab + summary) ──┘
-     cm17 ──────────────────────► cm20
-  cm17–cm21 ──► cm22 (ship gate)
+Phase 3 (planned; Billing units in bm00 Part 6):
+  bm74 ─► bm77 ─► bm78 ─► bm79 ─► [cm23 + bm82 : one merge] ─► bm83 ─► bm84 ─► [bm85 + cm24]
 ```
-
-cm19 depends only on delivered cm05 and can be built in parallel with cm17/cm18.
 
 ## Notes
 
-- **Just-in-time introduction (Phase 2):** the column in cm17; `assertBindableTemplate` in cm18 (first caller); `getCustomerAccountsSummary`, the label resolver and the page-size config key in cm20 (first caller); the reset service, action and audit event type in cm21.
-- **Not in any unit (Phase 3, `TODOS.md`):** a template catalog or picker, any non-`NULL` binding, a template-line identifier, CSV/layout binding, and posting reading the reference.
-- **Per-unit checklist:** `custmgmt-ai-workflow-rules.md` §8 and §9.8 apply to every Phase 2 unit.
+- **Just-in-time introduction (Phase 3):** `0054`, the type-aware gate, `listBindableTemplateTypes` and the new label resolver all land in cm23, their first caller. `lockTemplateType` and the type repository come from Billing (bm78, bm77) and are consumed here, never edited.
+- **Not in any unit:** choosing a type at onboarding; bulk-binding outside Billing's retire; version pinning; a new permission or audit event type; any change to `customer` schema tables.
+- **Per-unit checklist:** `custmgmt-ai-workflow-rules.md` §8 and §10.8 apply to every Phase 3 unit.

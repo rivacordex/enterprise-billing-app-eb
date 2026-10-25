@@ -1,38 +1,48 @@
 # Bill Run — Build Plan (Units, in build order)
 
-Decomposition of the Billing Management (Bill Run) module into build units. This revision (2026-10-15) plans **Invoice Template Phase 3: the bill run uses the BAN's invoice template, and the Standard layout v1 is rewritten**, as units **bm64–bm73**. Units bm01–bm63 are delivered and listed below only as the numbering record. Their full unit text is in `git show a63eebb:context/billing-management/specs/bm00-build-plan.md` and in `specs/bm01`–`bm63`.
+Decomposition of the Billing Management (Bill Run) module into build units. This revision (2026-10-25) plans the **Invoice Template Types** update as units **bm74–bm85**: editor-package upload, a catalog of template types, binding a BAN to a type, retire with a bulk switch, and export/restore. It is a cross-module update; its Customer Management units are **cm23–cm24** in `context/customer-management/specs/cm00-build-plan.md` Phase 3. Units bm01–bm73 are delivered and listed below as the numbering record.
 
 **Sources of truth:**
-- `billmgmt-project-overview.md` › Invoice Template Phase 3: the change; success criteria 1–15 with evidence (folded from `billmgmt-update-overview.md` at bm73).
-- `_updatemodule-billing-invoice-template-phase3-billrun-plan.md`: decisions D1–D60.
-- `billmgmt-architecture.md`: Invariants #1–#58, with #51–#58 for this update; the dated _Invoice Template Phase 3 — architecture deltas_ section; P1–P11.
-- `billmgmt-code-standards.md`: the Phase 3 section; guardrail items 57–67.
-- `billmgmt-ai-workflow-rules.md`: unit discipline, protected files.
-- `billmgmt-ui-context.md`: §10b and §10d.
-- Stack: `context/architecture.md` §1 + `billmgmt-architecture.md` §1. **No new technology** in this update: Next.js App Router, TypeScript strict, Drizzle + PostgreSQL 16, Kestra OSS flows as `billrun_runtime`, Handlebars 4.7 + Playwright Chromium `page.pdf`, Azure Blob (Azurite locally).
+- `billmgmt-update-overview.md`: the authoritative design of this update (goals, flows, features, scope, success criteria 1–11).
+- `billmgmt-architecture.md`: Invariants #1–#68, with **#59–#68** for this update; the dated _Invoice Template Types — architecture deltas_ section; contradictions T1–T10.
+- `billmgmt-code-standards.md`: the _Invoice Template Types — code-standards deltas_ section; guardrail items **68–79**.
+- `billmgmt-ai-workflow-rules.md`: unit discipline, protected files, the verification checklist.
+- `billmgmt-ui-context.md`: §7, §10a, §10e.
+- `context/customer-management/custmgmt-update-overview.md` and `custmgmt-architecture.md` (Inv. #19–#22): the Customer Management part.
+- `_updatemodule-billing-invoice-template-types-plan.md`: background analysis only. This build plan supersedes its §12 proposed order.
+- **Stack:** `context/architecture.md` §1 + `billmgmt-architecture.md` (stack sections), unchanged except **one new library**:
+  - unchanged: Next.js App Router (Server Actions, Route Handlers), TypeScript strict, Drizzle + PostgreSQL, Better-Auth RBAC, Zod, Handlebars 4.7.10, Playwright 1.63 Chromium, Azure Blob (Azurite locally), vitest
+  - **new:** **`fflate`**, introduced just in time in bm78
 
 **Decomposition rules:**
 - Each unit produces **one visible result**.
 - Each unit stays within **one system boundary**.
-- Dependencies land **just in time**.
+- Dependencies land **just in time**: a library, helper, grant or repository function arrives in the first unit that calls it.
 - Units always done together in one session are **merged**.
 - A unit with no standalone visible result is **merged** into its neighbour.
-- Every unit finishes green (`tsc` / lint / tests incl. the route × level matrix), carries its own guardrail tests, and syncs its owning doc before the next starts.
+- Every unit finishes green (`tsc` / lint / tests incl. the route × level matrix), carries its own guardrail items, and syncs its owning doc before the next starts.
+
+**Boundary key:**
+- **DB:** `db/**` (schema, migrations, bootstrap grants, repositories).
+- **RENDER:** `services/billing/render-invoice.ts`.
+- **TEMPLATE-CORE:** `services/billing/invoice-template/**`, `validation/billing/**`, `db/seeds/invoice-templates/**`.
+- **SETTINGS-UI:** `app/(app)/administration/invoice-settings/**`, `actions/billing/invoice-settings/**`, `components/billing/invoice-settings/**`, with the services they call.
+- **BILL-RUN:** `services/billing/{capture-template-stamps,trigger-run,rerun-run}.ts`, `components/billing/rerun-dialog.tsx`.
+- **TESTS:** cross-cutting guardrails and E2E.
 
 ---
 
-> ## Status (re-checked 2026-10-15 against `enterprise-billing-app` `dev1` `1ab2bd1`)
+> ## Status (2026-10-25)
 >
 > | Units | State |
 > | --- | --- |
-> | bm01–bm39 | **Delivered.** Phases 1–4: control plane, two-writer boundary, real compute plane, self-driving lifecycle, production deployable and wired. The cloud cutover is a gated ops step. |
+> | bm01–bm39 | **Delivered.** Phases 1–4. The cloud cutover is a gated ops step. |
 > | bm40–bm46 + bm42a | **Delivered.** Target Capacity Pricing. Still open: **TC54** (capacity-aware live-Kestra harness) and **O-TC7** (partial-period capacity, a business decision). |
-> | bm47–bm63 | **Delivered.** The Invoice Template update; bm63 ship gate signed off 2026-10-11. |
-> | **bm64–bm73** | **Planned, specced.** Invoice Template Phase 3 (below). All ten specs written 2026-10-15 (`specs/bm64`–`bm73`); none built yet. |
+> | bm47–bm63 | **Delivered.** The Invoice Template update; signed off 2026-10-11. |
+> | bm64–bm73 | **Delivered.** Invoice Template Phase 3; signed off by bm73, 2026-10-17. |
+> | **bm74–bm85** | **Planned** (below). Unit list and specs `bm74-…` to `bm85-…` written 2026-10-25 (with CM cm23–cm24). Not built. |
 >
-> **Latest applied migration:** `0050_billing_account_template_ref.sql` (cm17, Customer Management). There is no `0042`. Migrations after `0026` are hand-written SQL with no drizzle-kit snapshot. This plan adds `0051` (bm65) and `0052` (bm67), and edits `0046` in place once (bm64, fresh-DB round only).
->
-> **Rating prerequisite:** rating Phase H (rm24–rm29: raw `udr_key`, `udr_resource` = `state|district|polygon_start_date`) is implemented on `dev1` (rm28 `e955d7d`, rm29 `1ab2bd1`). bm71 needs it **deployed** and the rm26 raw-key format confirmed.
+> **Latest applied migration:** `0052` (bm67). This update adds `0053` (bm74, catalog) and `0054` (cm23, `billing_account`). Both are additive and run on a populated database; no applied migration is edited.
 
 ---
 
@@ -46,207 +56,231 @@ Decomposition of the Billing Management (Bill Run) module into build units. This
 | 36–39 | `bm36`–`bm39` | processor signal-back · local E2E assertion · production deployable + wired · phase-4 ship gate |
 | 40–46, 42a | `bm40`–`bm46`, `bm42a` | flow rename + extracted-SQL harness · capacity columns · capacity aggregation · capacity verification + rate gate · checksum re-anchor on `rated_amount` · usage appendix · capacity ship gate · flow fixes |
 | 47–63 | `bm47`–`bm63` | invoice binder · rating geo · usage annex · template catalog · blob store · prod containers · resolution + seed upload · posting stamps · settings shell + template read/preview · profile read · template save draft · template activate · profile save draft · logo upload · profile activate · CSV output · Invoice Template ship gate |
+| 64–73 | `bm64`–`bm73` | Standard template family · run-start template capture · drafts from captured template · posting from captured template · flow stops writing appendix · DD/MM/YYYY and Mbps formats · page 1 capacity summary · detail pages per service type and State-District · Total Amount page + footnote editor + v1 pin · Invoice Template Phase 3 ship gate |
 
 ---
 
-# Part 5 — Invoice Template Phase 3 (delivered, Units 64–73; signed off by bm73, 2026-10-17)
+# Part 6 — Invoice Template Types (planned, Units 74–85)
 
-**What changes, in one line:** each BAN's template is resolved once at run start (NULL → Standard → its ACTIVE version), frozen on `bill_run_account`, and used by draft, posting and reprint. The Standard layout v1 is rewritten to the business design. Customer Management is **not** touched (D46), and only the Standard family exists (D45).
-
-**v1 is edited in place across bm70–bm72 and pinned at bm72.** Each of those units re-seeds a freshly emptied database and `invoice-templates` container (the bm64 runbook) before its render tests. Never overwrite a blob.
+**What changes, in one line:** a MANAGER/ADMIN creates template types, uploads an editor-exported layout zip that becomes a DRAFT (or overwrites the open DRAFT after a warning), previews and activates it. RevOps binds a BAN to a usable type, and the bill run captures that type. A type can be retired with a bulk switch of its BANs, and any version can be exported and restored elsewhere.
 
 ## Units
 
-### 64 — Standard template family in the catalog (`bm64`)
+### 74 — Type-scoped template catalog in the database (`bm74`)
 
-- **Spec:** `specs/bm64-template-family-catalog.md` (written 2026-10-15).
-
-- **Boundary:** database (migration, Drizzle schema, seed, grants, read repository), plus its ops runbook.
+- **Boundary:** DB.
 - **Builds:**
-  - `0046_invoice_template_catalog.sql` **edited in place** (D26). Only the `.sql` changes; its journal entry stays.
-    - New `billing.bill_template_family`: `BTF` + 8-digit id, `name`, `code` UNIQUE, `kind = 'generated'`, `is_default`, `retired_datetime`, audit columns. `btf_one_default_uq ON (kind) WHERE is_default`, and a CHECK that the default is never retired.
-    - `bill_template_version.ref_bill_template_family_id`, with `CHECK (kind <> 'generated' OR ref_bill_template_family_id IS NOT NULL)`, added to the guard trigger's identity list.
-    - `btv_one_active_uq` split into a family-scoped `generated` index and a (`format`, `kind`) index for layout/CSV. `btv_one_draft_uq` becomes family-scoped.
-    - The **Standard** family seeded, with every seeded `generated` row carrying it.
-  - `app_runtime` `SELECT` on `bill_template_family`. `billrun_runtime` gets nothing.
-  - Drizzle `db/schema/billing/bill-template-family.ts`, `db/repositories/billing/bill-template-family.ts` (`findDefault`, `findById`), and `validation/billing/template-family-id.schema.ts` (`^BTF\d+$`).
-  - The **fresh-environment runbook (T11)**: rebuild from an empty database **and** an empty `invoice-templates` container, then `db:setup`.
-- **Visible result:** on a fresh database the catalog holds one family, "Standard (default)", owning the seeded generated version. A second non-default ACTIVE or DRAFT in that family, or a `generated` row without a family, is refused. Version history is unchanged. Guardrail item 61.
-- **Depends on:** the fresh-DB round being confirmed (D3, D26).
+  - Migration `0053` on `billing.bill_template_family`:
+    - `layout_code` (NOT NULL, UNIQUE; Standard via `ADD COLUMN … DEFAULT 'INVTPL-STD-A4'` then `DROP DEFAULT`, after asserting Standard is the only row)
+    - `UNIQUE (bill_template_family_id, layout_code)`
+    - `btf_name_ci_uq ON (lower(btrim(name)))`
+    - the name CHECKs (format, plus no doubled or surrounding spaces)
+    - the guard trigger freezes `name`, `code` and `layout_code`
+  - Migration `0053` on `billing.bill_template_version`:
+    - layout rows require the type id
+    - per-(type, kind) unique indexes for `version_no`, ACTIVE and DRAFT; CSV keeps (format, kind)
+    - `UNIQUE (bill_template_version_id, ref_bill_template_family_id)`, plus the two composite FKs (same-type pair; layout ↔ type's `layout_code`)
+    - `btv_draft_only_generated` dropped and `btv_draft_has_no_files` relaxed for layout
+    - `last_modified_by` added
+    - the version guard allows DRAFT → RETIRED, and DRAFT → DRAFT changes to the file columns, `page_setup` and `ref_layout_version_id`
+    - Standard's default layout v1 gets its type id through the one-row trigger disable inside the migration, asserted, then re-enabled
+  - The Drizzle mirrors for both tables.
+- **Visible result:** on a database holding real Standard rows, runs and bills, `0053` applies. Standard reads `layout_code = INVTPL-STD-A4`, its layout v1 carries the type id, and the guard trigger is enabled. A cross-type pair, a mismatched `layout_code`, a duplicate name in any case or spacing, a doubled-space name, and a name or code update are all refused by the database. Guardrail item 75.
+- **Depends on:** delivered bm64–bm73.
 
-### 65 — Template captured at run start and on rerun (`bm65`)
+### 75 — Network-blocked, script-free invoice rendering (`bm75`)
 
-- **Spec:** `specs/bm65-run-start-template-capture.md` (written 2026-10-15).
+- **Boundary:** RENDER.
+- **Builds:** the one hardened browser-context factory in `services/billing/render-invoice.ts`:
+  - `javaScriptEnabled: false` and `offline: true`
+  - `page.route('**/*')` aborting all but `data:`/`about:`
+  - a `logger.warn` with `versionId` for each blocked URL, never thrown
 
-- **Boundary:** the bill-run trigger and rerun services, with their repository and migration.
+  Draft and final renders use it. The semaphore, the 2-render cap and `BROWSER_CLOSE_TIMEOUT_MS` are unchanged.
+- **Visible result:** a layout that references an external URL (inserted directly in a test) still renders its PDF, logs the blocked URL, and a stub server records no hit; inline script doesn't run; Standard v1's golden is unchanged. The draft- and final-render half of guardrail item 74 (the "no other `chromium.launch`" check included).
+- **Depends on:** nothing new. It is independent of 74 and can land any time before 76.
+
+### 76 — Layout rules module and the `INVTPL-BASIC-A4` reference package (`bm76`)
+
+- **Boundary:** TEMPLATE-CORE.
 - **Builds:**
-  - Migration `0051`: five nullable stamp columns on the partitioned `bill_run_account` — `ref_bill_template_family_id`, `ref_bill_template_version_id`, `ref_invoice_profile_version`, `ref_csv_template_version_id`, `template_captured_at`. Plain keys with no FK (the posting-stamp rule).
-  - Drizzle mirror; `RunTemplateStamps` type (`Pick` of `$inferSelect`).
-  - `billRunAccountRepository.captureTemplateStamps` / `readStamps`: one set-based statement.
-  - `services/billing/capture-template-stamps.ts`:
-    - It reads `billing_account.ref_bill_template_version_id`. NULL → default family; non-NULL → that version's family.
-    - Within the family it takes the non-default ACTIVE version, else the default.
-    - No ACTIVE version → family stamped with a NULL version. It never throws and never marks the account `EXCLUDED` (D55).
-    - EXCLUDED rows stay NULL.
-  - Called from `trigger-run.ts` after `insertSnapshot`, and from `rerun-run.ts` for the selected BANs only, before the `BILL_RUN_RERUN` audit (so it lists the stamps). _(Corrected 2026-10-16 from "`setAttemptForRerun`", which runs after that audit.)_
-  - `BILL_RUN_TRIGGERED` and `BILL_RUN_RERUN` `afterData.templateStamps`.
-- **Visible result:** after **Run**, every non-EXCLUDED account row carries Standard and its version, and the Audit tab's trigger row lists them. Rerunning one BAN after a new activation changes only that BAN's stamps. Guardrail item 59; the capture half of item 60.
-- **Depends on:** 64.
+  - `services/billing/invoice-template/compliance.ts`, with no I/O:
+    - the lint rules moved out of `invoice-layout-lint.test.ts`, which becomes a thin caller
+    - the editor's hardening rules (entity- and CSS-escaped URLs, `image-set()`, `on…=`)
+    - the typed-supplier rule
+    - `COMPLIANCE_SECTION_KEYS`
+    - the visible-text check: comments stripped, hidden elements inside `.sec--<key>` rejected, probe values required in the rendered `innerText`, using 75's factory, passed in as a function
+  - The reference package `db/seeds/invoice-templates/INVTPL-BASIC-A4/v1/`: a manifest, a plain shell, footer and eight partials with the supplier block from `company.*`, sample data, and `checksums.json` written by `write-checksums.ts`. It has no catalog row and the seed doesn't upload it.
+  - The CI check over `INVTPL-STD-A4/v1` and `INVTPL-BASIC-A4/v1`.
+- **Visible result:** CI runs the compliance check, and both layouts pass. A fixture missing a required value, or hiding one in a comment or under `display:none`, fails `LAYOUT_MISSING_REQUIRED_BLOCKS`. Each hardening rule rejects its fixture. Guardrail items 72 and 73.
+- **Depends on:** 75 (the render used by the visible-text check).
+- **Editor counterpart (in `F:\Projects\invoice-editor`, not an app unit):** after 76, run E7 (snapshot `compliance.ts`, call it from `gates.ts`, delete the local lint port and `hardeningHits`, bump `contractVersion` to `1.1.0`) and E8 (add `INVTPL-BASIC-A4/v1` to the snapshot sources).
 
-### 66 — Draft PRO-FORMA renders from the captured template (`bm66`)
+### 77 — Invoice template type list, create type and type detail page (`bm77`)
 
-- **Spec:** `specs/bm66-draft-renders-captured-template.md` (written 2026-10-15).
-
-- **Boundary:** template resolution (`resolve-template.ts`) and its two non-posting callers.
+- **Boundary:** SETTINGS-UI.
 - **Builds:**
-  - `RenderMode` = `run` | `final` | `preview-posted` | `preview-family`, replacing `draft`, with `never` checks.
-  - The run mode reads the BAN's stamps. A NULL version on a non-EXCLUDED row throws `TEMPLATE_VERSION_NOT_FOUND` (`FAMILY_HAS_NO_ACTIVE_VERSION`), never the default.
-  - `GET /billing/bill-runs/[runId]/draft-invoice/[banId]` builds the run mode; a missing or EXCLUDED row gets 404.
-  - The Invoice Settings preview action takes a `familyId` (Standard) and renders `preview-family`, the only live mode.
-  - Posting is untouched in this unit.
-- **Visible result:** activate a new Standard version mid-run. The run's draft previews keep the captured version, while the editor preview shows the new one. A NULL-stamp fixture's draft shows the "no active version" message (UI context §10d).
-- **Depends on:** 65.
+  - `/administration/invoice-settings/invoice-template` becomes the **type list** (`TemplateTypeList`): name, status (`deriveTemplateTypeStatus`), the Default chip, active version and date, and a Retired filter. The Bound BANs column arrives with bm82, in cm23's merge, which creates the column it counts.
+  - **Create type** (`CreateTemplateTypeDialog` → `create-template-type.action.ts`, `invoice_settings` EDIT) writes the type row only and audits `INVOICE_TEMPLATE_TYPE_CREATED`. The code and `layout_code` are derived from the name, with the `_2` suffix on collision.
+  - The **type detail page** `/administration/invoice-settings/invoice-template/[typeId]` (`?tab=edit|generated|history`) takes over the existing template page. It adds the Layout code / Next layout version row and the "No layout uploaded yet" empty state.
+  - The existing save-draft, preview and activate actions are re-scoped to a type, and every DRAFT write sets `last_modified_by`.
+  - **Just in time:** the type repository's `insertType` and `listUsable`; `app_runtime` `INSERT, UPDATE` on `bill_template_family` and `USAGE` on its sequence (DELETE stays revoked); the `template-type.schema.ts` validation; the `INVOICE_TEMPLATE_TYPE_CREATED` audit event.
+  - The authz-matrix rows for the list, the detail page and create.
+- **Visible result:**
+  - The list shows Standard (Usable, Default).
+  - Creating "Wholesale" adds a Not-yet-usable row and opens its empty detail page.
+  - Standard's detail page still edits the Payment toggle and footnote, previews and activates exactly as before.
+  - A duplicate or invalid name shows its field error.
+  - A READ user sees no EDIT control.
+  - The grant half of guardrail item 79.
+- **Depends on:** 74.
 
-### 67 — Posted invoices use the captured template (`bm67`)
+### 78 — Upload a layout package as a new draft (`bm78`)
 
-- **Spec:** `specs/bm67-posting-uses-captured-template.md` (written 2026-10-15).
-
-- **Boundary:** the posting transaction (`post-run.ts`, `stampPosted`) and its migration.
+- **Boundary:** SETTINGS-UI.
 - **Builds:**
-  - Migration `0052`: `customer_bill.ref_bill_template_family_id` (plain key, no FK). `PostedBillStamps` gains the family.
-  - `postAccount` reads the BAN's run stamps **before** creating the INV:
-    - a NULL version → `SKIPPED` with `TEMPLATE_VERSION_NOT_FOUND`; no INV number is consumed (D58);
-    - otherwise `stampPosted` copies the four stamps plus the family in the `ref_inv_document_id` `UPDATE`.
-  - `resolveVersionsForPosting` is **deleted**.
-  - Known-issues §19 is closed.
-- **Visible result:** in a run where a new version is activated mid-run, every posted PDF and bill stamp equals the run's captured stamps. The NULL-stamp fixture is skipped with no INV number while siblings post. Guardrail items 57, 58, 60.
-- **Depends on:** 66.
+  - The **Upload layout package** dialog (`UploadLayoutDialog`, "Create draft v{n}") → `upload-layout-package.action.ts` (`FormData`, `invoice_settings` EDIT).
+  - The **upload gate**, `upload-layout-package.ts`, collecting every problem before any write:
+    1. central-directory checks before inflate (2 MiB, 64 entries, the `LAYOUT_PACKAGE_FILES` allow-list)
+    2. checksums
+    3. `layoutManifestSchema`, the type-code check and the strict version check
+    4. `compliance.ts`
+    5. strict compile and execute, with Payment on and off
+    6. one probe render through 75's factory that **fails** on any attempted fetch (`LAYOUT_EXTERNAL_FETCH`)
+  - **`installLayoutPackage`**, the only layout-DRAFT writer. It writes blobs under a content-digest folder, then in one transaction under `lockTemplateType(…, 'update')`: layout DRAFT v(N+1), the settings DRAFT (re-pointed or created; Payment on and Standard's footnote for a new type), the settings-token bump, and the `INVOICE_TEMPLATE_LAYOUT_UPLOADED` audit.
+  - **`loadLayoutDraft`** for previewing the DRAFT; the problems `Alert`; `TEMPLATE_TYPE_RETIRED` on a retired type.
+  - **Just in time:** **`fflate`** (its own first commit), `lockTemplateType`, the `layout-upload.schema.ts` validation, the error-code unions, and `template-type-messages.ts`.
+- **Visible result:** a MANAGER uploads an editor export to the empty "Wholesale" type. Draft v1 appears in Version history and previews from the uploaded files. A zip that is oversized, carries an extra file, has a bad checksum or wrong code, fails compliance or tries to fetch a URL is refused with every problem listed, and nothing is written. Guardrail items 68, 69 and 70, and the gate half of 74.
+- **Depends on:** 76 (`compliance.ts`), 77 (the type detail page).
 
-### 68 — Capacity flow stops writing the appendix (`bm68`)
+### 79 — Activate an uploaded draft pair, and discard a draft (`bm79`)
 
-- **Spec:** `specs/bm68-flow-drops-capacity-appendix.md` (written 2026-10-15).
-
-- **Boundary:** the processing flow (`workflow-management/flows/bill-run-processor/`) and its extracted-SQL tests.
+- **Boundary:** SETTINGS-UI.
 - **Builds:**
-  - Remove `appendix` from the `additional_info` build and the `CAPACITY_APPENDIX_OVER_LIMIT` guard, from `local-dev/bill_run_processing.yml` (the only copy with SQL), correcting the comments in `bill_run_processing.template.yml` (D31); revoke the two ratecard grants only the appendix used.
-  - Update the `billrun-capacity-appendix` suites to assert the key is absent.
-  - The boundary guardrail (Customer Management untouched; `invoice-render-input.ts` free of `rating.`; no appendix in either YAML).
-- **Visible result:** a live-Kestra run on the `ci` seed reaches `COMPLETED`, and no capacity line carries an `appendix` key. Guardrail item 66.
-- **Depends on:** nothing new; bm49 already stopped reading the appendix.
+  - **Activate** promotes the pair (settings + layout) in one transaction. It re-runs the compliance check, retires the replaced ACTIVE members, writes one `INVOICE_TEMPLATE_ACTIVATED`, and re-checks the settings token under lock.
+  - The first activation makes the type Usable.
+  - **Discard** (`discard-template-draft.action.ts`) sets both DRAFTs to RETIRED and audits `INVOICE_TEMPLATE_DRAFT_DISCARDED`.
+- **Visible result:**
+  - Wholesale's uploaded draft is activated, and the type list shows it **Usable**, with v1.
+  - An Activate whose preview predates another manager's upload fails the stale-draft check and promotes nothing.
+  - A discarded draft shows RETIRED in history, and the next upload takes the next version number.
+  - Guardrail item 71 (the activation half).
+- **Depends on:** 78.
 
-### 69 — Invoice dates DD/MM/YYYY and Mbps quantities (`bm69`)
+### 80 — Overwrite an open draft by upload, with the warning (`bm80`)
 
-- **Spec:** `specs/bm69-invoice-date-quantity-formats.md` (written 2026-10-15).
-
-- **Boundary:** formatting (the shared calendar-date formatter in `lib/` and the invoice Handlebars helpers).
+- **Boundary:** SETTINGS-UI.
 - **Builds:**
-  - A numeric day/month/year option on the shared formatter, landing **first, with no default change** and CI proof that every other module's output is unchanged (general §2.8).
-  - `helpers.ts`: `date`/`period` render `DD/MM/YYYY`; `qty` renders whole numbers, else 2 decimals. Still nine helpers.
-  - Current v1 goldens regenerated.
-- **Visible result:** today's invoice preview shows `DD/MM/YYYY` dates and the new quantity format.
-- **Depends on:** nothing new.
+  - The overwrite path in the upload dialog: an `AlertDialog` with the exact warning (the draft's version, `last_modified_datetime` and `last_modified_by`) and an "Overwrite draft" confirm in the danger role.
+  - The typed `expectedDraft` token, checked under the type lock, failing `DRAFT_CHANGED_SINCE_WARNING`.
+  - `installLayoutPackage`'s in-place overwrite: the same row and `version_no`, new file columns and `page_setup`, the settings DRAFT kept, the token bumped, and the audit with the previous and new `blob_ref` + `checksum`.
+  - The settings form's "layout was replaced by an upload" message.
+- **Visible result:**
+  - Uploading over an open draft shows the warning.
+  - On confirm, the draft keeps its number and previews the new files.
+  - Two concurrent uploads produce one draft and one `DRAFT_CHANGED_SINCE_WARNING`.
+  - An open settings form saved after the overwrite shows the replaced-layout message and keeps its values.
+  - Guardrail item 71 (the concurrency half), plus the preview-after-overwrite half of 70.
+- **Depends on:** 78. Order it after 79, so the stale-preview behaviour is tested against a real Activate.
 
-### 70 — New invoice page 1: capacity summary per service type (`bm70`)
+### 81 — Export a version and restore it by upload (`bm81`)
 
-- **Spec:** `specs/bm70-invoice-page1-capacity-summary.md` (written 2026-10-15).
-
-- **Boundary:** invoice rendering (render-input repository, binder, v1 layout seed files).
+- **Boundary:** SETTINGS-UI.
 - **Builds:**
-  - `invoice-render-input.ts` SQL, all `numeric` → string:
-    - per capacity type, Unutilised = Σ(`gross − rated`), Utilised = Σ`net` − Unutilised, and Total;
-    - "Other charges" rows (non-capacity `charge` lines) and their Sub Total;
-    - Total charges (= `subtotal`) and Adjustments.
-  - Utilised < 0 fails `INVOICE_NEGATIVE_UTILISED` (D42); the recipient name comes from the preferred billing contact.
-  - The binder **adds** `serviceTypes` (summary level), `otherCharges`, the new `totals` fields and `recipientName`; `usage` stays for now.
-  - v1 `shell.hbs` rewritten: embedded IBM Plex fonts, `--inv-*` palette, title "Invoice".
-  - The header, identification, bill-to, `chargeSummary`, `taxSummary`, `amountDue` and `payment` partials rewritten to the business page 1.
-  - `sample-data.json` and checksums regenerated; goldens updated.
-- **Visible result:** draft and posted page 1 show one Utilised / Unutilised / Total block per type of service, then "Other charges" (only when present), Total charges, Adjustments, Tax @ 0% and Grand Total (the amount due), with the recipient line. The 800 / 1,000 / 2,000 / 0 Mbps anchors print correctly. Guardrail item 62.
-- **Depends on:** 67, 69; the bm64 runbook.
+  - The export GET handler `…/invoice-template/versions/[versionId]/export/route.ts` (`invoice_settings` READ). It returns verified bytes through the loaders, plus `settings.json` written through `template-export-settings.schema.ts`, and audits `INVOICE_TEMPLATE_EXPORTED`.
+  - An **Export** link per Version history row.
+  - The restore path in the upload gate: the optional `settings.json` is allow-listed and schema-checked; its `structure` replaces the draft settings; the version-number check is skipped; the code check still applies; the audit gets `restoredFrom`. The dialog shows the restore note.
+- **Visible result:**
+  - A READ user downloads `INVTPL-WHOLESALE-v1-s1.zip`, and its layout files equal the stored blobs byte for byte.
+  - Uploading it into a fresh database's empty "Wholesale" creates draft v1 with the same bytes and settings.
+  - A tampered blob fails the export.
+  - The same zip without `settings.json` and with a wrong version is refused.
+  - Guardrail item 78.
+- **Depends on:** 78 (the gate), 79 (an ACTIVE version to export).
 
-### 71 — New invoice detail pages per service type and State-District (`bm71`)
+### 82 — Bill run captures the BAN's template type (`bm82`) — **one merge with cm23**
 
-- **Spec:** `specs/bm71-invoice-detail-pages.md` (written 2026-10-15).
+- **Boundary:** BILL-RUN.
+- **Builds:** `listBanFamilies` (`db/repositories/billing/bill-run-account.repository.ts`, called by `capture-template-stamps.ts`) reads `billing_account.ref_bill_template_family_id` directly: NULL → Standard; a type → its ACTIVE version, else a NULL version stamp. The `run-template-capture.integration.test.ts` fixtures are updated. The type list gains its **Bound BANs** column (`countBoundBansByType`, NULL counted under Standard), the Billing file the new column touches besides the capture read.
+- **Visible result:** with cm23 in the same merge, a BAN bound to Wholesale on Manage Customer gets a draft rendered on Wholesale at the next **Run**. A NULL BAN stays on Standard. A type left without an ACTIVE version blocks approval for that BAN. Existing capture and freeze tests stay green.
+- **Depends on:** 79 (a usable non-Standard type). **Counterpart: cm23**, built and merged together with it, because cm23's `0054` drops the column the old capture read.
 
-- **Boundary:** invoice rendering (rated-lines repository, binder, v1 layout seed files), plus the structure keys it retires.
+### 83 — Retire a type with a bulk switch (`bm83`)
+
+- **Boundary:** SETTINGS-UI.
+- **Builds:** `RetireTemplateTypeDialog` → `retire-template-type.action.ts` (`invoice_settings` EDIT), in one transaction:
+  - lock the retired type `FOR UPDATE` and the target `FOR SHARE`, in ascending id order
+  - re-check the target is usable
+  - one set-based `UPDATE billing_account` (NULL for Standard), plus one `BILLING_ACCOUNT_TEMPLATE_CHANGED` per BAN (`reason: 'TEMPLATE_TYPE_RETIRED'`), inserted in chunks of 500
+  - re-check that zero BANs remain, set `retired_datetime`, and audit `INVOICE_TEMPLATE_TYPE_RETIRED`
+
+  The dialog has the BAN count, a paginated list, the target picker and the typed-name confirm. A retired type's detail page is read-only, with export still available. `TEMPLATE_TYPE_RETIRED` is checked on save, upload, preview and activate.
+- **Visible result:**
+  - Retiring Wholesale moves BAN A to Standard, and the type shows Retired with its history intact.
+  - Standard can't be retired.
+  - The parallel tests pass: bind racing retire in both orders, and retire A→B racing retire B→A with no deadlock.
+  - Guardrail items 76 and 77, and the boundary-exemption half of 79.
+- **Depends on:** cm23 + 82 (binding exists).
+
+### 84 — Rerun warns when a BAN's type changed since run start (`bm84`)
+
+- **Boundary:** BILL-RUN.
+- **Builds:** `RerunDialog` lists each selected BAN whose current type differs from its run-start stamp: "Invoice template type changed since run start: *old → new*". The rerun re-captures the new type.
+- **Visible result:** after Wholesale is retired to Standard mid-run, rerunning BAN A shows the warning, and its new draft renders on Standard. BANs whose type didn't change show no warning.
+- **Depends on:** 82, 83.
+
+### 85 — Invoice Template Types ship gate (`bm85`) — **joint with cm24**
+
+- **Boundary:** TESTS.
 - **Builds:**
-  - **Detail query** in `rated-lines.repository.ts`:
-    - one CTE: polygon from the `udr_key` `polygon_id=` segment; State, District and start date from `udr_resource`;
-    - type attached via subscription → offering → capacity line;
-    - `BILL_NOTUSED` excluded; ordered per D21; `LIMIT 10001`.
-  - **Guards:** `INVOICE_POLYGON_DATA_MISSING`, the per-type `INVOICE_RECONCILIATION_FAILED`, and `INVOICE_USAGE_OVER_LIMIT`.
-  - **Binder:** `serviceTypes[].regions[]` (rows and Sub Total); `usage` / `InvoiceUsageSection` removed.
-  - **v1 `chargeDetails`** rewritten:
-    - a page break per type, headed by the type name and "Access Seeker";
-    - one table per State-District whose `<thead>` repeats the group label and column header;
-    - a Sub Total row; no "(continued)".
-  - **Retired:** the old line table, the `usageAnnex` partial and every `[[if columns.*]]` directive.
-  - **Structure (D56, part 1):** the manifest gets `usageGrouping` `["serviceType","state","district"]` and the new `fixedColumns`. `usageAnnex` and the four column keys are removed from the manifest, the unions, the Zod structure schema and the seeded `structure.json`, so the editor drops those toggles.
-  - "Page X of Y" moves right.
-- **Visible result:** each type of service gets its own detail pages, grouped by State-District with Sub Totals. A ~900-polygon fixture paginates with the label and header repeated on each page. Bad polygon data parks the account. Guardrail item 63; item 64's detail half.
-- **Depends on:** 70; rating Phase H **deployed**, with the rm26 raw `udr_key` format confirmed.
-
-### 72 — Total Amount page and editable footnote (`bm72`)
-
-- **Spec:** `specs/bm72-total-amount-page-footnote-editor.md` (written 2026-10-15).
-
-- **Boundary:** the Invoice template (layout, structure and its editor).
-- **Builds:**
-  - **v1 Total Amount page:** "Summary of Utilised Capacity Charges" and Total Amount = Σ Utilised (D22), never styled as the amount due.
-  - **Footnote:** `notes` becomes `structure.footnote`, 1–5 plain-text lines of ≤ 200 characters (D56, part 2), with the default two lines seeded. `layout-manifest.schema.ts` is Zod-validated (D38).
-  - **Editor:**
-    - heading "Invoice template — Standard (default)";
-    - the Payment information toggle plus the Footnote lines (React Hook Form `useFieldArray`; read-only below EDIT);
-    - the Activate dialog lists footnote changes.
-    - Save draft and activate keep `invoice_settings : EDIT`; a READ user's footnote change is refused.
-  - **Final:** goldens regenerated, and the **v1 seed-checksum pin** added. v1 is immutable from here (Inv #57).
-- **Visible result:** an Admin/Manager edits the footnote, previews it and activates it, and the next run's last page prints the new footnote after Total Amount, while a run already started keeps the old one. Guardrail items 64 (final), 65, 67.
-- **Depends on:** 71, 66 (the preview).
-
-### 73 — Invoice Template Phase 3 ship gate (`bm73`)
-
-- **Spec:** `specs/bm73-phase3-ship-gate.md` (written 2026-10-15).
-
-- **Boundary:** cross-cutting: tests, docs and the tracker. **Nothing new is built.**
-- **Builds:**
-  - The update overview's success criteria 1–15 on the owner's sample data (~5 BANs, largest ~900 polygons), end to end: trigger, review drafts, edit and activate the footnote, rerun one BAN, approve, post, then loopback distribution to `COMPLETED`.
-  - Inv #51–#58 audited, and guardrail items 57–67 plus every earlier guardrail covering touched files green.
-  - Flip every "planned" marker to "built".
-  - Fold the update into `billmgmt-project-overview.md` and return `billmgmt-update-overview.md` to pointers.
-  - `TODOS.md` notes the binding UI as deferred (D46).
-- **Visible result:** Invoice Template Phase 3 is declared shippable, with criteria 1–15 shown working.
-- **Depends on:** 64–72.
+  - The end-to-end journey in `invoice-template-journey.integration.test.ts`:
+    1. create Wholesale → upload an editor export → activate
+    2. bind BAN A → Run → draft on Wholesale
+    3. retire to Standard → rerun shows the warning → draft on Standard
+    4. approve → the posted bill carries Standard's stamps, and Wholesale's history is readable
+  - Standard v2 by upload through to a posted bill; the export/restore round trip; double-submit and stale-preview.
+  - The audit of Inv #59–#68 and guardrail items 68–79.
+  - The docs close-out: invariants and guardrails flipped to "built", the fold of `billmgmt-update-overview.md` into `billmgmt-project-overview.md` and its deletion, the progress tracker, and closing the `TODOS.md` Phase 3 binding entry.
+- **Visible result:** success criteria 1–11 of the update overview pass on sample data, and CI is green. The update is folded and the overview file is gone.
+- **Depends on:** 74–84, cm23, and cm24 (in the same change).
 
 ## Order that must not change
 
-- **64 first.** Everything resolves through the family.
-- **65 → 66 → 67.** Capture before anything reads the stamps. Drafts read them before posting does. `resolveVersionsForPosting` is deleted only in 67, once nothing calls it.
-- **69 before 70.** Page 1 prints dates and quantities.
-- **70 → 71 → 72.** Each unit changes the binder **and** the v1 pages that consume it together, so the tree never holds a binder shape the layout cannot render (D57's rule, kept by D59).
-- **Rating Phase H deployed before 71.**
-- **68 is independent.** Land it any time before 73.
-- **73 last.**
+- **74 first.** Every later unit relies on the type-scoped catalog.
+- **75 → 76.** The visible-text check renders through the hardened factory.
+- **76 → 78.** The upload gate calls `compliance.ts`.
+- **77 → 78 → 79 → 80.** Upload needs the type page. Activate needs an uploaded draft. Overwrite is tested against a real Activate.
+- **79 → 81.** Export needs an ACTIVE version, and restore needs the gate.
+- **79 → cm23 + 82.** Binding needs a usable non-Standard type. **cm23 and 82 merge together.**
+- **cm23 + 82 → 83 → 84.** Retire switches bound BANs; the rerun warning needs a type change.
+- **85 last**, together with cm24.
 
 ## Merged on purpose (do not split again)
 
-- **Trigger + rerun capture → 65.** One helper, always done together.
-- **The shared `lib/` date option + the invoice helper switch → 69.** The option alone shows nothing.
-- **The amount SQL and the D42 guard → 70; the detail query and its guards → 71.** Neither has a visible result until a page prints it, and that replaces D57's repository-only slice 2.
-- **The structure-key removals → 71 (columns, `usageAnnex`) and 72 (`notes` → footnote).** Each lands when the last layout directive using those keys is removed.
-- **The editor preview's `familyId` → 66; the footnote editor → 72.**
+- **The catalog DDL, its guard changes and the Standard backfill → 74.** One migration, one visible result.
+- **The type list + create type + type detail page + re-scoped settings actions → 77.** Create lands on the detail page, and moving the page to `[typeId]` forces the re-scope.
+- **`fflate`, the gate, `installLayoutPackage`, `lockTemplateType`, `loadLayoutDraft` → 78.** None has a visible result before the first upload.
+- **Export + restore → 81.** Restore is the only consumer of an export.
+- **The binding column + bind gate + BAN panel → cm23** (the gate has no visible result without the panel), merged with **82** across modules.
+- **Discard → 79.** It is the other outcome of reviewing an uploaded draft, on the same screen.
 
 ## Deliberately no unit (out of scope)
 
-- Any Customer Management change, including the family dropdown, a family-aware `assertBindableTemplate`, or edits to `billing_account` or `0050` (D46).
-- Create or retire family screens, and the retire/bind locks (D45).
-- Bespoke / In-building types (D6).
-- A "(continued)" marker (D48).
-- A discount line (D43).
-- Adjustments or OCC creation, real tax, credit or debit notes, MyInvois.
-- CSV changes (§23j).
-- Freezing contact data (D36).
-- RBAC changes (D53).
-- A larger seed (D52).
-- Layout v2.
-- Partial-period capacity (O-TC7).
-- TC54's capacity harness: it remains a separate open item from Part 3.
+- An in-app layout editor, or uploading single files.
+- Installing layouts through the seed, a migration or a release step.
+- Renaming a type, changing the default type, or un-retiring a type.
+- A new section kind, a toggle beyond Payment, or other detail columns or grouping (generator changes).
+- An "uploader ≠ activator" check (`last_modified_by` prepares for it), package signing, or a worker/timeout for the gate (accepted risk).
+- Bulk export, environment sync, per-type CSV templates or invoice profiles, non-`INVOICE` formats, e-invoicing.
+- Choosing a type at onboarding, or bulk-binding BANs outside retire.
+- Partial-period capacity (O-TC7), and TC54's capacity harness (open from Part 3).
+
+## Cross-module pairs (listed in both build plans)
+
+| Billing unit | Customer Management unit | Relationship |
+| --- | --- | --- |
+| bm82 (capture reads the type) | cm23 (bind a BAN to a type) | **One merge.** cm23's `0054` drops the column the old capture read. |
+| bm77 (type repository `listUsable`) | cm23 | cm23's usable-type list reads bm77's repository function. |
+| bm78 (`lockTemplateType`) | cm23 | cm23's bind gate calls it with `'share'`. |
+| bm83 (retire bulk switch) | cm23 | Retire writes cm23's column; the parallel bind-vs-retire test spans both. |
+| bm85 (ship gate) | cm24 (ship gate pointer) | Same change; both overviews are folded together. |

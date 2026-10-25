@@ -2,7 +2,7 @@
 
 > **PLANNED** — module-specific delta to `../code-standards.md` (the overarching standards). This file contains **only** Customer Management specifics; everything else (TypeScript, Next.js, styling, API, data, file organization, CI gates) is inherited unchanged and is not restated here. If a rule seems missing, it lives in the general file.
 
-**Companion docs:** `custmgmt-project-overview.md` (product spec) and `custmgmt-architecture.md` (technical design, numbered **Module Invariants**). Where this doc conflicts with the architecture _Invariants_, the **Invariants win** and the conflict is a bug to fix here.
+**Companion docs:** `custmgmt-project-overview.md` (product spec), `custmgmt-update-overview.md` (the in-flight **Invoice Template Types** update, Customer Management part; rules in §10 below) and `custmgmt-architecture.md` (technical design, numbered **Module Invariants**, #19–#22 planned). Where this doc conflicts with the architecture _Invariants_, the **Invariants win** and the conflict is a bug to fix here.
 
 ---
 
@@ -78,7 +78,9 @@
 4. **`SpecificationEditor` is the one component for editing `party_role_specification`** — a raw JSON textarea/editor with client-side JSON.parse feedback mirroring the server's well-formedness-only check (§1.8, §2.3); do not build a structured key/value form for it.
 5. **Three-section detail layout is a responsive stack:** Party – Organization, Role – Customer, Customer – Contact Details, in that order top-to-bottom on narrow viewports, optionally side-by-side on `lg:` and up (general §4.10) — order is fixed, do not reorder per page. Since cm19 the View Customer detail page splits them across URL-driven tabs (`?tab=profile|contacts|accounts`, default and fallback `profile`): **Profile** = Organization + Customer Role (in that order), **Contacts** = Contact Details, **Accounts** = billing accounts (cm20). `CustomerDetailTabs` is the one tab strip — a server component of plain `<Link>`s styled like `components/billing/run-detail-tabs.tsx` (ui-context §9.1); the `InconsistencyBanner` sits above it on every tab.
    The Accounts tab (cm20) is read-only and built from `AccountsLockedCard`, `AccountsNotOnboardedCard`, `FinancialAccountSummaryCard`, `BillingAccountCard` (with `BanStateChip` and the template label), `CustomerDocumentsTable` and `AccountsTabSkeleton`, composed by the presentational `CustomerAccountsTab`; a failed summary read renders `AccountsUnavailableCard` inside the tab. Money uses the Accounts module's `AmountCell` and document state its `DocStateBadge`; the Accounts `documents-table.tsx` is never reused (it imports the reversal mutation path). The summary is fetched by an async loader in the page itself, not in `components/**` (components may not import `services/**`).
-   On Manage Customer, `BillingAccountPanel` (cm21, client) lists each BAN with `BanStateChip` and the shared `TemplateLabel` (exported from `billing-account-card.tsx`) and a secondary **Reset to follow active template** button; it reuses `AccountsNotOnboardedCard` for the not-onboarded copy. The onboarding wizard's **Invoice template** field (cm18) is a read-only "Follow active template" field after Currency, with help text; there is no template picker in v1.
+   On Manage Customer, `BillingAccountPanel` (cm21, client) lists each BAN with `BanStateChip` and the shared `TemplateLabel` (exported from `billing-account-card.tsx`) and a secondary **Reset to follow active template** button. The button is enabled only with `canEditAccounts` on an open, non-`NULL` BAN, and only one reset runs at a time. Otherwise it shows a caption ("Already following the active template" / "Billing account is closed") and/or the `EDIT_DISABLED_TITLE` tooltip, so in v1 it is always disabled. The panel reuses `AccountsNotOnboardedCard` for the not-onboarded copy and `AccountsUnavailableCard` when `listCustomerBillingAccounts` fails (`accounts: null`; the page's `loadBillingAccounts` catches the error, so the rest of Manage Customer stays usable). The onboarding wizard's **Invoice template** field (cm18) is a read-only "Follow active template" field after Currency, with help text; there is no template picker in v1.
+
+   > **Amended 2026-10-25 (Invoice Template Types; planned, §10).** The **Reset to follow active template** button is replaced by a per-BAN **`TemplateTypeSelect` + Save** (§10, Styling rules 1–3). `TemplateLabel` renders the new type label. The "Already following the active template" caption is removed; the "Billing account is closed" caption stays.
 6. **The results table on both search pages reuses the platform table primitives** (general §4.2, product-module precedent) — one `CustomerResultsTable` component shared by View and Manage, not forked per page.
 
 ---
@@ -187,7 +189,7 @@ validation/customer/
   update-party-role-specification.schema.ts
   search-params.schema.ts       # search ?q=; CUSTOMER_DETAIL_TABS + detail ?tab= (cm19), ?page= / ?fa= (cm20)
 services/accounts/              # Accounts-side services owned here (onboarding field cm18, Accounts tab cm20, BAN panel cm21)
-  assert-bindable-template.ts       # assertBindableTemplate — v1 NULL-only; the one validator (cm18)
+  assert-bindable-template.ts       # assertBindableTemplate — the one validator (cm18); NULL-only until §10 makes it type-aware
   get-customer-accounts-summary.ts  # getCustomerAccountsSummary(partyRoleId, page, pageFinancialAccountId)
   resolve-ban-template-label.ts     # "Follows active template (currently: … vN), as of now"
   list-customer-billing-accounts.ts # listCustomerBillingAccounts(partyRoleId) — Manage panel read (cm21)
@@ -247,3 +249,122 @@ The general test-suite gate includes this module's guardrail tests from _Success
 8. **Search correctness** — partial, case-insensitive matches on `organization.name` and `trading_name`; result count capped by `CUSTOMER_SEARCH_RESULT_LIMIT` (default 5) with the refine-search hint shown when the cap is hit.
 9. **Customer screens read accounts data read-only (Inv. #11; cm20, cm22)** — `tests/guardrails/customer-accounts-read-boundary.test.ts` and `tests/guardrails/customer-accounts-binding-boundaries.test.ts`: no file under `app/(app)/customers/**` or `components/customers/**` imports an Accounts mutation action (only onboarding, its `get-wizard-options` read, and the template reset are allowed), `post-document`, pgledger, the Accounts reversal UI or any billing service/action; the three new Accounts read services (`get-customer-accounts-summary`, `list-customer-billing-accounts`, `resolve-ban-template-label`) import no action, `post-document`, `pgledgerCreateTransfers` or posting-time resolver.
 10. **Posting never reads the BAN template reference (Inv. #18; cm22)** — `tests/guardrails/customer-accounts-binding-boundaries.test.ts`: no file under `services/billing/**`, `db/repositories/billing/**` or `workflow-management/**` pairs `billingAccount` with `refBillTemplateVersionId` or contains `billing_account.ref_bill_template_version_id` (`customer_bill`'s own stamp stays allowed); `assertBindableTemplate` is defined once and called only by onboarding and the reset service; the column is written only by onboarding's BAN insert and `billingAccountRepository.setTemplateRef`. The chained flow is proved end to end by `tests/e2e/customer-accounts-journey.integration.test.ts` (DB-gated).
+
+    > **Amended 2026-10-25 (Invoice Template Types; planned).** On ship, this guardrail is rewritten as **§10 guardrail 11**. `ref_bill_template_version_id` no longer exists, and Billing gains exactly two sanctioned references to the new `ref_bill_template_family_id`: the run-start capture read (`listBanFamilies`) and the retire bulk switch (`template-types.ts`). Until then it stands as written.
+
+---
+
+## 10. Invoice Template Types update — code-standards deltas (2026-10-25; planned, not built)
+
+_**Planned.** The Customer Management part is in `custmgmt-update-overview.md`; invariants **#19–#22** are in `custmgmt-architecture.md` §6 and §8. Billing's own rules for the shared pieces are in `billmgmt-code-standards.md` › Invoice Template Types. This section records only what changes in Customer Management. Where it conflicts with §1–§9, this section wins once the update ships._
+
+### General rules (adds to §1)
+
+1. **`NULL` is Standard, always.** Every Customer Management path that writes a BAN's type writes `null` for Standard. No code compares a type id to Standard's id; it checks for `null`. An explicit Standard id is rejected (`TEMPLATE_NOT_BINDABLE`) (Inv. #19, #20).
+2. **One validator.** `assertBindableTemplate` is defined once in `services/accounts/assert-bindable-template.ts`, and called only by `onboard-customer-accounts.ts` (always `null`) and `set-billing-account-template.ts`.
+3. **Lock inside the caller's transaction.** `assertBindableTemplate(tx, typeId)` takes the caller's `tx` and calls Billing's `lockTemplateType(tx, typeId, 'share')` **before** reading usability, so the check and the BAN update commit together. It never opens its own transaction (Inv. #20).
+4. **Read Billing through repositories only.** `services/accounts/**` may import `db/repositories/billing/bill-template-family.ts` and `bill-template-version.ts` (reads plus `lockTemplateType`). No file under `services/accounts/**`, `app/(app)/customers/**` or `components/customers/**` imports `services/billing/**` or `actions/billing/**` (Inv. #11, #22).
+5. **The label is computed, never stored.** `resolveBanTemplateLabel` runs per request; no column, cache or client state holds a label (Inv. #21).
+6. **Never touch bill-run stamps.** Binding writes only `billing_account`. It reads and writes nothing in `bill_run_account` or `customer_bill`.
+
+### TypeScript conventions (adds to §2)
+
+1. **The value type** is `typeId: string | null` everywhere on the bind path (schema, service, action, panel). The name `billTemplateVersionId` is removed from these files.
+2. **`BindableTemplateType`** = `{ typeId: string | null; name: string }`. `listBindableTemplateTypes()` returns `BindableTemplateType[]` with Standard (`typeId: null`, `name: "Standard (default)"`) first, then usable types by `name` ascending.
+3. **`BanTemplateLabel`** = `{ kind: "STANDARD" | "TYPE" | "NOT_USABLE"; text: string; name: string; versionNo: number | null }`. Components pick styling from `kind` and render the mono `v{N}` from `versionNo`, never by parsing `text`; `text` is the full string for accessible names and tests.
+4. **Result codes stay** `BAN_NOT_FOUND | BAN_CLOSED | CONFLICT | TEMPLATE_NOT_BINDABLE` (plus the action's `FORBIDDEN | VALIDATION_ERROR`). No new code.
+
+### Next.js rules (adds to §3)
+
+1. **`/customers/manage/[id]`** loads `listBindableTemplateTypes()` in the existing `Promise.all` with the BAN list, and passes it to `BillingAccountPanel`. A failure of either read renders `AccountsUnavailableCard` inside the panel, as today.
+2. **The save** calls the existing `set-billing-account-template` Server Action with `{ partyRoleId, billingAccountId, typeId, lastModified }`, then `revalidatePath` on the manage and view routes. On `TEMPLATE_NOT_BINDABLE` the panel shows the retired-type message and calls `router.refresh()`.
+3. **No new route, page or Route Handler.**
+
+### Styling (adds to §4)
+
+1. **`TemplateTypeSelect`** uses the shadcn/ui `Select`, with options from `listBindableTemplateTypes()`, labelled **"Invoice template type"**. It shows one row per open BAN, inside `BillingAccountPanel`.
+2. **Save** is a secondary button labelled **"Save"**, enabled only when the selection differs from the BAN's current type and the viewer holds `accounts_transactions : EDIT`. One save runs at a time, as for the delivered reset.
+3. **Panel copy**, defined once in `components/customers/billing-account-messages.ts`:
+   - **Caption:** "Changes apply from the next bill run start or rerun."
+   - **Retired-type message:** "This invoice template type is no longer available. It may have been retired. The account's current type has been reloaded."
+   - **Onboarding field:** label "Invoice template type", value "Standard (default)", help text "New billing accounts use the Standard invoice template. Choose another type afterwards in Manage Customer › Billing account."
+4. **Label styling** by `BanTemplateLabel.kind`: `STANDARD` and `TYPE` use the delivered neutral label tokens; `NOT_USABLE` uses the warning family, with an icon, never colour alone. Exact tokens are in `custmgmt-ui-context.md` §10.
+5. **Removed copy:** "Reset to follow active template", "Already following the active template", "Follows active template (currently: … vN), as of now", "Template reference not supported yet".
+
+### API routes (adds to §5)
+
+None. The bind stays a Server Action.
+
+### Data and storage rules (adds to §6)
+
+1. **The migration is new and additive.** Add `ref_bill_template_family_id` with its FK; `RAISE EXCEPTION` if any `ref_bill_template_version_id IS NOT NULL`; then drop that column and its FK. Never edit `0050`.
+2. **It ships in one merge with Billing's capture change,** so no caller ever reads the dropped column. Both units' specs say so.
+3. **The BAN compare-and-set is unchanged** (`billingAccountRepository.setTemplateRef` on `last_modified`). It now writes the type column, and still never bumps `party_role.last_modified_datetime` (Inv. #17).
+4. **The audit payload:** `BILLING_ACCOUNT_TEMPLATE_CHANGED` `beforeData`/`afterData` = `{ refBillTemplateFamilyId, typeName }`. Customer Management never sets `reason`; only Billing's retire switch does.
+5. **No index** on the new column.
+
+### File organization (adds to §7)
+
+```
+services/accounts/
+  assert-bindable-template.ts        # CHANGED: null or usable type under FOR SHARE
+  set-billing-account-template.ts    # CHANGED: typeId | null
+  onboard-customer-accounts.ts       # CHANGED: type reference field, always null
+  list-bindable-template-types.ts    # NEW: Standard first, then usable types (Billing repository read)
+  resolve-ban-template-label.ts      # CHANGED: type label
+  list-customer-billing-accounts.ts  get-customer-accounts-summary.ts   # CHANGED: type id + label
+actions/accounts/set-billing-account-template.ts                       # CHANGED: schema only
+validation/accounts/
+  set-billing-account-template.schema.ts  onboard-customer-accounts.schema.ts   # CHANGED
+components/customers/
+  billing-account-panel.tsx          # CHANGED: TemplateTypeSelect + Save replaces Reset
+  template-type-select.tsx           # NEW
+  billing-account-messages.ts        # NEW: panel and onboarding copy
+  billing-account-card.tsx           # CHANGED: TemplateLabel shows the type label
+  onboard-accounts-wizard.tsx        # CHANGED: field wording
+db/schema/billing/accounts.ts        # CHANGED: column swap
+db/migrations/<next>_billing_account_template_type.sql                 # NEW
+```
+
+### Permission names & per-page permission map (adds to §8)
+
+**No new permission and no level change.**
+
+| Surface | Route | Top-level component(s) | Folder | Permission : level |
+|---|---|---|---|---|
+| Manage Customer: Billing account panel, type label | `/customers/manage/[id]` | `CustomerEditPage` → `BillingAccountPanel` → `TemplateLabel` | `app/(app)/customers/manage/[id]/` | `customers` : **EDIT** (page) |
+| Bind / rebind a BAN's type | same page | `BillingAccountPanel` → `TemplateTypeSelect` + Save → `set-billing-account-template` | `actions/accounts/` | `customers` : **EDIT** + `accounts_transactions` : **EDIT** (re-checked in the action) |
+| View Customer: Accounts tab type label | `/customers/view/[id]?tab=accounts` | `CustomerAccountsTab` → `BillingAccountCard` → `TemplateLabel` | `app/(app)/customers/view/[id]/` | `customers` : **READ** + `accounts_view` : **READ** |
+| Onboarding "Invoice template type" field | `/customers/manage/[id]` (wizard) | `OnboardAccountsWizard` | `components/customers/` | existing dual guard (unchanged) |
+
+The authz matrix gains: a `customers : EDIT`-only user's bind is refused server-side; a READ-only user can't reach the panel; a user without `accounts_view : READ` sees no label on the Accounts tab.
+
+### Guardrail tests (extends §9, items 11–13)
+
+11. **Template-column boundary (replaces item 10 on ship).**
+    - No file anywhere references `ref_bill_template_version_id` on `billing_account`.
+    - Under `services/billing/**`, `db/repositories/billing/**` and `workflow-management/**`, `ref_bill_template_family_id` on `billing_account` appears **only** in `listBanFamilies` (read) and `services/billing/invoice-template/template-types.ts` (the Bound BANs count and the retire switch).
+    - `assertBindableTemplate` is defined once and called only by onboarding and `set-billing-account-template.ts`.
+    - No customer-tree file imports `services/billing/**` or `actions/billing/**`.
+12. **Bind gate.**
+    - `null` binds Standard.
+    - A usable type binds: one update, one audit row with type names, the BAN's `last_modified` bumped, `party_role.last_modified_datetime` untouched.
+    - Each of these returns `TEMPLATE_NOT_BINDABLE`, writes nothing and audits nothing: Standard's id, an unknown id, a retired type, a not-yet-usable type.
+    - `CONFLICT`, `BAN_CLOSED`, `BAN_NOT_FOUND` and unchanged-value no-op behave as before.
+    - The CM half of Billing's parallel test (billing guardrail 76): a bind racing a retire commits first and is switched, or fails.
+13. **Panel and labels.**
+    - The select lists Standard first, then usable types; retired and not-yet-usable types are absent.
+    - Save is disabled when unchanged and for a `customers : EDIT`-only user.
+    - The retired-mid-edit save shows the agreed message and reloads.
+    - Labels render "Standard (default) · vN" and "{type} · vN", and "· not usable" with the warning style.
+    - None of the four removed strings (Styling rule 5) exists in the source.
+    - Onboarding still writes `null`, and the V7 rollback test passes.
+
+### Rules superseded by this update
+
+| Rule | Was | Now |
+|---|---|---|
+| §4 rule 5 (Manage Customer panel) | Reset to follow active template; enabled only for an open, non-`NULL` BAN. | `TemplateTypeSelect` + Save (Styling rules 1–3). |
+| §7 `assert-bindable-template.ts` | "v1 NULL-only". | `null` or a usable type under `FOR SHARE` (General rules 1–3). |
+| §8 note "Billing account template reset (cm21)" | Reset writes `NULL` only. | Bind writes `null` or a type id; same dual guard. |
+| §9 guardrail 10 | Posting never reads the column; no Billing file references it. | Item 11: Billing references the new column in exactly two places. |

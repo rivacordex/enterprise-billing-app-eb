@@ -2,9 +2,9 @@
 
 This document extends `context/code-standards.md` (the platform-wide standards every module inherits) and records **only** what the Billing Management module adds or does differently, including the three delivered updates (Part 1 Target Capacity Pricing; Part 2 Invoice Template; **Invoice Template Phase 3**, bill run uses the BAN's template, signed off by bm73), all folded into `billmgmt-project-overview.md`. Everything else in the general file (general rules, TypeScript, Next.js, styling, API, data, file organization, CI gates) still applies and is **not** repeated here. If a rule seems missing, look in the general file. Where this doc conflicts with the architecture **Module Invariants** (`billmgmt-architecture.md` §6), the Invariants win and the conflict is a bug to fix here.
 
-**Companion docs (authoritative):** `billmgmt-project-overview.md` (product spec, flows, success criteria — the Phase-4 update overview is folded in) · `billmgmt-update-overview.md` (pointers only; Part 2 folded at bm63, Invoice Template Phase 3 at bm73) · `billmgmt-architecture.md` (technical design, **58** numbered **Module Invariants** §6, #51–#58 built and audited at bm73; #15 retired) · `_updatemodule-billing-invoice-template-phase3-billrun-plan.md` (Invoice Template Phase 3 decisions D1–D60) · `_updatemodule-billing-invoice-template-merged-plan.md` (Part 2 decisions D1–D8, v1 review R1–R11; §15 wins over §§1–14) · `_updatemodule-billing-billrun-phase3-plan.md` (phase-3 decisions D1–D30) · `_newmodule-billing-billrun-plan.md` (phase-1 functional design & data model).
+**Companion docs (authoritative):** `billmgmt-project-overview.md` (product spec, flows, success criteria — the Phase-4 update overview is folded in) · `billmgmt-update-overview.md` (the in-flight **Invoice Template Types** update; Part 2 folded at bm63, Invoice Template Phase 3 at bm73) · `billmgmt-architecture.md` (technical design, **68** numbered **Module Invariants** §6, #51–#58 built and audited at bm73, #59–#68 planned; #15 retired) · `_updatemodule-billing-invoice-template-phase3-billrun-plan.md` (Invoice Template Phase 3 decisions D1–D60) · `_updatemodule-billing-invoice-template-merged-plan.md` (Part 2 decisions D1–D8, v1 review R1–R11; §15 wins over §§1–14) · `_updatemodule-billing-billrun-phase3-plan.md` (phase-3 decisions D1–D30) · `_newmodule-billing-billrun-plan.md` (phase-1 functional design & data model).
 
-**Where each update's rules live:** Part 1 → "Target Capacity Pricing update — code-standards deltas" · Part 2 → "Invoice Template update — code-standards deltas" · Invoice Template Phase 3 → "Invoice Template Phase 3 — … code-standards deltas" (all at the end of this file). Part 2 replaces §6.15 below.
+**Where each update's rules live:** Part 1 → "Target Capacity Pricing update — code-standards deltas" · Part 2 → "Invoice Template update — code-standards deltas" · Invoice Template Phase 3 → "Invoice Template Phase 3 — … code-standards deltas" · Invoice Template Types (planned) → "Invoice Template Types — … code-standards deltas" (all at the end of this file). Part 2 replaces §6.15 below.
 
 **Status:** Phase 3 planning, ENG CLEARED (2026-09-14). Component/route/permission names below are the **binding** convention for the build.
 
@@ -1213,3 +1213,240 @@ Reviewed 2026-10-15 against `context/code-standards.md`. These predate Invoice T
 | §7.6: repositories are `db/repositories/<entity>.ts`. | `db/repositories/billing/` mixes `<entity>.ts` (catalog files) and `<entity>.repository.ts` (run files). | Pre-existing. The new `bill-template-family.ts` follows its catalog siblings and the general rule. |
 | §5.1: route handlers live at `app/api/**/route.ts`. | Session-guarded GET byte handlers live inside `app/(app)/…` (bm18/bm19 precedent, Part 2 Next.js rule 7). | Pre-existing, documented module exception. Phase 3 adds no handler. |
 | §6.2 / §10.5: migrations are committed and ordered; no manual DDL. | `0046` is edited in place (Data rule 1). | One-time exception on the fresh-DB round, recorded in architecture's platform-level deltas. Still a committed file, still applied by the gated step. |
+
+---
+
+## Invoice Template Types — editor upload, type catalog, BAN binding — code-standards deltas (2026-10-25; planned, not built)
+
+_**Planned.** The functional design is in `billmgmt-update-overview.md`; the architecture deltas and invariants **#59–#68** are in `billmgmt-architecture.md`. This section records only what this update adds to or changes in the rules above and in `context/code-standards.md`. Where a rule here conflicts with an earlier section, this section wins (see "Rules superseded by this update")._
+
+### General rules (adds to §1)
+
+1. **One write path for layouts.** Only `installLayoutPackage` (`services/billing/invoice-template/install-layout-package.ts`) inserts or overwrites a layout DRAFT, writes its blobs, re-points or creates the settings DRAFT, bumps that DRAFT's token and writes `INVOICE_TEMPLATE_LAYOUT_UPLOADED`. No action, seed, script or migration writes a `kind = 'layout'` row (Inv #59).
+2. **Validate the whole package before the first write.** The upload service runs every gate step in this order, collects **all** problems, and returns them in one result:
+   1. the zip's central-directory checks
+   2. checksums
+   3. the manifest, plus the code and version checks
+   4. `compliance.ts`
+   5. strict compile and execute
+   6. the probe render
+
+   Only a fully clean package reaches `installLayoutPackage`. Never write a blob "speculatively" before the gate passes (Inv #60).
+3. **Never trust the origin of a package.** No code branches on who or what produced a zip: no editor marker, header or signature is read. An app export is recognised only by a `settings.json` that passes its schema, and that only skips the version-number check (Inv #68).
+4. **A DRAFT is loaded only through `loadLayoutDraft`.** Capture, draft-in-run, posting, final render and reprint keep calling the existing loaders, which use `assertLoadable`. `loadLayoutDraft` results are never stored in the compiled-template memo or any other cache keyed by version id (Inv #61).
+5. **Every layout rule lives in `compliance.ts`.** The lint test, CI, the upload gate and activation import it. No rule is written inline in a test, an action or the editor (Inv #63). A change to `compliance.ts`, `generate.ts`, `compile.ts`, `helpers.ts`, `layout-manifest.schema.ts` or `layout-page-setup.schema.ts` notes **"editor contract refresh needed"** in the PR description.
+6. **Every Chromium render goes through the one hardened context factory** in `services/billing/render-invoice.ts`: `javaScriptEnabled: false`, `offline: true`, and `page.route('**/*')` aborting all but `data:`/`about:`. The gate render **throws** `LAYOUT_EXTERNAL_FETCH` on any attempted fetch. Draft and final renders log each blocked URL (`logger.warn`, with `versionId`) and **never throw** because of it (Inv #64).
+7. **Lock order is fixed.** Every transaction that locks template-type rows uses `lockTemplateType(tx, typeId, mode)` and, when it locks two, locks them in **ascending `bill_template_family_id`** order. Bind takes `'share'`; retire takes `'update'` on the retired type and `'share'` on the target (Inv #66).
+8. **Standard is NULL, always.** Every code path that writes a BAN's type writes `null` for Standard: the bind gate, the retire switch to Standard, onboarding. No code compares a BAN's type to Standard's id; it checks for `null` (Inv #66).
+9. **Type identity is never updated.** No repository method takes `name`, `code` or `layout_code` in an UPDATE. The type repository exposes `insertType`, `retireType` and reads only (Inv #65).
+10. **One EDIT holder may upload and activate.** Do not add an uploader ≠ activator check in this update. Every DRAFT write still sets `last_modified_by` to the actor, so the check can be added later in one place.
+
+### TypeScript conventions (adds to §2)
+
+1. **Upload result.** `uploadLayoutPackage` returns a discriminated union:
+   - `{ ok: true; versionId: string; versionNo: number; replaced: boolean }`
+   - `| { ok: false; code: LayoutUploadErrorCode; problems: LayoutProblem[] }`
+
+   `LayoutProblem` is `{ file: string; code: LayoutProblemCode; message: string }`. The action never flattens `problems` into one string; the dialog lists them.
+2. **Error-code unions, declared once in `types/billing.ts`** and imported everywhere (no string literals in components):
+   - `LayoutUploadErrorCode` = `"FORBIDDEN" | "VALIDATION_ERROR" | "SERVER_ERROR" | "TEMPLATE_TYPE_RETIRED" | "DRAFT_CHANGED_SINCE_WARNING" | "LAYOUT_REJECTED"`.
+   - `LayoutProblemCode` = `"ZIP_TOO_LARGE" | "ZIP_TOO_MANY_ENTRIES" | "ZIP_UNEXPECTED_FILE" | "ZIP_MISSING_FILE" | "CHECKSUM_MISMATCH" | "MANIFEST_INVALID" | "LAYOUT_CODE_MISMATCH" | "LAYOUT_VERSION_MISMATCH" | "SETTINGS_INVALID" | "LINT_VIOLATION" | "LAYOUT_MISSING_REQUIRED_BLOCKS" | "COMPILE_FAILED" | "LAYOUT_EXTERNAL_FETCH"`.
+   - `TemplateTypeErrorCode` = `"TEMPLATE_TYPE_NAME_TAKEN" | "TEMPLATE_TYPE_NAME_INVALID" | "TEMPLATE_TYPE_RETIRED" | "DEFAULT_TYPE_NOT_RETIRABLE" | "RETIRE_TARGET_NOT_USABLE" | "RETIRE_NAME_MISMATCH" | "TEMPLATE_NOT_BINDABLE"`.
+3. **The warned-about draft is a typed token,** never a boolean "confirmed" flag: `expectedDraft: { versionId: string; lastModified: string } | { none: true }`. The server compares it under the type lock.
+4. **`TemplateTypeStatus` = `"USABLE" | "NOT_YET_USABLE" | "RETIRED"`** is **derived** in one function, `deriveTemplateTypeStatus(type, activeSettingsVersion)`, and never stored or recomputed inline.
+5. **The export `settings.json` has one schema,** `validation/billing/template-export-settings.schema.ts`: `{ exportFormat: 1; source: { typeCode; typeName; layoutVersion; settingsVersion; status; layoutChecksum; exportedAt; exportedBy }; structure: InvoiceTemplateStructure }`. Export writes it through the schema's type, and upload parses it with the same schema. `structure` reuses `invoiceTemplateStructureSchema`. Upload accepts it only when `source.layoutChecksum` equals the sha256 of the package's own `checksums.json`; otherwise it is `SETTINGS_INVALID`, so a `settings.json` from one export can't skip the version check for other files.
+6. **Zip entries are typed by an allow-list constant,** `LAYOUT_PACKAGE_FILES`, built from `LAYOUT_PART_KEYS`, plus the font rule (`fonts/*.woff2`, `fonts/OFL.txt`) and the optional `settings.json`. The constant is the single source for the gate, the export and the tests.
+7. **Limits are named constants in `types/billing.ts`:** `LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024` and `LAYOUT_PACKAGE_MAX_ENTRIES = 64`. No literal limit appears elsewhere.
+8. **`lockTemplateType(tx, typeId: string, mode: "update" | "share")`** takes the transaction handle. It is never called outside a `db.transaction` callback.
+
+### Next.js rules (adds to §3)
+
+1. **Upload is a Server Action taking `FormData`,** following `upload-logo.action.ts`:
+   1. `requirePermission(INVOICE_SETTINGS, EDIT)` is the first statement
+   2. Zod parses `typeId`, `expectedDraft` and `file`
+   3. the bytes are read with `await file.arrayBuffer()`
+   4. the service is called, and the action ends with `revalidatePath` for the type detail page
+
+   The zip is never written to disk. It fits the existing `bodySizeLimit: "5mb"`; do not raise that limit for this feature.
+2. **Export is a GET Route Handler,** not a Server Action, because it returns a file: `app/(app)/administration/invoice-settings/invoice-template/versions/[versionId]/export/route.ts`. The session guard is `invoice_settings : READ`, and the response uses `Content-Disposition: attachment; filename="<layout_code>-v<N>-s<M>.zip"`. It writes `INVOICE_TEMPLATE_EXPORTED` before returning. It follows the module's documented exception for session-guarded byte handlers inside `app/(app)/`.
+3. **The type detail page is a dynamic route,** `[typeId]`, with the existing tabs (`?tab=edit|generated|history`). The old single-template page becomes the type list. A request to a retired type's detail renders read-only (no Upload, Save, Activate or Retire controls) but still serves history and export.
+4. **The create, retire and upload dialogs are client components** that call Server Actions. They keep no server state, and on any `ok: false` they re-fetch the type (`router.refresh()`), so the warning and lists reflect the current DRAFT.
+5. **The overwrite warning is rendered from server data:** the type page passes the open DRAFT's version, `last_modified_datetime` and `last_modified_by` name to the dialog. The dialog never infers it.
+
+### Styling (adds to §4)
+
+1. **No new design token.** Use existing shadcn/ui components: `Dialog`, `AlertDialog` (retire, overwrite), `Table`, `Badge`, `Alert`.
+2. **Status badges:** reuse `TemplateVersionStatusBadge`, extended with the three type statuses:
+   - **Usable** uses the existing ACTIVE style
+   - **Not yet usable** uses the DRAFT style
+   - **Retired** uses the RETIRED style
+
+   Standard also carries the existing **Default** chip (primary outline + `Lock` icon, ui-context §10a).
+3. **The overwrite warning** is an `AlertDialog` with the destructive variant on the confirm button labelled **"Overwrite draft"**. The no-draft case uses a plain `Dialog` with the confirm label **"Create draft vN"**.
+4. **Upload problems** render as one `Alert` (destructive) holding a list grouped by `file`, each line showing `code` and `message`. Never a toast.
+5. **Retire** uses an `AlertDialog` whose confirm button stays disabled until the typed name matches exactly (after trim).
+6. **Exact UI strings** are defined once in `components/billing/invoice-settings/template-type-messages.ts` and reused by the dialogs and tests:
+   - **Overwrite warning:** "This type already has a draft (layout v{n}, last changed {date} by {user}). Uploading will overwrite the existing draft layout. Your draft settings (Payment and footnote) are kept."
+   - **Restore note:** "The package's settings (Payment and footnote) will replace the draft settings."
+   - **Layout-replaced save message:** "The layout was replaced by an upload. Your unsaved changes are kept below; review and save again."
+   - **Type no longer available:** "This invoice template type is no longer available. It may have been retired. The account's current type has been reloaded."
+
+### API routes (adds to §5)
+
+1. **One new Route Handler: the export GET** (Next.js rule 2). All other new operations are Server Actions.
+2. **The existing file download handler,** `…/invoice-template/versions/[versionId]/files/[file]`, is unchanged. It serves only the stored files of a non-DRAFT **generated** version (`invoice.hbs`, `footer.hbs`, `structure.json`) and still requires `invoice_settings : READ`. It never serves layout files or a DRAFT. A layout's files leave the app only through the export handler.
+3. **No new `app/api/**` endpoint** and no machine-to-machine path. The editor never calls the app.
+
+### Data and storage rules (adds to §6)
+
+1. **Migrations are additive:**
+   - `0053_invoice_template_types.sql` changes the catalog
+   - `0054_billing_account_template_type.sql` changes the BAN column
+
+   Neither edits an earlier migration. The one guarded-row backfill in `0053` disables `bill_template_version_guard_trg` for one statement only: `DISABLE` → `UPDATE … WHERE is_default AND kind = 'layout'` → `RAISE EXCEPTION` unless exactly one row changed → `ENABLE`, inside the migration transaction. No other trigger disable is allowed anywhere.
+2. **Every new column on `bill_template_version` is classified in the guard trigger** as identity, draft-editable or frozen-at-activation. `last_modified_by` is draft-editable.
+3. **Blob paths for uploads are content-addressed:** `invoice-templates/layouts/<layout_code>/v<versionNo>-<first 12 hex of the checksums.json sha256>/<file>` (the seeded `layouts/` prefix, `0046`), written with `writeOnce` and `onExists: "returnExisting"`. An existing object whose digest differs is an error, never an overwrite.
+4. **The row write and the audit write share one transaction.** Blob writes happen before that transaction. A failure after the blobs are written leaves orphan blobs only, which is accepted, and is never retried by deleting them.
+5. **The bulk switch is one set-based statement:** `UPDATE billing.billing_account SET ref_bill_template_family_id = $target WHERE ref_bill_template_family_id = $retired` (with `$target = NULL` for Standard). Audit rows are inserted in chunks of 500 per statement. No per-BAN loop issues an UPDATE.
+6. **Grants:** `db/bootstrap/bootstrap-db-roles.sql` gives `app_runtime` `INSERT, UPDATE` on `billing.bill_template_family` and `USAGE` on `billing.bill_template_family_seq`. `DELETE` stays revoked. `billrun_runtime` gets nothing new.
+7. **No index on `billing_account.ref_bill_template_family_id`** (about 5 BANs). Add one only through a reviewed migration, if any type exceeds 10,000 BANs.
+8. **The reference package `db/seeds/invoice-templates/INVTPL-BASIC-A4/v1/`** passes `layoutManifestSchema` and `compliance.ts`, and its `checksums.json` is regenerated with `scripts/invoice-templates/write-checksums.ts`. The seed script never uploads it, and no migration inserts it.
+9. **JSON written to `structure` and the export `settings.json`** is validated by its Zod schema on every write (general §6, JSONB rule).
+
+### File organization (adds to §7)
+
+```
+services/billing/invoice-template/
+  compliance.ts                      # NEW: every layout rule (lint, hardening, typed-supplier, static + visible checks); I/O-free
+  compliance-render.ts               # NEW: the visible tier's Chromium reader (via withHardenedPage)
+  upload-layout-package.ts           # NEW: the gate (zip → checksums → manifest → compliance → compile → probe render)
+  install-layout-package.ts          # NEW: the only layout-DRAFT writer
+  export-template-version.ts         # NEW: verified bytes + settings.json
+  template-types.ts                  # NEW: create, retire + bulk switch, deriveTemplateTypeStatus
+  load.ts                            # CHANGED: + loadLayoutDraft
+  activate-template.ts  save-template-draft.ts  preview.ts   # CHANGED: type-scoped
+services/billing/
+  render-invoice.ts                  # CHANGED: hardened context factory
+  capture-template-stamps.ts         # CHANGED: reads billing_account.ref_bill_template_family_id
+services/accounts/
+  assert-bindable-template.ts        # CHANGED (Customer Management): usable type under FOR SHARE
+  set-billing-account-template.ts  onboard-customer-accounts.ts   # CHANGED: new signature
+actions/billing/invoice-settings/
+  create-template-type.action.ts  upload-layout-package.action.ts
+  discard-template-draft.action.ts  retire-template-type.action.ts  # NEW
+app/(app)/administration/invoice-settings/invoice-template/
+  page.tsx                           # CHANGED: type list
+  [typeId]/page.tsx  [typeId]/loading.tsx  [typeId]/error.tsx       # NEW: type detail
+  versions/[versionId]/export/route.ts                              # NEW: export GET
+components/billing/invoice-settings/
+  template-type-list.tsx  create-template-type-dialog.tsx
+  upload-layout-dialog.tsx  retire-template-type-dialog.tsx
+  template-type-messages.ts          # NEW
+db/repositories/billing/
+  bill-template-family.ts            # CHANGED: insertType, retireType, lockTemplateType, listUsable
+  bill-template-version.ts           # CHANGED: layout DRAFT insert/overwrite, per-type reads
+validation/billing/
+  layout-upload.schema.ts  template-export-settings.schema.ts  template-type.schema.ts   # NEW
+db/migrations/
+  0053_invoice_template_types.sql  0054_billing_account_template_type.sql             # NEW
+db/seeds/invoice-templates/INVTPL-BASIC-A4/v1/**   # NEW reference package (not seeded)
+```
+
+1. **`services/billing/invoice-template/*` files import no `next/*`** and no `components/**` (general §3.14).
+2. **Customer Management files** (`services/accounts/**`, `components/customers/**`) are changed only for the bind gate, the BAN panel dropdown and the Accounts tab label. Billing code calls them only through `lockTemplateType` and the bind gate's exported function.
+3. **`compliance.ts` has no I/O.** It takes strings and buffers and returns problems, so the editor can snapshot it verbatim. Rendering for the visible-text check is passed in as a function argument.
+
+### Permission names & per-page permission map (adds to §8)
+
+**No new permission and no level change.**
+
+| Surface | Route | Top-level component(s) | Folder | Permission : level |
+|---|---|---|---|---|
+| Invoice template types: list | `/administration/invoice-settings/invoice-template` | `InvoiceTemplateTypesPage` → `TemplateTypeList`, `TemplateVersionStatusBadge` | `app/(app)/administration/invoice-settings/invoice-template/` | `invoice_settings` : **READ** |
+| Create type | same page | `CreateTemplateTypeDialog` → `create-template-type.action.ts` | `actions/billing/invoice-settings/` | `invoice_settings` : **EDIT** |
+| Type detail: settings, Generated .hbs, version history, Layout code / Next layout version | `/administration/invoice-settings/invoice-template/[typeId]` (`?tab=edit\|generated\|history`) | `InvoiceTemplateTypePage` → `InvoiceSettingsTabs`, `InvoiceStructureForm` (read-only below EDIT), `InvoicePreviewFrame`, `GeneratedHbsViewer`, `VersionHistoryTable` | `app/(app)/administration/invoice-settings/invoice-template/[typeId]/` | `invoice_settings` : **READ** |
+| Upload layout package (create or overwrite the DRAFT) | type detail | `UploadLayoutDialog` → `upload-layout-package.action.ts` | `actions/billing/invoice-settings/` | `invoice_settings` : **EDIT** |
+| Save settings DRAFT, activate pair | type detail | `InvoiceStructureForm`, `ActivateVersionDialog` → `save-template-draft.action.ts`, `activate-template.action.ts` | `actions/billing/invoice-settings/` | `invoice_settings` : **EDIT** |
+| Discard DRAFT pair | type detail | `VersionHistoryTable` → `discard-template-draft.action.ts` | `actions/billing/invoice-settings/` | `invoice_settings` : **EDIT** |
+| Live preview (type, incl. DRAFT) | type detail | `InvoicePreviewFrame` → `preview-invoice-template.action.ts` (`typeId`) | `actions/billing/invoice-settings/` | `invoice_settings` : **READ**; a `{ billId }` source also needs `billrun_view` : **READ** (unchanged) |
+| Export a version pair | `GET /administration/invoice-settings/invoice-template/versions/[versionId]/export` | `route.ts` → `exportTemplateVersion`; linked from `VersionHistoryTable` | `…/invoice-template/versions/[versionId]/export/` | `invoice_settings` : **READ** |
+| File download (any version, incl. DRAFT) | `GET /administration/invoice-settings/invoice-template/versions/[versionId]/files/[file]` | existing `route.ts` | unchanged | `invoice_settings` : **READ** (unchanged) |
+| Retire type + bulk switch | type detail | `RetireTemplateTypeDialog` → `retire-template-type.action.ts` | `actions/billing/invoice-settings/` | `invoice_settings` : **EDIT** |
+| Bind / reset a BAN's type | `/customers/manage/[id]` | `BillingAccountPanel` → type dropdown → existing `set-billing-account-template` action | `components/customers/`, `actions/accounts/` | `customers` : **EDIT** + `accounts_transactions` : **EDIT** (cm21, unchanged) |
+| Accounts tab: type name | `/customers/view/[id]` | existing Accounts tab | `app/(app)/customers/view/[id]/` | `customers` : **READ** (unchanged) |
+| Rerun with "type changed" warning | `/billing/bill-runs/[runId]` | `RerunDialog` → `rerun-run.action.ts` | `components/billing/`, `actions/billing/` | `billrun_operate` : **EDIT** (unchanged) |
+
+**Notes**
+- A user **without** `invoice_settings` gets `/no-access` (pages) or 403 (handlers).
+- **READ** sees every type, version and badge, and can export; every EDIT control is hidden. Each EDIT action still refuses server-side, and the action guard is what's tested.
+- **EDIT** gets everything on these pages.
+- `tests/guardrails/invoice-settings-authz-matrix.test.ts` gains a row for each new route and action above.
+
+### Guardrail tests (extends §9, items 68–79)
+
+68. **One layout writer (Inv #59).** A static test fails if any file other than `install-layout-package.ts` inserts or updates a `bill_template_version` row with `kind = 'layout'`, or calls the blob store for `invoice-templates/layouts/`.
+69. **Gate completeness (Inv #60).** One fixture per `LayoutProblemCode`, each refused with that code and leaving zero new rows, blobs and audit rows:
+    - `ZIP_TOO_LARGE` checks the central directory before any inflate (a spy asserts no inflate call)
+    - `ZIP_UNEXPECTED_FILE` covers `partials/extra.hbs`, `../x`, `x.editor.json` and `fonts/x.ttf`
+70. **Draft isolation (Inv #61), CRITICAL regression.**
+    - Capture, posting, final render and reprint throw `TEMPLATE_VERSION_NOT_FOUND` when handed a DRAFT.
+    - `loadLayoutDraft` output never appears in `loadedTemplateMemo`.
+    - A preview after an in-place overwrite renders the new files.
+71. **Stale preview (Inv #62).**
+    - An upload changes the settings DRAFT's token.
+    - An Activate with the pre-upload token promotes nothing.
+    - Two concurrent uploads carrying `{ none: true }` produce one DRAFT, and one `DRAFT_CHANGED_SINCE_WARNING`.
+72. **Visible-text compliance (Inv #63).** For each required probe value, a layout fails `LAYOUT_MISSING_REQUIRED_BLOCKS` when the value is:
+    - removed
+    - placed in an HTML comment
+    - placed under `display:none`, `visibility:hidden` or a `hidden` attribute inside its `.sec--<key>`
+
+    CI runs `compliance.ts` over `INVTPL-STD-A4/v1` and `INVTPL-BASIC-A4/v1`, and both pass.
+73. **Rule ownership (Inv #63).**
+    - `invoice-layout-lint.test.ts` declares no regex of its own; it imports `compliance.ts`.
+    - Each hardening rule is rejected by `compliance.ts`: entity-encoded URL, CSS-escaped URL, `image-set()`, `on…=`.
+74. **Network-blocked render (Inv #64).**
+    - A gate render of a fetching layout returns `LAYOUT_EXTERNAL_FETCH`.
+    - A final render of the same layout (inserted directly) produces a PDF, logs the URL, and a stub server records no hit.
+    - An inline `<script>` doesn't run.
+    - Standard v1's golden is unchanged.
+    - No file other than the context factory in `render-invoice.ts` calls `chromium.launch` or `browser.newContext`.
+75. **Type identity and catalog DDL (Inv #65), on a populated DB.**
+    - `0053` keeps existing rows valid, backfills Standard's `layout_code` and type id, and leaves `bill_template_version_guard_trg` enabled.
+    - The guard rejects any name, code or `layout_code` update.
+    - The composite FKs reject a cross-type pair and a mismatched `layout_code`.
+    - The name CHECKs reject doubled and surrounding spaces.
+    - `btf_name_ci_uq` rejects a case or space variant of a retired name.
+76. **Bind and retire races (Inv #66).**
+    - A bind racing a retire, both orders: it lands before and is switched, or fails `TEMPLATE_NOT_BINDABLE`.
+    - Retire A→B racing retire B→A completes with no deadlock.
+    - After a retire, zero BANs reference the type.
+    - An explicit Standard id is rejected.
+    - The switch to Standard writes NULL.
+77. **Retire scope (Inv #67).**
+    - A retire leaves every version row of the type unchanged (row-by-row compare).
+    - Save, upload, preview and activate on a retired type return `TEMPLATE_TYPE_RETIRED`.
+    - Standard returns `DEFAULT_TYPE_NOT_RETIRABLE`.
+78. **Export and restore (Inv #68).**
+    - Exported layout files and `checksums.json` equal the stored blobs byte for byte, for an ACTIVE, a RETIRED and a DRAFT pair and for Standard v1.
+    - A tampered blob fails the export.
+    - Uploading the export into an empty same-named type restores bytes and settings, skips the version check, and records `restoredFrom`.
+    - The same zip without `settings.json` and with a wrong version is refused.
+79. **Grants and boundaries.**
+    - `app_runtime` can INSERT and UPDATE `bill_template_family` and use its sequence, and can't DELETE it.
+    - `billrun_runtime` has no new grant.
+    - Item 66's boundary test pins one new exemption: `services/billing/invoice-template/template-types.ts` may write `billing_account.ref_bill_template_family_id`, in the retire switch only.
+    - `0054` aborts on a non-NULL `ref_bill_template_version_id` fixture.
+
+### Rules superseded by this update
+
+| Rule | Was | Now |
+|---|---|---|
+| Guardrail 66 (Phase 3 boundaries) | No file under `services/billing/**` or `actions/billing/**` imports `services/accounts/**` or writes `billing_account`. | One pinned exemption: the retire switch in `template-types.ts` writes `billing_account.ref_bill_template_family_id` (item 79). Imports of `services/accounts/**` stay forbidden except the existing `post-run.ts` pin. |
+| Phase 3 permission row "Manage Customer Billing account panel: Not touched" | Customer Management unchanged. | The panel gains the type dropdown (permission map above); the cm21 gate is unchanged. |
+| Phase 3 File organization rule 2 "No new folder under `components/`" | Footnote inputs live in the existing form. | Still no new folder. New files go in the existing `components/billing/invoice-settings/`. |
+| Phase 3 Data rule 1 (`0046` edited in place) | A one-time in-place edit on the fresh-DB round. | Superseded for this update: `0053`/`0054` are additive (Data rule 1). |
+| Phase 3 file listing "`bill-template-family.ts` — findDefault, findById (read-only this phase)" | Read-only repository. | Adds `insertType`, `retireType`, `lockTemplateType` and `listUsable` (General rule 9: still no identity UPDATE). |
+| Phase 3 grant "`app_runtime` SELECT only on `bill_template_family`" | The table was seed-fixed. | INSERT, UPDATE and sequence USAGE; DELETE still revoked (Data rule 6). |
+| Part 2 General rule 6 / Phase 3 "Still no markup" | The only admin template input is structure booleans plus the footnote. | Unchanged for the settings form. An **uploaded package** is the one sanctioned way admin input becomes layout code, gated by General rule 2. |
+| Guardrail 67 (structure and manifest parity, seeded manifest only) | Checks the seeded manifest. | Also applies to every uploaded manifest at the gate (Inv #60, step 3). |
