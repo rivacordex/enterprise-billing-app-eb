@@ -15,28 +15,20 @@ import { layoutUploadSchema } from "@/validation/billing/layout-upload.schema";
 
 // bm78 — guard → Zod → bytes → service (the upload-logo.action.ts shape). FormData within
 // the unchanged bodySizeLimit; the zip never touches disk (code-standards › Invoice
-// Template Types, Next.js rule 1).
-async function guardEdit(): Promise<
-  | { ok: true; actorId: string }
-  | { ok: false; code: "FORBIDDEN" | "SERVER_ERROR" }
-> {
-  try {
-    const { userId } = await requirePermission(
-      PERMISSIONS.INVOICE_SETTINGS,
-      LEVELS.EDIT,
-    );
-    return { ok: true, actorId: userId };
-  } catch (error) {
-    if (isRedirectError(error)) return { ok: false, code: "FORBIDDEN" };
-    return { ok: false, code: "SERVER_ERROR" };
-  }
-}
-
+// Template Types, Next.js rule 1). The guard is the first statement.
 export async function uploadLayoutPackageAction(
   formData: FormData,
 ): Promise<UploadLayoutPackageResult> {
-  const guard = await guardEdit();
-  if (!guard.ok) return { ok: false, code: guard.code, problems: [] };
+  let actorId: string;
+  try {
+    ({ userId: actorId } = await requirePermission(
+      PERMISSIONS.INVOICE_SETTINGS,
+      LEVELS.EDIT,
+    ));
+  } catch (error) {
+    const code = isRedirectError(error) ? "FORBIDDEN" : "SERVER_ERROR";
+    return { ok: false, code, problems: [] };
+  }
 
   const parsed = layoutUploadSchema.safeParse({
     familyId: formData.get("familyId"),
@@ -65,7 +57,7 @@ export async function uploadLayoutPackageAction(
     const zip = new Uint8Array(await file.arrayBuffer());
     const result = await uploadLayoutPackage(
       { familyId, zip, expectedDraft },
-      guard.actorId,
+      actorId,
     );
     if (result.ok) {
       revalidatePath("/administration/invoice-settings", "layout");

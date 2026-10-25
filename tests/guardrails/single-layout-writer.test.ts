@@ -1,8 +1,9 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { listSourceFiles } from "@/tests/helpers/list-source-files";
 import { stripComments } from "@/tests/helpers/strip-code-comments";
 
 // bm78-spec §13 / billmgmt-code-standards.md guardrail item 68 (Inv #59) — the
@@ -45,24 +46,6 @@ const DRIZZLE_LAYOUT_INSERT =
   /\.insert\(\s*billTemplateVersion\s*\)[\s\S]{0,1000}?kind\s*:\s*["'`]layout["'`]/;
 const PUT_OBJECT = /\bputObject\s*\(/;
 const LAYOUTS_PATH = /["'`][^"'`\n]*\blayouts\//;
-
-function listSourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  const walk = (abs: string): void => {
-    for (const entry of readdirSync(abs)) {
-      if (entry === "node_modules") continue;
-      const child = resolve(abs, entry);
-      if (statSync(child).isDirectory()) {
-        walk(child);
-      } else if (/\.(?:tsx?|[cm]?js)$/.test(entry)) {
-        out.push(relative(ROOT, child).split(sep).join("/"));
-      }
-    }
-  };
-  const abs = resolve(ROOT, dir);
-  if (existsSync(abs)) walk(abs);
-  return out;
-}
 
 const productionFiles = SOURCE_DIRS.flatMap(listSourceFiles).filter(
   (file) => !EXCLUDED_PREFIXES.some((p) => file.startsWith(p)),

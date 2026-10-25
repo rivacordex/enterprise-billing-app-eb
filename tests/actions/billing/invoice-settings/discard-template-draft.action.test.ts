@@ -22,6 +22,7 @@ import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { logger } from "@/lib/logger";
 import { discardTemplateDraft } from "@/services/billing/invoice-template/discard-template-draft";
+import { principal, redirectError } from "@/tests/helpers/action-guard";
 
 const mockGuard = vi.mocked(requirePermission);
 const mockService = vi.mocked(discardTemplateDraft);
@@ -33,19 +34,9 @@ const INPUT = {
   expectedDraftToken: "2026-10-25T01:02:03.123456Z",
 };
 
-function redirectError(): Error & { digest: string } {
-  const e = new Error("NEXT_REDIRECT") as Error & { digest: string };
-  e.digest = "NEXT_REDIRECT;replace;/no-access;307;";
-  return e;
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGuard.mockResolvedValue({
-    userId: "actor-1",
-    userEmail: "a@example.com",
-    permissionMap: { invoice_settings: "EDIT" },
-  } as never);
+  mockGuard.mockResolvedValue(principal({ invoice_settings: "EDIT" }));
 });
 
 describe("discardTemplateDraftAction (bm79)", () => {
@@ -58,24 +49,21 @@ describe("discardTemplateDraftAction (bm79)", () => {
     );
   });
 
-  it("refuses a READ user with FORBIDDEN and never calls the service", async () => {
-    mockGuard.mockRejectedValue(redirectError());
-    expect(await discardTemplateDraftAction(INPUT)).toEqual({
-      ok: false,
-      code: "FORBIDDEN",
-    });
-    expect(mockService).not.toHaveBeenCalled();
-    expect(mockRevalidate).not.toHaveBeenCalled();
-  });
-
-  it("maps a non-redirect guard failure to SERVER_ERROR", async () => {
-    mockGuard.mockRejectedValue(new Error("db down"));
-    expect(await discardTemplateDraftAction(INPUT)).toEqual({
-      ok: false,
-      code: "SERVER_ERROR",
-    });
-    expect(mockService).not.toHaveBeenCalled();
-  });
+  it.each([
+    ["a READ user (the guard redirects)", "FORBIDDEN", redirectError()],
+    ["a non-redirect guard failure", "SERVER_ERROR", new Error("db down")],
+  ] as const)(
+    "%s → %s, and the service is never called",
+    async (_case, code, error) => {
+      mockGuard.mockRejectedValue(error);
+      expect(await discardTemplateDraftAction(INPUT)).toEqual({
+        ok: false,
+        code,
+      });
+      expect(mockService).not.toHaveBeenCalled();
+      expect(mockRevalidate).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["a malformed familyId", { ...INPUT, familyId: "wholesale" }],

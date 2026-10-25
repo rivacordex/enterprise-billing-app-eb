@@ -1,13 +1,5 @@
-import { BlobServiceClient } from "@azure/storage-blob";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
-import type postgresjs from "postgres";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import * as schema from "@/db/schema";
-import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
-import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 
 // bm79-spec §9 — discard a type's DRAFTs on a real database and a real Azurite
@@ -27,21 +19,13 @@ vi.mock("@/db/client", () => ({
 }));
 
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
-import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
 import { discardTemplateDraft } from "@/services/billing/invoice-template/discard-template-draft";
-import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
 import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
-import { createTemplateType } from "@/services/billing/invoice-template/template-types";
-import { uploadLayoutPackage } from "@/services/billing/invoice-template/upload-layout-package";
 import {
   getGeneratedVersionFile,
   getInvoiceTemplatePageData,
 } from "@/services/billing/read/invoice-template-settings";
-import {
-  buildLayoutPackage,
-  cleanRender,
-} from "@/tests/helpers/layout-package";
-import type { Database } from "@/db/client";
+import { registerTemplateTypeDb } from "@/tests/db/helpers/template-type-db-harness";
 
 const ACTOR = "bm79-discarder";
 const BLOB_PREFIXES = ["layouts/INVTPL-WHOLESALE/", "layouts/INVTPL-SHUT/"];
@@ -49,70 +33,18 @@ const BLOB_PREFIXES = ["layouts/INVTPL-WHOLESALE/", "layouts/INVTPL-SHUT/"];
 describe.skipIf(!databaseUrl || !blobConnection)(
   "bm79 discard a template draft (requires DATABASE_URL + Azurite)",
   () => {
-    let sql: postgresjs.Sql;
-    let db: Database;
     let wholesaleId: string;
-    const service = blobConnection
-      ? BlobServiceClient.fromConnectionString(blobConnection)
-      : null;
-    const templates = () => service!.getContainerClient("invoice-templates");
-
-    async function dropAll(): Promise<void> {
-      for (const s of [
-        "billing",
-        "customer",
-        "product",
-        "rating",
-        "core",
-        "drizzle",
-        "partman",
-        "inventory",
-        "ordering",
-      ]) {
-        await sql.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-      }
-    }
-
-    async function blobNames(prefix: string): Promise<string[]> {
-      const names: string[] = [];
-      for await (const b of templates().listBlobsFlat({ prefix })) {
-        names.push(b.name);
-      }
-      return names;
-    }
-
-    async function deleteTestBlobs(): Promise<void> {
-      for (const prefix of BLOB_PREFIXES) {
-        for (const name of await blobNames(prefix)) {
-          await templates()
-            .deleteBlob(name)
-            .catch(() => undefined);
-        }
-      }
-    }
-
-    async function upload(familyId: string, layoutCode: string, n: number) {
-      const result = await uploadLayoutPackage(
-        {
-          familyId,
-          zip: buildLayoutPackage({ layoutCode, layoutVersion: n }).zip,
-          expectedDraft: { none: true },
-        },
-        ACTOR,
-        { render: cleanRender() },
-      );
-      if (!result.ok) throw new Error(`upload failed: ${result.code}`);
-      return result;
-    }
-
-    async function settingsDraft(familyId: string) {
-      const draft = await billTemplateVersionRepository.findDraft(db, {
-        kind: "generated",
-        familyId,
-      });
-      if (!draft) throw new Error("no settings draft");
-      return draft;
-    }
+    const h = registerTemplateTypeDb({
+      databaseUrl,
+      blobConnection,
+      actor: {
+        id: ACTOR,
+        name: "Draft Discarder",
+        email: "draft-discarder@example.com",
+      },
+      blobPrefixes: BLOB_PREFIXES,
+      holder: hoisted.holder,
+    });
 
     async function discard(
       familyId: string,
@@ -129,7 +61,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }
 
     async function versionRows() {
-      return sql<
+      return h.sql<
         {
           bill_template_version_id: string;
           status: string;
@@ -140,50 +72,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         FROM billing.bill_template_version ORDER BY bill_template_version_id`;
     }
 
-    async function discardAudit() {
-      return sql<
-        { target_id: string; before_data: unknown; after_data: unknown }[]
-      >`
-        SELECT target_id, before_data, after_data FROM core.audit_log
-        WHERE event_type = 'INVOICE_TEMPLATE_DRAFT_DISCARDED' ORDER BY created_datetime`;
-    }
+    const discardAudit = () => h.auditRows("INVOICE_TEMPLATE_DRAFT_DISCARDED");
 
     beforeAll(async () => {
-      assertTestDatabaseUrl(databaseUrl as string);
-      assertTestBlobConnection(blobConnection as string);
-      sql = postgres(databaseUrl as string, { max: 8, onnotice: () => {} });
-      await dropAll();
-      const drizzleDb = drizzle(sql, { schema });
-      await migrate(drizzleDb, {
-        migrationsFolder: "./db/migrations",
-        migrationsSchema: "drizzle",
-      });
-      db = drizzleDb as unknown as Database;
-      hoisted.holder.db = db;
-      await sql`
-        INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
-        VALUES (${ACTOR}, 'Draft Discarder', 'draft-discarder@example.com', 'LOCAL', 'ACTIVE')`;
-      await seedInvoiceTemplates(db);
-      clearLoadedTemplateMemo();
-      await deleteTestBlobs();
-
-      const created = await createTemplateType({ name: "Wholesale" }, ACTOR);
-      if (!created.ok) throw new Error(`create type failed: ${created.code}`);
-      wholesaleId = created.typeId;
-      await upload(wholesaleId, "INVTPL-WHOLESALE", 1);
+      wholesaleId = await h.createTypeWithLayout("Wholesale");
     }, 180_000);
 
-    afterAll(async () => {
-      if (service) await deleteTestBlobs();
-      clearLoadedTemplateMemo();
-      if (sql) {
-        await dropAll();
-        await sql.end();
-      }
-    }, 60_000);
-
     it("a stale token is DRAFT_CONFLICT and changes nothing", async () => {
-      const draft = await settingsDraft(wholesaleId);
+      const draft = await h.settingsDraft(wholesaleId);
       const before = await versionRows();
       expect(
         await discard(wholesaleId, {
@@ -196,7 +92,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     });
 
     it("a draftId from another type is DRAFT_CONFLICT", async () => {
-      const draft = await settingsDraft(wholesaleId);
+      const draft = await h.settingsDraft(wholesaleId);
       const before = await versionRows();
       expect(await discard("BTF00000001", draft)).toEqual({
         ok: false,
@@ -206,12 +102,12 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     });
 
     it("discards Wholesale's pair: both RETIRED, never activated, the actor as last writer, one audit row, the blobs kept and the numbers consumed", async () => {
-      const draft = await settingsDraft(wholesaleId);
-      const layoutDraft = (await billTemplateVersionRepository.findDraft(db, {
+      const draft = await h.settingsDraft(wholesaleId);
+      const layoutDraft = (await billTemplateVersionRepository.findDraft(h.db, {
         kind: "layout",
         familyId: wholesaleId,
       }))!;
-      const layoutBlobs = await blobNames(
+      const layoutBlobs = await h.blobNames(
         layoutDraft.blobRef!.replace(/^invoice-templates\//, ""),
       );
       expect(layoutBlobs.length).toBeGreaterThan(0);
@@ -225,7 +121,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         ],
       });
 
-      const rows = await sql<
+      const rows = await h.sql<
         {
           bill_template_version_id: string;
           kind: string;
@@ -263,16 +159,16 @@ describe.skipIf(!databaseUrl || !blobConnection)(
 
       // Write-once blobs are never deleted inline.
       expect(
-        await blobNames(
+        await h.blobNames(
           layoutDraft.blobRef!.replace(/^invoice-templates\//, ""),
         ),
       ).toEqual(layoutBlobs);
 
       // Rows and numbers are never reused: the next upload is v2, and so is
       // the settings DRAFT it creates.
-      const next = await upload(wholesaleId, "INVTPL-WHOLESALE", 2);
+      const next = await h.upload(wholesaleId, "INVTPL-WHOLESALE", 2);
       expect(next.versionNo).toBe(2);
-      expect((await settingsDraft(wholesaleId)).versionNo).toBe(2);
+      expect((await h.settingsDraft(wholesaleId)).versionNo).toBe(2);
     }, 120_000);
 
     it("a Standard settings-only DRAFT is discarded alone: the page then shows the ACTIVE version and no layout row changes", async () => {
@@ -289,7 +185,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         ACTOR,
       );
       if (!saved.ok) throw new Error(`save failed: ${saved.code}`);
-      const layoutsBefore = await sql`
+      const layoutsBefore = await h.sql`
         SELECT * FROM billing.bill_template_version
         WHERE kind = 'layout' ORDER BY bill_template_version_id`;
 
@@ -302,7 +198,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         discardedVersionIds: [saved.versionId],
       });
       expect(
-        await sql`
+        await h.sql`
           SELECT * FROM billing.bill_template_version
           WHERE kind = 'layout' ORDER BY bill_template_version_id`,
       ).toEqual(layoutsBefore);
@@ -342,16 +238,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }, 120_000);
 
     it("[Inv #67] a retired type is TEMPLATE_TYPE_RETIRED and its DRAFTs stay", async () => {
-      const created = await createTemplateType({ name: "Shut" }, ACTOR);
-      if (!created.ok) throw new Error(`create type failed: ${created.code}`);
-      await upload(created.typeId, "INVTPL-SHUT", 1);
-      const draft = await settingsDraft(created.typeId);
-      await sql`
+      const typeId = await h.createTypeWithLayout("Shut");
+      const draft = await h.settingsDraft(typeId);
+      await h.sql`
         UPDATE billing.bill_template_family SET retired_datetime = now()
-        WHERE bill_template_family_id = ${created.typeId}`;
+        WHERE bill_template_family_id = ${typeId}`;
       const before = await versionRows();
 
-      expect(await discard(created.typeId, draft)).toEqual({
+      expect(await discard(typeId, draft)).toEqual({
         ok: false,
         code: "TEMPLATE_TYPE_RETIRED",
       });
@@ -359,7 +253,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }, 120_000);
 
     it("an unknown type is VALIDATION_ERROR", async () => {
-      const draft = await settingsDraft(wholesaleId);
+      const draft = await h.settingsDraft(wholesaleId);
       expect(await discard("BTF00009999", draft)).toEqual({
         ok: false,
         code: "VALIDATION_ERROR",

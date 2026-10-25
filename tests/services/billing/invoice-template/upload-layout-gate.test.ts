@@ -59,11 +59,7 @@ vi.mock("fflate", async (importOriginal) => {
   };
 });
 
-import {
-  COMPLIANCE_SECTION_KEYS,
-  type ComplianceSectionKey,
-  type VisibleSectionReport,
-} from "@/services/billing/invoice-template/compliance";
+import { COMPLIANCE_SECTION_KEYS } from "@/services/billing/invoice-template/compliance";
 import type { renderAndReadSections } from "@/services/billing/invoice-template/compliance-render";
 import {
   checkLayoutPackage,
@@ -71,6 +67,8 @@ import {
 } from "@/services/billing/invoice-template/upload-layout-package";
 import {
   buildLayoutPackage,
+  cleanReport,
+  cleanRender as sharedCleanRender,
   replaceInFile,
   type LayoutPackageOptions,
 } from "@/tests/helpers/layout-package";
@@ -88,29 +86,9 @@ const CODE = "INVTPL-BASIC-A4";
 const CTX = { layoutCode: CODE, expectedVersionNo: 1 };
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
-// A clean visible report: every probed section present once, printing every
-// required value legibly.
-function cleanReport(
-  probes: Parameters<Render>[1],
-): Record<ComplianceSectionKey, VisibleSectionReport> {
-  return Object.fromEntries(
-    probes.map((p) => [
-      p.key,
-      {
-        present: true,
-        count: 1,
-        text: p.values.length > 0 ? p.values.join(" ") : `${p.key} text`,
-        illegible: [],
-      },
-    ]),
-  ) as unknown as Record<ComplianceSectionKey, VisibleSectionReport>;
-}
-
+// The shared clean renderer, wrapped so a case can count its calls.
 function cleanRender(blockedUrls: string[] = []) {
-  return vi.fn<Render>(async (_html, probes) => ({
-    report: cleanReport(probes),
-    blockedUrls,
-  }));
+  return vi.fn<Render>(sharedCleanRender(blockedUrls));
 }
 
 function pkg(opts: LayoutPackageOptions = {}) {

@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -34,8 +32,12 @@ import { lintLayoutTemplates } from "@/services/billing/invoice-template/complia
 import { checkLayoutPackage } from "@/services/billing/invoice-template/upload-layout-package";
 import {
   buildLayoutPackage,
-  replaceInFile,
+  externalFetchPackage,
 } from "@/tests/helpers/layout-package";
+import {
+  startFetchStubServer,
+  type FetchStubServer,
+} from "@/tests/helpers/fetch-stub-server";
 
 const run = process.env.RUN_CHROMIUM_E2E === "1";
 const CODE = "INVTPL-BASIC-A4";
@@ -44,22 +46,16 @@ const CTX = { layoutCode: CODE, expectedVersionNo: 1 };
 describe.skipIf(!run)(
   "bm78 upload gate — real Chromium probe render (RUN_CHROMIUM_E2E=1)",
   () => {
-    let server: Server;
-    let hits = 0;
+    let stub: FetchStubServer;
     let origin: string;
 
     beforeAll(async () => {
-      server = createServer((_req, res) => {
-        hits++;
-        res.writeHead(200, { "content-type": "image/png" });
-        res.end();
-      });
-      await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-      origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      stub = await startFetchStubServer();
+      origin = stub.origin;
     });
 
     afterAll(async () => {
-      if (server) await new Promise<void>((r) => server.close(() => r()));
+      if (stub) await stub.close();
     });
 
     it("a real gate run over INVTPL-BASIC-A4 passes", async () => {
@@ -72,19 +68,7 @@ describe.skipIf(!run)(
     }, 120_000);
 
     it("a layout that fetches an external URL fails LAYOUT_EXTERNAL_FETCH at the render stage; the stub server sees no hit", async () => {
-      const split = `${origin.replace("http://", "http{{#if company}}{{/if}}://")}/x`;
-      const style = `<div class="bm78-fetch" style="width:20px;height:20px;background:url(${split})"></div>`;
-      const built = buildLayoutPackage({
-        layoutCode: CODE,
-        layoutVersion: 1,
-        edit: (f) =>
-          replaceInFile(
-            f,
-            "partials/header.hbs",
-            "<h1>Invoice</h1>",
-            `<h1>Invoice</h1>${style}`,
-          ),
-      });
+      const built = externalFetchPackage(origin, CODE);
       // The static lint does not see the split URL — so stage 7 is what refuses it.
       expect(
         lintLayoutTemplates({
@@ -104,11 +88,11 @@ describe.skipIf(!run)(
           message: expect.stringContaining(`${origin}/x`),
         }),
       ]);
-      expect(hits).toBe(0);
+      expect(stub.hits()).toBe(0);
     }, 120_000);
 
     it("renderAndReadSections reports a CSS background URL as blocked and never fetches it", async () => {
-      const before = hits;
+      const before = stub.hits();
       const { blockedUrls, report } = await renderAndReadSections(
         `<!doctype html><html><body>
           <section class="sec sec--header"><div style="width:20px;height:20px;background:url(${origin}/direct)"></div>Supplier</section>
@@ -117,7 +101,7 @@ describe.skipIf(!run)(
       );
       expect(blockedUrls).toEqual([`${origin}/direct`]);
       expect(report.header).toMatchObject({ present: true, count: 1 });
-      expect(hits).toBe(before);
+      expect(stub.hits()).toBe(before);
     }, 120_000);
   },
 );

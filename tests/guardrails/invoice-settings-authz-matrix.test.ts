@@ -481,42 +481,19 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
   });
 });
 
-// bm72-spec §5 (code-standards Phase 3 permission map): the footnote is an
-// `invoice_settings : EDIT` write like the rest of the structure. A READ user
-// who posts a changed footnote, or activates a draft carrying one, is refused
-// server-side before any parse or service call (the hidden inputs and buttons
-// are show/hide only).
-describe("invoice-settings authz matrix — a READ user cannot change the footnote (bm72)", () => {
+// A READ-only user's mutation is refused server-side before any parse or
+// service call (the hidden inputs, buttons and dialog triggers are show/hide
+// only). bm72-spec §5: the footnote is an `invoice_settings : EDIT` write like
+// the rest of the structure. bm78-spec §13: the layout upload. bm79: discard.
+describe("invoice-settings authz matrix — a READ user's mutation is FORBIDDEN and runs no service", () => {
   const CHANGED = {
     sections: { payment: true },
     columns: {},
     footnote: ["Calculations are done in Mbps", "A READ user's edit"],
   };
+  const TOKEN = "2026-10-10T01:02:03.123456Z";
 
-  it("save draft carrying a changed footnote is FORBIDDEN and saves nothing", async () => {
-    const result = await saveTemplateDraftAction({
-      structure: CHANGED,
-      expectedDraftToken: null,
-    });
-    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
-    expect(vi.mocked(saveTemplateDraft)).not.toHaveBeenCalled();
-  });
-
-  it("activating a draft that carries a changed footnote is FORBIDDEN and activates nothing", async () => {
-    const result = await activateTemplateAction({
-      draftId: "BTV00000004",
-      expectedDraftToken: "2026-10-10T01:02:03.123456Z",
-      changeNote: "Reword the footnote",
-    });
-    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
-    expect(vi.mocked(activateTemplate)).not.toHaveBeenCalled();
-  });
-});
-
-// bm78-spec §13 — a READ-only user's layout upload is refused server-side,
-// before any parse or service call (the dialog's trigger is show/hide only).
-describe("invoice-settings authz matrix — a READ user cannot upload a layout package (bm78)", () => {
-  it("the upload is FORBIDDEN with no problems and the service is never called", async () => {
+  function layoutForm(): FormData {
     const form = new FormData();
     form.set("familyId", "BTF00000002");
     form.set("expectedDraft", "none");
@@ -526,22 +503,52 @@ describe("invoice-settings authz matrix — a READ user cannot upload a layout p
         type: "application/zip",
       }),
     );
-    const result = await uploadLayoutPackageAction(form);
-    expect(result).toEqual({ ok: false, code: "FORBIDDEN", problems: [] });
-    expect(vi.mocked(uploadLayoutPackage)).not.toHaveBeenCalled();
-  });
-});
+    return form;
+  }
 
-// bm79 — a READ-only user's discard is refused server-side, before any parse
-// or service call (the Discard control is show/hide only).
-describe("invoice-settings authz matrix — a READ user cannot discard a draft (bm79)", () => {
-  it("the discard is FORBIDDEN and the service is never called", async () => {
-    const result = await discardTemplateDraftAction({
-      familyId: "BTF00000002",
-      draftId: "BTV00000004",
-      expectedDraftToken: "2026-10-10T01:02:03.123456Z",
-    });
-    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
-    expect(vi.mocked(discardTemplateDraft)).not.toHaveBeenCalled();
+  it.each(
+    [
+      {
+        surface: "bm72 — save draft carrying a changed footnote",
+        call: () =>
+          saveTemplateDraftAction({
+            structure: CHANGED,
+            expectedDraftToken: null,
+          }),
+        service: saveTemplateDraft,
+        refused: { ok: false, code: "FORBIDDEN" },
+      },
+      {
+        surface: "bm72 — activating a draft that carries a changed footnote",
+        call: () =>
+          activateTemplateAction({
+            draftId: "BTV00000004",
+            expectedDraftToken: TOKEN,
+            changeNote: "Reword the footnote",
+          }),
+        service: activateTemplate,
+        refused: { ok: false, code: "FORBIDDEN" },
+      },
+      {
+        surface: "bm78 — a layout package upload",
+        call: () => uploadLayoutPackageAction(layoutForm()),
+        service: uploadLayoutPackage,
+        refused: { ok: false, code: "FORBIDDEN", problems: [] },
+      },
+      {
+        surface: "bm79 — discarding a draft",
+        call: () =>
+          discardTemplateDraftAction({
+            familyId: "BTF00000002",
+            draftId: "BTV00000004",
+            expectedDraftToken: TOKEN,
+          }),
+        service: discardTemplateDraft,
+        refused: { ok: false, code: "FORBIDDEN" },
+      },
+    ].map((c) => [c.surface, c] as const),
+  )("%s is refused", async (_surface, { call, service, refused }) => {
+    expect(await call()).toEqual(refused);
+    expect(vi.mocked(service)).not.toHaveBeenCalled();
   });
 });

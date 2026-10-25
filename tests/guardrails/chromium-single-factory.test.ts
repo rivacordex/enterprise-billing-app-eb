@@ -1,7 +1,9 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { listSourceFiles } from "@/tests/helpers/list-source-files";
 
 // bm75-spec §2 / billmgmt-code-standards.md guardrail item 74 (draft/final
 // half), Inv #64 — every Chromium render in the app goes through the ONE
@@ -22,24 +24,6 @@ const FACTORY_FILE = "services/billing/render-invoice.ts";
 // pattern missed all but `chromium.launch` and `browser.newPage(`).
 const CHROMIUM_USE =
   /\b(?:chromium|firefox|webkit)\s*(?:\.|\[\s*["'`])\s*(?:launch|connect)\w*|\.newContext\s*\(|\.newPage\s*\(/;
-
-function listSourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  const walk = (abs: string): void => {
-    for (const entry of readdirSync(abs)) {
-      if (entry === "node_modules") continue;
-      const child = resolve(abs, entry);
-      if (statSync(child).isDirectory()) {
-        walk(child);
-      } else if (/\.(?:tsx?|[cm]?js)$/.test(entry)) {
-        out.push(relative(ROOT, child).split(sep).join("/"));
-      }
-    }
-  };
-  const abs = resolve(ROOT, dir);
-  if (existsSync(abs)) walk(abs);
-  return out;
-}
 
 describe("guardrail 74 — one hardened Chromium factory (Inv #64)", () => {
   it("only services/billing/render-invoice.ts launches Chromium or opens a context/page", () => {

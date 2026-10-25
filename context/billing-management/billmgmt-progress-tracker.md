@@ -45,6 +45,28 @@ invariant audit) trimmed to durable facts + decisions. Full history:
 
 Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
 
+**bm77–bm79 Sonar duplication follow-up (2026-10-25):** test-side shared helpers —
+`tests/db/helpers/template-type-db-harness.ts` (fresh migrated + seeded DB lifecycle, blob cleanup,
+upload / settings-draft / type-with-layout / audit-row helpers; used by the upload, pair-activation and
+discard suites), `tests/helpers/list-source-files.ts` (guardrails 68 and 74), `fetch-stub-server.ts` and
+`externalFetchPackage` (both Chromium e2e suites), `in-memory-blob-store.ts` (load-layout-draft and the
+activation e2e), `cleanReport`/`cleanRender` in `layout-package.ts` (gate test), `action-guard.ts`
+(discard action test); the authz matrix's READ-refusal cases are one table. Production: the upload
+action uses the inline guard of its sibling actions instead of a copy of upload-logo's `guardEdit`. No
+behaviour change; the outside-diff `readZip` slicing comment was already fixed. Unit 4848/1 (pre-existing
+`ratecard-demo-seed-boundary`), template integration 95/0, Chromium e2e 27/0.
+  **Review fixes (xhigh review of the follow-up, 13 findings):** the harness's `afterAll` deleted the
+  suite's blobs even when `beforeAll`'s store guard had refused the target (Vitest runs `afterAll` after a
+  failed `beforeAll`) — the blob client is now built, and blobs deleted, only after both guards pass; the
+  harness returns one handle (`h.db`, `h.sql`, `h.upload`, `h.settingsDraft`, `h.createTypeWithLayout`
+  deriving the layout code, `h.auditRows`) and fills the suite's `@/db/client` holder itself; it reuses
+  `tests/e2e/helpers/fresh-database.ts`'s `dropAllSchemas`; no non-null assertion; explicit return types
+  (incl. `principal()`, no longer `never`). New `upload-layout-package.action.test.ts` 9/0 for the
+  refactored guard. The in-memory blob store throws an untyped error for a missing blob unless
+  `missingAs404` (so `load-layout-draft` cannot pass on a wrong path); the guardrail walker also reads
+  `.jsx`/`.mts`/`.cts`; readable `it.each` titles (discard, upload, authz matrix). Unit 4857/1 (pre-existing),
+  template integration 78/0, Chromium e2e 27/0.
+
 **bm77–bm79 code review fixes (2026-10-25):** xhigh review of bm77 → bm79 + the uncommitted bm78
 fix (15 findings); owner decisions on the draft preview and the upload message.
 
@@ -562,6 +584,11 @@ logs, test runs and the Inv #51–#58 code ↔ test audit are in this file's git
 - **After pulling grant-file changes:** re-run `db:bootstrap-billrun-roles`.
 - **DB verification:** run DB-gated suites + `db:seed-sample` only against a disposable/CI
   Postgres — never the shared dev DB (see test-safety gotchas).
+- **Deferred from the bm77–bm79 review (owner, 2026-10-25):** (a) one shared server-action guard
+  (`requirePermission` + `isRedirectError` → FORBIDDEN/SERVER_ERROR), repeated in ~84 action files across
+  every domain — its own cross-domain unit; (b) move the older template DB suites (bm58 activation,
+  preview, capture, upload-logo) and `load.test.ts`'s blob mock onto
+  `tests/db/helpers/template-type-db-harness.ts` / `tests/helpers/in-memory-blob-store.ts`.
 - **Recorded cleanups (not scheduled):** share `buildInvoiceHtml`'s orchestration and the route
   auth preamble; the `lib/csv.ts` wire-format overlap. Owner-review items live in
   `billmgmt-design-review.md`.

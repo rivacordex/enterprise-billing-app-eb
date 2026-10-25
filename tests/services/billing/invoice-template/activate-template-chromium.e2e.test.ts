@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -23,7 +21,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
 const hoisted = vi.hoisted(() => ({
-  blobs: new Map<string, Buffer>(),
   putObject: vi.fn(),
   transaction: vi.fn(),
   family: null as unknown,
@@ -32,23 +29,14 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock("@/db/client", () => ({ db: { transaction: hoisted.transaction } }));
-vi.mock("@/services/billing/blob-store", () => ({
-  blobStore: {
-    digest: (bytes: Buffer, algorithm: string) =>
-      createHash(algorithm).update(bytes).digest("hex"),
-    parseBlobRef: (ref: string) => {
-      const slash = ref.indexOf("/");
-      return { container: ref.slice(0, slash), path: ref.slice(slash + 1) };
-    },
-    getObject: async (container: string, path: string) => {
-      const bytes = hoisted.blobs.get(`${container}/${path}`);
-      if (!bytes)
-        throw Object.assign(new Error("missing"), { statusCode: 404 });
-      return bytes;
-    },
-    putObject: hoisted.putObject,
-  },
-}));
+vi.mock("@/services/billing/blob-store", async () =>
+  (
+    await import("@/tests/helpers/in-memory-blob-store")
+  ).inMemoryBlobStoreModule({
+    missingAs404: true,
+    extra: { putObject: hoisted.putObject },
+  }),
+);
 vi.mock("@/db/repositories/billing/bill-template-family", () => ({
   billTemplateFamilyRepository: { findById: async () => hoisted.family },
 }));
@@ -65,10 +53,12 @@ vi.mock(
 
 import { activateTemplate } from "@/services/billing/invoice-template/activate-template";
 import { lintLayoutTemplates } from "@/services/billing/invoice-template/compliance";
+import { memoryBlobs } from "@/tests/helpers/in-memory-blob-store";
+import { externalFetchPackage } from "@/tests/helpers/layout-package";
 import {
-  buildLayoutPackage,
-  replaceInFile,
-} from "@/tests/helpers/layout-package";
+  startFetchStubServer,
+  type FetchStubServer,
+} from "@/tests/helpers/fetch-stub-server";
 
 const run = process.env.RUN_CHROMIUM_E2E === "1";
 const TOKEN = "2026-10-25T01:02:03.123456Z";
@@ -77,38 +67,20 @@ const BLOB_REF = "invoice-templates/layouts/INVTPL-WHOLESALE/v1-bypass/";
 describe.skipIf(!run)(
   "bm79 activate a pair — real Chromium compliance re-run (RUN_CHROMIUM_E2E=1)",
   () => {
-    let server: Server;
-    let hits = 0;
+    let stub: FetchStubServer;
     let origin: string;
 
     beforeAll(async () => {
-      server = createServer((_req, res) => {
-        hits++;
-        res.writeHead(200, { "content-type": "image/png" });
-        res.end();
-      });
-      await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-      origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      stub = await startFetchStubServer();
+      origin = stub.origin;
     });
 
     afterAll(async () => {
-      if (server) await new Promise<void>((r) => server.close(() => r()));
+      if (stub) await stub.close();
     });
 
     it("a layout DRAFT that fetches an external URL is refused LAYOUT_REJECTED at activation; nothing is written and the stub server sees no hit", async () => {
-      const split = `${origin.replace("http://", "http{{#if company}}{{/if}}://")}/x`;
-      const style = `<div class="bm79-fetch" style="width:20px;height:20px;background:url(${split})"></div>`;
-      const built = buildLayoutPackage({
-        layoutCode: "INVTPL-WHOLESALE",
-        layoutVersion: 1,
-        edit: (f) =>
-          replaceInFile(
-            f,
-            "partials/header.hbs",
-            "<h1>Invoice</h1>",
-            `<h1>Invoice</h1>${style}`,
-          ),
-      });
+      const built = externalFetchPackage(origin, "INVTPL-WHOLESALE");
       expect(
         lintLayoutTemplates({
           "partials/header.hbs": built.files
@@ -117,7 +89,7 @@ describe.skipIf(!run)(
         }),
       ).toEqual([]);
       for (const [name, bytes] of built.files) {
-        hoisted.blobs.set(`${BLOB_REF}${name}`, bytes);
+        memoryBlobs.set(`${BLOB_REF}${name}`, bytes);
       }
 
       hoisted.family = {
@@ -171,7 +143,7 @@ describe.skipIf(!run)(
       ]);
       expect(hoisted.putObject).not.toHaveBeenCalled();
       expect(hoisted.transaction).not.toHaveBeenCalled();
-      expect(hits).toBe(0);
+      expect(stub.hits()).toBe(0);
     }, 120_000);
   },
 );

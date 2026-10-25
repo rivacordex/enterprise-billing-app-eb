@@ -1,23 +1,7 @@
 import { createHash } from "node:crypto";
 
-import { BlobServiceClient } from "@azure/storage-blob";
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
-import type postgresjs from "postgres";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import * as schema from "@/db/schema";
-import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
-import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { SEEDED_FOOTNOTE } from "@/tests/helpers/seeded-invoice-template";
 
 // bm78-spec §13 (Inv #59, #60, #62, guardrail 69) — upload a layout package on
@@ -40,10 +24,9 @@ vi.mock("@/db/client", () => ({
 }));
 
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
-import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
-import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
 import { createTemplateType } from "@/services/billing/invoice-template/template-types";
 import { uploadLayoutPackage } from "@/services/billing/invoice-template/upload-layout-package";
+import { registerTemplateTypeDb } from "@/tests/db/helpers/template-type-db-harness";
 import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixtures";
 import {
   buildLayoutPackage,
@@ -51,7 +34,6 @@ import {
   replaceInFile,
   type LayoutPackageOptions,
 } from "@/tests/helpers/layout-package";
-import type { Database } from "@/db/client";
 
 const ACTOR = "bm78-actor";
 const LAYOUT_PREFIXES = [
@@ -66,55 +48,34 @@ const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 describe.skipIf(!databaseUrl || !blobConnection)(
   "bm78 upload layout package (requires DATABASE_URL + Azurite)",
   () => {
-    let sql: postgresjs.Sql;
-    let db: Database;
     let wholesaleId: string;
-    const service = blobConnection
-      ? BlobServiceClient.fromConnectionString(blobConnection)
-      : null;
-    const templates = () => service!.getContainerClient("invoice-templates");
-
-    async function dropAll(): Promise<void> {
-      for (const s of [
-        "billing",
-        "customer",
-        "product",
-        "rating",
-        "core",
-        "drizzle",
-        "partman",
-        "inventory",
-        "ordering",
-      ]) {
-        await sql.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-      }
-    }
+    const h = registerTemplateTypeDb({
+      databaseUrl,
+      blobConnection,
+      actor: {
+        id: ACTOR,
+        name: "Layout Uploader",
+        email: "layout-uploader@example.com",
+      },
+      blobPrefixes: LAYOUT_PREFIXES,
+      holder: hoisted.holder,
+    });
 
     async function blobs(prefix: string): Promise<Map<string, string>> {
       const out = new Map<string, string>();
-      for await (const b of templates().listBlobsFlat({ prefix })) {
+      for await (const b of h.templates().listBlobsFlat({ prefix })) {
         out.set(b.name, b.properties.etag ?? "");
       }
       return out;
     }
 
-    async function deleteLayoutBlobs(): Promise<void> {
-      for (const prefix of LAYOUT_PREFIXES) {
-        for (const name of (await blobs(prefix)).keys()) {
-          await templates()
-            .deleteBlob(name)
-            .catch(() => undefined);
-        }
-      }
-    }
-
     async function counts(familyId: string, prefix: string) {
-      const [versions] = await sql<{ n: number }[]>`
+      const [versions] = await h.sql<{ n: number }[]>`
         SELECT count(*)::int AS n FROM billing.bill_template_version`;
-      const [familyVersions] = await sql<{ n: number }[]>`
+      const [familyVersions] = await h.sql<{ n: number }[]>`
         SELECT count(*)::int AS n FROM billing.bill_template_version
         WHERE ref_bill_template_family_id = ${familyId}`;
-      const [audit] = await sql<{ n: number }[]>`
+      const [audit] = await h.sql<{ n: number }[]>`
         SELECT count(*)::int AS n FROM core.audit_log`;
       return {
         versions: versions!.n,
@@ -133,26 +94,6 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }
 
     beforeAll(async () => {
-      assertTestDatabaseUrl(databaseUrl as string);
-      // The cleanup below deletes blobs, so guard the blob store like the DB.
-      assertTestBlobConnection(blobConnection as string);
-      sql = postgres(databaseUrl as string, { max: 8, onnotice: () => {} });
-      await dropAll();
-      const drizzleDb = drizzle(sql, { schema });
-      await migrate(drizzleDb, {
-        migrationsFolder: "./db/migrations",
-        migrationsSchema: "drizzle",
-      });
-      db = drizzleDb as unknown as Database;
-      hoisted.holder.db = db;
-      await sql`
-        INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
-        VALUES (${ACTOR}, 'Layout Uploader', 'layout-uploader@example.com', 'LOCAL', 'ACTIVE')`;
-      // Standard's layout v1 and settings v1 (its footnote) must exist.
-      await seedInvoiceTemplates(db);
-      clearLoadedTemplateMemo();
-      await deleteLayoutBlobs();
-
       const created = await createTemplateType({ name: "Wholesale" }, ACTOR);
       if (!created.ok) throw new Error(`create type failed: ${created.code}`);
       expect(created.layoutCode).toBe("INVTPL-WHOLESALE");
@@ -162,15 +103,6 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     afterEach(() => {
       vi.restoreAllMocks();
     });
-
-    afterAll(async () => {
-      if (service) await deleteLayoutBlobs();
-      clearLoadedTemplateMemo();
-      if (sql) {
-        await dropAll();
-        await sql.end();
-      }
-    }, 60_000);
 
     // Runs first, while "Wholesale" has no layout draft (an open draft would
     // stop the request before the gate).
@@ -251,7 +183,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(result).toMatchObject({ ok: true, versionNo: 1, replaced: false });
       if (!result.ok) return;
 
-      const [layout] = await sql`
+      const [layout] = await h.sql`
         SELECT * FROM billing.bill_template_version
         WHERE bill_template_version_id = ${result.versionId}`;
       expect(layout).toMatchObject({
@@ -274,7 +206,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       );
       expect(layout!.page_setup).toMatchObject({ format: "A4" });
 
-      const settings = await sql`
+      const settings = await h.sql`
         SELECT * FROM billing.bill_template_version
         WHERE ref_bill_template_family_id = ${wholesaleId} AND kind = 'generated'`;
       expect(settings).toHaveLength(1);
@@ -298,13 +230,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         [...built.files.keys()].map((n) => `${dir}${n}`).sort(),
       );
       for (const [name, bytes] of built.files) {
-        const got = await templates()
+        const got = await h
+          .templates()
           .getBlobClient(`${dir}${name}`)
           .downloadToBuffer();
         expect(sha256(got)).toBe(sha256(bytes));
       }
 
-      const audit = await sql<
+      const audit = await h.sql<
         {
           target_id: string;
           actor_user_id: string;
@@ -355,13 +288,13 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     it("an open settings DRAFT is re-pointed at the new layout DRAFT, bumping its token (Inv #62)", async () => {
       // A type with an ACTIVE layout v1 and a settings DRAFT on it.
       const typeId = "BTF00000078";
-      await insertTemplateTypeFixture(sql, {
+      await insertTemplateTypeFixture(h.sql, {
         typeId,
         code: "BM78_REPOINT",
         name: "BM78 Repoint",
         layoutVersionId: "BTV00000078",
       });
-      await sql`
+      await h.sql`
         INSERT INTO billing.bill_template_version
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
            ref_layout_version_id, ref_bill_template_family_id, structure, created_by,
@@ -370,7 +303,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
                'BTV00000078', ${typeId}, structure, ${ACTOR}, ${ACTOR},
                now() - interval '1 hour'
         FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
-      const draftBefore = await billTemplateVersionRepository.findDraft(db, {
+      const draftBefore = await billTemplateVersionRepository.findDraft(h.db, {
         kind: "generated",
         familyId: typeId,
       });
@@ -391,7 +324,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(result).toMatchObject({ ok: true, versionNo: 2 });
       if (!result.ok) return;
 
-      const draftAfter = await billTemplateVersionRepository.findDraft(db, {
+      const draftAfter = await billTemplateVersionRepository.findDraft(h.db, {
         kind: "generated",
         familyId: typeId,
       });
@@ -403,11 +336,11 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         draftBefore!.lastModifiedDatetime.getTime(),
       );
       // Re-pointed, not duplicated: still one settings row for the type.
-      const [n] = await sql<{ n: number }[]>`
+      const [n] = await h.sql<{ n: number }[]>`
         SELECT count(*)::int AS n FROM billing.bill_template_version
         WHERE ref_bill_template_family_id = ${typeId} AND kind = 'generated'`;
       expect(n!.n).toBe(1);
-      const [audit] = await sql<{ after_data: Record<string, unknown> }[]>`
+      const [audit] = await h.sql<{ after_data: Record<string, unknown> }[]>`
         SELECT after_data FROM core.audit_log
         WHERE event_type = 'INVOICE_TEMPLATE_LAYOUT_UPLOADED' AND target_id = ${result.versionId}`;
       expect(audit?.after_data).toMatchObject({
@@ -419,7 +352,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     it("an upload to a retired type is TEMPLATE_TYPE_RETIRED", async () => {
       const created = await createTemplateType({ name: "Old Type" }, ACTOR);
       if (!created.ok) throw new Error(`create type failed: ${created.code}`);
-      await sql`
+      await h.sql`
         UPDATE billing.bill_template_family SET retired_datetime = now()
         WHERE bill_template_family_id = ${created.typeId}`;
       const before = await counts(
@@ -496,7 +429,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(retry).toMatchObject({ ok: true, versionNo: 1 });
       // The orphans were reused, not rewritten (write-once, returnExisting).
       expect(await blobs(prefix)).toEqual(orphanEtags);
-      const [n] = await sql<{ n: number }[]>`
+      const [n] = await h.sql<{ n: number }[]>`
         SELECT count(*)::int AS n FROM billing.bill_template_version
         WHERE ref_bill_template_family_id = ${created.typeId}`;
       expect(n!.n).toBe(2);
@@ -507,12 +440,12 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       if (!created.ok) throw new Error(`create type failed: ${created.code}`);
       const prefix = "layouts/INVTPL-NO_FOOTNOTE/";
       // A stale catalog: Standard's settings carry no footnote lines.
-      await sql`ALTER TABLE billing.bill_template_version DISABLE TRIGGER USER`;
-      await sql`
+      await h.sql`ALTER TABLE billing.bill_template_version DISABLE TRIGGER USER`;
+      await h.sql`
         UPDATE billing.bill_template_version
         SET structure = jsonb_set(structure, '{footnote}', '[]'::jsonb)
         WHERE kind = 'generated' AND ref_bill_template_family_id = 'BTF00000001'`;
-      await sql`ALTER TABLE billing.bill_template_version ENABLE TRIGGER USER`;
+      await h.sql`ALTER TABLE billing.bill_template_version ENABLE TRIGGER USER`;
       try {
         const before = await counts(created.typeId, prefix);
         const result = await uploadLayoutPackage(
@@ -536,14 +469,15 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         expect(after.familyVersions).toBe(0);
         expect(after.audit).toBe(before.audit);
       } finally {
-        await sql`ALTER TABLE billing.bill_template_version DISABLE TRIGGER USER`;
-        await sql`
+        await h.sql`ALTER TABLE billing.bill_template_version DISABLE TRIGGER USER`;
+        await h.sql`
           UPDATE billing.bill_template_version
           SET structure = jsonb_set(structure, '{footnote}', ${JSON.stringify(SEEDED_FOOTNOTE)}::jsonb)
           WHERE kind = 'generated' AND ref_bill_template_family_id = 'BTF00000001'`;
-        await sql`ALTER TABLE billing.bill_template_version ENABLE TRIGGER USER`;
+        await h.sql`ALTER TABLE billing.bill_template_version ENABLE TRIGGER USER`;
         for (const name of (await blobs(prefix)).keys()) {
-          await templates()
+          await h
+            .templates()
             .deleteBlob(name)
             .catch(() => undefined);
         }

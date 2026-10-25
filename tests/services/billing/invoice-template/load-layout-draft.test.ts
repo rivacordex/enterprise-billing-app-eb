@@ -9,23 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // still refuse a DRAFT. The blob store is an in-memory map serving a package
 // built from INVTPL-BASIC-A4 v1.
 
-const blobs = new Map<string, Buffer>();
-
-vi.mock("@/services/billing/blob-store", () => ({
-  blobStore: {
-    parseBlobRef: (ref: string) => {
-      const slash = ref.indexOf("/");
-      return { container: ref.slice(0, slash), path: ref.slice(slash + 1) };
-    },
-    digest: (bytes: Buffer, algorithm: string) =>
-      createHash(algorithm).update(bytes).digest("hex"),
-    getObject: vi.fn(async (container: string, path: string) => {
-      const bytes = blobs.get(`${container}/${path}`);
-      if (!bytes) throw new Error(`404 ${container}/${path}`);
-      return bytes;
-    }),
-  },
-}));
+vi.mock("@/services/billing/blob-store", async () =>
+  (
+    await import("@/tests/helpers/in-memory-blob-store")
+  ).inMemoryBlobStoreModule(),
+);
 
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import {
@@ -36,6 +24,7 @@ import {
   loadLayout,
   loadLayoutDraft,
 } from "@/services/billing/invoice-template/load";
+import { memoryBlobs as blobs } from "@/tests/helpers/in-memory-blob-store";
 import { buildLayoutPackage } from "@/tests/helpers/layout-package";
 import {
   SEEDED_GENERATED_ROW,

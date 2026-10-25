@@ -107,6 +107,24 @@ export function buildLayoutPackage(
   return { zip: zipFiles(files), files, indexBytes: files.get(INDEX_FILE) };
 }
 
+// A clean visible report: every probed section present once, printing every
+// required value legibly.
+export function cleanReport(
+  probes: Parameters<typeof renderAndReadSections>[1],
+): Record<ComplianceSectionKey, VisibleSectionReport> {
+  return Object.fromEntries(
+    probes.map((p) => [
+      p.key,
+      {
+        present: true,
+        count: 1,
+        text: p.values.length > 0 ? p.values.join(" ") : `${p.key} text`,
+        illegible: [],
+      },
+    ]),
+  ) as unknown as Record<ComplianceSectionKey, VisibleSectionReport>;
+}
+
 // bm78/bm79 — a Chromium-free stand-in for `renderAndReadSections` (the
 // `deps.render` of upload and activation): every probed section present and
 // legible, with the given blocked URLs. The e2e suites prove the real one.
@@ -114,17 +132,31 @@ export function cleanRender(
   blockedUrls: string[] = [],
 ): typeof renderAndReadSections {
   return async (_html, probes) => ({
-    report: Object.fromEntries(
-      probes.map((p) => [
-        p.key,
-        {
-          present: true,
-          count: 1,
-          text: p.values.length > 0 ? p.values.join(" ") : `${p.key} text`,
-          illegible: [],
-        },
-      ]),
-    ) as unknown as Record<ComplianceSectionKey, VisibleSectionReport>,
+    report: cleanReport(probes),
     blockedUrls,
+  });
+}
+
+// bm78/bm79 Chromium e2e — a package whose header carries a visible
+// `background:url(<origin>/x)`. The URL is split by an empty built-in block
+// (`http{{#if company}}{{/if}}://…`), so no raw-text lint rule sees it while
+// Handlebars renders it to a plain external URL: exactly the fetch only the
+// render stage (stage 7) can refuse.
+export function externalFetchPackage(
+  origin: string,
+  layoutCode: string,
+): LayoutPackage {
+  const split = `${origin.replace("http://", "http{{#if company}}{{/if}}://")}/x`;
+  const style = `<div class="e2e-fetch" style="width:20px;height:20px;background:url(${split})"></div>`;
+  return buildLayoutPackage({
+    layoutCode,
+    layoutVersion: 1,
+    edit: (f) =>
+      replaceInFile(
+        f,
+        "partials/header.hbs",
+        "<h1>Invoice</h1>",
+        `<h1>Invoice</h1>${style}`,
+      ),
   });
 }
