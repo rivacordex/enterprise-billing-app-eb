@@ -38,12 +38,32 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (uncommitted), bm76 next. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (uncommitted), bm77 next. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
 
 Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+
+**bm76 notes (2026-10-25):**
+
+- `compliance.ts` holds the lint (moved verbatim from the lint test), `PROBE_RENDER_INPUT` +
+  `deepFreeze` (moved verbatim from `load.ts`, which re-exports it), the editor's hardening and
+  entity decoder (ported verbatim, plus its `LINT_REASONS`/`lintReason` messages), the new
+  typed-supplier rule, `lintLayoutTemplates`, and both compliance tiers. Static required-value
+  matching collapses whitespace on both sides (the `money` output may carry an NBSP).
+- **Deviation 1 — entity table size.** The spec says the editor's `NAMED_ENTITIES` has 46 entries;
+  the editor file has 28. Ported verbatim (28).
+- **Deviation 2 — the `&#104;ttps://` hardening case.** The editor's `hardeningHits`, ported
+  verbatim, reports only what the plain lint misses, and that snippet still carries a raw `//`
+  the plain lint already refuses, so `hardeningHits` alone returns `[]`. All four spec cases are
+  asserted through `lintLayoutTemplates` (guardrail 73: "rejected by `compliance.ts`"), plus a
+  separate `hardeningHits` set where the plain lint is blind (`&#104;ttps&#58;&#47;&#47;…`, the CSS
+  escape, `image-set()`, `onclick`).
+- `INVTPL-BASIC-A4/v1`: no catalog row, not in `SEEDED_TEMPLATE_VERSION_IDS`, no `fonts/`; seed
+  checksum and seed-upload suites unchanged and green. The negative "taxSummary deleted" fixture
+  empties the partial (the loader needs every file).
+- Editor counterpart (E7 snapshot of `compliance.ts`, E8 BASIC source) is the editor repo's work.
 
 **bm75 notes (2026-10-25):**
 
@@ -79,7 +99,8 @@ Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
 | Unit | What | Status |
 | --- | --- | --- |
 | bm74 | Type-scoped template catalog in the DB (migration `0053`, two Drizzle mirrors) | **Built** (2026-10-25, `d1fbb92`) — tsc/ESLint/Prettier clean; integration 124/0 on the disposable `ebill-test` DB (new types-catalog suite incl. precondition abort + the full §5 matrix; catalog, activate, save-draft, capture, seed-upload, migration, draft-stamps, posting-skip, template journey); unit 4564 passed, 1 failed (`ratecard-demo-seed-boundary`, pre-existing since `771d39b`, unrelated) + 8 files fail to load without an env file |
-| bm75 | Network-blocked, script-free Chromium rendering (`withHardenedPage`, guardrail 74 draft/final half) | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; `render-invoice.service` 15/0 (4 spec cases + a final-render blocked-fetch case); guardrail `chromium-single-factory` 2/0, mutation-checked (a scratch `chromium.launch()` under `services/` fails it); Chromium e2e 7/0 (`RUN_CHROMIUM_E2E=1`: zero stub-server hits, 4 URLs blocked, script not run, data: allowed, Standard v1 1 page as before, no blocked URL); unchanged: golden, `post-run.service`, `draft-invoice-route` (87/0 with the above) and the template journey 19/19 on the disposable DB |
+| bm75 | Network-blocked, script-free Chromium rendering (`withHardenedPage`, guardrail 74 draft/final half) | **Built** (2026-10-25, `a2a74d3`) — tsc/ESLint/Prettier clean; `render-invoice.service` 15/0 (4 spec cases + a final-render blocked-fetch case); guardrail `chromium-single-factory` 2/0, mutation-checked (a scratch `chromium.launch()` under `services/` fails it); Chromium e2e 7/0 (`RUN_CHROMIUM_E2E=1`: zero stub-server hits, 4 URLs blocked, script not run, data: allowed, Standard v1 1 page as before, no blocked URL); unchanged: golden, `post-run.service`, `draft-invoice-route` (87/0 with the above) and the template journey 19/19 on the disposable DB |
+| bm76 | Layout rules module `compliance.ts` (static + visible tiers) and the `INVTPL-BASIC-A4` reference package | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; lint guardrail 55/0 (22 `.hbs` incl. BASIC, hardening + typed-supplier cases); static compliance guardrail 16/0 (both packages clean, BASIC checksums match, 5 negative fixtures, import scan); visible e2e 7/0 (`RUN_CHROMIUM_E2E=1`: both packages clean, all 5 hiding tricks pass static and fail visible); template + golden + seed-checksum + guardrail unit suites 564 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload integration 17/0 on the disposable DB. **PR note: "editor contract refresh needed"** (E7/E8) |
 
 ## Delivered units
 

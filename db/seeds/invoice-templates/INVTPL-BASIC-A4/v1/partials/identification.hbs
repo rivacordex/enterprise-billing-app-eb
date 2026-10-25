@@ -1,0 +1,10 @@
+<section class="sec sec--identification sec--half">
+  <h2>Invoice identification</h2>
+  <div>Invoice no. {{#if invoice.number}}{{invoice.number}}{{else}}— pending posting —{{/if}}</div>
+  <div>{{#if invoice.isDraft}}Indicative date{{else}}Date{{/if}}: {{date invoice.date}}</div>
+  <div>Billing period: {{period invoice.periodStart invoice.periodEnd}}</div>
+  <div>Due date: {{date invoice.dueDate}}</div>
+  <div>Bill run {{invoice.billRunId}} ({{invoice.cycleName}})</div>
+  {{#if invoice.poRef}}<div>PO reference: {{invoice.poRef}}</div>{{/if}}
+  {{#if invoice.contractRef}}<div>Contract reference: {{invoice.contractRef}}</div>{{/if}}
+</section>

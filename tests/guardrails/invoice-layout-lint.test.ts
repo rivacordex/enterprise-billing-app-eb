@@ -1,9 +1,14 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-import Handlebars from "handlebars";
 import { describe, expect, it } from "vitest";
 
+import {
+  hardeningHits,
+  lintInvoiceTemplate,
+  lintLayoutTemplates,
+  typedSupplierHits,
+} from "@/services/billing/invoice-template/compliance";
 import { KNOWN_HELPERS } from "@/services/billing/invoice-template/helpers";
 
 // bm47-spec §Tests (code-standards Part 2 Styling rule 3, guardrail 50's lint
@@ -11,145 +16,16 @@ import { KNOWN_HELPERS } from "@/services/billing/invoice-template/helpers";
 // `db/seeds/invoice-templates/**` has no external fetch (`<img src="http`,
 // `url(http`, `<link`, `@import`), no `<script`, no triple-stash `{{{`, no
 // partial `{{>`, and calls only the nine registered helpers (plus Handlebars'
-// block built-ins). A bad fixture proves the lint fails.
+// block built-ins). A bad fixture proves the lint fails. bm76 (Inv #63,
+// guardrail 73): the rules live in `compliance.ts`; this file only calls them
+// and declares no pattern of its own. It also proves the hardening and the
+// typed-supplier rules.
 const REPO_ROOT = join(__dirname, "../..");
 const SEED_DIR = join(REPO_ROOT, "db/seeds/invoice-templates");
 const BAD_FIXTURE = join(
   REPO_ROOT,
   "tests/fixtures/invoice-layout-bad/bad.hbs",
 );
-
-// An external fetch is any URL-bearing attribute or CSS `url()` that points
-// at `http(s):` or a protocol-relative `//`, in any element (img, source,
-// video poster, SVG image, form action …), plus the elements that load or
-// re-base content by themselves.
-const EXTERNAL_URL = String.raw`\s*["']?\s*(?:https?:|\/\/)`;
-const BANNED_TEXT: readonly [RegExp, string][] = [
-  [
-    new RegExp(
-      String.raw`(?:^|[\s/"'])(?:src|srcset|href|xlink:href|data|poster|action|formaction|background)\s*=` +
-        String.raw`\s*["']?[^"'>]*?(?:https?:|\/\/)`,
-      "i",
-    ),
-    "external url attribute",
-  ],
-  [new RegExp(String.raw`url\(` + EXTERNAL_URL, "i"), "url(http"],
-  [/<(?:iframe|object|embed|base)[\s/>]/i, "<iframe|object|embed|base"],
-  [/<script/i, "<script"],
-  [/\{\{\{/, "{{{"],
-  [/<link[\s>]/i, "<link"],
-  [/@import/i, "@import"],
-  [/\{\{~?>/, "{{>"],
-];
-
-const BLOCK_BUILT_INS = new Set(["if", "unless", "each", "with"]);
-const ALLOWED_HELPERS = new Set([
-  ...Object.keys(KNOWN_HELPERS),
-  ...BLOCK_BUILT_INS,
-]);
-
-type Node = { type: string; [key: string]: unknown };
-
-// Walks the Handlebars AST: a mustache/block/sub-expression with parameters
-// or a hash is a helper call, and its name must be registered; any partial
-// and any unescaped mustache is a violation.
-function astViolations(source: string): string[] {
-  const found: string[] = [];
-  const visit = (node: unknown): void => {
-    if (Array.isArray(node)) {
-      node.forEach(visit);
-      return;
-    }
-    if (!node || typeof node !== "object") return;
-    const n = node as Node;
-    if (n.type === "PartialStatement" || n.type === "PartialBlockStatement") {
-      found.push("partial");
-    }
-    if (
-      n.type === "MustacheStatement" ||
-      n.type === "BlockStatement" ||
-      n.type === "SubExpression"
-    ) {
-      const path = n.path as {
-        original?: unknown;
-        value?: unknown;
-        type: string;
-      };
-      const params = (n.params as unknown[]) ?? [];
-      const isCall =
-        n.type === "BlockStatement" || params.length > 0 || Boolean(n.hash);
-      // A helper can be named by a path or by a literal (`{{"lookup" x}}`).
-      if (isCall) {
-        const name = String(path.original ?? path.value ?? "");
-        if (!ALLOWED_HELPERS.has(name)) found.push(`helper:${name}`);
-      }
-      if (n.type === "MustacheStatement" && n.escaped === false) {
-        found.push("unescaped");
-      }
-    }
-    for (const [key, value] of Object.entries(n)) {
-      if (key !== "loc") visit(value);
-    }
-  };
-  visit(Handlebars.parse(source));
-  return found;
-}
-
-// Comments (CSS, HTML, Handlebars) are documentation, not markup: the seeded
-// shell's CSS comment names `@import` and `<link>` to state the rule itself.
-// Handlebars comments go first (Handlebars removes them before any HTML is
-// produced). HTML comments and `<style>` blocks are recognised only where
-// they begin in text content, never inside a tag's attribute value, so a
-// `<!--`/`-->` or `<style>`/`/*` pair split across two attribute values
-// cannot hide the markup between them. CSS comments are stripped only inside
-// a real `<style>` block.
-function stripComments(source: string): string {
-  const text = source
-    .replace(/\{\{!--[\s\S]*?--\}\}/g, "")
-    .replace(/\{\{![\s\S]*?\}\}/g, "");
-  let out = "";
-  let i = 0;
-  let inTag = false;
-  let quote: string | null = null;
-  while (i < text.length) {
-    const ch = text[i]!;
-    if (inTag) {
-      if (quote) {
-        if (ch === quote) quote = null;
-      } else if (ch === '"' || ch === "'") {
-        quote = ch;
-      } else if (ch === ">") {
-        inTag = false;
-      }
-      out += ch;
-      i += 1;
-    } else if (text.startsWith("<!--", i)) {
-      const end = text.indexOf("-->", i + 4);
-      i = end === -1 ? text.length : end + 3;
-    } else if (/^<style\b[^>]*>/i.test(text.slice(i, i + 200))) {
-      const open = /^<style\b[^>]*>/i.exec(text.slice(i))![0];
-      const close = text.toLowerCase().indexOf("</style>", i + open.length);
-      const cssEnd = close === -1 ? text.length : close;
-      out +=
-        open +
-        text.slice(i + open.length, cssEnd).replace(/\/\*[\s\S]*?\*\//g, "");
-      i = cssEnd;
-    } else {
-      if (ch === "<") inTag = true;
-      out += ch;
-      i += 1;
-    }
-  }
-  return out;
-}
-
-export function lintInvoiceTemplate(source: string): string[] {
-  const markup = stripComments(source);
-  const textHits = BANNED_TEXT.filter(([re]) => re.test(markup)).map(
-    ([, label]) => label,
-  );
-  return [...textHits, ...astViolations(source)];
-}
 
 function hbsFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -165,7 +41,8 @@ describe("invoice layout lint (Styling rule 3)", () => {
   it("finds the seeded layout and generated templates", () => {
     // Layout v1: shell + footer + 8 partials; generated v1: invoice + footer.
     // bm71 deleted partials/usageAnnex.hbs (14 → 13); bm72 notes.hbs (→ 12).
-    expect(files.length).toBeGreaterThanOrEqual(12);
+    // bm76 adds the INVTPL-BASIC-A4 v1 reference package (+10 → 22).
+    expect(files.length).toBeGreaterThanOrEqual(22);
   });
 
   it.each(files.map((f) => [relative(REPO_ROOT, f).split("\\").join("/"), f]))(
@@ -267,5 +144,49 @@ describe("invoice layout lint (Styling rule 3)", () => {
         "unitCode",
       ].sort(),
     );
+  });
+
+  // bm76 (guardrail 73) — each hardening case is rejected by compliance.ts: a
+  // URL spelled with entities or CSS escapes, image-set(), and event-handler
+  // attributes. Asserted through the package lint (lint + hardening +
+  // typed-supplier): the editor's `hardeningHits`, ported verbatim, reports
+  // only what the plain lint misses, and `&#104;ttps://` still carries a raw
+  // `//` the plain lint already refuses.
+  it.each([
+    ['<img src="&#104;ttps://x.example/a.png">'],
+    ['<div style="background:url(\\68ttps://x.example/b.png)">'],
+    [
+      '<div style="background-image:image-set(url(https://x.example/c.png) 1x)">',
+    ],
+    ['<div onclick="x()">'],
+  ])("compliance.ts rejects %s", (snippet) => {
+    expect(lintLayoutTemplates({ "partials/x.hbs": snippet })).not.toEqual([]);
+  });
+
+  // The hardening itself, where the plain lint is blind: a URL whose scheme
+  // and `//` are both entity-encoded, a CSS-escaped scheme, image-set() and
+  // an on…= handler.
+  it.each([
+    ['<img src="&#104;ttps&#58;&#47;&#47;x.example/a.png">'],
+    ['<div style="background:url(\\68ttps://x.example/b.png)">'],
+    [
+      '<div style="background-image:image-set(url(https://x.example/c.png) 1x)">',
+    ],
+    ['<div onclick="x()">'],
+  ])("hardeningHits rejects %s", (snippet) => {
+    expect(hardeningHits(snippet)).not.toEqual([]);
+  });
+
+  // bm76 — supplier identity comes from `company.*`, never typed in.
+  it.each([
+    ["<div>TIN C1234567890</div>"],
+    ["<div>W10-1234-12345678</div>"],
+    ["<div>Reg. No. 202601000001</div>"],
+  ])("the typed-supplier rule rejects %s", (snippet) => {
+    expect(typedSupplierHits(snippet)).not.toEqual([]);
+  });
+
+  it("the typed-supplier rule passes a {{company.…}} placeholder", () => {
+    expect(typedSupplierHits("<div>TIN {{company.tin}}</div>")).toEqual([]);
   });
 });

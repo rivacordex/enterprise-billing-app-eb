@@ -1,0 +1,19 @@
+<section class="sec sec--chargeSummary sec--full">
+  <table>
+    {{#each serviceTypes}}
+    <tr><th colspan="2">{{this.label}}</th></tr>
+    <tr><td>Utilised capacity charges</td><td class="num">{{money this.utilised}}</td></tr>
+    <tr><td>Unutilised capacity charges</td><td class="num">{{money this.unutilised}}</td></tr>
+    <tr><td>Total</td><td class="num">{{money this.total}}</td></tr>
+    {{/each}}
+    {{#if otherCharges.length}}
+    <tr><th colspan="2">Other charges</th></tr>
+    {{#each otherCharges}}
+    <tr><td>{{this.description}}</td><td class="num">{{money this.amount}}</td></tr>
+    {{/each}}
+    <tr><td>Sub Total</td><td class="num">{{money totals.otherChargesSubTotal}}</td></tr>
+    {{/if}}
+    <tr><td>Total charges</td><td class="num">{{money totals.totalCharges}}</td></tr>
+    <tr><td>Adjustments</td><td class="num">{{money totals.adjustments}}</td></tr>
+  </table>
+</section>

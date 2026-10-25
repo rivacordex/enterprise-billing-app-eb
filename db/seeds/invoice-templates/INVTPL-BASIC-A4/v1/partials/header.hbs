@@ -1,0 +1,16 @@
+<section class="sec sec--header sec--full">
+  <h1>Invoice</h1>
+  {{#if company}}
+  <div class="supplier">
+    <div>{{company.name}}</div>
+    <div>Reg. No. {{company.registrationNo}}</div>
+    <div>TIN {{company.tin}}</div>
+    {{#if company.sstRegNo}}<div>SST No. {{company.sstRegNo}}</div>{{/if}}
+    <div>{{company.addressLine1}}</div>
+    {{#if company.addressLine2}}<div>{{company.addressLine2}}</div>{{/if}}
+    <div>{{company.postcode}} {{company.city}}</div>
+    <div>{{company.state}}</div>
+    <div>{{company.country}}</div>
+  </div>
+  {{/if}}
+</section>

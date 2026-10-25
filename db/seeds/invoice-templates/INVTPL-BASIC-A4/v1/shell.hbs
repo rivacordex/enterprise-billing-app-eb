@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>{{#if isDraft}}Pro-forma invoice{{else}}{{#if invoice.number}}Tax invoice {{invoice.number}}{{else}}Pro-forma invoice{{/if}}{{/if}}</title>
+<style>
+  /*
+   * INVTPL-BASIC-A4 v1 — the minimal compliant reference layout (bm76). A
+   * starting point for new template types in the Invoice Template Editor; it
+   * is not a type and is never uploaded by the seed. System font stack only:
+   * no embedded or remote fonts, no colour branding.
+   */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    color: #000000;
+    font-size: 9pt;
+    line-height: 13pt;
+  }
+
+  /* The DRAFT watermark, copied from INVTPL-STD-A4: fixed-position elements
+     repeat on every printed page; kept behind the opaque .sheet. */
+  .watermark {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .watermark span {
+    display: block;
+    transform: rotate(-32deg);
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #D92D2D;
+    opacity: 0.14;
+    white-space: nowrap;
+    line-height: 3.4;
+  }
+  .sheet { position: relative; z-index: 1; background: #ffffff; }
+
+  h1 { font-size: 16pt; line-height: 20pt; margin: 0 0 4px; }
+  h2 { font-size: 12pt; line-height: 16pt; margin: 0 0 4px; }
+  .sec { margin-bottom: 16px; }
+  .sec--half { display: inline-block; width: 48%; vertical-align: top; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
+  th, td { text-align: left; padding: 3px 4px; border-bottom: 1px solid #cccccc; }
+  .num { text-align: right; }
+</style>
+</head>
+<body>
+  {{#if isDraft}}
+  <div class="watermark" aria-hidden="true">
+    <span>DRAFT&nbsp;&middot;&nbsp;PRO-FORMA&nbsp;&middot;&nbsp;NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE<br />DRAFT&nbsp;&middot;&nbsp;PRO-FORMA&nbsp;&middot;&nbsp;NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE<br />DRAFT&nbsp;&middot;&nbsp;PRO-FORMA&nbsp;&middot;&nbsp;NOT&nbsp;A&nbsp;VALID&nbsp;INVOICE</span>
+  </div>
+  {{/if}}
+  <div class="sheet">
+    [[body]]
+  </div>
+</body>
+</html>

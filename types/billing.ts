@@ -1352,3 +1352,28 @@ export const LOGO_MIN_SIDE_PX = 300;
 export const LOGO_MAX_SIDE_PX = 2_000;
 
 export type LogoRejectDetail = Readonly<Record<string, string | number | null>>;
+
+// bm76 — layout rule results (code-standards › Invoice Template Types, TS rule 2). The upload
+// error-code union (LayoutUploadErrorCode) arrives with its first user, bm78.
+export const LAYOUT_PROBLEM_CODES = [
+  "ZIP_TOO_LARGE",
+  "ZIP_TOO_MANY_ENTRIES",
+  "ZIP_UNEXPECTED_FILE",
+  "ZIP_MISSING_FILE",
+  "CHECKSUM_MISMATCH",
+  "MANIFEST_INVALID",
+  "LAYOUT_CODE_MISMATCH",
+  "LAYOUT_VERSION_MISMATCH",
+  "SETTINGS_INVALID",
+  "LINT_VIOLATION",
+  "LAYOUT_MISSING_REQUIRED_BLOCKS",
+  "COMPILE_FAILED",
+  "LAYOUT_EXTERNAL_FETCH",
+] as const;
+export type LayoutProblemCode = (typeof LAYOUT_PROBLEM_CODES)[number];
+
+export interface LayoutProblem {
+  file: string; // package-relative path, or "(render)" for render-level problems
+  code: LayoutProblemCode;
+  message: string; // human-readable, shown verbatim in the upload problems list
+}

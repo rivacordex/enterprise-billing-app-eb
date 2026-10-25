@@ -6,6 +6,7 @@ import {
   compileInvoiceTemplate,
   executeInvoiceTemplate,
 } from "@/services/billing/invoice-template/compile";
+import { PROBE_RENDER_INPUT } from "@/services/billing/invoice-template/compliance";
 import {
   CHECKSUM_ALGORITHMS,
   InvoiceRenderError,
@@ -172,151 +173,10 @@ async function verifyVersionFiles(
   return new Map(entries);
 }
 
-// D2 step 6 — Handlebars compiles lazily, so a delegate is executed once
-// against this fixture at load: a parse error, an unknown helper or a strict-
-// mode missing path surfaces here as `TEMPLATE_COMPILE_FAILED`, never halfway
-// through a run. Every key present; company/payment populated; the detail
-// pages both with regions and empty (bm71). Frozen — Handlebars only reads its
-// context.
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object") {
-    for (const child of Object.values(value)) deepFreeze(child);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
-  template: { layoutCode: "PROBE", layoutVersion: 1, version: 1 },
-  company: {
-    name: "Probe Sdn Bhd",
-    registrationNo: "202601000001",
-    tin: "C1234567890",
-    sstRegNo: "W10-1234-12345678",
-    addressLine1: "1 Probe Street",
-    addressLine2: "Probe Tower",
-    postcode: "50000",
-    city: "Kuala Lumpur",
-    stateCode: "14",
-    state: "Wilayah Persekutuan Kuala Lumpur",
-    countryCode: "MY",
-    country: "Malaysia",
-    phone: "+60 3-0000 0000",
-    email: "billing@probe.example",
-    website: "https://probe.example",
-    brandColor: "#2E45A9",
-    accentColor: "#006975",
-    logoUrl: "data:image/png;base64,iVBORw0KGgo=",
-  },
-  payment: {
-    bankName: "Probe Bank",
-    accountName: "Probe Sdn Bhd",
-    accountNo: "1234567890",
-    swift: "PROBMYKL",
-    jomPayBillerCode: "12345",
-    remittanceEmail: "ar@probe.example",
-  },
-  invoice: {
-    number: "INV00000001",
-    isDraft: false,
-    date: "2026-02-01",
-    periodStart: "2026-01-01",
-    periodEnd: "2026-01-31",
-    dueDate: "2026-03-02",
-    paymentTermsDays: 30,
-    currency: "MYR",
-    billRunId: "BRN00000001",
-    cycleName: "Probe Cycle",
-    billRef: "CBL00000001",
-    poRef: null,
-    contractRef: null,
-  },
-  customer: {
-    billingAccountId: "BAN00000001",
-    recipientName: "Probe Recipient",
-    name: "Probe Customer Sdn Bhd",
-    tradingName: "Probe Customer",
-    registrationNo: "202601000002",
-    tin: "C0987654321",
-    sstRegNo: null,
-    address: {
-      line1: "2 Customer Road",
-      line2: null,
-      city: "Shah Alam",
-      stateProvince: "Selangor",
-      postalCode: "40000",
-      country: "Malaysia",
-    },
-    email: "ap@customer.example",
-    phone: "+60 3-1111 1111",
-  },
-  totals: {
-    grossTotal: "3.00",
-    discountTotal: "0.00",
-    subtotalExclTax: "3.00",
-    taxTotal: "0.00",
-    // bm72 — Σ per-type Utilised (1.50 + 0.00), not the bill total.
-    totalAmount: "1.50",
-    amountDue: "3.00",
-    totalCharges: "3.00",
-    adjustments: "0.00",
-    otherChargesSubTotal: "1.00",
-  },
-  taxes: [{ category: "SST", rate: "0.00", amount: "0.00" }],
-  taxRateLabel: "0.00",
-  // bm71 (spec §3) — two types: one with two regions, one of them the
-  // blank-label "Unassigned region"; one with no claimed row (`regions: []`).
-  serviceTypes: [
-    {
-      offeringId: "POF00000001",
-      label: "Probe capacity service",
-      utilised: "1.50",
-      unutilised: "0.50",
-      total: "2.00",
-      regions: [
-        {
-          label: "Selangor - Petaling",
-          rows: [
-            {
-              polygonStartDate: "2025-06-01",
-              polygonName: "PLG-0001",
-              capacityMbps: "1.000000",
-              ratePerMbps: "1.00",
-              amount: "1.00",
-            },
-          ],
-          subTotal: "1.00",
-        },
-        {
-          label: "Unassigned region",
-          rows: [
-            {
-              polygonStartDate: "2025-06-01",
-              polygonName: "PLG-0002",
-              capacityMbps: "0.500000",
-              ratePerMbps: "1.00",
-              amount: "0.50",
-            },
-          ],
-          subTotal: "0.50",
-        },
-      ],
-    },
-    {
-      offeringId: "POF00000002",
-      label: "Probe idle capacity service",
-      utilised: "0.00",
-      unutilised: "1.00",
-      total: "1.00",
-      regions: [],
-    },
-  ],
-  otherCharges: [{ description: "Probe recurring line", amount: "1.00" }],
-  footnote: ["Probe footnote line 1", "Probe footnote line 2"],
-  isDraft: false,
-  locale: "en-MY",
-  timezone: "Asia/Kuala_Lumpur",
-});
+// D2 step 6 — the load-time probe fixture lives in `compliance.ts` since bm76
+// (the layout rules render it, and this file does I/O); re-exported here so
+// `activate-template.ts` and every other importer are unchanged.
+export { PROBE_RENDER_INPUT } from "@/services/billing/invoice-template/compliance";
 
 const GENERATED_FILES = ["invoice.hbs", "footer.hbs"] as const;
 
