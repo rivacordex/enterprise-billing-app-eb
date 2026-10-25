@@ -38,7 +38,8 @@ import {
 // type comes from the `[typeId]` segment, never the default. READ views
 // everything (form read-only, preview, Generated .hbs, history); EDIT only
 // makes the form editable — `canEdit` is a show/hide gate, never enforcement.
-// Save draft (bm57) and Activate (bm58) are server actions that re-check EDIT.
+// Save draft (bm57), Activate (bm58) and Discard (bm79) are server actions that
+// re-check EDIT.
 // A type with no settings yet ("Not yet usable") shows the empty state; bm78
 // adds the Upload button inside it.
 export const dynamic = "force-dynamic";
@@ -273,6 +274,7 @@ export default async function InvoiceTemplateTypePage({
           draftVersionNo={draft?.versionNo ?? null}
           activeStructure={data.currentStructure}
           familyId={data.typeId}
+          layoutChange={data.layoutChange}
           canPreviewBills={canPreviewBills}
           recentBills={canPreviewBills ? await listRecentPostedBills() : []}
         />
@@ -283,6 +285,23 @@ export default async function InvoiceTemplateTypePage({
           rows={data.history}
           shownVersionId={shown.billTemplateVersionId}
           canViewDrafts={canEdit}
+          // bm79 — EDIT on a non-retired type (the upload gate) may discard
+          // the DRAFT pair.
+          discard={
+            canUpload && draft
+              ? {
+                  familyId: data.typeId,
+                  draftId: draft.billTemplateVersionId,
+                  draftToken: draft.token,
+                  layoutDraft: data.openLayoutDraft
+                    ? {
+                        code: data.layoutCode,
+                        versionNo: data.openLayoutDraft.versionNo,
+                      }
+                    : null,
+                }
+              : null
+          }
           locale={await getAppLocale()}
           timezone={getAppTimezone()}
         />

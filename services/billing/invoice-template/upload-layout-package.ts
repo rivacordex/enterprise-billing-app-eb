@@ -3,7 +3,7 @@ import { Unzip, UnzipInflate, unzipSync } from "fflate";
 import { db } from "@/db/client";
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
-import { testRender } from "@/services/billing/invoice-template/activate-template";
+import { testRender } from "@/services/billing/invoice-template/test-render";
 import {
   checksumIndexSchema,
   sha256,

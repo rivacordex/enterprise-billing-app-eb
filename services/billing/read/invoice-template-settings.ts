@@ -64,6 +64,14 @@ export interface InvoiceTemplateEditorData {
   // `current`'s structure, parsed (the Activate dialog diffs against it);
   // `null` when there is no current version yet (bm78).
   currentStructure: InvoiceTemplateStructure | null;
+  // bm79 — set when the working DRAFT points at a layout DRAFT (an uploaded
+  // pair): the Activate dialog's "Layout: <code> v<old> → v<new>" line.
+  // `fromVersionNo` is the current settings version's layout, or `null`.
+  layoutChange: {
+    code: string;
+    fromVersionNo: number | null;
+    toVersionNo: number;
+  } | null;
   history: TemplateVersionHistoryRow[];
 }
 
@@ -216,6 +224,23 @@ export async function getInvoiceTemplatePageData(
         ),
       }
     : null;
+  const layoutById = new Map(
+    layoutRows.map((l) => [l.billTemplateVersionId, l]),
+  );
+  const draftLayout = draftRow?.refLayoutVersionId
+    ? layoutById.get(draftRow.refLayoutVersionId)
+    : undefined;
+  const currentLayout = current?.refLayoutVersionId
+    ? layoutById.get(current.refLayoutVersionId)
+    : undefined;
+  const layoutChange =
+    draftLayout?.status === "DRAFT"
+      ? {
+          code: type.layoutCode,
+          fromVersionNo: currentLayout?.versionNo ?? null,
+          toVersionNo: draftLayout.versionNo,
+        }
+      : null;
   const layoutLabels = new Map(
     layoutRows.map((l) => [
       l.billTemplateVersionId,
@@ -232,6 +257,7 @@ export async function getInvoiceTemplatePageData(
     draft,
     shownStructure: parseStoredStructure(shown),
     currentStructure: current ? parseStoredStructure(current) : null,
+    layoutChange,
     history: generatedRows.map((r) => toHistoryRow(r, layoutLabels)),
   };
 }

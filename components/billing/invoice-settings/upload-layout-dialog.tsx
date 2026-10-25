@@ -19,7 +19,7 @@ import {
   uploadCreatesDraft,
   uploadDraftOpen,
 } from "@/components/billing/invoice-settings/template-type-messages";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { LayoutProblemsAlert } from "@/components/billing/invoice-settings/layout-problems-alert";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -39,18 +39,6 @@ export interface UploadLayoutDialogProps {
   // The version this upload will create (the page's "Next layout version").
   nextVersionNo: number;
   openLayoutDraft: { versionId: string; versionNo: number } | null;
-}
-
-function groupByFile(
-  problems: readonly LayoutProblem[],
-): [string, LayoutProblem[]][] {
-  const groups = new Map<string, LayoutProblem[]>();
-  for (const p of problems) {
-    const list = groups.get(p.file) ?? [];
-    list.push(p);
-    groups.set(p.file, list);
-  }
-  return [...groups];
 }
 
 export function UploadLayoutDialog({
@@ -161,26 +149,10 @@ export function UploadLayoutDialog({
         </Field>
 
         {problems.length > 0 ? (
-          <Alert variant="destructive">
-            <AlertTitle>{TEMPLATE_TYPE_MESSAGES.uploadRejected}</AlertTitle>
-            <AlertDescription>
-              <ul className="space-y-2">
-                {groupByFile(problems).map(([groupFile, list]) => (
-                  <li key={groupFile}>
-                    <span className="font-mono text-mono">{groupFile}</span>
-                    <ul className="ml-4 list-disc">
-                      {list.map((p, i) => (
-                        <li key={`${p.code}-${i}`}>
-                          <span className="font-mono text-mono">{p.code}</span>{" "}
-                          — {p.message}
-                        </li>
-                      ))}
-                    </ul>
-                  </li>
-                ))}
-              </ul>
-            </AlertDescription>
-          </Alert>
+          <LayoutProblemsAlert
+            title={TEMPLATE_TYPE_MESSAGES.uploadRejected}
+            problems={problems}
+          />
         ) : null}
 
         {message ? (

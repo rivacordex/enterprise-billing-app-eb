@@ -4,6 +4,11 @@ import path from "node:path";
 import { zipSync } from "fflate";
 
 import { buildChecksumIndex } from "@/services/billing/invoice-template/checksum-index";
+import type {
+  ComplianceSectionKey,
+  VisibleSectionReport,
+} from "@/services/billing/invoice-template/compliance";
+import type { renderAndReadSections } from "@/services/billing/invoice-template/compliance-render";
 
 // bm78-spec §13 — layout package fixtures, built IN MEMORY (never on disk) from
 // the committed reference package `db/seeds/invoice-templates/INVTPL-BASIC-A4/v1/`:
@@ -100,4 +105,26 @@ export function buildLayoutPackage(
   opts.override?.(files);
 
   return { zip: zipFiles(files), files, indexBytes: files.get(INDEX_FILE) };
+}
+
+// bm78/bm79 — a Chromium-free stand-in for `renderAndReadSections` (the
+// `deps.render` of upload and activation): every probed section present and
+// legible, with the given blocked URLs. The e2e suites prove the real one.
+export function cleanRender(
+  blockedUrls: string[] = [],
+): typeof renderAndReadSections {
+  return async (_html, probes) => ({
+    report: Object.fromEntries(
+      probes.map((p) => [
+        p.key,
+        {
+          present: true,
+          count: 1,
+          text: p.values.length > 0 ? p.values.join(" ") : `${p.key} text`,
+          illegible: [],
+        },
+      ]),
+    ) as unknown as Record<ComplianceSectionKey, VisibleSectionReport>,
+    blockedUrls,
+  });
 }

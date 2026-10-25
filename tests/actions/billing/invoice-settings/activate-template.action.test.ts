@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // FORBIDDEN with no blob and no row written; an empty note is
 // CHANGE_NOTE_REQUIRED; a malformed id or token is VALIDATION_ERROR; success
 // revalidates the Invoice Settings layout; service refusals and a thrown
-// service error are mapped, and a refusal revalidates nothing.
+// service error are mapped, and a refusal revalidates nothing. bm79: the
+// blob path carries the type code, success carries `layout`, and
+// LAYOUT_REJECTED (with its problems) and TEMPLATE_TYPE_RETIRED are mapped.
 
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/invoice-template/activate-template", () => ({
@@ -57,8 +59,9 @@ describe("activateTemplateAction", () => {
       versionId: "BTV00000004",
       versionNo: 2,
       retiredVersionId: null,
-      blobRef: "invoice-templates/generated/INVOICE/v2-abc/",
+      blobRef: "invoice-templates/generated/INVOICE/STANDARD/v2-abc/",
       checksum: "a".repeat(64),
+      layout: null,
     });
     await activateTemplateAction(INPUT);
     expect(mockGuard).toHaveBeenCalledWith(
@@ -124,6 +127,7 @@ describe("activateTemplateAction", () => {
       retiredVersionId: null,
       blobRef: "r",
       checksum: "c",
+      layout: null,
     });
     await activateTemplateAction({
       ...INPUT,
@@ -141,14 +145,16 @@ describe("activateTemplateAction", () => {
       versionId: "BTV00000004",
       versionNo: 2,
       retiredVersionId: "BTV00000003",
-      blobRef: "invoice-templates/generated/INVOICE/v2-abc/",
+      blobRef: "invoice-templates/generated/INVOICE/STANDARD/v2-abc/",
       checksum: "a".repeat(64),
+      layout: null,
     });
     expect(await activateTemplateAction(INPUT)).toEqual({
       ok: true,
       versionId: "BTV00000004",
       versionNo: 2,
       retiredVersionId: "BTV00000003",
+      layout: null,
     });
     expect(mockService).toHaveBeenCalledWith(INPUT, "actor-1");
     expect(mockRevalidate).toHaveBeenCalledWith(
@@ -164,6 +170,8 @@ describe("activateTemplateAction", () => {
     "TEMPLATE_GENERATION_FAILED",
     "TEMPLATE_COMPILE_FAILED",
     "ACTIVATION_BLOB_CONFLICT",
+    // bm79
+    "TEMPLATE_TYPE_RETIRED",
   ] as const)(
     "returns %s from the service without revalidating",
     async (code) => {
@@ -172,6 +180,51 @@ describe("activateTemplateAction", () => {
       expect(mockRevalidate).not.toHaveBeenCalled();
     },
   );
+
+  it("bm79 — returns the promoted layout of a pair activation", async () => {
+    const layout = {
+      versionId: "BTV00000010",
+      versionNo: 1,
+      retiredVersionId: null,
+    };
+    mockService.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000011",
+      versionNo: 1,
+      retiredVersionId: null,
+      blobRef: "invoice-templates/generated/INVOICE/WHOLESALE/v1-abc/",
+      checksum: "a".repeat(64),
+      layout,
+    });
+    expect(await activateTemplateAction(INPUT)).toEqual({
+      ok: true,
+      versionId: "BTV00000011",
+      versionNo: 1,
+      retiredVersionId: null,
+      layout,
+    });
+  });
+
+  it("bm79 — returns LAYOUT_REJECTED with its problems, without revalidating", async () => {
+    const problems = [
+      {
+        file: "(render)",
+        code: "LAYOUT_EXTERNAL_FETCH" as const,
+        message: "the layout tried to fetch 1 URL: http://x/a.png",
+      },
+    ];
+    mockService.mockResolvedValue({
+      ok: false,
+      code: "LAYOUT_REJECTED",
+      problems,
+    });
+    expect(await activateTemplateAction(INPUT)).toEqual({
+      ok: false,
+      code: "LAYOUT_REJECTED",
+      problems,
+    });
+    expect(mockRevalidate).not.toHaveBeenCalled();
+  });
 
   it("maps a service throw to SERVER_ERROR", async () => {
     mockService.mockRejectedValue(new Error("boom"));

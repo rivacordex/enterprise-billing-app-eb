@@ -13,6 +13,11 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
   billTemplateVersionRepository: {},
 }));
 vi.mock("@/services/billing/blob-store", () => ({ blobStore: {} }));
+// bm79 — activation imports the upload gate (`checkLayoutFiles`), whose
+// import chain needs the real repositories; this suite tests `testRender` only.
+vi.mock("@/services/billing/invoice-template/upload-layout-package", () => ({
+  checkLayoutFiles: vi.fn(),
+}));
 
 import { readFileSync } from "node:fs";
 import path from "node:path";

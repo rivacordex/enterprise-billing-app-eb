@@ -35,15 +35,21 @@ vi.mock("@/services/billing/invoice-template/activate-template", () => ({
 vi.mock("@/services/billing/invoice-template/upload-layout-package", () => ({
   uploadLayoutPackage: vi.fn(),
 }));
+// bm79 — the discard service, so a discard that slips past the guard is visible.
+vi.mock("@/services/billing/invoice-template/discard-template-draft", () => ({
+  discardTemplateDraft: vi.fn(),
+}));
 vi.mock("@/lib/logger", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { activateTemplateAction } from "@/actions/billing/invoice-settings/activate-template.action";
+import { discardTemplateDraftAction } from "@/actions/billing/invoice-settings/discard-template-draft.action";
 import { saveTemplateDraftAction } from "@/actions/billing/invoice-settings/save-template-draft.action";
 import { uploadLayoutPackageAction } from "@/actions/billing/invoice-settings/upload-layout-package.action";
 import { activateTemplate } from "@/services/billing/invoice-template/activate-template";
+import { discardTemplateDraft } from "@/services/billing/invoice-template/discard-template-draft";
 import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
 import { uploadLayoutPackage } from "@/services/billing/invoice-template/upload-layout-package";
 import { PERMISSION_NAMES } from "@/types/rbac";
@@ -169,6 +175,13 @@ const MATRIX: MatrixRow[] = [
     // bm78 — upload a layout package as a new draft.
     surface: "upload layout package (a mutation)",
     file: "actions/billing/invoice-settings/upload-layout-package.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
+  {
+    // bm79 — discard a type's DRAFTs.
+    surface: "discard template draft (a mutation)",
+    file: "actions/billing/invoice-settings/discard-template-draft.action.ts",
     level: "EDIT",
     kind: "action",
   },
@@ -516,5 +529,19 @@ describe("invoice-settings authz matrix — a READ user cannot upload a layout p
     const result = await uploadLayoutPackageAction(form);
     expect(result).toEqual({ ok: false, code: "FORBIDDEN", problems: [] });
     expect(vi.mocked(uploadLayoutPackage)).not.toHaveBeenCalled();
+  });
+});
+
+// bm79 — a READ-only user's discard is refused server-side, before any parse
+// or service call (the Discard control is show/hide only).
+describe("invoice-settings authz matrix — a READ user cannot discard a draft (bm79)", () => {
+  it("the discard is FORBIDDEN and the service is never called", async () => {
+    const result = await discardTemplateDraftAction({
+      familyId: "BTF00000002",
+      draftId: "BTV00000004",
+      expectedDraftToken: "2026-10-10T01:02:03.123456Z",
+    });
+    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
+    expect(vi.mocked(discardTemplateDraft)).not.toHaveBeenCalled();
   });
 });

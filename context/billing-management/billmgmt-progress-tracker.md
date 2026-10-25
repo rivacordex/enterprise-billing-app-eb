@@ -38,12 +38,43 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (uncommitted; `fflate` to land as its own first commit). Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built** (uncommitted). Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
 
 Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+
+**bm79 notes (2026-10-25):**
+
+- Activate promotes the PAIR: when the settings DRAFT points at a layout DRAFT, step 3 loads it through
+  `loadLayoutDraft` and re-runs `checkLayoutFiles` (both compliance tiers + the fetch check; a failure is
+  `LAYOUT_REJECTED` with its problems, nothing written). Step 8 locks the type, then the kind (the
+  install order), re-checks the token and the layout DRAFT's checksum, then retires the old layout →
+  promotes the layout (`promoteLayoutDraft`, files frozen) → retires the old settings → promotes the
+  settings; one `INVOICE_TEMPLATE_ACTIVATED` (`afterData.familyId` + `layout`, `beforeData.activeLayoutVersionId`).
+  A retired type is `TEMPLATE_TYPE_RETIRED` (early and under the lock). Generated blobs now go under
+  `generated/INVOICE/<type code>/v<n>-<digest12>/`; older rows keep their `blob_ref`.
+- Discard (`discard-template-draft.ts` + action): one transaction, type then kind lock, token check,
+  settings then layout DRAFT → RETIRED (`discardDraft`), one `INVOICE_TEMPLATE_DRAFT_DISCARDED`
+  ("Removal"; filter options 91). UI: `DiscardDraftDialog` (ghost trigger, danger confirm inside the
+  `AlertDialog`), `LayoutProblemsAlert` extracted from the upload dialog, the Activate summary's layout
+  line / "First version of this type.", page data `layoutChange`.
+- **Deviation 1 — `testRender` moved to `services/billing/invoice-template/test-render.ts`** (re-exported
+  by `activate-template.ts`): activation now imports the upload gate, which imported `testRender` from
+  activation — an import cycle. No behaviour change.
+- **Deviation 2 — the Chromium e2e is DB-free** (the bm78 gate e2e precedent): the layout DRAFT the gate
+  never saw comes from repository stand-ins and an in-memory blob store, not an SQL insert; the URL is
+  split by an empty `{{#if}}` block so stage 7, not the lint, refuses it. It also asserts no blob write
+  and no transaction.
+- **Deviation 3 — small UI/test additions:** a discarded (never-activated) row hides "Download .hbs" (it
+  has no files); the Discard dialog re-fetches on every `ok: false` (Next.js rule 4); the bm58 suite's
+  `render` stub throws if called (proves settings-only activation never re-runs compliance); bm78's
+  `cleanRender` moved to `tests/helpers/layout-package.ts` for reuse.
+- **Forced edits:** `activate-template.test.ts` mocks the gate module (its import chain needs the real
+  repositories); the status-literal allow-list gains `[typeId]/page.tsx` — its bm78 `"RETIRED"` gate was
+  already un-listed at HEAD — and Discard reuses that `canUpload` gate; the detail-page fixture gains
+  `layoutChange`.
 
 **bm78 notes (2026-10-25):**
 
@@ -203,7 +234,8 @@ a compliance-only probe.
 | bm76 | Layout rules module `compliance.ts` (static + visible tiers) and the `INVTPL-BASIC-A4` reference package | **Built** (2026-10-25, `d7bbca4`) — tsc/ESLint/Prettier clean; lint guardrail 55/0 (22 `.hbs` incl. BASIC, hardening + typed-supplier cases); static compliance guardrail 16/0 (both packages clean, BASIC checksums match, 5 negative fixtures, import scan); visible e2e 7/0 (`RUN_CHROMIUM_E2E=1`: both packages clean, all 5 hiding tricks pass static and fail visible); template + golden + seed-checksum + guardrail unit suites 564 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload integration 17/0 on the disposable DB. **PR note: "editor contract refresh needed"** (E7/E8) |
 | bm75–76 code review fixes | xhigh review of `a2a74d3`+`d7bbca4` (15 findings) + Sonar S5852 (3 regexes) | **Built** (2026-10-25, `1abf17c`) — tsc/ESLint/Prettier clean; lint guardrail 62/0; static compliance 24/0; visible e2e 14/0 and render e2e 7/0 (`RUN_CHROMIUM_E2E=1`); guardrail 74 2/0, mutation-checked against 5 bypasses (all passed the old pattern); billing + guardrail unit suites 1134 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload + template journey 36/0 on the disposable DB |
 | bm77 | Invoice template type list, create type, per-type detail page (`[typeId]`), `app_runtime` grant | **Built** (2026-10-25, `e251953`) — tsc/ESLint/Prettier clean; unit 4735 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) — incl. new template-types 9/0, list page 6/0, detail page 6/0, read service 13/0, authz matrix + nav guard + audit filters 39/0; integration on the disposable DB: 22 template/grant/invoice suites 250+/0 incl. new create-type 10/0, save-draft + activate 31/0, template journey 19/0; admin browser e2e 5/0 after a fresh `next build` (`RUN_INVOICE_SETTINGS_E2E=1`; the first run had one company-profile `waitFor` timeout, passed on rerun) |
-| bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`, draft-layout preview) | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; unit 4797 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new gate 35/0, load-layout-draft 14/0, single-layout-writer 5/0 (mutation-checked), authz matrix 32/0; integration on the disposable DB 83/0 incl. new upload 9/0, preview 2/0, capture +1 DRAFT-only case; Chromium e2e 26/0 incl. new upload gate 3/0 |
+| bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`, draft-layout preview) | **Built** (2026-10-25, `6366487` fflate, `1f1c895`) — tsc/ESLint/Prettier clean; unit 4797 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new gate 35/0, load-layout-draft 14/0, single-layout-writer 5/0 (mutation-checked), authz matrix 32/0; integration on the disposable DB 83/0 incl. new upload 9/0, preview 2/0, capture +1 DRAFT-only case; Chromium e2e 26/0 incl. new upload gate 3/0 |
+| bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | **Built** (2026-10-25, uncommitted) — tsc/ESLint/Prettier clean; unit 4829 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new discard action 15/0, Discard + discarded-row component cases, pair form cases 5/0, authz matrix + discard READ refusal; integration on the disposable DB 163/0 across 16 template suites incl. new pair activation 8/0 (guardrail 71 activation half, interleaved upload, compliance re-run, retired type, frozen files, Standard untouched), new discard 6/0, bm58 activate suite on the `STANDARD/` path, template journey; Chromium e2e 27/0 incl. new activation re-run 1/0; admin browser e2e 5/0 after a fresh `next build` |
 
 ## Delivered units
 

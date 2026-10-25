@@ -1293,6 +1293,27 @@ export const TEMPLATE_ACTIVATION_ERROR_CODES = [
 export type TemplateActivationErrorCode =
   (typeof TEMPLATE_ACTIVATION_ERROR_CODES)[number];
 
+// bm79 — the template-activation codes beyond TEMPLATE_ACTIVATION_ERROR_CODES,
+// which the company-profile activation shares and which is therefore
+// unchanged. `LAYOUT_REJECTED`: the pair's layout DRAFT no longer passes the
+// compliance check (it carries its problems).
+export type TemplatePairActivationErrorCode =
+  | "TEMPLATE_TYPE_RETIRED"
+  | "LAYOUT_REJECTED";
+
+// bm79 — discard a type's DRAFTs (settings and, if any, layout) → RETIRED.
+export type DiscardTemplateDraftResult =
+  | { ok: true; discardedVersionIds: string[] }
+  | {
+      ok: false;
+      code:
+        | "FORBIDDEN"
+        | "VALIDATION_ERROR"
+        | "SERVER_ERROR"
+        | "DRAFT_CONFLICT"
+        | "TEMPLATE_TYPE_RETIRED";
+    };
+
 // bm61-spec §Design D2 — the company-profile activation result codes beyond
 // the generic ones (all binding, code-standards TS rule 7; result codes, never
 // thrown). `PROFILE_LOGO_REQUIRED`: no logo, or its asset version is missing

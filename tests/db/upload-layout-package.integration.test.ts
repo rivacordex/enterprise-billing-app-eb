@@ -41,23 +41,17 @@ vi.mock("@/db/client", () => ({
 
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
-import type { renderAndReadSections } from "@/services/billing/invoice-template/compliance-render";
-import type {
-  ComplianceSectionKey,
-  VisibleSectionReport,
-} from "@/services/billing/invoice-template/compliance";
 import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
 import { createTemplateType } from "@/services/billing/invoice-template/template-types";
 import { uploadLayoutPackage } from "@/services/billing/invoice-template/upload-layout-package";
 import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixtures";
 import {
   buildLayoutPackage,
+  cleanRender,
   replaceInFile,
   type LayoutPackageOptions,
 } from "@/tests/helpers/layout-package";
 import type { Database } from "@/db/client";
-
-type Render = typeof renderAndReadSections;
 
 const ACTOR = "bm78-actor";
 const LAYOUT_PREFIXES = [
@@ -68,23 +62,6 @@ const LAYOUT_PREFIXES = [
 ];
 
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
-
-function cleanRender(blockedUrls: string[] = []): Render {
-  return async (_html, probes) => ({
-    report: Object.fromEntries(
-      probes.map((p) => [
-        p.key,
-        {
-          present: true,
-          count: 1,
-          text: p.values.length > 0 ? p.values.join(" ") : `${p.key} text`,
-          illegible: [],
-        },
-      ]),
-    ) as unknown as Record<ComplianceSectionKey, VisibleSectionReport>,
-    blockedUrls,
-  });
-}
 
 describe.skipIf(!databaseUrl || !blobConnection)(
   "bm78 upload layout package (requires DATABASE_URL + Azurite)",

@@ -512,6 +512,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       versionId: "BTV00000004",
       versionNo: 2,
       retiredVersionId: null,
+      layout: null,
     });
     renderForm(DRAFT_PROPS);
     fireEvent.click(screen.getByRole("button", { name: "Activate v2" }));
@@ -616,6 +617,7 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       versionId: "BTV00000009",
       versionNo: 3,
       retiredVersionId: null,
+      layout: null,
     });
     renderForm();
     togglePayment();
@@ -639,6 +641,122 @@ describe("InvoiceStructureForm — Activate (bm58)", () => {
       changeNote: "n",
       familyId: "BTF00000001",
     });
+  });
+});
+
+describe("InvoiceStructureForm — Activate a pair (bm79)", () => {
+  const PAIR_PROPS = {
+    expectedDraftToken: TOKEN,
+    draftVersionId: "BTV00000011",
+    draftVersionNo: 1,
+    familyId: "BTF00000002",
+  } as const;
+
+  async function confirmActivate(versionNo: number): Promise<void> {
+    fireEvent.click(
+      screen.getByRole("button", { name: `Activate v${versionNo}` }),
+    );
+    fireEvent.change(screen.getByLabelText(/Change note/), {
+      target: { value: "Wholesale layout" },
+    });
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: `Activate v${versionNo}`,
+        }),
+      );
+    });
+  }
+
+  it("leads the summary with the layout line, old → new", () => {
+    renderForm({
+      ...PAIR_PROPS,
+      draftVersionNo: 3,
+      activeStructure: ALL_ON,
+      layoutChange: {
+        code: "INVTPL-WHOLESALE",
+        fromVersionNo: 1,
+        toVersionNo: 2,
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Activate v3" }));
+    const summary = screen.getByTestId("activate-summary");
+    expect(summary).toHaveTextContent(
+      "Layout: INVTPL-WHOLESALE v1 → v2No change in structure.",
+    );
+    expect(
+      within(summary).getByText("Layout: INVTPL-WHOLESALE v1 → v2"),
+    ).toHaveClass("font-mono");
+  });
+
+  it("for a new type reads '(first version)' and 'First version of this type.'", () => {
+    renderForm({
+      ...PAIR_PROPS,
+      activeStructure: null,
+      layoutChange: {
+        code: "INVTPL-WHOLESALE",
+        fromVersionNo: null,
+        toVersionNo: 1,
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Activate v1" }));
+    const summary = screen.getByTestId("activate-summary");
+    expect(
+      within(summary).getByText("Layout: INVTPL-WHOLESALE v1 (first version)"),
+    ).toBeInTheDocument();
+    expect(
+      within(summary).getByText("First version of this type."),
+    ).toBeInTheDocument();
+  });
+
+  it("a settings-only draft has no layout line", () => {
+    renderForm({ ...PAIR_PROPS, activeStructure: ALL_ON, layoutChange: null });
+    fireEvent.click(screen.getByRole("button", { name: "Activate v1" }));
+    expect(screen.getByTestId("activate-summary")).not.toHaveTextContent(
+      "Layout:",
+    );
+  });
+
+  it("on LAYOUT_REJECTED says nothing was activated and renders the problems alert above the preview", async () => {
+    mockActivate.mockResolvedValue({
+      ok: false,
+      code: "LAYOUT_REJECTED",
+      problems: [
+        {
+          file: "(render)",
+          code: "LAYOUT_EXTERNAL_FETCH",
+          message: "the layout tried to fetch 1 URL: http://x/a.png",
+        },
+      ],
+    });
+    renderForm({ ...PAIR_PROPS, activeStructure: null });
+    await confirmActivate(1);
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        "The layout no longer passes the compliance check. Nothing was activated.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("The draft layout failed the compliance check."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("LAYOUT_EXTERNAL_FETCH")).toBeInTheDocument();
+    expect(screen.getByText("(render)")).toBeInTheDocument();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("on TEMPLATE_TYPE_RETIRED shows the retired message and refreshes", async () => {
+    mockActivate.mockResolvedValue({
+      ok: false,
+      code: "TEMPLATE_TYPE_RETIRED",
+    });
+    renderForm({ ...PAIR_PROPS, activeStructure: null });
+    await confirmActivate(1);
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        "This invoice template type has been retired, so its drafts can no longer be activated or discarded.",
+      ),
+    ).toBeInTheDocument();
+    expect(refresh).toHaveBeenCalled();
   });
 });
 

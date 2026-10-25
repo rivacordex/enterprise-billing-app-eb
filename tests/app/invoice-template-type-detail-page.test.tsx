@@ -81,6 +81,7 @@ const STANDARD_DATA = {
   draft: null,
   shownStructure: STRUCTURE,
   currentStructure: STRUCTURE,
+  layoutChange: null,
   history: [],
 };
 

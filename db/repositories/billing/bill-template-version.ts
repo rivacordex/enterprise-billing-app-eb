@@ -397,8 +397,8 @@ export const billTemplateVersionRepository = {
 
   // bm58 D2 step 8 — retire the current NON-default ACTIVE of the kind, if any.
   // MUST run before `promoteDraft`: the one-ACTIVE indexes
-  // (`btv_one_active_family_uq` for generated, bm64) are checked per
-  // statement, so promoting first would violate it. The default row is never
+  // (`btv_one_active_family_uq` for generated, bm64; layout too, from bm79)
+  // are checked per statement, so promoting first would violate it. The default row is never
   // touched (it is excluded here, and the guard trigger would refuse anyway).
   // Returns the retired row, or `null` when only the default was in use.
   async retireActive(
@@ -461,6 +461,64 @@ export const billTemplateVersionRepository = {
           eq(billTemplateVersion.billTemplateVersionId, input.id),
           eq(billTemplateVersion.status, "DRAFT"),
           sql`${draftToken} = ${input.expectedToken}`,
+        ),
+      )
+      .returning();
+    return row ?? null;
+  },
+
+  // bm79 — layout DRAFT → ACTIVE. Files are NOT set: the guard freezes
+  // blob_ref/checksum at activation, and the WHERE re-asserts the checksum
+  // step 3 verified. `null` → the caller reports DRAFT_CONFLICT.
+  async promoteLayoutDraft(
+    tx: Database,
+    input: {
+      id: string;
+      expectedChecksum: string;
+      activatedBy: string;
+      changeNote: string;
+    },
+  ): Promise<BillTemplateVersion | null> {
+    const [row] = await tx
+      .update(billTemplateVersion)
+      .set({
+        status: "ACTIVE",
+        activatedBy: input.activatedBy,
+        activatedDatetime: sql`now()`,
+        changeNote: input.changeNote,
+        lastModifiedDatetime: sql`now()`,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, input.id),
+          eq(billTemplateVersion.kind, "layout"),
+          eq(billTemplateVersion.status, "DRAFT"),
+          eq(billTemplateVersion.checksum, input.expectedChecksum),
+        ),
+      )
+      .returning();
+    return row ?? null;
+  },
+
+  // bm79 — DRAFT → RETIRED (discard). The bm74 guard allows only status +
+  // retired_datetime (last_modified_* are not frozen). `null` when the row is
+  // no longer a DRAFT.
+  async discardDraft(
+    tx: Database,
+    { id, actorId }: { id: string; actorId: string },
+  ): Promise<BillTemplateVersion | null> {
+    const [row] = await tx
+      .update(billTemplateVersion)
+      .set({
+        status: "RETIRED",
+        retiredDatetime: sql`now()`,
+        lastModifiedDatetime: sql`now()`,
+        lastModifiedBy: actorId,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, id),
+          eq(billTemplateVersion.status, "DRAFT"),
         ),
       )
       .returning();

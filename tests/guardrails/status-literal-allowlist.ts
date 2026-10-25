@@ -182,4 +182,8 @@ export const STATUS_LITERAL_ALLOWLIST: StatusLiteralAllowEntry[] = [
     "components/billing/invoice-settings/template-type-list.tsx",
     "hides and mutes RETIRED types in the type list",
   ),
+  templateTypeStatus(
+    "app/(app)/administration/invoice-settings/invoice-template/[typeId]/page.tsx",
+    "hides the Upload (bm78) and Discard (bm79) controls on a RETIRED type",
+  ),
 ];

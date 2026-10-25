@@ -4,11 +4,14 @@
 // header, overline labels), never a parallel table. One row per generated
 // version, newest first as the caller hands them. "Used by" is the SQL count
 // of `customer_bill` rows stamped with the version (tabular-nums). bm56 reuses
-// it for company-profile versions via `kind="profile"`.
+// it for company-profile versions via `kind="profile"`. bm79: the DRAFT row
+// carries the client **Discard** control when the page passes `discard`; a
+// discarded row is RETIRED with no activation ("—") and no files.
 
 import Link from "next/link";
 import { Download, Eye, History } from "lucide-react";
 
+import { DiscardDraftDialog } from "@/components/billing/invoice-settings/discard-draft-dialog";
 import { TemplateVersionStatusBadge } from "@/components/billing/invoice-settings/template-version-status-badge";
 import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -31,6 +34,14 @@ export type VersionHistoryTableProps = {
   canViewDrafts?: boolean;
   locale: string;
   timezone: string;
+  // bm79 — EDIT on a non-retired type: the DRAFT row's Discard control, with
+  // the token the page loaded. `null` (or absent) means no control.
+  discard?: {
+    familyId: string;
+    draftId: string;
+    draftToken: string;
+    layoutDraft: { code: string; versionNo: number } | null;
+  } | null;
 } & (
   | { kind?: "template"; rows: TemplateVersionHistoryRow[] }
   | { kind: "profile"; rows: ProfileHistoryRow[] }
@@ -111,8 +122,9 @@ function normalize(props: VersionHistoryTableProps): NormalizedRow[] {
         : row.isDefault && nonDefaultInUse
           ? "Fallback"
           : null,
+    // A DRAFT, or a discarded one (RETIRED, never activated), has no files.
     downloadHref:
-      row.status === "DRAFT"
+      row.status === "DRAFT" || row.activatedAt === null
         ? null
         : `${INVOICE_TEMPLATE_FILES_BASE}/${row.billTemplateVersionId}/files/invoice.hbs`,
   }));
@@ -129,7 +141,13 @@ function usedByLabel(count: number): string {
 export function VersionHistoryTable(
   props: VersionHistoryTableProps,
 ): React.JSX.Element {
-  const { shownVersionId, locale, timezone, canViewDrafts = true } = props;
+  const {
+    shownVersionId,
+    locale,
+    timezone,
+    canViewDrafts = true,
+    discard = null,
+  } = props;
   const isProfile = props.kind === "profile";
   const rows = normalize(props);
   const headers = isProfile
@@ -240,6 +258,17 @@ export function VersionHistoryTable(
                             <Download size={14} aria-hidden />
                             Download .hbs
                           </a>
+                        ) : null}
+                        {discard &&
+                        row.status === "DRAFT" &&
+                        row.key === discard.draftId ? (
+                          <DiscardDraftDialog
+                            familyId={discard.familyId}
+                            draftId={discard.draftId}
+                            draftToken={discard.draftToken}
+                            draftVersionNo={row.versionNo}
+                            layoutDraft={discard.layoutDraft}
+                          />
                         ) : null}
                       </div>
                     </td>
