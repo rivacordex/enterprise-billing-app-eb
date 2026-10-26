@@ -2,7 +2,7 @@
 
 - **Unit:** 18 of 22 (`cm00-build-plan.md` Phase 2 — Invoice Template Binding update). **Boundary:** APP (customer screen + the Accounts-side onboarding service it calls).
 - **Dependencies:** `cm17` (`billing_account.ref_bill_template_version_id`); delivered `cm10` / `ac04` onboarding wizard (`components/customers/onboard-accounts-wizard.tsx`, rendered by `components/customers/customer-role-form.tsx`).
-- **Authorizing sections:** binding plan §3.1, §5, D2, D9, D11, D13, D15; `custmgmt-update-overview.md` *Core user flow 1*, *Features → Onboarding*; `custmgmt-architecture.md` §7.2, Inv. #18; `custmgmt-ui-context.md` §9.5; `custmgmt-ai-workflow-rules.md` §9.2 (cm18), §9.3 items 1–2.
+- **Authorizing sections:** binding plan §3.1, §5, D2, D9, D11, D13, D15; the binding update overview (folded into `custmgmt-project-overview.md`) *Core user flow 1*, *Features → Onboarding*; `custmgmt-architecture.md` §7.2, Inv. #18; `custmgmt-ui-context.md` §9.5; `custmgmt-ai-workflow-rules.md` §9.2 (cm18), §9.3 items 1–2.
 - **Decisions recorded 2026-10-10:** O1 (wizard control) → **read-only field**, same pattern as Currency.
 - **Codebase verified against:** `enterprise-billing-app` working tree, 2026-10-10.
 

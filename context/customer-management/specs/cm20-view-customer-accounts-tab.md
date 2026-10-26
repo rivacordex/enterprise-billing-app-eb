@@ -2,7 +2,7 @@
 
 - **Unit:** 20 of 22 (`cm00-build-plan.md` Phase 2 — Invoice Template Binding update). **Boundary:** APP (customer screen + the Accounts-side read service it calls).
 - **Dependencies:** `cm19` (tab shell, `?tab=accounts` placeholder); `cm17` (`billing_account.ref_bill_template_version_id`, read by the label); delivered Accounts read paths (`getFinancialAccountDetail`, `listTransactionDocuments`, `ledgerRepository`, `DocStateBadge`, `AmountCell`); delivered Billing catalog reads (`billTemplateVersionRepository.findActive/findDefault/findById`).
-- **Authorizing sections:** binding plan §7.2, D6, D7, D8, D11, D14, D16; `custmgmt-update-overview.md` *Core user flow 2*, *Features → Accounts tab*; `custmgmt-architecture.md` §7.2, §7.3, Inv. #11, #12, #13, #15, #18; `custmgmt-ui-context.md` §9.2–§9.4; `custmgmt-ai-workflow-rules.md` §9.3 items 3, 5, 6, 10.
+- **Authorizing sections:** binding plan §7.2, D6, D7, D8, D11, D14, D16; the binding update overview (folded into `custmgmt-project-overview.md`) *Core user flow 2*, *Features → Accounts tab*; `custmgmt-architecture.md` §7.2, §7.3, Inv. #11, #12, #13, #15, #18; `custmgmt-ui-context.md` §9.2–§9.4; `custmgmt-ai-workflow-rules.md` §9.3 items 3, 5, 6, 10.
 - **Decisions recorded 2026-10-10:** O3 → new `system_config` key `CUSTOMER_ACCOUNTS_DOCUMENTS_PAGE_SIZE` (group `customer`, default `20`).
 - **Codebase verified against:** `enterprise-billing-app` working tree, 2026-10-10.
 
@@ -155,7 +155,7 @@ DB-gated tests run only on a throwaway Postgres marked disposable.
 
 ### 3.9 Doc fixes in this unit (same change set)
 
-- `custmgmt-architecture.md` Inv. #15 and §7 storage row, binding plan D16 and §7.2, `custmgmt-update-overview.md` Accounts-tab feature: replace "balances from one `billing.account_view` read" with "FA balances via `getFinancialAccountDetail`; per-BAN receivables in one grouped `pgledger_accounts_view` read".
+- `custmgmt-architecture.md` Inv. #15 and §7 storage row, binding plan D16 and §7.2, the binding update overview (folded into `custmgmt-project-overview.md`) Accounts-tab feature: replace "balances from one `billing.account_view` read" with "FA balances via `getFinancialAccountDetail`; per-BAN receivables in one grouped `pgledger_accounts_view` read".
 - `cm00-build-plan.md` cm20 "Builds": the page-size key is seeded by `db/seeds/customer.ts`, not a migration.
 - `custmgmt-code-standards.md` §4/§7: the new component names; §8 permission map: the Accounts tab sub-gate.
 

@@ -1,7 +1,7 @@
 # bm83 — Retire a type with a bulk switch
 
 **Unit:** bm83 (Invoice Template Types · Part 6, unit 10 of 12). **Boundary:** SETTINGS-UI: the retire service in `template-types.ts`, its action and schema, the type repository's `retireType`, a multi-row audit insert, the `RetireTemplateTypeDialog`, the retired-type read-only detail page, the `TEMPLATE_TYPE_RETIRED` checks on save and preview, and their tests. **Specs from:**
-- `billmgmt-update-overview.md` › Core user flow step 12 and Features › Retire with bulk switch
+- `billmgmt-project-overview.md` › Invoice Template Types › Core user flow step 12 and Features › Retire with bulk switch
 - `billmgmt-architecture.md` Inv #65 (Standard is never retired), #66 and #67
 - `billmgmt-code-standards.md` › Invoice Template Types, General rules 7–9, TS rule 2 (`TemplateTypeErrorCode`), Next.js rules 3–4, Styling rule 5, the Retire permission-map row, guardrail items 76, 77 and 79 (boundary half)
 - `billmgmt-ui-context.md` §10e (Retire dialog; Retired type, detail page)

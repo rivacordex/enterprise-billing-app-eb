@@ -2,7 +2,7 @@
 
 - **Unit:** 21 of 22 (`cm00-build-plan.md` Phase 2 — Invoice Template Binding update). **Boundary:** APP (customer screen + the Accounts-side service and action it calls).
 - **Dependencies:** `cm17` (column); `cm18` (`assertBindableTemplate`); `cm20` (`resolveCurrentTemplateLabel` / `banTemplateLabel`, `BanStateChip`); delivered `cm08` Manage Customer edit page; delivered BAN CAS precedent (`billingAccountRepository.close`, ac16).
-- **Authorizing sections:** binding plan §6, D3, D12, D13, D15; `custmgmt-update-overview.md` *Core user flow 3*, *Features → Template binding write path*, *Manage Customer panel*; `custmgmt-architecture.md` §7.2, §7.4, Inv. #16, #17, #18; `custmgmt-ui-context.md` §9.4–§9.5; `custmgmt-ai-workflow-rules.md` §1.3 (lock scope), §8.2–§8.3, §9.3 items 1, 7.
+- **Authorizing sections:** binding plan §6, D3, D12, D13, D15; the binding update overview (folded into `custmgmt-project-overview.md`) *Core user flow 3*, *Features → Template binding write path*, *Manage Customer panel*; `custmgmt-architecture.md` §7.2, §7.4, Inv. #16, #17, #18; `custmgmt-ui-context.md` §9.4–§9.5; `custmgmt-ai-workflow-rules.md` §1.3 (lock scope), §8.2–§8.3, §9.3 items 1, 7.
 - **Decisions recorded 2026-10-10:** O4 → event type **`BILLING_ACCOUNT_TEMPLATE_CHANGED`** (category `Change`); reset button **enabled only when the BAN holds a non-`NULL` value**, otherwise disabled with "Already following the active template" (always disabled in v1); Inv. #17 decided (BAN lock, never the customer lock).
 - **Codebase verified against:** `enterprise-billing-app` working tree, 2026-10-10.
 

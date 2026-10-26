@@ -43,7 +43,7 @@ Assert the migrations directory / `_journal.json` added exactly `0044_customer_b
 - `billmgmt-architecture.md`: confirm invariants #29–#38 describe the shipped behaviour; no drift.
 - `billmgmt-known-issues.md`: record the ratified residuals — the bm45 D2 rating-feed coupling and D4 ratecard-version resolution (ACTIVE-of-named-card, durable pin deferred to a rating stamp), the TC40/TC55 fractional-rounding drift (accepted), and **O-TC7** (partial-period billing — business, unresolved; capacity accounts stay EXCLUDED until business settles whether/how to pro-rate).
 - `billmgmt-progress-tracker.md`: record bm40–bm46 delivered; the Target Capacity update leaves Outstanding; note O-TC7 as the one open business decision blocking any future partial-period unit.
-- `billmgmt-update-overview.md` / `billmgmt-project-overview.md`: fold the capacity update into the delivered narrative (drop any "in-flight" callout).
+- The update overview / `billmgmt-project-overview.md`: fold the capacity update into the delivered narrative (drop any "in-flight" callout).
 
 ## Dependencies
 
@@ -60,4 +60,4 @@ Assert the migrations directory / `_journal.json` added exactly `0044_customer_b
 - [x] **No new migration** beyond bm41's `0044`; capacity logic is inline SQL only (no `billing.capacity_charge()` function, no Python task); the flow-SQL source is the extracted-SQL harness (no hand-copied double); no `udr_subscriber_ref_id` remains anywhere. _(within bm40–bm46 only — `0045`–`0049` came later; `udr_subscriber_ref_id` survives only in the rename gate `db/checks/check-rating-rename-gate.ts` and `infra/azure-pipelines.yml`.)_
 - [ ] Capacity guardrails 36–42 are present + green; invariants #29–#38 match shipped behaviour.
 - [ ] `tsc`/lint/the DB-free unit suite green; the DB-gated capacity suites green on a disposable Postgres; the live-Kestra capacity smoke green.
-- [ ] **Doc sync:** `billmgmt-progress-tracker.md` records bm40–bm46 delivered and O-TC7 as the open business decision; `billmgmt-known-issues.md` records the bm45 D2/D4 residuals and the TC40/TC55 drift; `billmgmt-update-overview.md`/`billmgmt-project-overview.md` fold the update into the delivered narrative; `billmgmt-architecture.md`/`billmgmt-code-standards.md` show no drift.
+- [ ] **Doc sync:** `billmgmt-progress-tracker.md` records bm40–bm46 delivered and O-TC7 as the open business decision; `billmgmt-known-issues.md` records the bm45 D2/D4 residuals and the TC40/TC55 drift; the update overview/`billmgmt-project-overview.md` fold the update into the delivered narrative; `billmgmt-architecture.md`/`billmgmt-code-standards.md` show no drift.
