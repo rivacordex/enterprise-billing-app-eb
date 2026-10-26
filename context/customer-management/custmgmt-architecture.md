@@ -126,15 +126,15 @@ Platform Invariants (`architecture.md` §7) all apply. Additional rules this mod
     - onboarding, which always writes `NULL`
     - Billing's retire bulk switch (billing Inv #66)
 
-    No other code path writes the column. _(Planned.)_
-20. **[CRITICAL] Binding is serialised against retire, inside the binding transaction.** `assertBindableTemplate(tx, typeId | null)` accepts `null` without a lock. For a type id it calls Billing's `lockTemplateType(tx, typeId, 'share')` and accepts only a type that exists, isn't retired and has an ACTIVE settings version, within the **same** transaction as the BAN update. An explicit Standard id is rejected (`TEMPLATE_NOT_BINDABLE`). A bind racing a retire therefore either commits before the retire (and is switched by it) or fails; it never leaves a BAN on a retired type. _(Planned.)_
-21. **The customer screen shows the type the next bill run will capture, read live.** `resolveBanTemplateLabel` derives the label from the BAN's current type and that type's ACTIVE version on every request, and never caches or stores it:
+    No other code path writes the column. _(Built (cm23).)_
+20. **[CRITICAL] Binding is serialised against retire, inside the binding transaction.** `assertBindableTemplate(tx, typeId | null)` accepts `null` without a lock. For a type id it calls Billing's `lockTemplateType(tx, typeId, 'share')` and accepts only a type that exists, isn't retired and has an ACTIVE settings version, within the **same** transaction as the BAN update. An explicit Standard id is rejected (`TEMPLATE_NOT_BINDABLE`). A bind racing a retire therefore either commits before the retire (and is switched by it) or fails; it never leaves a BAN on a retired type. _(Built (cm23).)_
+21. **The customer screen shows the type the next bill run will capture, read live.** `resolveBanTemplateLabels` derives the label from the BAN's current type and that type's ACTIVE version on every request, and never caches or stores it:
     - `NULL` → "Standard (default) · vN"
     - a usable type → "{name} · vN"
     - a type that isn't usable → "{name} · not usable", as a warning
 
-    A binding never touches a bill run's captured stamps; the screen states that changes apply from the next run start or rerun. _(Planned; replaces Inv. #18 on ship.)_
-22. **Customer Management reads the type catalog; it never manages it.** The customer tree reads types only through `listBindableTemplateTypes` and `resolveBanTemplateLabel` in `services/accounts/`. These call Billing's **repositories** (`bill-template-family`, `bill-template-version`), never `services/billing/**` or `actions/billing/**` (Inv. #11 unchanged). No customer screen creates, uploads, activates, retires or exports a type, or reads layout files. _(Planned.)_
+    A binding never touches a bill run's captured stamps; the screen states that changes apply from the next run start or rerun. _(Built (cm23); replaces Inv. #18 on ship — cm24 closes it out.)_
+22. **Customer Management reads the type catalog; it never manages it.** The customer tree reads types only through `listBindableTemplateTypes` and `resolveBanTemplateLabels` in `services/accounts/`. These call Billing's **repositories** (`bill-template-family`, `bill-template-version`), never `services/billing/**` or `actions/billing/**` (Inv. #11 unchanged). No customer screen creates, uploads, activates, retires or exports a type, or reads layout files. _(Built (cm23).)_
 
 
 ---

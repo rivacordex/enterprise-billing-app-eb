@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  expectNotOnboarded,
   type OnboardingDatabase,
   seedInitializedCustomer,
   setUpOnboardingDatabase,
@@ -9,28 +8,27 @@ import {
 } from "@/tests/helpers/onboarding-database";
 import { onboardCustomerAccounts } from "@/services/accounts/onboard-customer-accounts";
 
-// cm18-spec §3.6 — onboarding writes ref_bill_template_version_id = NULL on
-// the new BAN and records it in ACCOUNTS_ONBOARDED.afterData; a non-NULL id is
-// refused before any write (Inv. #18, D13). Same fresh-migrate setup as
-// v07-onboarding-atomicity.integration.test.ts.
+// cm18-spec §3.6 / cm23-spec §3.7 (D7) — onboarding writes
+// ref_bill_template_family_id = NULL (Standard) on the new BAN and records it
+// in ACCOUNTS_ONBOARDED.afterData, whether `templateTypeId` is sent as null or
+// omitted. A type id never reaches the service: the schema admits only null
+// (tests/validation/onboard-customer-accounts.schema.test.ts). Same
+// fresh-migrate setup as v07-onboarding-atomicity.integration.test.ts.
 const databaseUrl = process.env.DATABASE_URL;
 
 describe.skipIf(!databaseUrl)(
-  "cm18 onboarding invoice template binding (requires DATABASE_URL)",
+  "cm18/cm23 onboarding invoice template type (requires DATABASE_URL)",
   () => {
     let db: OnboardingDatabase;
 
-    async function onboard(
-      orgName: string,
-      billTemplateVersionId: string | null,
-    ) {
+    async function onboard(orgName: string, sendNull: boolean) {
       const pr = await seedInitializedCustomer(db, orgName);
       const result = await onboardCustomerAccounts(
         {
           partyRoleId: pr.id,
           billCycleId: db.cycleId,
           currency: "MYR",
-          billTemplateVersionId,
+          ...(sendNull ? { templateTypeId: null } : {}),
           statusReason: "cm18 template binding test",
           lastModifiedDatetime: pr.ts,
         },
@@ -47,36 +45,38 @@ describe.skipIf(!databaseUrl)(
       await tearDownOnboardingDatabase(db.sql);
     });
 
-    it("onboarding leaves the BAN with ref_bill_template_version_id IS NULL and records it in the audit", async () => {
-      const { result } = await onboard("cm18 Org A", null);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
+    it.each([
+      { sendNull: true, org: "cm23 Org A" },
+      { sendNull: false, org: "cm23 Org B" },
+    ])(
+      "onboarding (templateTypeId sent as null: $sendNull) leaves the BAN with ref_bill_template_family_id IS NULL and records it in the audit",
+      async ({ sendNull, org }) => {
+        const { result } = await onboard(org, sendNull);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
 
-      const [ban] = await db.sql<{ ref: string | null }[]>`
-        SELECT ref_bill_template_version_id AS ref
-        FROM billing.billing_account
-        WHERE billing_account_id = ${result.value.billingAccountId}
-      `;
-      expect(ban).toBeDefined();
-      expect(ban?.ref).toBeNull();
+        const [ban] = await db.sql<{ ref: string | null }[]>`
+          SELECT ref_bill_template_family_id AS ref
+          FROM billing.billing_account
+          WHERE billing_account_id = ${result.value.billingAccountId}
+        `;
+        expect(ban).toBeDefined();
+        expect(ban?.ref).toBeNull();
 
-      const [audit] = await db.sql<{ after_data: Record<string, unknown> }[]>`
-        SELECT after_data
-        FROM core.audit_log
-        WHERE event_type = 'ACCOUNTS_ONBOARDED'
-          AND target_id = ${result.value.financialAccountId}
-      `;
-      expect(audit?.after_data).toHaveProperty(
-        "refBillTemplateVersionId",
-        null,
-      );
-    });
-
-    it("a non-NULL id leaves the customer INITIALIZED and creates no FA/BAN", async () => {
-      const { pr, result } = await onboard("cm18 Org B", "BTV00000002");
-      expect(result).toEqual({ ok: false, code: "TEMPLATE_NOT_BINDABLE" });
-
-      await expectNotOnboarded(db.sql, pr.id);
-    });
+        const [audit] = await db.sql<{ after_data: Record<string, unknown> }[]>`
+          SELECT after_data
+          FROM core.audit_log
+          WHERE event_type = 'ACCOUNTS_ONBOARDED'
+            AND target_id = ${result.value.financialAccountId}
+        `;
+        expect(audit?.after_data).toHaveProperty(
+          "refBillTemplateFamilyId",
+          null,
+        );
+        expect(audit?.after_data).not.toHaveProperty(
+          "refBillTemplateVersionId",
+        );
+      },
+    );
   },
 );

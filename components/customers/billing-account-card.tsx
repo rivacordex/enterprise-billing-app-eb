@@ -1,13 +1,15 @@
-// cm20 (custmgmt-ui-context §9.2/§9.4) — one card per BAN: id, name, state,
-// bill cycle, resolved payment term, live receivable and the invoice-template
-// label. The label is a reference, not a status: no badge color (§9.4).
+// cm20 / cm23 (custmgmt-ui-context §9.2/§10.1) — one card per BAN: id, name,
+// state, bill cycle, resolved payment term, live receivable and the invoice
+// template type label. The label is a reference, not a status: no badge
+// color, except the warning treatment for a type that isn't usable (§10.1).
 
-import { FileText } from "lucide-react";
+import { AlertTriangle, FileText } from "lucide-react";
 
 import { AmountCell } from "@/components/accounts/amount-cell";
 import { BanStateChip } from "@/components/customers/ban-state-chip";
+import { TEMPLATE_TYPE_FIELD_LABEL } from "@/components/customers/billing-account-messages";
 import { cn } from "@/lib/utils";
-import type { AccountState } from "@/types/accounts";
+import type { AccountState, BanTemplateLabel } from "@/types/accounts";
 
 export interface BillingAccountCardProps {
   billingAccountId: string;
@@ -17,33 +19,48 @@ export interface BillingAccountCardProps {
   paymentTermDays: number;
   receivableBalance: string;
   currency: string;
-  templateLabel: string;
+  templateLabel: BanTemplateLabel;
 }
 
-const FOLLOWS_LABEL =
-  /^Follows active template \(currently: (.+) (v\d+)\), as of now$/;
-
-// §9.4 typography: "vN" in mono, "as of now" muted caption. The rendered text
-// stays identical to the service's label. Shared with the Manage Customer
-// Billing account panel (cm21).
-export function TemplateLabel({ label }: { label: string }): React.JSX.Element {
-  const match = FOLLOWS_LABEL.exec(label);
+// §10.1 typography: muted caption field label, the type name, then " · " and
+// `v{N}` in mono, or "· not usable" in the warning family with an icon. Built
+// from the structured label, never by parsing `text` (code-standards §10 TS
+// rule 3). Shared with the Manage Customer Billing account panel.
+export function TemplateLabel({
+  label,
+}: {
+  label: BanTemplateLabel;
+}): React.JSX.Element {
   return (
-    <p className="flex items-start gap-1.5 text-body-sm text-[color:var(--text-body)]">
+    <p
+      aria-label={label.text}
+      className="flex flex-wrap items-start gap-1.5 text-body-sm text-[color:var(--text-body)]"
+    >
       <FileText
         size={14}
         aria-hidden="true"
         className="mt-0.5 shrink-0 text-[color:var(--color-neutral-600)]"
       />
-      {match === null ? (
-        <span>{label}</span>
-      ) : (
-        <span>
-          Follows active template (currently: {match[1]}{" "}
-          <span className="font-mono">{match[2]}</span>),{" "}
-          <span className="text-caption text-[color:var(--text-muted)]">
-            as of now
-          </span>
+      <span className="text-caption text-[color:var(--text-muted)]">
+        {TEMPLATE_TYPE_FIELD_LABEL}
+      </span>
+      <span>
+        {label.name}
+        {label.versionNo !== null && (
+          <>
+            {" · "}
+            <span className="font-mono">v{label.versionNo}</span>
+          </>
+        )}
+      </span>
+      {label.kind === "NOT_USABLE" && (
+        <span className="inline-flex items-center gap-1 text-[color:var(--color-warning-700)]">
+          <AlertTriangle
+            size={14}
+            aria-hidden="true"
+            className="shrink-0 text-[color:var(--color-warning-500)]"
+          />
+          · not usable
         </span>
       )}
     </p>

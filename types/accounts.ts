@@ -280,7 +280,7 @@ export type CustomerAccountsSummary =
           billCycleName: string;
           paymentTermDays: number;
           receivableBalance: string;
-          templateLabel: string;
+          templateLabel: BanTemplateLabel;
         }>;
         documents: {
           rows: TransactionDocumentRow[];
@@ -291,15 +291,32 @@ export type CustomerAccountsSummary =
       }>;
     };
 
+// cm23 (custmgmt code-standards §10 TS rules 2–3) — the invoice template type
+// read model. Standard is always `typeId: null` (Inv. #19). Exported from a
+// types module so Billing's retire switch (bm83) can name Standard without
+// importing services/accounts/**.
+export const STANDARD_TYPE_NAME = "Standard (default)";
+
+export type BindableTemplateType = { typeId: string | null; name: string };
+
+// `text` is the full label (accessible names, tests); components render the
+// mono `v{N}` from `versionNo` and pick styling from `kind`, never parse `text`.
+export type BanTemplateLabel = {
+  kind: "STANDARD" | "TYPE" | "NOT_USABLE";
+  text: string;
+  name: string;
+  versionNo: number | null;
+};
+
 // cm21-spec §3.5 — one row of the Manage Customer Billing account panel.
-// `lastModified` is the BAN's CAS token for the template reset (Inv. #17).
+// `lastModified` is the BAN's CAS token for the template bind (Inv. #17).
 export interface CustomerBillingAccountRow {
   billingAccountId: string;
   name: string;
   state: AccountState;
   lastModified: Date;
-  refBillTemplateVersionId: string | null;
-  templateLabel: string;
+  refBillTemplateFamilyId: string | null;
+  templateLabel: BanTemplateLabel;
 }
 
 export type CustomerBillingAccounts =

@@ -38,7 +38,11 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**; **bm80 built**; **bm81 built**. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**; **bm80 built**; **bm81 built**; **cm23 built** (Customer Management's half of the bm82 merge; `custmgmt-progress-tracker.md`). `0054` drops `billing_account.ref_bill_template_version_id`, so bm82 must land in the same merge. bm82 must move off the dropped column:
+  - `listBanFamilies` (42703 today, which fails `run-template-capture` ×6 and `trigger-run` ×5)
+  - the fixtures that write the old column in `run-template-capture`, `draft-uses-run-stamps`, `posting-skips-null-template` and `invoice-template-journey`
+
+  CM guardrail 11 ("old column gone") stays red until then. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)

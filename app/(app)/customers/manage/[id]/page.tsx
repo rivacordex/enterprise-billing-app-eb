@@ -10,13 +10,17 @@ import { ContactManagerPanel } from "@/components/customers/contact-manager-pane
 import { CustomerRoleForm } from "@/components/customers/customer-role-form";
 import { OrganizationForm } from "@/components/customers/organization-form";
 import { reportError } from "@/lib/logger";
+import { listBindableTemplateTypes } from "@/services/accounts/list-bindable-template-types";
 import { listCustomerBillingAccounts } from "@/services/accounts/list-customer-billing-accounts";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import {
   getAppLocale,
   getAppTimezone,
 } from "@/services/system-config/app-config-read.service";
-import type { CustomerBillingAccounts } from "@/types/accounts";
+import type {
+  BindableTemplateType,
+  CustomerBillingAccounts,
+} from "@/types/accounts";
 import { meetsLevel } from "@/types/permissions";
 import { partyRoleIdSchema } from "@/validation/customer/party-role.schema";
 
@@ -44,15 +48,21 @@ function CustomerNotFound(): React.JSX.Element {
   );
 }
 
-// cm21 — the Billing account panel's read. A failed Accounts read degrades to
-// AccountsUnavailableCard inside the panel (null) instead of replacing the
-// whole Manage Customer page — org, role and contact editing included — with
-// customers/manage/error.tsx (the cm20 CustomerAccountsTabLoader precedent).
-async function loadBillingAccounts(
-  partyRoleId: string,
-): Promise<CustomerBillingAccounts | null> {
+// cm21 / cm23 — the Billing account panel's reads: the BANs and the usable
+// template types. A failure of either degrades to AccountsUnavailableCard
+// inside the panel (null) instead of replacing the whole Manage Customer page
+// — org, role and contact editing included — with customers/manage/error.tsx
+// (the cm20 CustomerAccountsTabLoader precedent).
+async function loadBillingAccounts(partyRoleId: string): Promise<{
+  accounts: CustomerBillingAccounts;
+  templateTypes: BindableTemplateType[];
+} | null> {
   try {
-    return await listCustomerBillingAccounts(partyRoleId);
+    const [accounts, templateTypes] = await Promise.all([
+      listCustomerBillingAccounts(partyRoleId),
+      listBindableTemplateTypes(),
+    ]);
+    return { accounts, templateTypes };
   } catch (error) {
     unstable_rethrow(error);
     reportError(error, { scope: "customer-billing-accounts", partyRoleId });
@@ -80,7 +90,7 @@ export default async function CustomerEditPage({
     return <CustomerNotFound />;
   }
 
-  // cm21 (Inv. #16) — UX-only gate for the reset control; the action
+  // cm21 (Inv. #16) — UX-only gate for the type select and Save; the action
   // re-checks both permissions.
   const canEditAccounts = meetsLevel(
     permissionMap[PERMISSIONS.ACCOUNTS_TRANSACTIONS],
@@ -124,7 +134,8 @@ export default async function CustomerEditPage({
 
       <BillingAccountPanel
         partyRoleId={detail.customerRole.partyRoleId}
-        accounts={billingAccounts}
+        accounts={billingAccounts?.accounts ?? null}
+        templateTypes={billingAccounts?.templateTypes ?? []}
         canEditAccounts={canEditAccounts}
       />
     </main>

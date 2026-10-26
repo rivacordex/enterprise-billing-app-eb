@@ -28,7 +28,7 @@ export type OnboardCustomerAccountsResult =
 // ac04-spec §2.2 + §3.1 — single atomic transaction owned by this service:
 //   1. compareAndUpdateStatus → INITIALIZED → VALIDATED (cm10 seam)
 //   2a. inserts billing.financial_account (FIN…)
-//   2b. inserts billing.billing_account (BAN…, ref_bill_template_version_id = NULL in v1)
+//   2b. inserts billing.billing_account (BAN…, ref_bill_template_family_id = NULL (Standard), always)
 //   2c. pgledger_create_account ×3
 //   2d. inserts three ledger_binding rows
 //   3. writes ACCOUNTS_ONBOARDED audit event
@@ -57,9 +57,10 @@ export async function onboardCustomerAccounts(
       return { ok: false, code: "CYCLE_RETIRED" };
     }
 
-    // cm18 — validate the template binding before any write (Inv. #18).
-    const templateId = input.billTemplateVersionId ?? null;
-    const bindable = await assertBindableTemplate(tx, templateId);
+    // cm23 (D7) — a new BAN always starts on Standard (NULL); the schema admits
+    // only null or absent. The gate still runs before any write (General rule 2).
+    const templateTypeId = null;
+    const bindable = await assertBindableTemplate(tx, templateTypeId);
     if (!bindable.ok) return { ok: false, code: bindable.code };
 
     // Step 1 — status change (optimistic lock; null = stale → CONFLICT).
@@ -95,7 +96,7 @@ export async function onboardCustomerAccounts(
       creditLimitAmount: input.banCreditLimit ?? null,
       refBillCycleId: input.billCycleId,
       paymentDueDaysOverride: input.paymentDueDaysOverride ?? null,
-      refBillTemplateVersionId: templateId,
+      refBillTemplateFamilyId: templateTypeId,
       lastEditedBy: actorId,
     });
 
@@ -152,7 +153,7 @@ export async function onboardCustomerAccounts(
         billingAccountId: ban.billingAccountId,
         partyRoleId: input.partyRoleId,
         ledgerAccountNames: [ucName, depName, recName],
-        refBillTemplateVersionId: templateId,
+        refBillTemplateFamilyId: null,
       },
     });
 

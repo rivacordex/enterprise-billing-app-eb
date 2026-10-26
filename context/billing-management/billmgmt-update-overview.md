@@ -4,7 +4,7 @@ This file holds the in-flight update to the Billing Management module. It is fol
 
 | Update | Status |
 |---|---|
-| Invoice Template Types: upload editor packages, type catalog, BAN binding, retire, export | Planned; specs bm74–bm85 written (with CM cm23–cm24); not built |
+| Invoice Template Types: upload editor packages, type catalog, BAN binding, retire, export | In progress; specs bm74–bm85 written (with CM cm23–cm24); build status in `billmgmt-progress-tracker.md` |
 
 _Date: 2026-10-25 · **Users:**_
 - _The RevOps team manager (MANAGER) and ADMIN own template types: `invoice_settings` EDIT._
@@ -60,7 +60,7 @@ The same upload creates a **new version of an existing type** (Standard included
    1. **zip directory checks, before unpacking:**
       - at most 2 MiB uncompressed and 64 entries
       - only allow-listed names: `manifest.json`, `shell.hbs`, `footer.hbs`, `sample-data.json`, `checksums.json`, the eight `partials/<key>.hbs`, `fonts/*.woff2`, `fonts/OFL.txt`, and an optional `settings.json` from an app export
-   2. `checksums.json` verifies every file
+   2. `checksums.json` verifies every other file in the package. An app export's `settings.json` is the one file it never lists
    3. the manifest passes `layoutManifestSchema`, `layoutCode` equals the type's layout code, and `layoutVersion` equals the version to be written
    4. the layout lint and the hardening rules: no external URLs (including ones hidden behind entities or CSS escapes), no `image-set()`, no `on…=` handlers, no `<script>`, no `{{{`, no typed-in supplier data
    5. `generate` → strict compile → execute against the probe input and the package's sample data, with Payment on and off
@@ -140,7 +140,7 @@ The same upload creates a **new version of an existing type** (Standard included
 ### Settings, preview and activation
 - **Settings** = the Payment section toggle plus the footnote: 1–5 lines, each up to 200 characters. The form stays as today.
 - **Preview** renders the pair against a sample BAN as sandboxed HTML (`<iframe sandbox="">`).
-- **Activate** needs a change note. It re-runs the compliance check, promotes both pair members, retires the previously ACTIVE members they replace, and writes one `INVOICE_TEMPLATE_ACTIVATED` row.
+- **Activate** needs a change note. It re-runs the compliance check, promotes both pair members, retires the type's previous **non-default** ACTIVE members they replace, and writes one `INVOICE_TEMPLATE_ACTIVATED` row. Standard's default v1 rows are never retired, so they stay the fallback.
 
 ### Compliance and layout rules
 - **`services/billing/invoice-template/compliance.ts`** holds every layout rule: `COMPLIANCE_SECTION_KEYS`, the visible-text content check, the typed-supplier rule, and the hardening rules ported from the editor.

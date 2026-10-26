@@ -25,6 +25,9 @@ vi.mock("@/services/system-config/app-config-read.service", () => ({
 vi.mock("@/services/accounts/list-customer-billing-accounts", () => ({
   listCustomerBillingAccounts: vi.fn(),
 }));
+vi.mock("@/services/accounts/list-bindable-template-types", () => ({
+  listBindableTemplateTypes: vi.fn(),
+}));
 vi.mock("@/lib/logger", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
   reportError: vi.fn(),
@@ -50,6 +53,7 @@ import { BillingAccountPanel } from "@/components/customers/billing-account-pane
 import { ContactManagerPanel } from "@/components/customers/contact-manager-panel";
 import { CustomerResultsTable } from "@/components/customers/customer-results-table";
 import { reportError } from "@/lib/logger";
+import { listBindableTemplateTypes } from "@/services/accounts/list-bindable-template-types";
 import { listCustomerBillingAccounts } from "@/services/accounts/list-customer-billing-accounts";
 import { getCustomerDetail } from "@/services/customer/get-customer-detail";
 import {
@@ -264,12 +268,21 @@ describe("CustomerEditPage — Billing account panel (cm21)", () => {
         name: "Primary",
         state: "active" as const,
         lastModified: LOCK,
-        refBillTemplateVersionId: null,
-        templateLabel:
-          "Follows active template (currently: INVTPL-STD-A4 v1), as of now",
+        refBillTemplateFamilyId: null,
+        templateLabel: {
+          kind: "STANDARD" as const,
+          text: "Standard (default) · v1",
+          name: "Standard (default)",
+          versionNo: 1,
+        },
       },
     ],
   };
+  const mockListTemplateTypes = vi.mocked(listBindableTemplateTypes);
+  const TEMPLATE_TYPES = [
+    { typeId: null, name: "Standard (default)" },
+    { typeId: "BTF00000002", name: "Wholesale" },
+  ];
 
   function grant(accountsTransactions: "READ" | "EDIT" | null) {
     mockRequirePermission.mockResolvedValue({
@@ -306,6 +319,8 @@ describe("CustomerEditPage — Billing account panel (cm21)", () => {
     mockGetCustomerDetail.mockResolvedValue(detail());
     mockListBillingAccounts.mockReset();
     mockListBillingAccounts.mockResolvedValue(ACCOUNTS);
+    mockListTemplateTypes.mockReset();
+    mockListTemplateTypes.mockResolvedValue(TEMPLATE_TYPES);
     vi.mocked(getAppLocale).mockResolvedValue("en-MY");
     vi.mocked(getAppTimezone).mockResolvedValue("Asia/Kuala_Lumpur");
   });
@@ -334,7 +349,9 @@ describe("CustomerEditPage — Billing account panel (cm21)", () => {
     const panel = findElementByType(result, BillingAccountPanel);
     expect(panel?.props.partyRoleId).toBe("PTRL00000001");
     expect(panel?.props.accounts).toBe(ACCOUNTS);
+    expect(panel?.props.templateTypes).toBe(TEMPLATE_TYPES);
     expect(mockListBillingAccounts).toHaveBeenCalledWith("PTRL00000001");
+    expect(mockListTemplateTypes).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -369,6 +386,20 @@ describe("CustomerEditPage — Billing account panel (cm21)", () => {
 
     const panel = findElementByType(result, BillingAccountPanel);
     expect(panel?.props.accounts).toBeNull();
+    expect(panel?.props.templateTypes).toEqual([]);
+    expect(findElementByType(result, ContactManagerPanel)).toBeDefined();
+    expect(vi.mocked(reportError)).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed template-type read (cm23) also degrades to the panel's unavailable state", async () => {
+    vi.mocked(reportError).mockClear();
+    mockListTemplateTypes.mockRejectedValue(new Error("catalog down"));
+
+    const result = await renderPage();
+
+    const panel = findElementByType(result, BillingAccountPanel);
+    expect(panel?.props.accounts).toBeNull();
+    expect(panel?.props.templateTypes).toEqual([]);
     expect(findElementByType(result, ContactManagerPanel)).toBeDefined();
     expect(vi.mocked(reportError)).toHaveBeenCalledTimes(1);
   });
@@ -380,5 +411,6 @@ describe("CustomerEditPage — Billing account panel (cm21)", () => {
 
     expect(findElementByType(result, BillingAccountPanel)).toBeUndefined();
     expect(mockListBillingAccounts).not.toHaveBeenCalled();
+    expect(mockListTemplateTypes).not.toHaveBeenCalled();
   });
 });
