@@ -1430,6 +1430,7 @@ export interface TemplateTypeListRow {
   activeVersionNo: number | null; // the ACTIVE (or default) settings version
   activeSince: Date | null; // its activated_datetime
   retiredAt: Date | null;
+  boundBanCount: number; // bm82 — BANs on this type, every state (NULL → Standard)
 }
 
 // bm78 — layout package upload limits and shape (code-standards › Invoice

@@ -375,9 +375,25 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
       BAN_TABLE.test(captureBody!) && TEMPLATE_COLUMN.test(captureBody!),
       `${RUN_START_CAPTURE.fn} reads billing_account.ref_bill_template_family_id`,
     ).toBe(true);
+    // bm82 — the capture reads the BAN's own type column (not a version's
+    // family through a join), and never the dropped version column.
     expect(
-      files.some(({ relative }) => relative === TEMPLATE_TYPES_FILE),
-      TEMPLATE_TYPES_FILE,
+      captureBody!.includes("ba.ref_bill_template_family_id"),
+      `${RUN_START_CAPTURE.fn} reads ba.ref_bill_template_family_id`,
+    ).toBe(true);
+    expect(
+      captureBody!.includes("ref_bill_template_version_id"),
+      `${RUN_START_CAPTURE.fn} no longer reads ref_bill_template_version_id`,
+    ).toBe(false);
+    const templateTypes = files.find(
+      ({ relative }) => relative === TEMPLATE_TYPES_FILE,
+    );
+    expect(templateTypes, TEMPLATE_TYPES_FILE).toBeDefined();
+    // bm82 — the exemption is not vacuous: the Bound BANs count reads it.
+    expect(
+      BAN_TABLE.test(templateTypes!.code) &&
+        TEMPLATE_COLUMN.test(templateTypes!.code),
+      `${TEMPLATE_TYPES_FILE} reads billing_account.ref_bill_template_family_id`,
     ).toBe(true);
     const postRun = files.find(
       ({ relative }) => relative === "services/billing/post-run.ts",

@@ -21,6 +21,10 @@ import type { Database } from "@/db/client";
 //   2. a rerun re-captures exactly the rerun BAN, and its audit lists it;
 //   3. a BAN whose family has no ACTIVE (or default) version is stamped with a
 //      NULL version — the trigger succeeds and the BAN is never EXCLUDED (D55).
+// bm82 (Inv #54 amended) — capture reads the BAN's TYPE column
+// (`billing_account.ref_bill_template_family_id`, NULL = Standard, 0054), so the
+// SQL-bound fixtures below set a type id, and a BAN bound through cm23's
+// `setBillingAccountTemplate` drafts on its type's layout.
 // The services use the `@/db/client` singleton, so it is replaced with one
 // built on the test client (the activate-template precedent). Activation is
 // the real service, so it writes template blobs to Azurite.
@@ -37,13 +41,34 @@ vi.mock("@/db/client", () => ({
   },
 }));
 
+import { billRunRepository } from "@/db/repositories/billing/bill-run.repository";
+import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
+import { setBillingAccountTemplate } from "@/services/accounts/set-billing-account-template";
+import { runPreApprovalChecks } from "@/services/billing/pre-approval-checks";
+import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
+import { createTemplateType } from "@/services/billing/invoice-template/template-types";
+import { uploadLayoutPackage } from "@/services/billing/invoice-template/upload-layout-package";
+import {
+  buildLayoutPackage,
+  cleanRender,
+  replaceInFile,
+} from "@/tests/helpers/layout-package";
 import { activateTemplate } from "@/services/billing/invoice-template/activate-template";
 import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
 import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
 import { rerunRun } from "@/services/billing/rerun-run";
 import { triggerRun } from "@/services/billing/trigger-run";
 import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixtures";
+
+// bm82 — Wholesale's uploaded layout carries a marker the Standard layout lacks,
+// so a draft shows which layout it rendered through.
+const WHOLESALE_MARKER = "bm82 Wholesale layout";
+// Blobs the Wholesale case writes (layout files and its per-type generated path).
+const WHOLESALE_BLOB_PREFIXES = [
+  "layouts/INVTPL-WHOLESALE/",
+  "generated/INVOICE/WHOLESALE/",
+];
 
 // bm72 — a new Standard version differs from v1 by its footnote.
 function structure(footnoteLine: string) {
@@ -221,6 +246,13 @@ describe.skipIf(!databaseUrl || !blobConnection)(
               .catch(() => undefined);
           }
         }
+        for (const prefix of WHOLESALE_BLOB_PREFIXES) {
+          for await (const b of templates().listBlobsFlat({ prefix })) {
+            await templates()
+              .deleteBlob(b.name)
+              .catch(() => undefined);
+          }
+        }
       }
       clearLoadedTemplateMemo();
       if (sql) {
@@ -314,8 +346,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
 
     it("3. a family with no ACTIVE version stamps a NULL version; the trigger succeeds and the BAN is never EXCLUDED (D55)", async () => {
       // A second, non-default family (test-only) holding just a RETIRED
-      // generated version, and a BAN bound to that version by SQL — bypassing
-      // assertBindableTemplate, which accepts NULL only today.
+      // generated version, and a BAN bound to that TYPE by SQL — bypassing
+      // assertBindableTemplate, which refuses a type with no ACTIVE version.
       // bm74 — the type needs its own layout (btv_pair_same_type_fk).
       await insertTemplateTypeFixture(sql, {
         typeId: "BTF00000099",
@@ -337,7 +369,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       const boundBan = await newBillingAccount(cycleId);
       const standardBan = await newBillingAccount(cycleId);
       await sql`
-        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000099'
+        UPDATE billing.billing_account SET ref_bill_template_family_id = 'BTF00000099'
         WHERE billing_account_id = ${boundBan}`;
       const runId = await newScheduledRun(cycleId);
 
@@ -398,11 +430,11 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         WHERE bill_template_version_id = 'BTV00000088'`;
       expect(second?.status).toBe("ACTIVE");
 
-      // A BAN following the second family captures its ACTIVE version.
+      // A BAN bound to the second type captures its ACTIVE version.
       const cycleId = await newCycle("BM65VERIFY Second Family Cycle");
       const ban = await newBillingAccount(cycleId);
       await sql`
-        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000088'
+        UPDATE billing.billing_account SET ref_bill_template_family_id = 'BTF00000088'
         WHERE billing_account_id = ${ban}`;
       const runId = await newScheduledRun(cycleId);
       expect((await triggerRun(runId, ACTOR, "2026-07-01")).ok).toBe(true);
@@ -437,8 +469,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
 
     // bm78-spec §13 (guardrail 70) — an uploaded, not yet activated type: its
     // only versions are a layout DRAFT and the settings DRAFT pointing at it.
-    // A BAN bound to that settings DRAFT (by SQL) is stamped with the type and
-    // a NULL version at capture — never a DRAFT id.
+    // A BAN bound to that type (by SQL; bm82: the type column) is stamped with
+    // the type and a NULL version at capture — never a DRAFT id.
     it("6. a type whose only versions are DRAFTs stamps a NULL version, never a DRAFT id (bm78)", async () => {
       await sql`
         INSERT INTO billing.bill_template_family
@@ -467,7 +499,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       const cycleId = await newCycle("BM78VERIFY Drafts Only Cycle");
       const ban = await newBillingAccount(cycleId);
       await sql`
-        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000077'
+        UPDATE billing.billing_account SET ref_bill_template_family_id = 'BTF00000077'
         WHERE billing_account_id = ${ban}`;
       const runId = await newScheduledRun(cycleId);
 
@@ -494,13 +526,19 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       ]);
     });
 
-    it("5. a BAN bound to a non-generated version is captured with a NULL family and version, never silently Standard (§24e)", async () => {
-      const cycleId = await newCycle("BM65VERIFY Wrong Kind Cycle");
-      const ban = await newBillingAccount(cycleId);
-      // BTV00000003 is the CSV version: the 0050 FK allows it, the column's
-      // meaning (generated only) does not.
+    // bm82 — replaces the "non-generated version → NULL family" case, which a
+    // type reference cannot express: a BAN bound (by SQL) to a new, empty type
+    // with no generated version at all captures that type with a NULL version,
+    // and the blocking `template_versions_captured` check refuses approval.
+    it("5. a BAN bound to an empty type (no generated version) captures the type with a NULL version, and approval is blocked", async () => {
       await sql`
-        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000003'
+        INSERT INTO billing.bill_template_family
+          (bill_template_family_id, code, name, layout_code, kind)
+        VALUES ('BTF00000066', 'BM82_EMPTY', 'Empty type', 'INVTPL-BM82_EMPTY', 'generated')`;
+      const cycleId = await newCycle("BM82VERIFY Empty Type Cycle");
+      const ban = await newBillingAccount(cycleId);
+      await sql`
+        UPDATE billing.billing_account SET ref_bill_template_family_id = 'BTF00000066'
         WHERE billing_account_id = ${ban}`;
       const runId = await newScheduledRun(cycleId);
 
@@ -509,10 +547,152 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       const row = (await stamps(runId)).get(ban);
       expect(row).toMatchObject({
         status: "PENDING",
-        ref_bill_template_family_id: null,
+        ref_bill_template_family_id: "BTF00000066",
         ref_bill_template_version_id: null,
       });
       expect(row?.template_captured_at).not.toBeNull();
+
+      // The processor would have driven the run to PROCESSED.
+      await sql`UPDATE billing.bill_run SET status = 'PROCESSED' WHERE bill_run_id = ${runId}`;
+      await sql`UPDATE billing.bill_run_account SET status = 'PROCESSED' WHERE ref_bill_run_id = ${runId}`;
+      const run = await billRunRepository.findByIdForUpdate(db, runId);
+      const checks = await runPreApprovalChecks(db, run!, "bm82-approver");
+      expect(
+        checks.find((c) => c.check === "template_versions_captured"),
+      ).toMatchObject({ pass: false });
     });
+
+    // bm82 — the visible result (with cm23): a BAN bound to Wholesale through
+    // the real bind service drafts on Wholesale at the next Run; a NULL BAN in
+    // the same run stays on Standard.
+    it("7. a BAN bound to Wholesale via setBillingAccountTemplate captures Wholesale v1 and its draft renders through Wholesale's layout; a NULL BAN stays on Standard", async () => {
+      // Create "Wholesale", upload its layout and activate settings v1 through
+      // the bm77–bm79 services (stage 7's Chromium probe is stubbed clean).
+      const created = await createTemplateType({ name: "Wholesale" }, ACTOR);
+      if (!created.ok) throw new Error(`create type failed: ${created.code}`);
+      const wholesaleId = created.typeId;
+      const uploaded = await uploadLayoutPackage(
+        {
+          familyId: wholesaleId,
+          zip: buildLayoutPackage({
+            layoutCode: created.layoutCode,
+            layoutVersion: 1,
+            edit: (f) =>
+              replaceInFile(
+                f,
+                "partials/header.hbs",
+                "<h1>Invoice</h1>",
+                `<h1>Invoice</h1><div class="bm82-marker">${WHOLESALE_MARKER}</div>`,
+              ),
+          }).zip,
+          expectedDraft: { none: true },
+        },
+        ACTOR,
+        { render: cleanRender() },
+      );
+      if (!uploaded.ok) throw new Error(`upload failed: ${uploaded.code}`);
+      const draft = await billTemplateVersionRepository.findDraft(db, {
+        kind: "generated",
+        familyId: wholesaleId,
+      });
+      if (!draft) throw new Error("no Wholesale settings draft");
+      const activated = await activateTemplate(
+        {
+          draftId: draft.billTemplateVersionId,
+          expectedDraftToken: draft.token,
+          changeNote: "bm82 Wholesale v1",
+          familyId: wholesaleId,
+        },
+        ACTOR,
+        { render: cleanRender() },
+      );
+      if (!activated.ok) throw new Error(`activate failed: ${activated.code}`);
+      expect(activated.versionNo).toBe(1);
+      clearLoadedTemplateMemo();
+
+      // Bind BAN A through cm23's service; BAN B stays NULL (Standard).
+      const cycleId = await newCycle("BM82VERIFY Wholesale Cycle");
+      const banA = await newBillingAccount(cycleId);
+      const banB = await newBillingAccount(cycleId);
+      const [banRow] = await sql<
+        { ref_party_role_id: string; last_modified: Date }[]
+      >`
+        SELECT ref_party_role_id, last_modified FROM billing.billing_account
+        WHERE billing_account_id = ${banA}`;
+      const bound = await setBillingAccountTemplate(
+        {
+          partyRoleId: banRow!.ref_party_role_id,
+          billingAccountId: banA,
+          typeId: wholesaleId,
+          lastModified: new Date(banRow!.last_modified),
+        },
+        ACTOR,
+      );
+      expect(bound).toMatchObject({ ok: true, value: { changed: true } });
+
+      const [standardCurrent] = await sql<
+        { bill_template_version_id: string }[]
+      >`
+        SELECT bill_template_version_id FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = ${STANDARD} AND kind = 'generated'
+          AND status = 'ACTIVE' AND NOT is_default`;
+
+      const runId = await newScheduledRun(cycleId);
+      expect((await triggerRun(runId, ACTOR, "2026-07-01")).ok).toBe(true);
+      const rows = await stamps(runId);
+      expect(rows.get(banA)).toMatchObject({
+        ref_bill_template_family_id: wholesaleId,
+        ref_bill_template_version_id: activated.versionId,
+      });
+      expect(rows.get(banB)).toMatchObject({
+        ref_bill_template_family_id: STANDARD,
+        ref_bill_template_version_id:
+          standardCurrent?.bill_template_version_id ?? "BTV00000002",
+      });
+
+      // The processor would have produced a trial bill per account; insert one
+      // (the invoice-render-fixtures shape) so each draft can render.
+      await sql`UPDATE billing.bill_run_account SET status = 'PROCESSED' WHERE ref_bill_run_id = ${runId}`;
+      for (const ban of [banA, banB]) {
+        await sql.begin(async (tx) => {
+          await tx`SET LOCAL session_replication_role = replica`;
+          const [cb] = await tx<{ customer_bill_id: string }[]>`
+            INSERT INTO billing.customer_bill
+              (ref_bill_run_id, ref_billing_account_id, period_partition, category, state,
+               billing_period_start, billing_period_end, subtotal, tax_total, total_amount,
+               payment_due_date)
+            VALUES (${runId}, ${ban}, '2026-06-01', 'trial', 'new',
+                    '2026-06-01', '2026-06-30', '150.00', '0.00', '150.00', '2026-07-15')
+            RETURNING customer_bill_id`;
+          await tx`
+            INSERT INTO billing.customer_bill_line
+              (ref_customer_bill_id, period_partition, line_no, source, ref_product_offering_id,
+               gross_amount, discount_amount, net_amount, grouping_key, currency, description,
+               quantity, unit)
+            VALUES (${cb!.customer_bill_id}, '2026-06-01', 1, 'RECURRING', 'POF-BM82',
+                    '150.00', '0.00', '150.00', 'POF-BM82', 'MYR', 'BM82 Fibre',
+                    '1.000000', 'EA')`;
+        });
+      }
+
+      const draftA = await buildInvoiceHtml({
+        runId,
+        banId: banA,
+        mode: "draft",
+      });
+      expect(draftA.resolved.generated.billTemplateVersionId).toBe(
+        activated.versionId,
+      );
+      expect(draftA.resolved.layout.layoutCode).toBe(created.layoutCode);
+      expect(draftA.html).toContain(WHOLESALE_MARKER);
+
+      const draftB = await buildInvoiceHtml({
+        runId,
+        banId: banB,
+        mode: "draft",
+      });
+      expect(draftB.resolved.layout.layoutCode).toBe("INVTPL-STD-A4");
+      expect(draftB.html).not.toContain(WHOLESALE_MARKER);
+    }, 180_000);
   },
 );

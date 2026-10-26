@@ -3,8 +3,9 @@
 // of `VersionHistoryTable` (square corners, sunken header). Name links to the
 // type's detail page; Status is the one `TemplateVersionStatusBadge` with the
 // derived type state, plus the Default chip on Standard. Retired rows are
-// hidden unless `showRetired`. No empty state: Standard always exists. The
-// "Bound BANs" column arrives with bm82 (cm23 adds the column it reads).
+// hidden unless `showRetired`. No empty state: Standard always exists. bm82
+// adds "Bound BANs" after the Status (Default chip) column: tabular numerals,
+// right-aligned, NULL BANs counted under Standard.
 
 import Link from "next/link";
 
@@ -14,7 +15,14 @@ import { formatDatetime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type { TemplateTypeListRow } from "@/types/billing";
 
-const HEADERS = ["Name", "Status", "Active version", "Active since"] as const;
+const HEADERS = [
+  "Name",
+  "Status",
+  "Bound BANs",
+  "Active version",
+  "Active since",
+] as const;
+const NUMERIC_HEADERS: ReadonlySet<string> = new Set(["Bound BANs"]);
 const MUTED = "text-[color:var(--text-muted)]";
 const DETAIL_BASE = "/administration/invoice-settings/invoice-template";
 
@@ -47,7 +55,10 @@ export function TemplateTypeList({
                   <th
                     key={label}
                     scope="col"
-                    className="px-4 py-3 text-left text-overline font-semibold tracking-wider text-muted-foreground uppercase"
+                    className={cn(
+                      "px-4 py-3 text-overline font-semibold tracking-wider text-muted-foreground uppercase",
+                      NUMERIC_HEADERS.has(label) ? "text-right" : "text-left",
+                    )}
                   >
                     {label}
                   </th>
@@ -76,6 +87,9 @@ export function TemplateTypeList({
                       status={row.status}
                       isDefault={row.isDefault}
                     />
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {row.boundBanCount}
                   </td>
                   <td className="px-4 py-2 font-mono text-mono tabular-nums">
                     {row.activeVersionNo === null ? (

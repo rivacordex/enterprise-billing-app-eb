@@ -3,9 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 // bm77-spec §11 — the pure parts of invoice template types: name
 // normalization, the derived code (DB-shaped, btf_code_format), and the one
 // derived status. The DB path (create type) is template-types-create.integration.test.ts.
+// bm82: countBoundBansByType's row mapping (its SQL is covered there too).
 vi.mock("@/db/client", () => ({ db: {} }));
 
+import type { Database } from "@/db/client";
 import {
+  countBoundBansByType,
   deriveTemplateTypeCode,
   deriveTemplateTypeStatus,
   normalizeTemplateTypeName,
@@ -60,5 +63,45 @@ describe("deriveTemplateTypeStatus", () => {
     expect(deriveTemplateTypeStatus({ retiredDatetime: null }, false)).toBe(
       "NOT_YET_USABLE",
     );
+  });
+});
+
+describe("countBoundBansByType (bm82)", () => {
+  function dbReturning(rows: { type_id: string | null; n: number }[]): {
+    db: Database;
+    execute: ReturnType<typeof vi.fn>;
+  } {
+    const execute = vi.fn().mockResolvedValue(rows);
+    return { db: { execute } as unknown as Database, execute };
+  }
+
+  it("maps each type to its count; NULL BANs arrive under Standard's id (the SQL coalesces)", async () => {
+    const { db, execute } = dbReturning([
+      { type_id: "BTF00000001", n: 5 },
+      { type_id: "BTF00000002", n: 2 },
+    ]);
+    const counts = await countBoundBansByType(db);
+    expect(counts).toEqual(
+      new Map([
+        ["BTF00000001", 5],
+        ["BTF00000002", 2],
+      ]),
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a NULL type row (no default family — impossible after 0046)", async () => {
+    const { db } = dbReturning([
+      { type_id: null, n: 3 },
+      { type_id: "BTF00000002", n: 1 },
+    ]);
+    expect(await countBoundBansByType(db)).toEqual(
+      new Map([["BTF00000002", 1]]),
+    );
+  });
+
+  it("is empty when there are no BANs", async () => {
+    const { db } = dbReturning([]);
+    expect((await countBoundBansByType(db)).size).toBe(0);
   });
 });

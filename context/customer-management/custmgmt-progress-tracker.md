@@ -18,7 +18,7 @@ Bind a BAN to a template **type** (`billing.billing_account.ref_bill_template_fa
 
 | Unit | Name                                                                                         | Boundary | Status          |
 | ---- | -------------------------------------------------------------------------------------------- | -------- | --------------- |
-| cm23 | Bind a BAN to a template type (`0054`, type-aware gate, panel select + Save, type labels, onboarding wording). **One merge with Billing bm82** | APP      | **Built, awaiting bm82** (2026-10-26) — do not merge alone |
+| cm23 | Bind a BAN to a template type (`0054`, type-aware gate, panel select + Save, type labels, onboarding wording). **One merge with Billing bm82** | APP      | **Built** (2026-10-26), with Billing bm82 in the same merge |
 | cm24 | Ship gate pointer, joint with Billing bm85                                                   | TESTS    | Not started     |
 
 **cm23 notes (2026-10-26):**
@@ -45,9 +45,7 @@ Bind a BAN to a template **type** (`billing.billing_account.ref_bill_template_fa
   - Unit (services, actions, validation): 87/0.
   - Component, app and guardrail: 105/1.
   - DB-gated on the disposable `ebill-test` DB: 26/0 across 7 files. Covers bind, onboarding template, summary, the journey, the column and the new `0054` migration suite; V7 atomicity is green, unedited.
-- **Expected red until bm82 lands in the same merge:**
-  - Guardrail 11 "old column gone": the remaining references are `listBanFamilies`, plus fixtures in `run-template-capture`, `draft-uses-run-stamps`, `posting-skips-null-template` and `invoice-template-journey` that write the dropped column.
-  - `run-template-capture` 6 failing and `trigger-run` 5 failing, both with 42703 from `listBanFamilies`.
+- **bm82 landed (2026-10-26):** capture reads the type column, the Billing fixtures moved to `ref_bill_template_family_id`; guardrail 11 is green (11/11) and the capture/trigger suites pass.
 - **Not edited (approval needed):** `ac04` (Accounts spec) still quotes the old wizard wording. acctmgmt docs need owner approval (workflow rules §10.6 item 5).
 
 ## Carried forward (not blocking)

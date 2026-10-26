@@ -34,9 +34,19 @@ vi.mock("@/db/repositories/billing/bill-template-family", () => ({
 vi.mock("@/services/billing/invoice-template/load", () => ({
   loadGeneratedFiles: vi.fn(),
 }));
+// bm82 — the Bound BANs count is its own raw-SQL read; the derived status
+// stays the real function.
+vi.mock(
+  "@/services/billing/invoice-template/template-types",
+  async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    countBoundBansByType: vi.fn(),
+  }),
+);
 
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
+import { countBoundBansByType } from "@/services/billing/invoice-template/template-types";
 import {
   getInvoiceTemplatePageData,
   listTemplateTypes,
@@ -305,7 +315,13 @@ describe("getInvoiceTemplatePageData: the working draft", () => {
 });
 
 describe("listTemplateTypes (bm77)", () => {
-  it("joins every type with its active settings version and derives the status", async () => {
+  it("joins every type with its active settings version, derives the status and (bm82) merges the Bound BANs count, default 0", async () => {
+    vi.mocked(countBoundBansByType).mockResolvedValue(
+      new Map([
+        [STANDARD, 3],
+        ["BTF00000003", 1],
+      ]),
+    );
     familyRepo.listAll.mockResolvedValue([
       STANDARD_FAMILY,
       {
@@ -342,6 +358,7 @@ describe("listTemplateTypes (bm77)", () => {
         activeVersionNo: 1,
         activeSince: new Date("2026-10-08T00:00:00Z"),
         retiredAt: null,
+        boundBanCount: 3,
       },
       {
         billTemplateFamilyId: "BTF00000002",
@@ -351,6 +368,7 @@ describe("listTemplateTypes (bm77)", () => {
         activeVersionNo: null,
         activeSince: null,
         retiredAt: null,
+        boundBanCount: 0,
       },
       {
         billTemplateFamilyId: "BTF00000003",
@@ -360,7 +378,9 @@ describe("listTemplateTypes (bm77)", () => {
         activeVersionNo: null,
         activeSince: null,
         retiredAt: new Date("2026-10-20T00:00:00Z"),
+        boundBanCount: 1,
       },
     ]);
+    expect(countBoundBansByType).toHaveBeenCalledTimes(1);
   });
 });

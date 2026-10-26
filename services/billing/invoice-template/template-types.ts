@@ -1,4 +1,7 @@
+import { sql } from "drizzle-orm";
+
 import { db } from "@/db/client";
+import type { Database } from "@/db/client";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import type {
@@ -154,4 +157,25 @@ export async function createTemplateType(
   throw new Error(
     `createTemplateType: no free code for "${name}" after ${MAX_ATTEMPTS} attempts`,
   );
+}
+
+// bm82 (CM guardrail 11 exemption) — BANs bound per type; NULL counted under Standard.
+// Every state, matching what a retire (bm83) must move. Standard is reached through
+// `is_default`, never an id literal (General rule 8).
+export async function countBoundBansByType(
+  db: Database,
+): Promise<Map<string, number>> {
+  const rows = await db.execute<{ type_id: string | null; n: number }>(sql`
+    SELECT COALESCE(ba.ref_bill_template_family_id, dft.bill_template_family_id) AS type_id,
+           count(*)::int AS n
+    FROM billing.billing_account ba
+    CROSS JOIN (
+      SELECT bill_template_family_id FROM billing.bill_template_family WHERE is_default
+    ) dft
+    GROUP BY 1`);
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.type_id !== null) counts.set(r.type_id, r.n);
+  }
+  return counts;
 }

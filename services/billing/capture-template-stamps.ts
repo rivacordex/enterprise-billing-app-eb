@@ -12,13 +12,14 @@ import type { CapturedTemplateStamp } from "@/types/billing";
 // triggered, so the flow never starts on an uncaptured account and an engine
 // failure rolls the stamps back with everything else.
 //
-// Set-based: one read of every BAN's family, the shared CSV/profile once, one
+// Set-based: one read of every BAN's type (`billing_account.ref_bill_template_family_id`;
+// NULL = Standard), via `listBanFamilies`, the shared CSV/profile once, one
 // generated-version resolution per DISTINCT family, one UPDATE (chunked, pruned
 // to the run's partition) — no per-BAN statement. Capture never fails the
 // trigger (General rule 3): a family with no usable version (none ACTIVE, or
 // retired, D55/D44), and a BAN whose family cannot be resolved (a corrupted
-// catalog, or a reference to a non-generated version), are stamped with a NULL
-// version — and a NULL family in the second case. The blocking
+// catalog with no default family), are stamped with a NULL version — and a
+// NULL family in the second case. The blocking
 // `template_versions_captured` approval check then stops the run (D58a), and
 // render and posting act on the NULL (bm66, bm67). EXCLUDED rows are never
 // stamped. Returns the stamps for the audit `afterData`.

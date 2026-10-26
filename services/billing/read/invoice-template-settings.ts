@@ -7,7 +7,10 @@ import {
   loadGeneratedFiles,
   type GeneratedVersionFile,
 } from "@/services/billing/invoice-template/load";
-import { deriveTemplateTypeStatus } from "@/services/billing/invoice-template/template-types";
+import {
+  countBoundBansByType,
+  deriveTemplateTypeStatus,
+} from "@/services/billing/invoice-template/template-types";
 import { isShowable } from "@/services/billing/invoice-template/version-visibility";
 import {
   InvoiceRenderError,
@@ -265,11 +268,13 @@ export async function getInvoiceTemplatePageData(
 }
 
 // bm77 — the type list: every type, the default first, with its derived
-// status and the settings version new invoices of that type use.
+// status, the settings version new invoices of that type use, and (bm82) the
+// number of BANs bound to it.
 export async function listTemplateTypes(): Promise<TemplateTypeListRow[]> {
-  const [types, activeByType] = await Promise.all([
+  const [types, activeByType, boundBans] = await Promise.all([
     billTemplateFamilyRepository.listAll(db),
     billTemplateVersionRepository.listActiveSettingsByFamily(db),
+    countBoundBansByType(db),
   ]);
   return types.map((t) => {
     const active = activeByType.get(t.billTemplateFamilyId) ?? null;
@@ -281,6 +286,7 @@ export async function listTemplateTypes(): Promise<TemplateTypeListRow[]> {
       activeVersionNo: active?.versionNo ?? null,
       activeSince: active?.activatedDatetime ?? null,
       retiredAt: t.retiredDatetime,
+      boundBanCount: boundBans.get(t.billTemplateFamilyId) ?? 0,
     };
   });
 }

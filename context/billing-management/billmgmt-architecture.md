@@ -260,7 +260,7 @@ Rules this module must never violate, **in addition to** the platform invariants
 
     A BAN never pins an exact version; the bill records the exact version used. _(D10, D46.)_
 
-    > **Amended 2026-10-25 (Invoice Template Types; planned).** The reference moves to **`billing_account.ref_bill_template_family_id`** (a type, FK; NULL = Standard), and the version column is dropped. Capture reads the type directly: NULL → Standard; a type → that type's ACTIVE `generated` version (NULL if it has none, Inv #58). The bill run still only reads the column. It is written by Customer Management's bind gate, and by Billing's retire bulk switch (Inv #66).
+    > **Amended 2026-10-25 (Invoice Template Types; built (bm82)).** The reference moves to **`billing_account.ref_bill_template_family_id`** (a type, FK; NULL = Standard), and the version column is dropped. Capture reads the type directly: NULL → Standard; a type → that type's ACTIVE `generated` version (NULL if it has none, Inv #58). The bill run still only reads the column. It is written by Customer Management's bind gate, and by Billing's retire bulk switch (Inv #66).
 55. **Capacity Utilised and Unutilised are derived from the bill line, never stored, and Utilised is never negative.** Per capacity line:
     - Unutilised = `gross_amount − rated_amount` (the commitment top-up);
     - Utilised = `net_amount − Unutilised` (= `rated_amount − discount_amount`, after discount);
@@ -293,7 +293,7 @@ Rules this module must never violate, **in addition to** the platform invariants
 59. **[CRITICAL] A layout version enters the app only by upload, and only through one write path.** `installLayoutPackage` is the only code that inserts or overwrites a layout DRAFT, its blobs and its settings DRAFT. The seed installs no layout rows beyond the fixed default versions, and no migration or script adds one. _(**Built (bm78–bm80):** `install-layout-package.ts` (bm78 create; bm80 the in-place overwrite via `overwriteLayoutDraft`, same row and `version_no`, new content-addressed folder, replaced blobs kept); `tests/guardrails/single-layout-writer.test.ts` (guardrail 68, `overwriteLayoutDraft` added in bm80), `tests/db/upload-layout-package.integration.test.ts`, `tests/db/overwrite-layout-draft.integration.test.ts`.)_
 60. **[CRITICAL] An upload is fully validated before anything is written, and a rejection writes nothing.** In order:
     1. the zip is read in memory (never written to disk), and its central directory is checked **before any inflate**: total uncompressed size ≤ 2 MiB, ≤ 64 entries, every name on a fixed allow-list (`manifest.json`, `shell.hbs`, `footer.hbs`, `sample-data.json`, `checksums.json`, the eight `partials/<key>.hbs`, `fonts/*.woff2`, `fonts/OFL.txt`, and an optional export `settings.json`, which has its own 64 KiB budget outside the size and entry caps: bm81 review, owner 2026-10-26)
-    2. `checksums.json` verifies every file
+    2. `checksums.json` lists and verifies every other file in the package, and nothing more. An app export's `settings.json` is the one file it never lists (Inv #68); a listed `settings.json` is `CHECKSUM_MISMATCH`
     3. the manifest passes `layoutManifestSchema`, its `layoutCode` equals the type's `layout_code`, and its `layoutVersion` equals the version to be written (except an app export carrying a valid `settings.json`)
     4. the `compliance.ts` rules pass (lint, hardening, visible-text compliance; Inv #63)
     5. strict compile and execute against the probe input and the sample data, with Payment on and off

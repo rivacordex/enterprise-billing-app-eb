@@ -33,14 +33,14 @@ function textArray(values: (string | null)[]) {
 // transaction. bm04 adds the per-account status read/write the stage handler
 // needs as the engine progresses.
 export const billRunAccountRepository = {
-  // bm65-spec §4 — the family each BAN is captured with: the family of the
-  // `generated` version its `ref_bill_template_version_id` names
-  // (follow-the-line, 0050), or the default family when that reference is
-  // NULL. This is the one sanctioned billing read of the BAN template
-  // reference (Inv #54, D46); posting never reads it. Review fix (§24e) —
-  // every BAN gets a row: a reference to a non-generated version, or a missing
-  // default family, yields a NULL family instead of silently defaulting or
-  // dropping the BAN, and capture stamps it with a NULL version.
+  // bm65-spec §4 / bm82 (Inv #54 amended) — reads the BAN's type column. NULL →
+  // the default family (Standard, reached through `is_default`, never an id
+  // literal; General rule 8). Never writes `billing_account`. This is the one
+  // sanctioned billing read of the BAN template reference (Inv #54, D46);
+  // posting never reads it. Every BAN gets a row: a missing default family
+  // (impossible after 0046) yields a NULL family, and capture stamps it with a
+  // NULL version. A retired or not-yet-usable type is kept as-is; capture's
+  // `resolveGeneratedForFamily` gives it a NULL version (bm82 D2).
   async listBanFamilies(
     tx: Database,
     banIds: string[],
@@ -53,14 +53,8 @@ export const billRunAccountRepository = {
         family_id: string | null;
       }>(sql`
         SELECT ba.billing_account_id AS ban_id,
-               CASE WHEN ba.ref_bill_template_version_id IS NULL
-                    THEN dft.bill_template_family_id
-                    ELSE btv.ref_bill_template_family_id
-               END AS family_id
+               COALESCE(ba.ref_bill_template_family_id, dft.bill_template_family_id) AS family_id
         FROM billing.billing_account ba
-        LEFT JOIN billing.bill_template_version btv
-          ON btv.bill_template_version_id = ba.ref_bill_template_version_id
-         AND btv.kind = 'generated'
         LEFT JOIN (
           SELECT bill_template_family_id FROM billing.bill_template_family WHERE is_default
         ) dft ON true

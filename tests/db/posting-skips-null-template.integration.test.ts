@@ -96,10 +96,11 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       }));
       siblings.push((await fx.postableBill({ label: "S2", runId: RUN })).banId);
       // Bind the BAN to the empty family by SQL (bypassing
-      // assertBindableTemplate, which accepts NULL only) and re-capture, as a
+      // assertBindableTemplate, which refuses a type with no ACTIVE version;
+      // bm82: the type column) and re-capture, as a
       // trigger would: the family has no ACTIVE version → NULL version (D55).
       await sql`
-        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000099'
+        UPDATE billing.billing_account SET ref_bill_template_family_id = 'BTF00000099'
         WHERE billing_account_id = ${nullBan}`;
       await captureTemplateStamps(fx.db, RUN, [nullBan], "2026-06-01");
 
