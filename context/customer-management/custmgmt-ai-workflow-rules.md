@@ -5,13 +5,13 @@ This document supplements `../ai-workflow-rules.md` (binding for all modules —
 **Companion docs (authoritative — do not restate or contradict):**
 
 - `custmgmt-project-overview.md` — product spec: user flows, two pages (View/Manage Customer), 3-table data model, lifecycle maps, in/out of scope, success criteria.
-- `custmgmt-architecture.md` — technical design deltas: `customer` schema, permission matrix (§4), 22 numbered **Module Invariants** (§6; #11–#18 belong to the delivered Invoice Template Binding update, #19–#22 to the planned Invoice Template Types update), update deltas (§7 delivered, §8 planned).
+- `custmgmt-architecture.md` — technical design deltas: `customer` schema, permission matrix (§4), 22 numbered **Module Invariants** (§6; #11–#18 belong to the delivered Invoice Template Binding update, #19–#22 to the delivered Invoice Template Types update, which replaced #18), update deltas (§7 and §8, both delivered).
 - `custmgmt-code-standards.md` — module coding conventions, file tree (§7), permission map (§8), guardrail tests (§9), and the Invoice Template Types deltas (§10, guardrails 11–13).
-- `custmgmt-update-overview.md` — **the authoritative design of the in-flight Invoice Template Types update, Customer Management part** (bind a BAN to a template type). Its owning design (types, upload, activation, retire, export, capture) is `context/billing-management/billmgmt-update-overview.md`. Workflow rules for it are in **§10** below.
+- The **Invoice Template Types update, Customer Management part** (cm23–cm24; bind a BAN to a template type) is **delivered (ship gate 2026-10-26, joint with Billing bm85)** and folded into `custmgmt-project-overview.md`. Its owning design (types, upload, activation, retire, export, capture) is Billing's. §10 below is its record. **No Customer Management update is in flight.**
 - The **Invoice Template Binding update** (cm17–cm22) is **delivered and signed off (2026-10-25)** and folded into `custmgmt-project-overview.md`. §9 below is its record; the rules §10 supersedes are listed at the top of §9.
 - `context/billing-management/billmgmt-ai-workflow-rules.md` — **binding on you** for every Billing-owned file this update touches.
 
-**Precedence** per the general doc: module architecture **Invariants** → overview → architecture → code-standards → this supplement → general workflow rules. For the Invoice Template Types update: Invariants #19–#22 (and Billing's #59–#68 for shared pieces) → `custmgmt-update-overview.md` for Customer Management screens and `billmgmt-update-overview.md` for everything Billing owns → architecture §8 → code-standards §10 → §10 of this supplement. **If the two update overviews disagree, stop and ask; never pick one yourself.** Planning documents (`_updatemodule-*.md`) are background only and never override these docs.
+**Precedence** per the general doc: module architecture **Invariants** → overview → architecture → code-standards → this supplement → general workflow rules. For the delivered Invoice Template Types code: Invariants #19–#22 (and Billing's #59–#68 for shared pieces) → `custmgmt-project-overview.md` for Customer Management screens and Billing's docs for everything Billing owns → architecture §8 → code-standards §10 → §10 of this supplement. **If the Customer Management and Billing docs disagree, stop and ask; never pick one yourself.** Planning documents (`_updatemodule-*.md`) are background only and never override these docs.
 
 ---
 
@@ -25,7 +25,7 @@ Read the following files in order before implementing or making any architectura
 4. `context/customer-management/custmgmt-code-standards.md` — implementation rules and conventions
 5. `context/customer-management/custmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach (this document)
 6. `context/customer-management/custmgmt-progress-tracker.md` — current phase, completed work, open questions, and next steps
-7. For Invoice Template Types work: `context/customer-management/custmgmt-update-overview.md`, then `context/billing-management/billmgmt-update-overview.md` (the owning design), then §10 of this document
+7. For work touching the delivered Invoice Template Types binding: `custmgmt-project-overview.md` › Invoice Template Types — Customer Management part, then `context/billing-management/billmgmt-project-overview.md` › Invoice Template Types (the owning design), then §10 of this document (the record)
 
 Update `context/customer-management/custmgmt-progress-tracker.md` after each meaningful implementation change.
 
@@ -44,7 +44,7 @@ If implementation changes the architecture, scope, or standards documented in th
 
 ## 2. Units — One at a Time
 
-> **Phase 1 — delivered (cm01–cm16).** The unit list below is the record of the original "simple customer" build and is kept for history. Do not rebuild these units. §9 records the delivered Invoice Template Binding update; the active rules for the Invoice Template Types update are **§10**. Item 4 (Nav) is also **superseded** by the platform navigation rule: pages register in `NAV_REGISTRY` (`lib/nav-registry.ts`) with a `NAV_ICONS` glyph, and a page the viewer cannot access is **hidden**, not greyed (`context/architecture.md` §2, general doc §7.6).
+> **Phase 1 — delivered (cm01–cm16).** The unit list below is the record of the original "simple customer" build and is kept for history. Do not rebuild these units. §9 records the delivered Invoice Template Binding update and **§10** the delivered Invoice Template Types update. Item 4 (Nav) is also **superseded** by the platform navigation rule: pages register in `NAV_REGISTRY` (`lib/nav-registry.ts`) with a `NAV_ICONS` glyph, and a page the viewer cannot access is **hidden**, not greyed (`context/architecture.md` §2, general doc §7.6).
 
 Deliver these as separate units, in this dependency order (general doc §2). Do not start a unit until the previous one passes verification (§8 below) and is committed.
 
@@ -232,7 +232,7 @@ Update, in the same change set as the code that changes them:
 1. **`custmgmt-architecture.md` §7 and Invariants #11–#18** — any change to a boundary, a guard, a storage fact or a rule.
 2. **`cm05` (View Customer spec) and `custmgmt-project-overview.md` *Features*** — together, when the tab shell and Accounts tab land (`cm05` requires both docs to move together).
 3. **`custmgmt-code-standards.md` §8 permission map and §7 file tree** — when the action, panel, tab components or the `accounts_view` sub-gate land.
-4. **`custmgmt-update-overview.md`** — move its **Status** from Planned to Delivered only after cm22 passes.
+4. **`custmgmt-update-overview.md`** (since folded into `custmgmt-project-overview.md` and deleted) — move its **Status** from Planned to Delivered only after cm22 passes.
 5. **`custmgmt-progress-tracker.md`** — after every unit.
 6. **Accounts-side docs (`ac04` onboarding spec, `acctmgmt-architecture.md` `billing_account` row)** — draft the change and get approval before editing (§9.6 item 7).
 
@@ -253,13 +253,15 @@ Run §8 and the general doc §8, then confirm each of these for the unit:
 
 ---
 
-## 10. Invoice Template Types update — workflow rules (2026-10-25; planned)
+## 10. Invoice Template Types update — workflow rules (2026-10-25)
+
+> **Delivered (cm23–cm24; ship gate 2026-10-26, joint with Billing bm85). This section is the record.** Do not rebuild cm23–cm24. **Carried forward — still binding for any later change to the delivered code:** §10.3 items 1–8 (Billing owns the type catalog; no onboarding choice, bulk-bind, version pin, new permission or audit event type), §10.5 item 1 (stop and ask), §10.6 items 3–4 (applied migrations including `0050` and `0054`; `components/ui/` and the auth files), and §10.8 items 1–3 and 5–8 (Standard is `NULL`, the gate locks, the boundary holds, locks and audit, live labels, permissions, onboarding atomic). **Spent with the ship gate:** §10.1 item 2 and §10.2 (the unit list), §10.4 (the cm23/bm82 merge), §10.6 items 1–2 and 5 (the update's file authorizations), §10.7 item 6 (the fold) and §10.8 item 4 (the migration check).
 
 These rules apply to the Customer Management part of the cross-module **Invoice Template Types** update: bind a BAN to a template type. They add to §1–§8 and to `../ai-workflow-rules.md`. They **supersede** the §9 items listed at the top of §9. Billing owns the update; its rules are in `billmgmt-ai-workflow-rules.md`, and both supplements bind you.
 
 ### 10.1 Operating approach
 
-1. **Cite an invariant or an overview section for every change:** Inv. #19–#22 (or #16–#17 as amended), a section of `custmgmt-update-overview.md`, or a code-standards §10 rule. For a shared piece, cite Billing's invariant (#59–#68). Never cite a planning document as the authority.
+1. **Cite an invariant or an overview section for every change:** Inv. #19–#22 (or #16–#17 as amended), a section of `custmgmt-project-overview.md` › Invoice Template Types — Customer Management part, or a code-standards §10 rule. For a shared piece, cite Billing's invariant (#59–#68). Never cite a planning document as the authority.
 2. **Do not write code before its spec exists.** Write the cm23 and cm24 specs (`cm00` Phase 3), each naming its Billing counterpart ("Counterpart: bm82" / "bm85") both ways.
 3. **Work cross-domain only through the named seams:**
    - Billing's **repositories** (`bill-template-family`, `bill-template-version`) for reads and `lockTemplateType`
@@ -305,8 +307,8 @@ Apply §4 and the general doc §3, plus:
    - a new result code
    - a copy change beyond `billing-account-messages.ts`
    - a type list that includes retired or not-yet-usable types
-2. **Never resolve a disagreement between `custmgmt-update-overview.md` and `billmgmt-update-overview.md` yourself.** Flag both citations.
-3. **Record every resolution** in the owning doc in the same change: the screen → `custmgmt-update-overview.md`; a rule → `custmgmt-architecture.md`; a convention → `custmgmt-code-standards.md`.
+2. **Never resolve a disagreement between `custmgmt-project-overview.md` (the folded Customer Management part) and `billmgmt-project-overview.md` › Invoice Template Types yourself.** Flag both citations.
+3. **Record every resolution** in the owning doc in the same change: the screen → `custmgmt-project-overview.md`; a rule → `custmgmt-architecture.md`; a convention → `custmgmt-code-standards.md`.
 
 ### 10.6 Protected files for this update
 
@@ -333,7 +335,7 @@ Update in the same change set as the code:
 3. **`custmgmt-ui-context.md` §10:** the label, panel and onboarding tokens.
 4. **`cm05` (View Customer spec) and `ac04` (onboarding spec):** wherever they quote the old label, Reset button or wizard wording.
 5. **`custmgmt-progress-tracker.md`:** after every unit.
-6. **At the ship gate:** fold `custmgmt-update-overview.md` into `custmgmt-project-overview.md` and delete the update overview, in the same change as Billing's fold. Invariant **#18** is then marked replaced by #19–#21, and guardrail **10** by guardrail 11.
+6. **At the ship gate:** fold the update overview (`custmgmt-update-overview.md`) into `custmgmt-project-overview.md` and delete it, in the same change as Billing's fold. Invariant **#18** is then marked replaced by #19–#21, and guardrail **10** by guardrail 11. _(Done by cm24, 2026-10-26.)_
 
 ### 10.8 Verification checklist — before the next unit
 

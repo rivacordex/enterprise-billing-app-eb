@@ -1,4 +1,5 @@
 import { db } from "@/db/client";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import { getInvoiceProfile } from "@/services/billing/invoice-profile/read-profile";
 import {
@@ -74,6 +75,15 @@ export class PreviewBillNotFoundError extends Error {
   constructor(billId: string) {
     super(`No bill ${billId} to preview.`);
     this.name = "PreviewBillNotFoundError";
+  }
+}
+
+// bm83 (Inv #67, D7) — a retired type has no live preview, whatever the
+// source and the `draft` flag (its open DRAFT pair stays, unreachable).
+export class TemplateTypeRetiredError extends Error {
+  constructor(familyId: string) {
+    super(`Invoice template type ${familyId} is retired.`);
+    this.name = "TemplateTypeRetiredError";
   }
 }
 
@@ -197,6 +207,11 @@ export async function previewInvoiceTemplate({
   outline = false,
   draft = false,
 }: PreviewInvoiceTemplateParams): Promise<PreviewInvoiceTemplateResult> {
+  const family = await billTemplateFamilyRepository.findById(db, familyId);
+  if (family?.retiredDatetime != null) {
+    throw new TemplateTypeRetiredError(familyId);
+  }
+
   if (source === "sample") {
     const { html, templateLabel } = await previewSample(
       structure,

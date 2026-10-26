@@ -92,6 +92,20 @@ describe("InvoicePreviewFrame", () => {
     fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
+
+  it("bm83 — a TEMPLATE_TYPE_RETIRED preview shows the retired-type message", () => {
+    render(
+      <InvoicePreviewFrame
+        html={null}
+        status="error"
+        error={{ code: "TEMPLATE_TYPE_RETIRED" }}
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This invoice template type has been retired, so it can no longer be edited or previewed.",
+    );
+  });
 });
 
 describe("TemplateVersionStatusBadge", () => {

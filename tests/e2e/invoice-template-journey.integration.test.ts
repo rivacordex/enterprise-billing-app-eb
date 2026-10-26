@@ -1,4 +1,5 @@
 import { BlobServiceClient } from "@azure/storage-blob";
+import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import postgres from "postgres";
 import type postgresjs from "postgres";
@@ -44,6 +45,21 @@ import type * as CaptureStamps from "@/services/billing/capture-template-stamps"
 import type * as PreviewAction from "@/actions/billing/invoice-settings/preview-invoice-template.action";
 import type * as DraftInvoiceRoute from "@/app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/route";
 import type * as FlowDoubleFixtures from "@/tests/db/helpers/billrun-flow-double-fixtures";
+import type * as CreateTemplateTypeAction from "@/actions/billing/invoice-settings/create-template-type.action";
+import type * as UploadLayoutPackageAction from "@/actions/billing/invoice-settings/upload-layout-package.action";
+import type * as RetireTemplateTypeAction from "@/actions/billing/invoice-settings/retire-template-type.action";
+import type * as ListRerunTemplateChangesAction from "@/actions/billing/list-rerun-template-changes.action";
+import type * as SetBanTemplateAction from "@/actions/accounts/set-billing-account-template";
+import type * as ListCustomerBillingAccounts from "@/services/accounts/list-customer-billing-accounts";
+import type * as CustomerAccountsSummary from "@/services/accounts/get-customer-accounts-summary";
+import type * as InvoiceTemplateSettingsRead from "@/services/billing/read/invoice-template-settings";
+import type * as ExportTemplateVersion from "@/services/billing/invoice-template/export-template-version";
+import type * as TemplateTypes from "@/services/billing/invoice-template/template-types";
+import type * as UploadLayoutPackage from "@/services/billing/invoice-template/upload-layout-package";
+import type * as Preview from "@/services/billing/invoice-template/preview";
+import type * as LayoutPackageFixtures from "@/tests/helpers/layout-package";
+import type * as BillTemplateVersionRepo from "@/db/repositories/billing/bill-template-version";
+import type * as DbClient from "@/db/client";
 import type * as PolygonFixtures from "@/tests/db/helpers/capacity-polygon-fixtures";
 import { INVOICE_USAGE_ROW_LIMIT } from "@/types/billing";
 import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixtures";
@@ -140,6 +156,20 @@ vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({ get: () => undefined })),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// bm85 step 8 — the restore runs on a SECOND fresh database: while
+// `typesDb.override` is set, every service reads and writes it. Step 8 sets
+// it inside a try/finally that clears it, so no other step or journey ever
+// sees it; for them this mock is a pass-through to the real client.
+const typesDb = vi.hoisted(() => ({ override: undefined as unknown }));
+vi.mock("@/db/client", async (importOriginal) => {
+  const actual = await importOriginal<object & { db: unknown }>();
+  return {
+    ...actual,
+    get db() {
+      return typesDb.override ?? actual.db;
+    },
+  };
+});
 
 // One account's five processing stages as the flow runs them: the flow's own
 // extracted Collection/Aggregation/Verification SQL, each stage signalled
@@ -194,6 +224,53 @@ async function processAccountOnFlowSql(
   expect((await signal("taxation", ban, attempt)).status).toBe(200);
   await runVerification(sql, { runId, ban, attempt, businessTimezone });
   expect((await signal("verification", ban, attempt)).status).toBe(200);
+}
+
+// bm73/bm85 — one stage signal for `runId` through the real M2M route, as
+// the flow sends it.
+async function signalStage(
+  stageComplete: Services["stageComplete"],
+  runId: string,
+  stage: string,
+  ban: string,
+  attempt: number,
+): Promise<{ status: number }> {
+  const response = await stageComplete(
+    new Request(
+      `http://localhost/api/billrun/${runId}/stage/${stage}/complete`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${SERVICE_TOKEN}`,
+        },
+        body: JSON.stringify({ ban_id: ban, attempt, status: "DONE" }),
+      },
+    ),
+    { params: Promise.resolve({ runId, stage }) },
+  );
+  return { status: response.status };
+}
+
+// bm73/bm85 — a run's captured template stamps, by BAN.
+async function runStampsOf(sql: postgresjs.Sql, runId: string) {
+  const rows = await sql<
+    {
+      ref_billing_account_id: string;
+      status: string;
+      ref_bill_template_family_id: string | null;
+      ref_bill_template_version_id: string | null;
+      ref_invoice_profile_version: number | null;
+      ref_csv_template_version_id: string | null;
+      template_captured_at: string | null;
+    }[]
+  >`
+    SELECT ref_billing_account_id, status, ref_bill_template_family_id,
+           ref_bill_template_version_id, ref_invoice_profile_version,
+           ref_csv_template_version_id, template_captured_at::text
+    FROM billing.bill_run_account
+    WHERE ref_bill_run_id = ${runId} ORDER BY ref_billing_account_id`;
+  return new Map(rows.map((r) => [r.ref_billing_account_id, r]));
 }
 
 // Chromium PDFs write one `/Type /Page` dictionary per page.
@@ -929,46 +1006,22 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
     let polyBan = "";
     let seededFootnote: readonly string[] = [];
 
-    async function signal(
+    function signal(
       stage: string,
       ban: string,
       attempt: number,
     ): Promise<{ status: number }> {
-      const response = await svc.stageComplete(
-        new Request(
-          `http://localhost/api/billrun/${run.bill_run_id}/stage/${stage}/complete`,
-          {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              authorization: `Bearer ${SERVICE_TOKEN}`,
-            },
-            body: JSON.stringify({ ban_id: ban, attempt, status: "DONE" }),
-          },
-        ),
-        { params: Promise.resolve({ runId: run.bill_run_id, stage }) },
+      return signalStage(
+        svc.stageComplete,
+        run.bill_run_id,
+        stage,
+        ban,
+        attempt,
       );
-      return { status: response.status };
     }
 
-    async function runStamps(runId: string) {
-      const rows = await sql<
-        {
-          ref_billing_account_id: string;
-          status: string;
-          ref_bill_template_family_id: string | null;
-          ref_bill_template_version_id: string | null;
-          ref_invoice_profile_version: number | null;
-          ref_csv_template_version_id: string | null;
-          template_captured_at: string | null;
-        }[]
-      >`
-        SELECT ref_billing_account_id, status, ref_bill_template_family_id,
-               ref_bill_template_version_id, ref_invoice_profile_version,
-               ref_csv_template_version_id, template_captured_at::text
-        FROM billing.bill_run_account
-        WHERE ref_bill_run_id = ${runId} ORDER BY ref_billing_account_id`;
-      return new Map(rows.map((r) => [r.ref_billing_account_id, r]));
+    function runStamps(runId: string) {
+      return runStampsOf(sql, runId);
     }
 
     async function runStatus(runId: string): Promise<string | undefined> {
@@ -1658,5 +1711,911 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         ref_bill_template_version_id: "BTV00000098",
       });
     }, 300_000);
+  },
+);
+
+// bm85-spec §Design "The journey" (with CM cm24 §3.2) — the Invoice Template
+// Types update end to end on its own FRESH database (`db:setup` + the `ci`
+// sample BANs), through the services and actions as the journeys above:
+//
+//   1. a MANAGER creates "Wholesale", uploads an editor export of
+//      `INVTPL-WHOLESALE` v1 (the real gate, Chromium probe included),
+//      previews the DRAFT pair and activates it: Usable v1, one audit row per
+//      step (criterion 1);
+//   2. RevOps binds BAN A to Wholesale on Manage Customer: one write, one
+//      BILLING_ACCOUNT_TEMPLATE_CHANGED, "Wholesale · v1", Bound BANs 1
+//      (criteria 1, 10; CM 2, 7);
+//   3. the ci run: A stamped Wholesale v1, the NULL BANs Standard; A's draft
+//      renders through `INVTPL-WHOLESALE` (criterion 1; CM 10);
+//   4. Wholesale retired to Standard: A → NULL with the reason, no BAN left,
+//      the version rows unchanged (criterion 8; CM 8), then cm24's half: both
+//      label reads show Standard, a pre-retire `lastModified` is CONFLICT, and
+//      a bind to the retired type is TEMPLATE_NOT_BINDABLE;
+//   5. the rerun warning lists "Wholesale → Standard" for A; the rerun
+//      re-stamps Standard and the draft renders on Standard;
+//   6. a second user approves, the run posts: A's bill carries Standard's
+//      stamps; Wholesale's page still shows its history and exports;
+//   7. an editor export of `INVTPL-STD-A4` v2 uploaded to Standard and
+//      activated: a new run captures every NULL BAN on settings v2 and renders
+//      on layout v2; no billing_account row changes; Standard v1's rows are
+//      byte-identical (criterion 2);
+//   8. Wholesale's last pair exported and restored into a SECOND fresh
+//      database's empty "Wholesale": byte-identical layout files, the same
+//      settings, DRAFT v1, and the same preview HTML for the same input
+//      (criterion 7).
+//
+// Step 9 (overwrite + stale preview in two browser sessions) and one pass of
+// steps 1–3 with a real editor export are run manually (bm85 §3).
+const TYPES_WHOLESALE_MARKER = "bm85 Wholesale layout";
+const TYPES_STANDARD_V2_MARKER = "bm85 Standard v2 layout";
+const TYPES_BAN_A_NAME = "_SAMPLE_ Billing Account 1 (Recurring + Usage)";
+const TYPES_RUN_STD_V2 = "BRN09085001";
+const TYPES_RESTORE_SUFFIX = "_bm85_restore";
+
+type TypesServices = Pick<
+  typeof CreateTemplateTypeAction,
+  "createTemplateTypeAction"
+> &
+  Pick<typeof UploadLayoutPackageAction, "uploadLayoutPackageAction"> &
+  Pick<typeof RetireTemplateTypeAction, "retireTemplateTypeAction"> &
+  Pick<
+    typeof ListRerunTemplateChangesAction,
+    "listRerunTemplateChangesAction"
+  > &
+  Pick<typeof SetBanTemplateAction, "setBillingAccountTemplateAction"> &
+  Pick<typeof ListCustomerBillingAccounts, "listCustomerBillingAccounts"> &
+  Pick<typeof CustomerAccountsSummary, "getCustomerAccountsSummary"> &
+  Pick<
+    typeof InvoiceTemplateSettingsRead,
+    "listTemplateTypes" | "getInvoiceTemplatePageData"
+  > &
+  Pick<typeof ExportTemplateVersion, "exportTemplateVersion"> &
+  Pick<typeof TemplateTypes, "createTemplateType"> &
+  Pick<typeof UploadLayoutPackage, "uploadLayoutPackage"> &
+  Pick<typeof Preview, "previewInvoiceTemplate"> &
+  Pick<typeof Load, "loadLayoutDraft"> &
+  Pick<typeof CaptureStamps, "captureTemplateStamps">;
+
+describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
+  "bm85 + cm24 — the Invoice Template Types journey on a fresh database",
+  () => {
+    let sql: postgresjs.Sql;
+    let restoreSql: postgresjs.Sql | undefined;
+    let restoreDbName = "";
+    let fx: InvoiceRenderFixtures;
+    let svc: Services;
+    let types: TypesServices;
+    let rerunRun: (typeof RerunRun)["rerunRun"];
+    let previewAction: (typeof PreviewAction)["previewInvoiceTemplateAction"];
+    let pkg: typeof LayoutPackageFixtures;
+    let versionRepo: (typeof BillTemplateVersionRepo)["billTemplateVersionRepository"];
+    let appDb: (typeof DbClient)["db"];
+    const service = blobConnection
+      ? BlobServiceClient.fromConnectionString(blobConnection)
+      : null;
+
+    let adminId = "";
+    let adminName = "";
+    let approverId = "";
+    let run: Phase3Run;
+    let wholesaleId = "";
+    let wholesaleSettingsId = "";
+    let wholesalePreviewHtml = "";
+    let wholesaleExport: Uint8Array | null = null;
+    let banA = "";
+    let partyRoleA = "";
+    let preRetireLastModified: Date | null = null;
+    let standardName = "";
+
+    function signal(
+      stage: string,
+      ban: string,
+      attempt: number,
+    ): Promise<{ status: number }> {
+      return signalStage(
+        svc.stageComplete,
+        run.bill_run_id,
+        stage,
+        ban,
+        attempt,
+      );
+    }
+
+    function runStamps(runId: string) {
+      return runStampsOf(sql, runId);
+    }
+
+    async function auditCount(eventType: string): Promise<number> {
+      const [row] = await sql<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM core.audit_log WHERE event_type = ${eventType}`;
+      return row!.n;
+    }
+
+    // The type's settings DRAFT and its token, as the page loads them.
+    async function settingsDraft(familyId: string) {
+      const draft = await versionRepo.findDraft(appDb, {
+        kind: "generated",
+        familyId,
+      });
+      if (!draft) throw new Error(`no settings DRAFT for ${familyId}`);
+      return draft;
+    }
+
+    async function versionRows(familyId: string) {
+      return sql`
+        SELECT * FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = ${familyId}
+        ORDER BY bill_template_version_id`;
+    }
+
+    // Upload a package through the action, as the dialog does (FormData).
+    async function uploadPackage(
+      familyId: string,
+      zip: Uint8Array,
+      name: string,
+    ) {
+      const form = new FormData();
+      form.set("familyId", familyId);
+      form.set(
+        "file",
+        new File([new Uint8Array(zip)], name, { type: "application/zip" }),
+      );
+      return types.uploadLayoutPackageAction(form);
+    }
+
+    async function activatePair(familyId: string, note: string) {
+      const draft = await settingsDraft(familyId);
+      const activated = await svc.activateTemplateAction({
+        draftId: draft.billTemplateVersionId,
+        expectedDraftToken: draft.token,
+        changeNote: note,
+        familyId,
+      });
+      if (!activated.ok) throw new Error(`activate: ${activated.code}`);
+      svc.clearLoadedTemplateMemo();
+      return activated;
+    }
+
+    async function banRow(banId: string) {
+      const accounts = await types.listCustomerBillingAccounts(partyRoleA);
+      if (!accounts.onboarded)
+        throw new Error("BAN A's customer not onboarded");
+      const row = accounts.bans.find((b) => b.billingAccountId === banId);
+      if (!row) throw new Error(`no panel row for ${banId}`);
+      return row;
+    }
+
+    // A short-lived superuser connection (BOOTSTRAP_DATABASE_URL, which
+    // `runScript` already pins to this throwaway server) for database DDL.
+    async function withBootstrap<T>(
+      fn: (superuser: postgresjs.Sql) => Promise<T>,
+    ): Promise<T> {
+      const superuser = postgres(bootstrapUrl as string, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        return await fn(superuser);
+      } finally {
+        await superuser.end();
+      }
+    }
+
+    // Every `invoice-templates` blob under `prefix`; returns how many.
+    async function deleteTemplateBlobs(prefix: string): Promise<number> {
+      const templates = service!.getContainerClient("invoice-templates");
+      let n = 0;
+      for await (const b of templates.listBlobsFlat({ prefix })) {
+        await templates.deleteBlob(b.name).catch(() => undefined);
+        n++;
+      }
+      return n;
+    }
+
+    async function templateBlobCount(prefix: string): Promise<number> {
+      let n = 0;
+      for await (const _ of service!
+        .getContainerClient("invoice-templates")
+        .listBlobsFlat({ prefix })) {
+        n++;
+      }
+      return n;
+    }
+
+    function wholesaleZip() {
+      return pkg.buildLayoutPackage({
+        layoutCode: "INVTPL-WHOLESALE",
+        layoutVersion: 1,
+        edit: (f) =>
+          pkg.replaceInFile(
+            f,
+            "partials/header.hbs",
+            "<h1>Invoice</h1>",
+            `<h1>Invoice</h1><div class="bm85-marker">${TYPES_WHOLESALE_MARKER}</div>`,
+          ),
+      }).zip;
+    }
+
+    beforeAll(async () => {
+      assertTestDatabaseUrl(databaseUrl as string);
+      // The setup deletes blobs: throwaway Azurite only.
+      assertTestBlobConnection(blobConnection as string);
+      process.env.BILLRUN_APP_TOKEN = SERVICE_TOKEN;
+      sql = postgres(databaseUrl as string, { max: 5, onnotice: () => {} });
+
+      await freshDatabase(sql, service!);
+      // Wholesale's layout blobs from an earlier run (content-addressed, so a
+      // re-run would otherwise adopt them). `freshDatabase` already purged
+      // every generated version but the seeded `v1/`.
+      await deleteTemplateBlobs("layouts/INVTPL-WHOLESALE/");
+      runScript("db/seeds/sample/seed-billrun-sample.ts", {
+        SAMPLE_SEED_PROFILE: "ci",
+      });
+
+      svc = {
+        ...(await import("@/services/billing/materialize-runs")),
+        ...(await import("@/services/billing/trigger-run")),
+        ...(await import("@/services/billing/approve-run")),
+        ...(await import("@/services/billing/post-run")),
+        ...(await import("@/services/billing/read/get-stored-invoice")),
+        ...(await import("@/services/billing/read/get-posting-progress")),
+        ...(await import("@/services/billing/render-invoice-template")),
+        ...(await import("@/services/billing/render-invoice")),
+        ...(await import("@/services/billing/invoice-template/invoice-csv")),
+        ...(await import("@/services/billing/invoice-template/load")),
+        computeChargeChecksum: (
+          await import("@/db/repositories/billing/customer-bill-line.repository")
+        ).customerBillLineRepository.computeChargeChecksum,
+        stageComplete: (
+          await import("@/app/api/billrun/[runId]/stage/[stage]/complete/route")
+        ).POST,
+        storedInvoiceGet: (
+          await import("@/app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/route")
+        ).GET,
+        ...(await import("@/actions/billing/invoice-settings/save-template-draft.action")),
+        ...(await import("@/actions/billing/invoice-settings/activate-template.action")),
+        ...(await import("@/actions/billing/invoice-settings/save-profile-draft.action")),
+        ...(await import("@/actions/billing/invoice-settings/upload-logo.action")),
+        ...(await import("@/actions/billing/invoice-settings/activate-profile.action")),
+      };
+      types = {
+        ...(await import("@/actions/billing/invoice-settings/create-template-type.action")),
+        ...(await import("@/actions/billing/invoice-settings/upload-layout-package.action")),
+        ...(await import("@/actions/billing/invoice-settings/retire-template-type.action")),
+        ...(await import("@/actions/billing/list-rerun-template-changes.action")),
+        ...(await import("@/actions/accounts/set-billing-account-template")),
+        ...(await import("@/services/accounts/list-customer-billing-accounts")),
+        ...(await import("@/services/accounts/get-customer-accounts-summary")),
+        ...(await import("@/services/billing/read/invoice-template-settings")),
+        ...(await import("@/services/billing/invoice-template/export-template-version")),
+        ...(await import("@/services/billing/invoice-template/template-types")),
+        ...(await import("@/services/billing/invoice-template/upload-layout-package")),
+        ...(await import("@/services/billing/invoice-template/preview")),
+        ...(await import("@/services/billing/invoice-template/load")),
+        ...(await import("@/services/billing/capture-template-stamps")),
+      };
+      ({ rerunRun } = await import("@/services/billing/rerun-run"));
+      ({ previewInvoiceTemplateAction: previewAction } =
+        await import("@/actions/billing/invoice-settings/preview-invoice-template.action"));
+      pkg = await import("@/tests/helpers/layout-package");
+      ({ billTemplateVersionRepository: versionRepo } =
+        await import("@/db/repositories/billing/bill-template-version"));
+      ({ db: appDb } = await import("@/db/client"));
+      svc.clearLoadedTemplateMemo();
+
+      const [admin] = await sql<{ user_id: string; user_name: string }[]>`
+        SELECT user_id, user_name FROM core.appuser WHERE user_email = ${ADMIN_EMAIL}`;
+      adminId = admin!.user_id;
+      adminName = admin!.user_name;
+      session.userId = adminId;
+      approverId = crypto.randomUUID();
+      await sql`
+        INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
+        VALUES (${approverId}, 'BM85 Approver', 'bm85-approver@example.invalid', 'LOCAL', 'ACTIVE')`;
+      const [std] = await sql<{ name: string }[]>`
+        SELECT name FROM billing.bill_template_family WHERE is_default`;
+      standardName = std!.name;
+
+      const { setupInvoiceRenderFixtures } =
+        await import("@/tests/db/helpers/invoice-render-fixtures");
+      fx = await setupInvoiceRenderFixtures(sql, "BM85", { reset: false });
+    }, 900_000);
+
+    afterAll(async () => {
+      typesDb.override = undefined;
+      svc?.clearLoadedTemplateMemo();
+      if (restoreSql) await restoreSql.end().catch(() => undefined);
+      if (restoreDbName) {
+        await withBootstrap((superuser) =>
+          superuser.unsafe(
+            `DROP DATABASE IF EXISTS "${restoreDbName}" WITH (FORCE)`,
+          ),
+        ).catch(() => undefined);
+      }
+      if (service) {
+        await purgeInvoiceBlobs(service).catch(() => undefined);
+        await deleteTemplateBlobs("layouts/INVTPL-WHOLESALE/");
+        await deleteTemplateBlobs("layouts/INVTPL-STD-A4/v2-");
+      }
+      if (sql) {
+        await dropAllSchemas(sql).catch(() => undefined);
+        await sql.end();
+      }
+    }, 120_000);
+
+    it("step 1 — create Wholesale, upload an editor export of INVTPL-WHOLESALE v1, preview the DRAFT pair, activate: Usable v1, one audit row per step (criterion 1)", async () => {
+      const created = await types.createTemplateTypeAction({
+        name: "Wholesale",
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      wholesaleId = created.typeId;
+      const [family] = await sql<{ code: string; layout_code: string }[]>`
+        SELECT code, layout_code FROM billing.bill_template_family
+        WHERE bill_template_family_id = ${wholesaleId}`;
+      expect(family).toEqual({
+        code: "WHOLESALE",
+        layout_code: "INVTPL-WHOLESALE",
+      });
+
+      const uploaded = await uploadPackage(
+        wholesaleId,
+        wholesaleZip(),
+        "INVTPL-WHOLESALE-v1.zip",
+      );
+      expect(uploaded).toMatchObject({ ok: true, versionNo: 1 });
+      const drafts = await sql<{ kind: string; status: string }[]>`
+        SELECT kind, status FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = ${wholesaleId} ORDER BY kind`;
+      expect(drafts).toEqual([
+        { kind: "generated", status: "DRAFT" },
+        { kind: "layout", status: "DRAFT" },
+      ]);
+
+      const draft = await settingsDraft(wholesaleId);
+      const draftPreview = await previewAction({
+        familyId: wholesaleId,
+        structure: draft.structure,
+        source: "sample",
+        draft: true,
+      });
+      expect(draftPreview.ok).toBe(true);
+      if (draftPreview.ok) {
+        expect(draftPreview.html).toContain(TYPES_WHOLESALE_MARKER);
+      }
+
+      const activated = await activatePair(wholesaleId, "Wholesale v1");
+      wholesaleSettingsId = activated.versionId;
+      const active = await sql<{ kind: string; status: string }[]>`
+        SELECT kind, status FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = ${wholesaleId} ORDER BY kind`;
+      expect(active).toEqual([
+        { kind: "generated", status: "ACTIVE" },
+        { kind: "layout", status: "ACTIVE" },
+      ]);
+      const listed = (await types.listTemplateTypes()).find(
+        (t) => t.billTemplateFamilyId === wholesaleId,
+      );
+      expect(listed).toMatchObject({ status: "USABLE", activeVersionNo: 1 });
+
+      // The version in use, previewed for step 8's restore comparison.
+      const activePreview = await previewAction({
+        familyId: wholesaleId,
+        structure: draft.structure,
+        source: "sample",
+      });
+      expect(activePreview.ok).toBe(true);
+      if (activePreview.ok) wholesalePreviewHtml = activePreview.html;
+
+      expect(await auditCount("INVOICE_TEMPLATE_TYPE_CREATED")).toBe(1);
+      expect(await auditCount("INVOICE_TEMPLATE_LAYOUT_UPLOADED")).toBe(1);
+      expect(await auditCount("INVOICE_TEMPLATE_ACTIVATED")).toBe(1);
+    }, 300_000);
+
+    it("step 2 — RevOps binds BAN A to Wholesale: one write and one audit row, the label reads 'Wholesale · v1', Bound BANs 1 (criteria 1, 10; CM 2, 7)", async () => {
+      const [ban] = await sql<
+        { billing_account_id: string; ref_party_role_id: string }[]
+      >`
+        SELECT billing_account_id, ref_party_role_id FROM billing.billing_account
+        WHERE name = ${TYPES_BAN_A_NAME}`;
+      banA = ban!.billing_account_id;
+      partyRoleA = ban!.ref_party_role_id;
+      const before = await banRow(banA);
+      expect(before.refBillTemplateFamilyId).toBeNull();
+      const rolesBefore = await sql`
+        SELECT last_modified_datetime FROM customer.party_role
+        WHERE party_role_id = ${partyRoleA}`;
+
+      const bound = await types.setBillingAccountTemplateAction({
+        partyRoleId: partyRoleA,
+        billingAccountId: banA,
+        typeId: wholesaleId,
+        lastModified: before.lastModified.toISOString(),
+      });
+      expect(bound).toMatchObject({ ok: true, value: { changed: true } });
+
+      const after = await banRow(banA);
+      expect(after.refBillTemplateFamilyId).toBe(wholesaleId);
+      expect(after.templateLabel).toMatchObject({
+        kind: "TYPE",
+        text: "Wholesale · v1",
+      });
+      preRetireLastModified = after.lastModified;
+      expect(await auditCount("BILLING_ACCOUNT_TEMPLATE_CHANGED")).toBe(1);
+      // CM Inv. #17 — the BAN's own lock only.
+      expect(
+        await sql`
+          SELECT last_modified_datetime FROM customer.party_role
+          WHERE party_role_id = ${partyRoleA}`,
+      ).toEqual(rolesBefore);
+      const listed = (await types.listTemplateTypes()).find(
+        (t) => t.billTemplateFamilyId === wholesaleId,
+      );
+      expect(listed?.boundBanCount).toBe(1);
+    }, 120_000);
+
+    it("step 3 — the ci run stamps A with Wholesale v1 and the NULL BANs with Standard; A's draft renders through INVTPL-WHOLESALE (criterion 1; CM 10)", async () => {
+      await svc.materializeDueRuns();
+      const [found] = await sql<Phase3Run[]>`
+        SELECT r.bill_run_id, r.period_start::text, r.period_end::text,
+               r.scheduled_run_date::text
+        FROM billing.bill_run r
+        JOIN billing.bill_cycle c ON c.bill_cycle_id = r.ref_bill_cycle_id
+        WHERE r.status = 'SCHEDULED' AND c.name = ${DEFAULT_BILL_CYCLE_NAME}`;
+      expect(found).toBeDefined();
+      run = found!;
+      expect(
+        (await svc.triggerRun(run.bill_run_id, adminId, run.scheduled_run_date))
+          .ok,
+      ).toBe(true);
+
+      const stamps = await runStamps(run.bill_run_id);
+      expect(stamps.get(banA)).toMatchObject({
+        ref_bill_template_family_id: wholesaleId,
+        ref_bill_template_version_id: wholesaleSettingsId,
+      });
+      const pending = [...stamps.values()].filter(
+        (s) => s.status !== "EXCLUDED",
+      );
+      for (const s of pending) {
+        if (s.ref_billing_account_id === banA) continue;
+        expect(s).toMatchObject({
+          ref_bill_template_family_id: "BTF00000001",
+          ref_bill_template_version_id: "BTV00000002",
+        });
+      }
+      for (const s of pending) {
+        await processAccountOnFlowSql(
+          sql,
+          signal,
+          run,
+          s.ref_billing_account_id,
+          1,
+        );
+      }
+
+      const draftA = await svc.buildInvoiceHtml({
+        runId: run.bill_run_id,
+        banId: banA,
+        mode: "draft",
+      });
+      expect(draftA.resolved.layout.layoutCode).toBe("INVTPL-WHOLESALE");
+      expect(draftA.html).toContain(TYPES_WHOLESALE_MARKER);
+      const other = pending.find((s) => s.ref_billing_account_id !== banA)!;
+      const draftOther = await svc.buildInvoiceHtml({
+        runId: run.bill_run_id,
+        banId: other.ref_billing_account_id,
+        mode: "draft",
+      });
+      expect(draftOther.resolved.layout.layoutCode).toBe("INVTPL-STD-A4");
+      expect(draftOther.html).not.toContain(TYPES_WHOLESALE_MARKER);
+    }, 600_000);
+
+    it("step 4 — Wholesale retired to Standard: A → NULL with the reason, no BAN left, the version rows unchanged (criterion 8; CM 8)", async () => {
+      const versionsBefore = await versionRows(wholesaleId);
+      const retired = await types.retireTemplateTypeAction({
+        typeId: wholesaleId,
+        targetTypeId: null,
+        confirmName: "Wholesale",
+      });
+      expect(retired).toEqual({ ok: true, movedBanCount: 1 });
+
+      expect((await banRow(banA)).refBillTemplateFamilyId).toBeNull();
+      const moves = await sql<{ target_id: string; after_data: unknown }[]>`
+        SELECT target_id, after_data FROM core.audit_log
+        WHERE event_type = 'BILLING_ACCOUNT_TEMPLATE_CHANGED'
+          AND after_data->>'reason' = 'TEMPLATE_TYPE_RETIRED'`;
+      expect(moves).toHaveLength(1);
+      // The step-2 bind and this one switch, nothing else.
+      expect(await auditCount("BILLING_ACCOUNT_TEMPLATE_CHANGED")).toBe(2);
+      expect(moves[0]).toMatchObject({
+        target_id: banA,
+        after_data: {
+          refBillTemplateFamilyId: null,
+          reason: "TEMPLATE_TYPE_RETIRED",
+        },
+      });
+      const [left] = await sql<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM billing.billing_account
+        WHERE ref_bill_template_family_id = ${wholesaleId}`;
+      expect(left!.n).toBe(0);
+      expect(await versionRows(wholesaleId)).toEqual(versionsBefore);
+      expect(await auditCount("INVOICE_TEMPLATE_TYPE_RETIRED")).toBe(1);
+    }, 120_000);
+
+    it("step 4 (cm24) — both label reads show Standard; a pre-retire lastModified is CONFLICT; a bind to the retired type is TEMPLATE_NOT_BINDABLE", async () => {
+      const panel = await banRow(banA);
+      expect(panel.templateLabel.kind).toBe("STANDARD");
+      expect(panel.templateLabel.text).toMatch(/^Standard \(default\) · v\d+$/);
+      const summary = await types.getCustomerAccountsSummary(partyRoleA, 1);
+      expect(summary.kind).toBe("onboarded");
+      if (summary.kind !== "onboarded") return;
+      const tabRow = summary.financialAccounts
+        .flatMap((fa) => fa.bans)
+        .find((b) => b.billingAccountId === banA);
+      expect(tabRow?.templateLabel).toEqual(panel.templateLabel);
+
+      // A panel opened before the retire: the switch bumped A's lock.
+      expect(preRetireLastModified).not.toBeNull();
+      expect(
+        await types.setBillingAccountTemplateAction({
+          partyRoleId: partyRoleA,
+          billingAccountId: banA,
+          typeId: null,
+          lastModified: preRetireLastModified!.toISOString(),
+        }),
+      ).toEqual({ ok: false, code: "CONFLICT" });
+      // …and saving the retired type it still showed: the gate refuses it
+      // first (the panel shows the retired-type message and reloads).
+      for (const lastModified of [preRetireLastModified!, panel.lastModified]) {
+        expect(
+          await types.setBillingAccountTemplateAction({
+            partyRoleId: partyRoleA,
+            billingAccountId: banA,
+            typeId: wholesaleId,
+            lastModified: lastModified.toISOString(),
+          }),
+        ).toEqual({ ok: false, code: "TEMPLATE_NOT_BINDABLE" });
+      }
+      expect((await banRow(banA)).refBillTemplateFamilyId).toBeNull();
+    }, 120_000);
+
+    it("step 5 — the rerun warning lists Wholesale → Standard for A; the rerun re-stamps Standard and the draft renders on Standard", async () => {
+      expect(
+        await types.listRerunTemplateChangesAction({
+          billRunId: run.bill_run_id,
+          accountIds: [banA],
+        }),
+      ).toEqual({
+        ok: true,
+        changes: [
+          {
+            billingAccountId: banA,
+            fromTypeName: "Wholesale",
+            toTypeName: standardName,
+          },
+        ],
+      });
+
+      const rerun = await rerunRun(
+        {
+          billRunId: run.bill_run_id,
+          accountIds: [banA],
+          fromStage: "validation",
+          reason: "bm85 journey: Wholesale retired",
+        },
+        adminId,
+      );
+      expect(rerun.ok).toBe(true);
+      if (!rerun.ok) return;
+      expect((await runStamps(run.bill_run_id)).get(banA)).toMatchObject({
+        ref_bill_template_family_id: "BTF00000001",
+        ref_bill_template_version_id: "BTV00000002",
+      });
+      await processAccountOnFlowSql(
+        sql,
+        signal,
+        run,
+        banA,
+        rerun.value.attempt,
+      );
+
+      const draft = await svc.buildInvoiceHtml({
+        runId: run.bill_run_id,
+        banId: banA,
+        mode: "draft",
+      });
+      expect(draft.resolved.layout.layoutCode).toBe("INVTPL-STD-A4");
+      expect(draft.html).not.toContain(TYPES_WHOLESALE_MARKER);
+      expect(
+        await types.listRerunTemplateChangesAction({
+          billRunId: run.bill_run_id,
+          accountIds: [],
+        }),
+      ).toEqual({ ok: true, changes: [] });
+    }, 600_000);
+
+    it("step 6 — a second user approves and the run posts: A's bill carries Standard's stamps; Wholesale's page still shows its history and exports", async () => {
+      const approved = await svc.approveRun(run.bill_run_id, approverId);
+      expect(approved.ok).toBe(true);
+      const posted = await svc.postRun(run.bill_run_id, approverId);
+      expect(posted.ok).toBe(true);
+      if (!posted.ok) return;
+      expect(
+        posted.value.results.find((r) => r.billingAccountId === banA)?.result
+          .status,
+      ).toBe("invoiced");
+      const [bill] = await sql<
+        {
+          ref_bill_template_family_id: string | null;
+          ref_bill_template_version_id: string | null;
+        }[]
+      >`
+        SELECT ref_bill_template_family_id, ref_bill_template_version_id
+        FROM billing.customer_bill
+        WHERE ref_bill_run_id = ${run.bill_run_id} AND ref_billing_account_id = ${banA}`;
+      expect(bill).toEqual({
+        ref_bill_template_family_id: "BTF00000001",
+        ref_bill_template_version_id: "BTV00000002",
+      });
+
+      const page = await types.getInvoiceTemplatePageData(
+        wholesaleId,
+        undefined,
+        { canEdit: true },
+      );
+      expect(page).toMatchObject({ typeStatus: "RETIRED", empty: false });
+      expect(page?.retiredDatetime).not.toBeNull();
+      expect(page?.history.map((h) => [h.versionNo, h.status])).toEqual([
+        [1, "ACTIVE"],
+      ]);
+      const exported = await types.exportTemplateVersion(
+        wholesaleSettingsId,
+        { id: adminId, userName: adminName },
+        true,
+      );
+      expect(exported.ok).toBe(true);
+      if (exported.ok) {
+        expect(exported.fileName).toBe("INVTPL-WHOLESALE-v1-s1.zip");
+        wholesaleExport = exported.bytes;
+      }
+    }, 900_000);
+
+    it("step 7 — a fixture export of INVTPL-STD-A4 v2 (Standard v1's files, re-versioned and marked) uploaded to Standard and activated: a new run captures every NULL BAN on v2 and renders each on layout v2; no billing_account row changes; Standard v1 is byte-identical (criterion 2)", async () => {
+      const standardV1 = () => sql`
+        SELECT * FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = 'BTF00000001' AND version_no = 1
+        ORDER BY bill_template_version_id`;
+      const v1Before = await standardV1();
+      const bansBefore = await sql`
+        SELECT * FROM billing.billing_account ORDER BY billing_account_id`;
+
+      // Standard v1's files re-versioned, with a visible marker so a render
+      // proves it read v2's files, not only the v2 row.
+      const zip = pkg.buildLayoutPackage({
+        baseDir: pkg.STANDARD_PACKAGE_DIR,
+        layoutCode: "INVTPL-STD-A4",
+        layoutVersion: 2,
+        edit: (f) =>
+          pkg.replaceInFile(
+            f,
+            "partials/header.hbs",
+            "<h1>Invoice</h1>",
+            `<h1>Invoice</h1><div class="bm85-marker">${TYPES_STANDARD_V2_MARKER}</div>`,
+          ),
+      }).zip;
+      expect(
+        await uploadPackage("BTF00000001", zip, "INVTPL-STD-A4-v2.zip"),
+      ).toMatchObject({ ok: true, versionNo: 2 });
+      const activated = await activatePair("BTF00000001", "Standard v2");
+
+      const layouts = await sql<{ version_no: number; status: string }[]>`
+        SELECT version_no, status FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = 'BTF00000001' AND kind = 'layout'
+        ORDER BY version_no`;
+      expect(layouts).toEqual([
+        { version_no: 1, status: "ACTIVE" },
+        { version_no: 2, status: "ACTIVE" },
+      ]);
+      expect(await standardV1()).toEqual(v1Before);
+
+      // A new run: every ci BAN is NULL now, and a fresh fixture BAN too.
+      await fx.newRun(TYPES_RUN_STD_V2);
+      const { banId: fresh } = await fx.draftBill({
+        label: "BM85V2",
+        runId: TYPES_RUN_STD_V2,
+      });
+      const ciBans = (
+        await sql<{ billing_account_id: string }[]>`
+          SELECT billing_account_id FROM billing.billing_account
+          WHERE name LIKE '\\_SAMPLE\\_ Billing Account %'`
+      ).map((r) => r.billing_account_id);
+      expect(ciBans).toContain(banA);
+      for (const ban of ciBans) {
+        await sql`
+          INSERT INTO billing.bill_run_account
+            (ref_bill_run_id, ref_billing_account_id, period_partition, status, attempt_count)
+          VALUES (${TYPES_RUN_STD_V2}, ${ban}, ${FIXTURE_PERIOD_START}, 'PROCESSED', 1)`;
+      }
+      await types.captureTemplateStamps(
+        fx.db,
+        TYPES_RUN_STD_V2,
+        ciBans,
+        FIXTURE_PERIOD_START,
+      );
+      const stamps = await runStamps(TYPES_RUN_STD_V2);
+      for (const ban of [...ciBans, fresh]) {
+        expect(stamps.get(ban), ban).toMatchObject({
+          ref_bill_template_family_id: "BTF00000001",
+          ref_bill_template_version_id: activated.versionId,
+        });
+      }
+      // A trial bill per ci BAN on the new run (the processor's output), so
+      // every NULL BAN's draft renders, as the fixture BAN's does.
+      for (const ban of ciBans) {
+        await sql.begin(async (tx) => {
+          await tx`SET LOCAL session_replication_role = replica`;
+          const [cb] = await tx<{ customer_bill_id: string }[]>`
+            INSERT INTO billing.customer_bill
+              (ref_bill_run_id, ref_billing_account_id, period_partition, category, state,
+               billing_period_start, billing_period_end, subtotal, tax_total, total_amount,
+               payment_due_date)
+            VALUES (${TYPES_RUN_STD_V2}, ${ban}, ${FIXTURE_PERIOD_START}, 'trial', 'new',
+                    ${FIXTURE_PERIOD_START}, ${FIXTURE_PERIOD_END}, '150.00', '0.00',
+                    '150.00', '2026-07-15')
+            RETURNING customer_bill_id`;
+          await tx`
+            INSERT INTO billing.customer_bill_line
+              (ref_customer_bill_id, period_partition, line_no, source, ref_product_offering_id,
+               gross_amount, discount_amount, net_amount, grouping_key, currency, description,
+               quantity, unit)
+            VALUES (${cb!.customer_bill_id}, ${FIXTURE_PERIOD_START}, 1, 'RECURRING', 'POF-BM85',
+                    '150.00', '0.00', '150.00', 'POF-BM85', 'MYR', 'BM85 Fibre',
+                    '1.000000', 'EA')`;
+        });
+      }
+      for (const ban of [...ciBans, fresh]) {
+        const draft = await svc.buildInvoiceHtml({
+          runId: TYPES_RUN_STD_V2,
+          banId: ban,
+          mode: "draft",
+        });
+        expect(draft.resolved.layout, ban).toMatchObject({
+          layoutCode: "INVTPL-STD-A4",
+          versionNo: 2,
+        });
+        expect(draft.html, ban).toContain(TYPES_STANDARD_V2_MARKER);
+      }
+
+      // The fixture BAN is new; every BAN that existed is untouched.
+      const bansAfter = await sql`
+        SELECT * FROM billing.billing_account
+        WHERE billing_account_id <> ${fresh} ORDER BY billing_account_id`;
+      expect(bansAfter).toEqual(bansBefore);
+    }, 600_000);
+
+    it("step 8 — Wholesale's last pair restored into a second fresh database: byte-identical layout files, the same settings, DRAFT v1, the same preview HTML (criterion 7)", async () => {
+      expect(wholesaleExport).not.toBeNull();
+      const exportFiles = unzipSync(wholesaleExport!);
+      const exportedSettings = JSON.parse(
+        Buffer.from(exportFiles["settings.json"]!).toString("utf-8"),
+      ) as { structure: unknown };
+      const localeRows = await sql<{ row: Record<string, unknown> }[]>`
+        SELECT to_jsonb(c) - 'modified_by' AS row FROM core.system_config c
+        WHERE config_group = 'app'`;
+
+      // A second database on the same throwaway server, marked disposable.
+      // Its URL is checked BEFORE anything is dropped or created, and the
+      // DDL runs on the superuser bootstrap connection, not the app's.
+      const url = new URL(databaseUrl as string);
+      restoreDbName = `${url.pathname.slice(1)}${TYPES_RESTORE_SUFFIX}`;
+      url.pathname = `/${restoreDbName}`;
+      assertTestDatabaseUrl(url.toString());
+      await withBootstrap((superuser) =>
+        superuser.unsafe(
+          `DROP DATABASE IF EXISTS "${restoreDbName}" WITH (FORCE)`,
+        ),
+      );
+      await withBootstrap((superuser) =>
+        superuser.unsafe(`CREATE DATABASE "${restoreDbName}"`),
+      );
+      restoreSql = postgres(url.toString(), { max: 5, onnotice: () => {} });
+      const { markDatabaseDisposable } =
+        await import("@/tests/helpers/disposable-database");
+      await markDatabaseDisposable(restoreSql);
+
+      // An empty Wholesale layout prefix: the restore must write every file
+      // itself (write-once would otherwise adopt step 1's blobs at the same
+      // content-addressed path). The first database's Wholesale rows are not
+      // read again after this point.
+      expect(
+        await deleteTemplateBlobs("layouts/INVTPL-WHOLESALE/"),
+      ).toBeGreaterThan(0);
+
+      const { freshTemplateDatabase } =
+        await import("@/tests/db/helpers/template-type-db-harness");
+      // The services read and write the second database ONLY inside this try.
+      typesDb.override = await freshTemplateDatabase(restoreSql, {
+        id: adminId,
+        name: adminName,
+        email: ADMIN_EMAIL,
+      });
+      try {
+        // The same app settings (locale) as the first database, so the two
+        // previews share every input.
+        await restoreSql`DELETE FROM core.system_config WHERE config_group = 'app'`;
+        for (const { row } of localeRows) {
+          await restoreSql`
+          INSERT INTO core.system_config
+          SELECT * FROM jsonb_populate_record(NULL::core.system_config, ${JSON.stringify(row)}::jsonb)`;
+        }
+
+        const created = await types.createTemplateType(
+          { name: "Wholesale" },
+          adminId,
+        );
+        expect(created.ok).toBe(true);
+        if (!created.ok) return;
+        const restored = await types.uploadLayoutPackage(
+          {
+            familyId: created.typeId,
+            zip: wholesaleExport!,
+            expectedDraft: { none: true },
+          },
+          adminId,
+        );
+        expect(restored).toMatchObject({ ok: true, versionNo: 1 });
+        // Every layout file and the index were written by the restore.
+        expect(await templateBlobCount("layouts/INVTPL-WHOLESALE/")).toBe(
+          Object.keys(exportFiles).length - 1,
+        );
+
+        const [layoutDraft] = await restoreSql<
+          { bill_template_version_id: string }[]
+        >`
+        SELECT bill_template_version_id FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = ${created.typeId}
+          AND kind = 'layout' AND status = 'DRAFT' AND version_no = 1`;
+        expect(layoutDraft).toBeDefined();
+        const { billTemplateVersionRepository } =
+          await import("@/db/repositories/billing/bill-template-version");
+        const row = await billTemplateVersionRepository.findById(
+          typesDb.override as never,
+          layoutDraft!.bill_template_version_id,
+        );
+        const restoredFiles = await types.loadLayoutDraft(row!, {
+          includeIndex: true,
+        });
+        const layoutNames = Object.keys(exportFiles).filter(
+          (n) => n !== "settings.json",
+        );
+        expect([...restoredFiles.keys()].sort()).toEqual(layoutNames.sort());
+        for (const [name, bytes] of Object.entries(exportFiles)) {
+          if (name === "settings.json") continue;
+          expect(
+            Buffer.compare(restoredFiles.get(name)!, Buffer.from(bytes)),
+            name,
+          ).toBe(0);
+        }
+
+        const [settings] = await restoreSql<
+          { version_no: number; status: string; structure: unknown }[]
+        >`
+        SELECT version_no, status, structure FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = ${created.typeId} AND kind = 'generated'`;
+        expect(settings).toMatchObject({ version_no: 1, status: "DRAFT" });
+        expect(settings!.structure).toEqual(exportedSettings.structure);
+
+        const preview = await types.previewInvoiceTemplate({
+          structure: settings!.structure as never,
+          source: "sample",
+          familyId: created.typeId,
+          draft: true,
+        });
+        expect(preview.html).toBe(wholesalePreviewHtml);
+      } finally {
+        typesDb.override = undefined;
+      }
+    }, 600_000);
   },
 );

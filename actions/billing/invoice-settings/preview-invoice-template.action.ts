@@ -7,6 +7,7 @@ import { logger } from "@/lib/logger";
 import { isRateLimited } from "@/lib/rate-limit";
 import {
   PreviewBillNotFoundError,
+  TemplateTypeRetiredError,
   previewInvoiceTemplate,
 } from "@/services/billing/invoice-template/preview";
 import {
@@ -31,7 +32,8 @@ export type PreviewInvoiceTemplateActionResult =
         | "VALIDATION_ERROR"
         | "NOT_FOUND"
         | "RATE_LIMITED"
-        | "PREVIEW_FAILED";
+        | "PREVIEW_FAILED"
+        | "TEMPLATE_TYPE_RETIRED";
       detail?: string;
     };
 
@@ -104,6 +106,9 @@ export async function previewInvoiceTemplateAction(
       error instanceof FinalInvoiceNotFoundError
     ) {
       return { ok: false, code: "NOT_FOUND" };
+    }
+    if (error instanceof TemplateTypeRetiredError) {
+      return { ok: false, code: "TEMPLATE_TYPE_RETIRED" };
     }
     if (error instanceof InvoiceRenderError) {
       logger.warn("invoice template preview failed", {

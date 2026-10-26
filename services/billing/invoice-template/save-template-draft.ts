@@ -34,7 +34,9 @@ export type SaveTemplateDraftResult =
       ok: false;
       code:
         | Exclude<TemplateDraftErrorCode, "DRAFT_LAYOUT_REPLACED">
-        | "VALIDATION_ERROR";
+        | "VALIDATION_ERROR"
+        // bm83 (Inv #67) — a retired type's settings are read-only.
+        | "TEMPLATE_TYPE_RETIRED";
     };
 
 const UNIQUE_VIOLATION = "23505";
@@ -93,6 +95,11 @@ export async function saveTemplateDraft(
           "update",
         );
         if (!family) return { ok: false, code: "DRAFT_CONFLICT" };
+        // bm83 (Inv #67) — under the type lock, so a save racing a retire
+        // either finishes first or waits and refuses here.
+        if (family.retiredDatetime !== null) {
+          return { ok: false, code: "TEMPLATE_TYPE_RETIRED" };
+        }
         // Serialise draft writers (see `lockKind`).
         await billTemplateVersionRepository.lockKind(tx, { kind: "generated" });
         const draft = await billTemplateVersionRepository.findDraft(tx, {

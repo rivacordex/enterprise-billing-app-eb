@@ -539,6 +539,44 @@ describe.skipIf(!databaseUrl)(
       expect(await auditRows()).toHaveLength(0);
     });
 
+    // bm83 (Inv #67) — the check runs under the type lock, before the kind
+    // lock: a retired type's settings are read-only.
+    it("bm83 — a save on a retired type is TEMPLATE_TYPE_RETIRED and writes nothing", async () => {
+      await insertTemplateTypeFixture(sql, {
+        typeId: "BTF00000083",
+        code: "BM83_RETIRED",
+        name: "BM83 Retired",
+        layoutVersionId: "BTV00000830",
+      });
+      await sql`
+        INSERT INTO billing.bill_template_version
+          (bill_template_version_id, ref_bill_format_id, kind, version_no, status, is_default,
+           ref_layout_version_id, ref_bill_template_family_id, structure, blob_ref, checksum,
+           checksum_algorithm, change_note, activated_datetime)
+        SELECT 'BTV00000831', 'INVOICE', 'generated', 1, 'ACTIVE', false,
+               'BTV00000830', 'BTF00000083', structure, 'invoice-templates/generated/INVOICE/BM83_RETIRED/v1/',
+               ${"8".repeat(64)}, 'sha256', 'bm83 retired-type fixture', now()
+        FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
+      await sql`
+        UPDATE billing.bill_template_family SET retired_datetime = now()
+        WHERE bill_template_family_id = 'BTF00000083'`;
+
+      const result = await saveTemplateDraft(
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000083",
+        },
+        ACTOR,
+      );
+      expect(result).toEqual({ ok: false, code: "TEMPLATE_TYPE_RETIRED" });
+      const drafts = await sql`
+        SELECT 1 FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = 'BTF00000083' AND status = 'DRAFT'`;
+      expect(drafts).toHaveLength(0);
+      expect(await auditRows()).toHaveLength(0);
+    });
+
     // bm80 — what install writes on an upload: the layout DRAFT and the
     // re-pointed settings DRAFT in ONE transaction, so both carry the same
     // `now()` (equal tokens). DB-only: the files are never read here.

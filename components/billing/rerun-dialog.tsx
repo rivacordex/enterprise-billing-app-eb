@@ -7,11 +7,16 @@
 // stage selector + MANDATORY reason → submitting/error → router.refresh() on
 // success). The action re-checks `billrun_operate:EDIT` server-side; this is a
 // show/hide affordance only.
+// bm84: the template-type warning (read on open; advisory)
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RotateCcw } from "lucide-react";
+import { AlertTriangle, RotateCcw } from "lucide-react";
 
+import {
+  listRerunTemplateChangesAction,
+  type ListRerunTemplateChangesActionResult,
+} from "@/actions/billing/list-rerun-template-changes.action";
 import { rerunRunAction } from "@/actions/billing/rerun-run.action";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +31,14 @@ const STAGE_LABELS: Record<RerunStage, string> = {
   taxation: "Taxation",
   verification: "Verification",
 };
+
+type RerunTemplateChange = Extract<
+  ListRerunTemplateChangesActionResult,
+  { ok: true }
+>["changes"][number];
+
+// bm84 (D5) — over this many changed BANs, the rest are summarised.
+const TEMPLATE_CHANGES_SHOWN = 10;
 
 export interface RerunDialogProps {
   billRunId: string;
@@ -49,6 +62,10 @@ export function RerunDialog({
   const [reason, setReason] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // bm84 — null until read (or when the read fails: advisory, shows nothing).
+  const [templateChanges, setTemplateChanges] = useState<
+    RerunTemplateChange[] | null
+  >(null);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const cancelledRef = useRef(false);
@@ -61,6 +78,23 @@ export function RerunDialog({
       triggerRef.current?.focus();
     }
   }, [confirming]);
+
+  // bm84 (D4) — read once each time the confirm opens; never cached. A
+  // response from an earlier opening (closed meanwhile) is dropped.
+  const openingRef = useRef(0);
+  function openConfirm(): void {
+    const opening = ++openingRef.current;
+    setTemplateChanges(null);
+    setConfirming(true);
+    listRerunTemplateChangesAction({ billRunId, accountIds }).then(
+      (result) => {
+        if (opening === openingRef.current && result.ok) {
+          setTemplateChanges(result.changes);
+        }
+      },
+      () => undefined,
+    );
+  }
 
   const count = accountIds.length;
   const scope =
@@ -118,7 +152,7 @@ export function RerunDialog({
         ref={triggerRef}
         type="button"
         variant={variant === "destructive" ? "destructive" : "outline"}
-        onClick={() => setConfirming(true)}
+        onClick={openConfirm}
       >
         <RotateCcw aria-hidden="true" />
         {triggerLabel}
@@ -139,6 +173,35 @@ export function RerunDialog({
         Rerun <strong>{scope}</strong> from stage{" "}
         <strong>{STAGE_LABELS[fromStage]}</strong>; later stages are recomputed.
       </p>
+
+      {templateChanges && templateChanges.length > 0 ? (
+        <div
+          role="note"
+          aria-label="Invoice template type changed since run start"
+          className="space-y-1 rounded-sm bg-[color:var(--color-warning-50)] px-3 py-2 text-body-sm text-[color:var(--color-warning-700)]"
+        >
+          <p className="flex items-center gap-2 font-medium">
+            <AlertTriangle size={14} aria-hidden="true" />
+            Invoice template type changed since run start
+          </p>
+          <ul className="space-y-0.5 pl-6">
+            {templateChanges.slice(0, TEMPLATE_CHANGES_SHOWN).map((c) => (
+              <li key={c.billingAccountId}>
+                <span className="font-mono text-mono">
+                  {c.billingAccountId}
+                </span>
+                : {c.fromTypeName} → {c.toTypeName}
+              </li>
+            ))}
+          </ul>
+          {templateChanges.length > TEMPLATE_CHANGES_SHOWN ? (
+            <p className="pl-6">
+              and {templateChanges.length - TEMPLATE_CHANGES_SHOWN} more
+            </p>
+          ) : null}
+          <p>The rerun uses each account&apos;s current type.</p>
+        </div>
+      ) : null}
 
       <label className="block space-y-1">
         <span className="text-body-sm font-medium text-foreground">
@@ -196,6 +259,7 @@ export function RerunDialog({
           disabled={submitting}
           onClick={() => {
             cancelledRef.current = true;
+            openingRef.current++;
             setConfirming(false);
             setError(null);
           }}

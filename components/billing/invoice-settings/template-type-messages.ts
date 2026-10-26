@@ -54,6 +54,28 @@ export const TEMPLATE_TYPE_MESSAGES = {
   discardForbidden: "You do not have permission to discard a draft.",
   // bm81 — Export (Version history) and the restore note (upload dialog).
   exportLink: "Export",
+  // bm83 — save and preview on a retired type (typeRetired above is worded
+  // for activate and discard).
+  typeRetiredEdit:
+    "This invoice template type has been retired, so it can no longer be edited or previewed.",
+  // bm83 — the Retire dialog (ui-context §10e).
+  retireTrigger: "Retire type…",
+  retireConfirm: "Retire type",
+  retireBoundBansLabel: "billing accounts bound to this type",
+  retireNoBoundBans: "No billing accounts are bound to this type.",
+  retireShowMore: "Show more",
+  retireTargetLabel: "Move its billing accounts to",
+  retireNameLabel: "Type the name of this type to confirm",
+  retireAlreadyRetired: "This invoice template type has already been retired.",
+  retireDefaultNotRetirable: "The Standard type can't be retired.",
+  retireTargetNotUsable:
+    "The chosen type can no longer take billing accounts. Choose another type.",
+  retireNameMismatch:
+    "The typed name doesn't match this type's name. Nothing was retired.",
+  retireFailed: "The invoice template type could not be retired. Try again.",
+  retireForbidden:
+    "You do not have permission to retire an invoice template type.",
+  retireListFailed: "More billing accounts could not be loaded. Try again.",
 } as const;
 
 // "A new draft v{n} will be created." / "Create draft v{n}".
@@ -122,4 +144,25 @@ export function discardBody(
   return layoutDraft
     ? `The draft settings v${n} and the draft layout ${layoutDraft.code} v${layoutDraft.versionNo} will be retired. Their version numbers are not reused.`
     : `The draft settings v${n} will be retired. Their version numbers are not reused.`;
+}
+
+// bm83 — the Retire dialog's title and body, and the success toast.
+export function retireTitle(name: string): string {
+  return `Retire ${name}?`;
+}
+export function retireBody(name: string): string {
+  return `Every billing account bound to ${name} moves to the type you choose, and ${name} is retired. This can't be undone. Its versions, history and exports are kept.`;
+}
+export function retireSuccessToast(
+  name: string,
+  n: number,
+  target: string,
+): string {
+  // Review fix (owner, 2026-10-26) — singular for one account.
+  const accounts = n === 1 ? "billing account" : "billing accounts";
+  return `${name} retired. ${n} ${accounts} moved to ${target}.`;
+}
+// bm83 (ui-context §10e) — the retired type's Info status line.
+export function retiredStatusLine(date: string): string {
+  return `Retired ${date}. History and exports remain available.`;
 }

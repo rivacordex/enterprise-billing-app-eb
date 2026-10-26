@@ -192,6 +192,20 @@ const MATRIX: MatrixRow[] = [
     level: "EDIT",
     kind: "action",
   },
+  {
+    // bm83 — retire a type with the bulk switch of its BANs.
+    surface: "retire template type (a mutation)",
+    file: "actions/billing/invoice-settings/retire-template-type.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
+  {
+    // bm83 — the Retire dialog's "Show more" (only that EDIT dialog uses it).
+    surface: "list bound BANs (the Retire dialog)",
+    file: "actions/billing/invoice-settings/list-bound-bans.action.ts",
+    level: "EDIT",
+    kind: "action",
+  },
 ];
 
 describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => {
@@ -285,7 +299,7 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     const src = read(TYPE_DETAIL_PAGE);
     // Another version is editable only when there is no draft to overwrite.
     expect(src).toMatch(
-      /editable=\{\s*canEdit &&\s*\(shownIsDraft \|\|\s*\(!draft &&/,
+      /editable=\{\s*editView &&\s*\(shownIsDraft \|\|\s*\(!draft &&/,
     );
     // The working copy keeps one form; a version opened from the history gets
     // its own (bm72 review: the post-save refresh no longer remounts it).
@@ -306,8 +320,10 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(src).toContain(
       "onGenerated && version === undefined ? (current ?? data.shown)",
     );
-    // A READ user gets no View link on a DRAFT history row.
-    expect(src).toContain("canViewDrafts={canEdit}");
+    // A READ user gets no View link on a DRAFT history row; bm83: nor does
+    // anyone on a retired type (`editView` is EDIT on a non-retired type).
+    expect(src).toContain("canViewDrafts={editView}");
+    expect(src).toContain("const editView = canEdit && retiredAt === null;");
   });
 
   it("activate-template guards on EDIT first, validates the note, then runs the service, then revalidates; its audit and writes live in the service (bm58)", () => {
@@ -444,8 +460,12 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(src).toMatch(
       /canPreviewBills = hasLevel\(\s*permissionMap,\s*PERMISSIONS\.BILLRUN_VIEW,\s*LEVELS\.READ,?\s*\)/,
     );
+    // bm83 review fix — and never on a retired type (no bill can preview it).
     expect(src).toContain(
-      "recentBills={canPreviewBills ? await listRecentPostedBills() : []}",
+      "const canPreviewTypeBills = canPreviewBills && retiredAt === null;",
+    );
+    expect(src).toMatch(
+      /recentBills=\{\s*canPreviewTypeBills \? await listRecentPostedBills\(\) : \[\]\s*\}/,
     );
   });
 

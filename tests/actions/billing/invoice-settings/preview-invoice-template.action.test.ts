@@ -75,6 +75,7 @@ vi.mock("@/services/billing/blob-store", async () => {
 import { previewInvoiceTemplateAction } from "@/actions/billing/invoice-settings/preview-invoice-template.action";
 import { requirePermission } from "@/auth/guard";
 import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
 import type { RawInvoiceRenderInput } from "@/db/repositories/billing/invoice-render-input";
@@ -507,6 +508,42 @@ describe("previewInvoiceTemplateAction — bill source", () => {
     });
     expect(result).toEqual({ ok: false, code: "NOT_FOUND" });
   });
+
+  // bm83 (D7, Inv #67) — a retired type has no live preview: the type is read
+  // before anything resolves, whatever the source and the draft flag.
+  it.each([
+    ["the sample, draft: false", "sample", false],
+    ["the sample, draft: true (EDIT)", "sample", true],
+    ["a bill, draft: false", { billId: "CBL00000007" }, false],
+    ["a bill, draft: true (EDIT)", { billId: "CBL00000007" }, true],
+  ] as const)(
+    "a retired type is TEMPLATE_TYPE_RETIRED for %s, before any resolve",
+    async (_label, source, draft) => {
+      mockRequirePermission.mockResolvedValue({
+        userId: "user-1",
+        userEmail: "user@example.com",
+        permissionMap: {
+          invoice_settings: "EDIT",
+          billrun_view: "READ",
+        } as never,
+      });
+      vi.mocked(billTemplateFamilyRepository.findById).mockResolvedValueOnce({
+        billTemplateFamilyId: FAMILY,
+        retiredDatetime: new Date("2026-10-26T00:00:00Z"),
+      } as never);
+      const result = await previewInvoiceTemplateAction({
+        familyId: FAMILY,
+        structure: ALL_ON,
+        source,
+        draft,
+      });
+      expect(result).toEqual({ ok: false, code: "TEMPLATE_TYPE_RETIRED" });
+      expect(repo.findActive).not.toHaveBeenCalled();
+      expect(repo.findDraft).not.toHaveBeenCalled();
+      expect(bills.findPreviewTarget).not.toHaveBeenCalled();
+      expectNoWrites();
+    },
+  );
 
   it("maps a pipeline failure to PREVIEW_FAILED with its code", async () => {
     bills.findPreviewTarget.mockResolvedValue({

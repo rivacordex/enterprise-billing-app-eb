@@ -2,7 +2,7 @@
 
 - **Unit:** 22 of 22 (`cm00-build-plan.md` Phase 2 — Invoice Template Binding update). **Boundary:** TESTS (+ docs close-out).
 - **Dependencies:** `cm17`–`cm21`.
-- **Authorizing sections:** binding plan §9 (tripwire), §11, §14 T6–T7; `custmgmt-update-overview.md` *Success criteria*; `custmgmt-architecture.md` Inv. #11, #18; `custmgmt-ai-workflow-rules.md` §9.7, §9.8.
+- **Authorizing sections:** binding plan §9 (tripwire), §11, §14 T6–T7; the binding update overview (folded into `custmgmt-project-overview.md`) *Success criteria*; `custmgmt-architecture.md` Inv. #11, #18; `custmgmt-ai-workflow-rules.md` §9.7, §9.8.
 - **Decisions recorded 2026-10-10:** the end-to-end proof is a **DB-gated service-level journey test** (module precedent `tests/e2e/customer-core-flow.integration.test.ts`); browser e2e is deferred to `_newmodule-playwright-e2e-testing-plan.md` (no `@playwright/test` exists in the repo; the `playwright` package is only used for PDF rendering).
 - **Codebase verified against:** `enterprise-billing-app` working tree, 2026-10-10.
 
@@ -58,7 +58,7 @@ Run and require green, unchanged: `tests/db/customer-bill-stamps.integration.tes
 
 Per `custmgmt-ai-workflow-rules.md` §9.7:
 
-- `custmgmt-update-overview.md`: **Status** → Delivered (date); success criterion 11 already reads "service-level journey test".
+- The update overview (since folded into `custmgmt-project-overview.md`): **Status** → Delivered (date); success criterion 11 already reads "service-level journey test".
 - `custmgmt-project-overview.md` *Features*, *Core user flows*: tabs, Accounts tab, onboarding field, Billing account panel; and `cm05` spec updated together (`cm05` docs-in-sync rule).
 - `custmgmt-code-standards.md`: §4/§7 component and file names from cm19–cm21; §8 permission map (Accounts-tab sub-gate, new action with dual permission); §9 adds the two guardrails above.
 - `custmgmt-architecture.md`: §7 marked delivered; Inv. #11–#18 wording matches the code (including the cm20 balance-source correction).
@@ -85,4 +85,4 @@ None.
 - [ ] Every row of the binding plan §11 matrix exists and passes.
 - [ ] `npm run typecheck`, `npm run lint`, Prettier, `npm run test` (unit + integration projects) green, apart from documented §21 baseline items.
 - [ ] Docs in §3.4 updated in the same change set; no Accounts-side doc edited without approval.
-- [ ] `custmgmt-update-overview.md` status is Delivered only after every item above passes.
+- [ ] The update overview's (since folded into `custmgmt-project-overview.md`) status is Delivered only after every item above passes.

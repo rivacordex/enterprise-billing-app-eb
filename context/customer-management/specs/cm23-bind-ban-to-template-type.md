@@ -8,7 +8,7 @@
   - Billing bm79: a usable non-Standard type to bind.
   - The delivered cm17–cm21 binding path.
 - **Authorizing sections:**
-  - `custmgmt-update-overview.md` (bind a BAN to a type; labels; select + Save; onboarding wording)
+  - `custmgmt-project-overview.md` › Invoice Template Types — Customer Management part (folded from the update overview by cm24; bind a BAN to a type; labels; select + Save; onboarding wording)
   - `custmgmt-architecture.md` Inv. #17, #19–#22, §8
   - `custmgmt-code-standards.md` §10, guardrails 11–13
   - `custmgmt-ui-context.md` §10.1–§10.4

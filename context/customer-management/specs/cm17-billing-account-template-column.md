@@ -2,7 +2,7 @@
 
 - **Unit:** 17 of 22 (`cm00-build-plan.md` Phase 2 — Invoice Template Binding update). **Boundary:** DB.
 - **Dependencies:** delivered Accounts module (`billing.billing_account`, migration `0012`, ac02); delivered Billing template catalog (`billing.bill_template_version`, migration `0046`, bm50).
-- **Authorizing sections:** `_updatemodule-customer-accounts-invoice-template-binding-plan.md` §4, D9, D10; `custmgmt-update-overview.md` *Features → Data model*; `custmgmt-architecture.md` §7.3 and Inv. #18; `custmgmt-ai-workflow-rules.md` §9.2 (cm17), §9.4 item 2.
+- **Authorizing sections:** `_updatemodule-customer-accounts-invoice-template-binding-plan.md` §4, D9, D10; the binding update overview (folded into `custmgmt-project-overview.md`) *Features → Data model*; `custmgmt-architecture.md` §7.3 and Inv. #18; `custmgmt-ai-workflow-rules.md` §9.2 (cm17), §9.4 item 2.
 - **Codebase verified against:** `enterprise-billing-app` working tree, 2026-10-10 (latest applied migration `0049_product_price_lane_key`).
 
 > **Framing.** `billing.billing_account` is an **Accounts-module** table; Customer Management adds one column to it because the customer screens are where the binding is captured and shown. The column is pure plumbing: in v1 only `NULL` is ever written (cm18, cm21) and posting never reads it (Inv. #18). This unit lands the column alone, verified, before any service reads or writes it (`custmgmt-ai-workflow-rules.md` §9.4).

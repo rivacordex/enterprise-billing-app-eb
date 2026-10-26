@@ -6,7 +6,7 @@
 >
 > **Invoice Template Binding update (delivered cm17–cm22; signed off 2026-10-25):** View Customer became three tabs with a read-only Accounts tab, and Manage Customer gained a Billing account panel and one onboarding field. **No new color, hex value, font, radius or elevation token**; existing shared and Accounting tokens are wired to the new elements. See §9 (the record).
 >
-> **Invoice Template Types update (planned 2026-10-25):** the BAN's template becomes a **template type**. The panel's Reset button becomes a per-BAN **type select + Save**, the label shows the type and its active version, and the onboarding field's wording changes. **No new color, hex value, font, radius, elevation or AI token**; only existing tokens. See §10, which supersedes §9.4 and three §9.5 rows. Template types themselves (list, upload, retire, export) are styled in `billmgmt-ui-context.md` §10e, not here.
+> **Invoice Template Types update (planned 2026-10-25; delivered cm23–cm24, 2026-10-26):** the BAN's template is now a **template type**. The panel's Reset button became a per-BAN **type select + Save**, the label shows the type and its active version, and the onboarding field's wording changes. **No new color, hex value, font, radius, elevation or AI token**; only existing tokens. See §10, which supersedes §9.4 and three §9.5 rows. Template types themselves (list, upload, retire, export) are styled in `billmgmt-ui-context.md` §10e, not here.
 
 ---
 
@@ -161,9 +161,11 @@ Reuse the Accounting module's components and status mapping (`acctmgmt-ui-contex
 | Loading (Suspense)  | `components/ui/skeleton` blocks on `--surface-sunken`                                        | `#EEF0F4`                       | —             |
 | Unavailable (read failed; added in the cm20 review) | Danger family, `role="alert"`: `danger-50` fill, `danger-700` text "Account details could not be loaded. Try again, or open the customer in the Accounts module." (`AccountsUnavailableCard`; also used by the Manage Customer Billing account panel) | `#FDEAEA` / `#8A1717` | `alert-triangle` |
 
-### 9.4 Template binding label (View Customer and Manage Customer)
+### 9.4 Template binding label (View Customer and Manage Customer) — replaced by §10.1
 
-The binding is a reference, not a status, so it gets **no badge color**. **Superseded by §10.1** when the Invoice Template Types update ships: the three text parts below are removed.
+_**Replaced by §10.1** (Invoice Template Types, cm23; closed out by cm24, 2026-10-26). Kept as history: the three text parts below no longer exist in the code._
+
+The binding is a reference, not a status, so it gets **no badge color**.
 
 | Part                                     | Token                                   | Hex       |
 | ---------------------------------------- | --------------------------------------- | --------- |
@@ -172,7 +174,9 @@ The binding is a reference, not a status, so it gets **no badge color**. **Super
 | "as of now"                              | `--text-muted`, `--text-caption`        | `#6A7283` |
 | Leading icon                             | `file-text`, neutral-600                | `#4C5462` |
 
-### 9.5 Manage Customer — Billing account panel and onboarding field
+### 9.5 Manage Customer — Billing account panel and onboarding field — replaced by §10.2–§10.3
+
+_**The Reset button, the `NULL` caption and the onboarding wording are replaced by §10.2–§10.3** (cm23; closed out by cm24, 2026-10-26). The rows not marked superseded (panel chrome, the disabled pattern, the closed caption, the result messages) still describe the built panel._
 
 | Element                                                        | Token                                                                                 | Hex                              | Rule                                                                                         |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -183,7 +187,7 @@ The binding is a reference, not a status, so it gets **no badge color**. **Super
 | `CONFLICT` / `BAN_CLOSED` / `TEMPLATE_NOT_BINDABLE` / `BAN_NOT_FOUND` / `FORBIDDEN` message | Danger family inline alert (`components/ui/alert`, `alert-circle` icon)          | `#FDEAEA` / `#8A1717`            | Icon + text, never color-only. `VALIDATION_ERROR` and a thrown action error show the generic "Something went wrong. Please try again." |
 | Onboarding "Invoice template" field **(wording superseded, §10.3)** | Read-only `Input`, styled like Currency (`bg-muted/50`, `text-muted-foreground`)      | —                                | As built (cm18): a read-only field showing "Follow active template", not a select; help text via `FieldDescription` ("Invoices use the active template. Per-customer templates are not available yet.") |
 
-> **Amended 2026-10-25:** the Invoice Template Types replacements for this panel are in **§10.2–§10.3**.
+> **Amended 2026-10-25; delivered 2026-10-26:** the Invoice Template Types replacements for this panel are in **§10.2–§10.3**.
 
 ### 9.6 Typography, radius and AI — no change
 
@@ -196,9 +200,11 @@ The binding is a reference, not a status, so it gets **no badge color**. **Super
 
 ---
 
-## 10. Invoice Template Types update — UI deltas (2026-10-25; planned, not built)
+## 10. Invoice Template Types update — UI deltas (2026-10-25; delivered cm23–cm24, 2026-10-26)
 
-Scope: `custmgmt-update-overview.md` (the Customer Management part), `custmgmt-architecture.md` Inv. #19–#22, `custmgmt-code-standards.md` §10 (copy owned by `components/customers/billing-account-messages.ts`). Every value is an **existing** token from `context/ui-context.md`; nothing new goes into `globals.css`. Template-type screens in Invoice Settings are Billing's (`billmgmt-ui-context.md` §10e).
+_**Delivered.** Built by cm23 and closed out by the cm24 ship gate (joint with Billing bm85) on 2026-10-26; the tables below describe the screens as built._
+
+Scope: `custmgmt-project-overview.md` › Invoice Template Types — Customer Management part, `custmgmt-architecture.md` Inv. #19–#22, `custmgmt-code-standards.md` §10 (copy owned by `components/customers/billing-account-messages.ts`). Every value is an **existing** token from `context/ui-context.md`; nothing new goes into `globals.css`. Template-type screens in Invoice Settings are Billing's (`billmgmt-ui-context.md` §10e).
 
 ### 10.1 Template type label (View Customer Accounts tab and Manage Customer panel) — replaces §9.4
 

@@ -11,6 +11,7 @@ import { render } from "@testing-library/react";
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/read/invoice-template-settings", () => ({
   getInvoiceTemplatePageData: vi.fn(),
+  getTemplateTypeRetireData: vi.fn(),
   getGeneratedHbsSources: vi.fn(),
   listRecentPostedBills: vi.fn(),
 }));
@@ -35,6 +36,21 @@ vi.mock("@/components/billing/invoice-settings/upload-layout-dialog", () => ({
     </button>
   ),
 }));
+// bm83 — the Retire dialog's actions pull the db/service graph.
+const retireProps = vi.hoisted(() => ({ last: null as unknown }));
+vi.mock(
+  "@/components/billing/invoice-settings/retire-template-type-dialog",
+  () => ({
+    RetireTemplateTypeDialog: (props: unknown) => {
+      retireProps.last = props;
+      return (
+        <button type="button" data-testid="retire-type">
+          Retire type…
+        </button>
+      );
+    },
+  }),
+);
 vi.mock("@/components/billing/invoice-settings/generated-hbs-viewer", () => ({
   GeneratedHbsViewer: () => <div data-testid="generated-viewer" />,
 }));
@@ -44,7 +60,11 @@ vi.mock("@/components/billing/invoice-settings/invoice-settings-tabs", () => ({
 
 import InvoiceTemplateTypePage from "@/app/(app)/administration/invoice-settings/invoice-template/[typeId]/page";
 import { requirePermission } from "@/auth/guard";
-import { getInvoiceTemplatePageData } from "@/services/billing/read/invoice-template-settings";
+import {
+  getInvoiceTemplatePageData,
+  getTemplateTypeRetireData,
+  listRecentPostedBills,
+} from "@/services/billing/read/invoice-template-settings";
 import {
   getAppLocale,
   getAppTimezone,
@@ -56,6 +76,7 @@ import {
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockPageData = vi.mocked(getInvoiceTemplatePageData);
+const mockRetireData = vi.mocked(getTemplateTypeRetireData);
 
 const STRUCTURE = {
   sections: { payment: true },
@@ -67,6 +88,7 @@ const STANDARD_DATA = {
   typeId: "BTF00000001",
   typeName: "Standard",
   typeStatus: "USABLE" as const,
+  retiredDatetime: null as Date | null,
   isDefaultType: true,
   layoutCode: "INVTPL-STD-A4",
   nextLayoutVersionNo: 2,
@@ -86,6 +108,7 @@ const EMPTY_DATA = {
   typeId: "BTF00000002",
   typeName: "Wholesale",
   typeStatus: "NOT_YET_USABLE" as const,
+  retiredDatetime: null as Date | null,
   isDefaultType: false,
   layoutCode: "INVTPL-WHOLESALE",
   nextLayoutVersionNo: 1,
@@ -105,6 +128,7 @@ function props(typeId: string, search: Record<string, string> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   formProps.last = null;
+  retireProps.last = null;
   mockRequirePermission.mockResolvedValue({
     userId: "user-1",
     userEmail: "user@example.com",
@@ -189,5 +213,149 @@ describe("InvoiceTemplateTypePage (bm77)", () => {
     expect(mockPageData).toHaveBeenCalledWith("BTF00000001", "BTV00000099", {
       canEdit: true,
     });
+  });
+});
+
+describe("InvoiceTemplateTypePage — retire (bm83)", () => {
+  const RETIRED_AT = new Date("2026-10-26T01:00:00Z");
+  const HISTORY_ROW = {
+    billTemplateVersionId: "BTV00000020",
+    versionNo: 1,
+    status: "ACTIVE" as const,
+    isDefault: false,
+    layoutLabel: "INVTPL-WHOLESALE v1",
+    createdBy: null,
+    createdAt: new Date("2026-10-20T00:00:00Z"),
+    activatedAt: new Date("2026-10-20T00:00:00Z"),
+    retiredAt: null,
+    changeNote: "Wholesale v1",
+    usedByCount: 0,
+  };
+  const WHOLESALE_ROW = {
+    ...SEEDED_GENERATED_ROW,
+    billTemplateVersionId: "BTV00000020",
+    refBillTemplateFamilyId: "BTF00000002",
+    isDefault: false,
+  };
+  const WHOLESALE_DATA = {
+    ...STANDARD_DATA,
+    typeId: "BTF00000002",
+    typeName: "Wholesale",
+    isDefaultType: false,
+    layoutCode: "INVTPL-WHOLESALE",
+    current: WHOLESALE_ROW,
+    shown: WHOLESALE_ROW,
+    defaultShown: WHOLESALE_ROW,
+    history: [HISTORY_ROW],
+  };
+  const RETIRED_DATA = {
+    ...WHOLESALE_DATA,
+    typeStatus: "RETIRED" as const,
+    retiredDatetime: RETIRED_AT,
+  };
+  const RETIRE = {
+    boundBanCount: 2,
+    firstBoundBans: [
+      { billingAccountId: "BAN00000001", name: "Acme", state: "active" },
+    ],
+    retireTargets: [{ billTemplateFamilyId: "BTF00000003", name: "Retail" }],
+  };
+
+  it("EDIT on a live non-Standard type shows Retire type… with the server data", async () => {
+    mockPageData.mockResolvedValue(WHOLESALE_DATA);
+    mockRetireData.mockResolvedValue(RETIRE);
+    const { getByTestId } = render(
+      await InvoiceTemplateTypePage(props("BTF00000002")),
+    );
+    expect(getByTestId("retire-type")).toBeTruthy();
+    expect(retireProps.last).toEqual({
+      typeId: "BTF00000002",
+      typeName: "Wholesale",
+      ...RETIRE,
+    });
+    expect(mockRetireData).toHaveBeenCalledWith("BTF00000002");
+  });
+
+  it("no Retire control, and no retire read, on Standard or for a READ user", async () => {
+    const standard = render(
+      await InvoiceTemplateTypePage(props("BTF00000001")),
+    );
+    expect(standard.queryByTestId("retire-type")).toBeNull();
+    standard.unmount();
+
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { invoice_settings: "READ" } as never,
+    });
+    mockPageData.mockResolvedValue(WHOLESALE_DATA);
+    const read = render(await InvoiceTemplateTypePage(props("BTF00000002")));
+    expect(read.queryByTestId("retire-type")).toBeNull();
+    expect(mockRetireData).not.toHaveBeenCalled();
+  });
+
+  // Review fix (owner, 2026-10-26) — the loader applies the retired rule from
+  // its one read of the type; the page takes the same answer from the data.
+  it("a retired type for an EDIT user: the Info line, no Upload, Save, Activate, Discard or Retire control, a read-only form; retired comes from the page data's one read", async () => {
+    // billrun_view too, so a live type would offer posted bills to preview.
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: {
+        invoice_settings: "EDIT",
+        billrun_view: "READ",
+      } as never,
+    });
+    mockPageData.mockResolvedValue(RETIRED_DATA);
+    const { getByRole, queryByTestId, getByText } = render(
+      await InvoiceTemplateTypePage(props("BTF00000002")),
+    );
+    expect(mockPageData).toHaveBeenCalledWith("BTF00000002", undefined, {
+      canEdit: true,
+    });
+    expect(mockRetireData).not.toHaveBeenCalled();
+    expect(
+      getByText(/^Retired .+\. History and exports remain available\.$/),
+    ).toBeTruthy();
+    expect(getByText("Retired")).toBeTruthy();
+    expect(queryByTestId("upload-layout")).toBeNull();
+    expect(queryByTestId("retire-type")).toBeNull();
+    expect(
+      getByRole("navigation", { name: "Invoice template tabs" }),
+    ).toBeTruthy();
+    // The form owns Save and Activate; it is not editable, and (review fix)
+    // offers no posted bill to preview a retired type with.
+    expect(formProps.last).toMatchObject({
+      editable: false,
+      canPreviewBills: false,
+      recentBills: [],
+    });
+    expect(listRecentPostedBills).not.toHaveBeenCalled();
+  });
+
+  it("a retired type's history keeps Export and has no Discard", async () => {
+    mockPageData.mockResolvedValue(RETIRED_DATA);
+    const { getByRole, queryByRole } = render(
+      await InvoiceTemplateTypePage(props("BTF00000002", { tab: "history" })),
+    );
+    expect(getByRole("link", { name: /Export/ })).toBeTruthy();
+    expect(queryByRole("button", { name: "Discard" })).toBeNull();
+  });
+
+  it("a retired type with only a never-activated pair shows the status line, not the upload empty state", async () => {
+    mockPageData.mockResolvedValue({
+      ...EMPTY_DATA,
+      typeStatus: "RETIRED",
+      retiredDatetime: RETIRED_AT,
+    });
+    const { queryByText, getByText } = render(
+      await InvoiceTemplateTypePage(props("BTF00000002")),
+    );
+    expect(getByText(/History and exports remain available\./)).toBeTruthy();
+    expect(
+      queryByText(
+        "No layout uploaded yet. Upload a layout package to create the first draft.",
+      ),
+    ).toBeNull();
   });
 });

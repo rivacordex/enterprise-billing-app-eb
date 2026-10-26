@@ -29,11 +29,11 @@ The primary flow — a MANAGER onboards a new enterprise customer and activates 
 9. Save. The server compares the loaded `last_modified_datetime`; if another user changed the customer meanwhile, the save is rejected with a reload prompt. On success, audit rows record actor, timestamp, and before/after values.
 10. Any USER can now open **View Customer**, search for the customer, and see the three read-only sections: Party – Organization, Role – Customer, Customer – Contact Details (on the Profile and Contacts tabs since cm19).
 
-Billing accounts follow-on (Invoice Template Binding update, cm17–cm22; delivered, signed off 2026-10-25):
+Billing accounts follow-on (Invoice Template Binding update, cm17–cm22, signed off 2026-10-25; template types since the Invoice Template Types update, cm23–cm24, delivered 2026-10-26):
 
-11. While the customer is INITIALIZED, a user holding `customers : EDIT` and `accounts_transactions : EDIT` onboards it from Manage Customer through the onboarding wizard. The wizard shows a read-only **Invoice template — Follow active template** field after Currency; submitting moves the customer to VALIDATED and creates the Financial Account and its Billing Account (BAN) with no template reference (follow the active template).
-12. On **View Customer**, the **Accounts** tab (`?tab=accounts`, needs `accounts_view : READ`) shows the Financial Account summary, each BAN with state, bill cycle, payment term, live receivable and its template label ("Follows active template (currently: <name> vN), as of now"), and a paginated read-only document list that links into the Accounts module.
-13. On **Manage Customer**, the **Billing account** panel lists each BAN with its template label. A user who also holds `accounts_transactions : EDIT` can **Reset to follow active template** on an open BAN that holds a non-`NULL` reference; otherwise the panel is read-only. In v1 every BAN already follows the active template, so the button is disabled with "Already following the active template".
+11. While the customer is INITIALIZED, a user holding `customers : EDIT` and `accounts_transactions : EDIT` onboards it from Manage Customer through the onboarding wizard. The wizard shows a read-only **Invoice template type: Standard (default)** field after Currency, with the help text "New billing accounts use the Standard invoice template. Choose another type afterwards in Manage Customer › Billing account." Submitting moves the customer to VALIDATED and creates the Financial Account and its Billing Account (BAN) on Standard (`NULL`).
+12. On **View Customer**, the **Accounts** tab (`?tab=accounts`, needs `accounts_view : READ`) shows the Financial Account summary, each BAN with state, bill cycle, payment term, live receivable and its **Invoice template type** label ("Standard (default) · vN" or "{type name} · vN", the type and version the next bill run will capture, read live), and a paginated read-only document list that links into the Accounts module.
+13. On **Manage Customer**, the **Billing account** panel lists each BAN with its type label. Each open BAN has an **Invoice template type** select ("Standard (default)" first, then every usable type by name) and a **Save** button, enabled only when the selection differs from the BAN's current type and the user also holds `accounts_transactions : EDIT`; otherwise the panel is read-only. A save is audited and applies from the next bill run start or rerun. Billing's retire of a type moves its BANs to the chosen target, and these screens show the new type on the next load.
 
 ## Features
 
@@ -44,15 +44,13 @@ Billing accounts follow-on (Invoice Template Binding update, cm17–cm22; delive
 - Read-only detail page with three sections: Party – Organization, Role – Customer (including read-only account reference and JSONB specification), Customer – Contact Details. Since the Invoice Template Binding update (cm19) they sit on URL-driven tabs (`?tab=`): **Profile** (Organization + Customer Role, the default), **Contacts** (Contact Details) and **Accounts** (billing accounts, cm20); the inconsistency banner shows above the tabs on every tab.
 - Inconsistency warning banner when statuses conflict (e.g. ACTIVE customer on a SUSPENDED organization) — warn only, no cascade.
 
-### Billing accounts and invoice template (Invoice Template Binding update, delivered cm17–cm22, signed off 2026-10-25)
+### Billing accounts and invoice template (Invoice Template Binding update, cm17–cm22, signed off 2026-10-25; Invoice Template Types, cm23–cm24, delivered 2026-10-26)
 
 - **Tabs (cm19):** View Customer detail is a server-rendered tab strip — Profile (default), Contacts, Accounts — driven by `?tab=`; an unknown value falls back to Profile.
-- **Accounts tab (cm20):** read-only. Four states: locked (no `accounts_view : READ`; nothing is fetched), not onboarded, onboarded with no documents, and the normal view (Financial Account summary, one card per BAN with state chip, bill cycle, resolved payment term, live receivable and template label, and a paginated document list per Financial Account). Document ids link to the Accounts Transactions page when the viewer holds `accounts_transactions : READ`. Data loads only on this tab, under Suspense; a failed read stays inside the tab.
-- **Onboarding field (cm18):** the onboarding wizard shows a read-only "Invoice template — Follow active template" field with help text; the BAN is created with no template reference.
-- **Billing account panel (cm21):** Manage Customer lists every BAN with its template label and a **Reset to follow active template** button. The button is enabled only with `accounts_transactions : EDIT` on an open BAN with a non-`NULL` reference, so it is always disabled in v1. A failed accounts read shows an "unavailable" card inside the panel and leaves the rest of the page editable. The reset is audited (`BILLING_ACCOUNT_TEMPLATE_CHANGED`), locks the BAN rather than the customer, and writes nothing when the BAN already follows the active template.
-- **Plumbing only:** in this release a BAN can only follow the active template, and posting does not read the BAN's reference. Choosing a specific template is Phase 3.
-
-  > **In flight (2026-10-25):** the Invoice Template Types update (`custmgmt-update-overview.md`) replaces the version reference with a **template type**. It turns the Reset button into a type dropdown and makes the bill run's capture use the BAN's type. Steps 11–13 above and the bullets here describe the delivered state until that update ships.
+- **Accounts tab (cm20):** read-only. Four states: locked (no `accounts_view : READ`; nothing is fetched), not onboarded, onboarded with no documents, and the normal view (Financial Account summary, one card per BAN with state chip, bill cycle, resolved payment term, live receivable and invoice template type label, and a paginated document list per Financial Account). Document ids link to the Accounts Transactions page when the viewer holds `accounts_transactions : READ`. Data loads only on this tab, under Suspense; a failed read stays inside the tab.
+- **Onboarding field (cm18; wording cm23):** the onboarding wizard shows a read-only "Invoice template type: Standard (default)" field with help text; the BAN is created on Standard (`NULL`). There is no type choice at onboarding.
+- **Billing account panel (cm21; type select cm23):** Manage Customer lists every BAN with its type label, and each open BAN has an **Invoice template type** select and **Save** (enabled only with `accounts_transactions : EDIT` and a changed selection), under the caption "Changes apply from the next bill run start or rerun." A closed BAN shows "Billing account is closed" and no select. A failed accounts read shows an "unavailable" card inside the panel and leaves the rest of the page editable. The bind is audited (`BILLING_ACCOUNT_TEMPLATE_CHANGED`), locks the BAN rather than the customer, and writes nothing when the value is unchanged. A save to a type retired meanwhile shows "This invoice template type is no longer available. It may have been retired. The account's current type has been reloaded." and reloads.
+- **A real binding:** a BAN references a template **type** (`NULL` = Standard), and Billing's bill run captures that type and its ACTIVE version at run start or rerun. Details: **Invoice Template Types — Customer Management part** below.
 
 ### Customer lifecycle
 
@@ -119,7 +117,7 @@ Done means all of the following are true:
 
 ## Invoice Template Binding update — delivered scope (cm17–cm22; signed off 2026-10-25)
 
-_Folded from `custmgmt-update-overview.md` at sign-off. The flows and features are in **Core user flow** steps 11–13 and **Features › Billing accounts and invoice template** above. This section keeps the rest of the update's record. The in-flight Invoice Template Types update supersedes the NULL-only rule, the version column and the Reset control (see `custmgmt-update-overview.md`)._
+_Folded from the update overview at sign-off. The flows and features are in **Core user flow** steps 11–13 and **Features › Billing accounts and invoice template** above, which now describe the type binding. This section keeps the rest of the update's record. **Superseded** by the delivered Invoice Template Types update (cm23–cm24, below): the NULL-only rule, the version column (`ref_bill_template_version_id`, dropped by `0054`) and the Reset control no longer exist._
 
 ### Goals (as delivered)
 
@@ -169,3 +167,105 @@ _Folded from `custmgmt-update-overview.md` at sign-off. The flows and features a
 11. The rewritten page test and the matrix tests, including the service-level journey, pass.
 12. Typecheck, lint and vitest pass on a disposable Postgres.
 13. The `cm05`, `ac04`, architecture and UI-context docs moved with the code.
+
+---
+
+## Invoice Template Types — Customer Management part (delivered, cm23–cm24)
+
+_Folded from the Customer Management update overview at the cm24 ship gate (2026-10-26, joint with Billing bm85); cm23 was built 2026-10-26 in one merge with Billing bm82. The owning update is Billing's (template types, upload, activation, retire, export and the bill run's capture). **Users:** RevOps staff holding `customers : EDIT` + `accounts_transactions : EDIT` bind BANs; everyone holding `customers : READ` (+ `accounts_view : READ`) sees the binding. Rules: `custmgmt-architecture.md` Inv. #19–#22 and §8, `custmgmt-code-standards.md` §10, `custmgmt-ui-context.md` §10, `custmgmt-ai-workflow-rules.md` §10._
+
+### Overview
+
+Before this update a BAN's invoice template reference accepted only `NULL` ("follow the active template"), the Manage Customer panel offered only a never-enabled "Reset to follow active template" button, and posting ignored the reference. Billing's update introduced a catalog of **invoice template types**: Standard plus any number of new types, each with its own layout. This update lets RevOps **bind each BAN to a usable type** from Manage Customer. `NULL` still means Standard. The bill run captures the BAN's type at the next run start or rerun, and View Customer and Manage Customer show the type each BAN will invoice on.
+
+### Goals (as delivered)
+
+1. **The BAN references a type, not a version:** `billing.billing_account.ref_bill_template_family_id` (FK to `billing.bill_template_family`), with `NULL` = Standard. `ref_bill_template_version_id` is dropped; the migration (`0054`) aborts if any BAN holds a non-`NULL` version value.
+2. **RevOps binds a BAN to any usable type** (not retired, has an ACTIVE version), or back to Standard, from the Manage Customer Billing account panel. The write is audited and concurrency-safe.
+3. **Standard is stored only as `NULL`.** Choosing "Standard (default)" writes `NULL`; an explicit Standard id is rejected.
+4. **Binding is serialised against Billing's retire:** the bind gate locks the type row `FOR SHARE` and re-checks that it is usable inside the same transaction.
+5. **The screen shows the truth:** every BAN label names the type and the version the next bill run will capture, read live.
+6. **Onboarding is unchanged in behaviour:** a new BAN starts on Standard (`NULL`); only the field's wording changed.
+
+### Core user flow
+
+1. **Bind a BAN (RevOps, `customers : EDIT` + `accounts_transactions : EDIT`).**
+   1. Open **Manage Customer** for an onboarded customer. The **Billing account** panel lists each BAN with its state chip and current type label.
+   2. Each open BAN row shows an **Invoice template type** select: **"Standard (default)"** first, then every usable type in name order. The select starts on the BAN's current type, and **Save** is enabled only when the selection differs from it.
+   3. A user with `customers : EDIT` only sees the select and Save disabled, with the `EDIT_DISABLED_TITLE` tooltip. A closed BAN shows "Billing account is closed" and no select.
+   4. **Save** runs one transaction:
+      1. the BAN's compare-and-set on `last_modified` (`CONFLICT` if stale)
+      2. `assertBindableTemplate`, which locks the chosen type `FOR SHARE` and requires it to be usable (`TEMPLATE_NOT_BINDABLE` if not); `NULL` needs no lock
+      3. the column update and `last_edited_by`
+      4. `BILLING_ACCOUNT_TEMPLATE_CHANGED`, with before and after type id and name
+
+      If the value is unchanged, nothing is written and no audit row is recorded.
+   5. If the chosen type was retired while the panel was open, the save fails with **"This invoice template type is no longer available. It may have been retired. The account's current type has been reloaded."** The panel reloads the BAN's current type and the usable-type list. There is no automatic retry.
+   6. The caption under the panel reads **"Changes apply from the next bill run start or rerun."** Runs already in progress keep the type they captured.
+2. **See the binding (anyone with `customers : READ`).**
+   - **View Customer → Accounts tab** (`accounts_view : READ`): each BAN card shows **Invoice template type** with the label.
+   - **Manage Customer → Billing account panel:** the same label on each row.
+3. **Onboard (unchanged behaviour).** The onboarding wizard's read-only field reads **"Invoice template type: Standard (default)"**, with the help text **"New billing accounts use the Standard invoice template. Choose another type afterwards in Manage Customer › Billing account."** The BAN is created with `NULL`.
+4. **Retire (Billing-owned, affects these screens).** When a manager retires a type in Invoice Settings, Billing's bulk switch moves every bound BAN to the chosen target and writes one `BILLING_ACCOUNT_TEMPLATE_CHANGED` per BAN with `reason: 'TEMPLATE_TYPE_RETIRED'`. The customer screens show the new type on the next load. Customer Management code takes no part in the switch.
+
+### Features
+
+- **Data model:** one migration on the Accounts-owned `billing.billing_account` (`0054_billing_account_template_type.sql`): add `ref_bill_template_family_id text` (FK to `billing.bill_template_family`, nullable; `NULL` = Standard), abort if any `ref_bill_template_version_id` is non-`NULL`, then drop that column and its FK. No backfill (every BAN was `NULL`), no index. No change to `customer` schema tables.
+- **Bind gate:** `assertBindableTemplate(tx, typeId | null)` is the one validator, shared by onboarding and the bind service. `null` is accepted; a type id goes through `lockTemplateType(tx, typeId, 'share')` and is accepted only if it exists, isn't Standard, isn't retired and has an ACTIVE settings version. Anything else is `TEMPLATE_NOT_BINDABLE`.
+- **Bind service and action:** `setBillingAccountTemplate` keeps its delivered shape (BAN compare-and-set, one transaction, no write on an unchanged value) and takes `typeId | null`. Result codes: `BAN_NOT_FOUND`, `BAN_CLOSED`, `CONFLICT`, `TEMPLATE_NOT_BINDABLE`. The action keeps its dual guard (`customers : EDIT`, then `accounts_transactions : EDIT`), then Zod, the service and `revalidatePath` on the manage and view routes.
+- **Usable-type list and labels:** `listBindableTemplateTypes()` reads Billing's type **repository** (never a Billing service) and returns "Standard (default)" (`typeId: null`) first, then usable types by name. `resolveBanTemplateLabels` reads live, one read per distinct type, never cached:
+  - `NULL` → **"Standard (default) · v{N}"**, where N is Standard's ACTIVE version
+  - a usable type → **"{type name} · v{N}"**
+  - a retired type or one with no ACTIVE version (possible only after an SQL bypass) → **"{type name} · not usable"**, styled as a warning, because the next run will block that BAN's approval until it is rebound or the type is activated
+
+  The old strings "Follows active template (currently: … vN), as of now" and "Template reference not supported yet" are gone.
+- **Manage Customer panel:** the Reset button is replaced by the per-BAN select and Save (Core user flow 1). Permission greying, closed-BAN handling, the in-panel `AccountsUnavailableCard` and one-save-at-a-time behaviour are unchanged.
+- **View Customer Accounts tab:** each BAN card's template line reads **"Invoice template type"** with the new label. The tab stays read-only, with no binding control.
+- **Onboarding:** only the field's label and help text changed (Core user flow 3). It still submits `null`, reads no type list, and keeps its dual guard and atomic transaction.
+
+### Access and audit
+
+| Action | Permission |
+|---|---|
+| View the label (Manage Customer, View Customer Accounts tab) | `customers : READ` / `customers : EDIT` page guards, + `accounts_view : READ` for the Accounts tab |
+| Bind or rebind a BAN | `customers : EDIT` + `accounts_transactions : EDIT`, re-checked in the action |
+
+No new permission and no new audit event type. `BILLING_ACCOUNT_TEMPLATE_CHANGED` carries the type id and name before and after, plus an optional `reason` (set only by Billing's retire switch).
+
+### In scope (delivered)
+
+- The `billing_account` migration (version reference → type reference), its Drizzle mirror and FK.
+- `assertBindableTemplate` accepting usable types under `FOR SHARE`, and rejecting an explicit Standard id.
+- `setBillingAccountTemplate` and its action taking `typeId | null`, with unchanged guards, locking and audit.
+- `listBindableTemplateTypes` and the new `resolveBanTemplateLabels`.
+- The Manage Customer panel select and Save, the retired-type message and the "next bill run" caption.
+- The View Customer Accounts tab label.
+- Onboarding wording.
+- Tests: the bind gate, the panel, labels, the migration abort, and the race with Billing's retire (shared with Billing).
+- Docs: the Customer Management architecture, code standards, UI context and workflow rules, plus the `cm05` and `ac04` specs where they quoted the old wording.
+
+### Out of scope
+
+- **Creating, uploading, activating, retiring or exporting template types.** All of these are Billing's (Invoice Settings).
+- **Choosing a type during onboarding.** A new BAN always starts on Standard.
+- **Binding from Accounts-module screens,** or bulk-binding several BANs at once. Bulk moves happen only through Billing's retire.
+- **Pinning a BAN to a specific version.** A BAN follows its type's ACTIVE version.
+- **A new permission or a new audit event type.**
+- **Any change to the `customer` schema,** the transition maps or the customer lock (`party_role.last_modified_datetime`).
+- **Showing a BAN's invoice preview** on customer screens.
+
+### Success criteria (met at the cm24 ship gate)
+
+_Evidence for each criterion is in `custmgmt-progress-tracker.md` cm24._
+
+1. After the migration, `billing.billing_account.ref_bill_template_family_id` exists (nullable, FK to `bill_template_family`), `ref_bill_template_version_id` is gone, and every BAN reads `NULL`. On a database holding a non-`NULL` version binding, the migration aborts and drops nothing.
+2. A user with both permissions binds an open BAN to a usable type: one row update, one `BILLING_ACCOUNT_TEMPLATE_CHANGED` with type names before and after, the BAN's `last_modified` bumped, and `party_role.last_modified_datetime` untouched.
+3. Choosing "Standard (default)" writes `NULL`. Sending Standard's id, an unknown id, a retired type or a not-yet-usable type returns `TEMPLATE_NOT_BINDABLE` and writes nothing.
+4. A stale save returns `CONFLICT`; a closed BAN returns `BAN_CLOSED`; another customer's BAN returns `BAN_NOT_FOUND`; an unchanged value writes nothing.
+5. The action rejects a user missing `customers : EDIT` or `accounts_transactions : EDIT`, even with the UI bypassed. The panel greys the select and Save for a `customers : EDIT`-only user.
+6. A bind racing Billing's retire of the same type either commits first (and is then switched by the retire) or fails `TEMPLATE_NOT_BINDABLE`. It never leaves a BAN on a retired type.
+7. The panel and the Accounts tab show "Standard (default) · vN" for a `NULL` BAN and "{type} · vN" for a bound BAN, from a live read. Neither old label string exists in the code.
+8. After a type is retired in Invoice Settings, the panel and the Accounts tab show each moved BAN on its new type, and the retired-mid-edit save shows the agreed message and reloads.
+9. Onboarding creates the BAN with `NULL`, shows the new wording, and the V7 rollback test still passes.
+10. The next bill run after a bind captures the BAN's type and its ACTIVE version (verified in Billing's end-to-end journey).
+11. Typecheck, lint and vitest pass on a disposable Postgres. The Customer Management docs and the `cm05`/`ac04` specs moved with the code.

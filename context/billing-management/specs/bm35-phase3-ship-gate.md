@@ -1,6 +1,6 @@
 # bm35 — Phase-3 Ship Gate
 
-**Unit:** bm35 (Phase 3 · Phase N). **Boundary:** cross-cutting — tests / CI + the `volume` seed profile (`db/seeds/sample`). **No new page, permission, table, or feature.** **Specs from:** `billmgmt-code-standards.md` §9 (guardrail tests 1–33), `billmgmt-update-overview.md` (the 14-step journey + 28 success criteria), `billmgmt-ai-workflow-rules.md` §0 (the three reversals), `bm00-build-plan.md` Unit 35. **Mirrors:** bm21 (phase-2 ship gate), bm13 (phase-1).
+**Unit:** bm35 (Phase 3 · Phase N). **Boundary:** cross-cutting — tests / CI + the `volume` seed profile (`db/seeds/sample`). **No new page, permission, table, or feature.** **Specs from:** `billmgmt-code-standards.md` §9 (guardrail tests 1–33), `billmgmt-project-overview.md` (the 14-step journey + 28 success criteria), `billmgmt-ai-workflow-rules.md` §0 (the three reversals), `bm00-build-plan.md` Unit 35. **Mirrors:** bm21 (phase-2 ship gate), bm13 (phase-1).
 
 > **Framing.** Each phase-3 unit shipped its own guardrail with the behavior it introduced (workflow-rules §4.9). This unit **assembles** the phase-3 suite, adds the `volume` seed profile and the one full-journey E2E no single unit owns, runs it all against **real** infrastructure, and sweeps any lingering citation of the three reversed rules — so the real-compute bill run ships green. It audits, it does not rebuild.
 

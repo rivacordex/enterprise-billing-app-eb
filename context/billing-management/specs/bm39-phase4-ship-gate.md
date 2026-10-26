@@ -1,6 +1,6 @@
 # bm39 — Phase-4 Ship Gate
 
-**Unit:** bm39 (Phase 4 · Phase O). **Boundary:** cross-cutting — tests + docs/tracker. **No new build** — audit, assemble, sign off (bm13/bm21/bm35 discipline). **Specs from:** `billmgmt-update-overview.md` (Phase 4 success criteria), `billmgmt-gap-assessment.md` (§7 definition of "end-to-end complete"), `billmgmt-code-standards.md` §9 (guardrail list), `bm00-build-plan.md` Unit 39.
+**Unit:** bm39 (Phase 4 · Phase O). **Boundary:** cross-cutting — tests + docs/tracker. **No new build** — audit, assemble, sign off (bm13/bm21/bm35 discipline). **Specs from:** `billmgmt-project-overview.md` (Phase 4 success criteria), `billmgmt-gap-assessment.md` (§7 definition of "end-to-end complete"), `billmgmt-code-standards.md` §9 (guardrail list), `bm00-build-plan.md` Unit 39.
 
 > **Framing.** The bm21/bm35 pattern: audit the assembled phase against its guardrails, run the full journey as the phase proof, fix only what auditing surfaces, and sync the owning docs — do not rebuild. Phase 4's proof is that the module now completes end-to-end **on its own** locally (no out-of-band replay) and the production deploy path is reviewable and gated. This unit owns the full-journey run (via bm37's smoke), the "no new schema" confirmation, and the tracker/known-issues closeout.
 

@@ -74,8 +74,8 @@ Load your sample data per the bm64 runbook and run steps 1–7. Record the run i
 
 ### 4. Docs (fold and flip)
 
-- `billmgmt-project-overview.md`: add a section "Invoice Template Phase 3 — bill run uses the BAN's template (delivered, bm64–bm73)", folded from `billmgmt-update-overview.md`: overview, goals, flow, features, scope, and criteria 1–15 with evidence. Update the "Current state" block.
-- `billmgmt-update-overview.md`: back to pointers only (workflow rules §7.8).
+- `billmgmt-project-overview.md`: add a section "Invoice Template Phase 3 — bill run uses the BAN's template (delivered, bm64–bm73)", folded from the update overview: overview, goals, flow, features, scope, and criteria 1–15 with evidence. Update the "Current state" block.
+- The update overview: back to pointers only (workflow rules §7.8).
 - `billmgmt-architecture.md`: Phase 3 section status → "Delivered (bm64–bm72), signed off by bm73"; every "planned" marker on #51–#58 and the amendments → "built (bmNN)"; the status table row.
 - `billmgmt-code-standards.md`: Phase 3 section status → delivered; every guardrail item 57–67 → "built (bmNN)" with its test file.
 - `billmgmt-ai-workflow-rules.md`: re-scope as the last revision did. Phase 3 rules move into §0 carried-forward, and the "What changed" row is added.

@@ -24,13 +24,13 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 
 Read the following files in order before implementing or making any architectural decision related to the Billing Module & Customer Module related to Invoice Template Type Change:
 
-1. `context/billing-management/billmgmt-update-overview.md` — current update's definition, goals, core flow, and scope
+1. `context/billing-management/billmgmt-project-overview.md` — the module's definition, goals, core flow and scope; the Invoice Template Types update is delivered and folded there (no Billing update is in flight)
 2. `context/billing-management/billmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
 3. `context/billing-management/billmgmt-code-standards.md` — implementation rules and conventions
 4. `context/billing-management/billmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
 5. `context/billing-management/billmgmt-ui-context.md` — theme, colors, typography, and component conventions
 
-1. `context/customer-management/custmgmt-update-overview.md` — current update's definition, goals, core flow, and scope
+1. `context/customer-management/custmgmt-project-overview.md` — the module's definition, goals, core flow and scope; the Invoice Template Types update (Customer Management part) is delivered and folded there (no Customer Management update is in flight)
 2. `context/customer-management/custmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
 3. `context/customer-management/custmgmt-code-standards.md` — implementation rules and conventions
 4. `context/customer-management/custmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach

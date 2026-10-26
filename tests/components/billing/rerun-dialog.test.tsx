@@ -9,18 +9,25 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/actions/billing/rerun-run.action", () => ({
   rerunRunAction: vi.fn(),
 }));
+// bm84 — the template-type warning read, called when the confirm opens.
+vi.mock("@/actions/billing/list-rerun-template-changes.action", () => ({
+  listRerunTemplateChangesAction: vi.fn(),
+}));
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { listRerunTemplateChangesAction } from "@/actions/billing/list-rerun-template-changes.action";
 import { rerunRunAction } from "@/actions/billing/rerun-run.action";
 import { RerunDialog } from "@/components/billing/rerun-dialog";
 
 const mockAction = vi.mocked(rerunRunAction);
+const mockChanges = vi.mocked(listRerunTemplateChangesAction);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockChanges.mockResolvedValue({ ok: true, changes: [] });
 });
 
 describe("RerunDialog (bm08-spec §Visual)", () => {
@@ -137,5 +144,96 @@ describe("RerunDialog (bm08-spec §Visual)", () => {
 
     await user.click(screen.getByRole("button", { name: /^rerun$/i }));
     expect(screen.getByText(/all eligible accounts/i)).toBeTruthy();
+  });
+});
+
+describe("RerunDialog — template-type warning (bm84)", () => {
+  const HEADING = "Invoice template type changed since run start";
+
+  function change(n: number) {
+    return {
+      billingAccountId: `BAN${String(n).padStart(8, "0")}`,
+      fromTypeName: "Wholesale",
+      toTypeName: "Standard",
+    };
+  }
+
+  async function open(accountIds: string[] = ["BAN00000001"]) {
+    const user = userEvent.setup();
+    render(<RerunDialog billRunId="BRN00000001" accountIds={accountIds} />);
+    await user.click(
+      screen.getByRole("button", { name: /rerun these accounts/i }),
+    );
+    return user;
+  }
+
+  it("reads the changes once when the confirm opens, with the dialog's scope", async () => {
+    const user = await open(["BAN00000001", "BAN00000002"]);
+    await user.type(screen.getByLabelText(/reason/i), "re-check");
+    expect(mockChanges).toHaveBeenCalledTimes(1);
+    expect(mockChanges).toHaveBeenCalledWith({
+      billRunId: "BRN00000001",
+      accountIds: ["BAN00000001", "BAN00000002"],
+    });
+  });
+
+  it("lists each changed BAN (mono id, from → to) in a Warning callout, and Confirm stays enabled", async () => {
+    mockChanges.mockResolvedValue({ ok: true, changes: [change(1)] });
+    const user = await open();
+    const note = await screen.findByRole("note", { name: HEADING });
+    expect(note).toHaveTextContent(HEADING);
+    const item = within(note).getByRole("listitem");
+    expect(item).toHaveTextContent("BAN00000001: Wholesale → Standard");
+    expect(within(item).getByText("BAN00000001").className).toContain(
+      "font-mono",
+    );
+    expect(note).toHaveTextContent(
+      "The rerun uses each account's current type.",
+    );
+    expect(note.className).toContain("--color-warning-50");
+    await user.type(screen.getByLabelText(/reason/i), "re-check");
+    expect(
+      (
+        screen.getByRole("button", {
+          name: /confirm rerun/i,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  });
+
+  it("shows the first 10 and 'and {n} more' above 10", async () => {
+    mockChanges.mockResolvedValue({
+      ok: true,
+      changes: Array.from({ length: 13 }, (_, i) => change(i + 1)),
+    });
+    await open([]);
+    const note = await screen.findByRole("note", { name: HEADING });
+    expect(within(note).getAllByRole("listitem")).toHaveLength(10);
+    expect(note).toHaveTextContent("and 3 more");
+  });
+
+  it.each([
+    ["no change", { ok: true as const, changes: [] }],
+    ["a failed read", { ok: false as const, code: "SERVER_ERROR" as const }],
+  ])("shows no callout on %s", async (_label, result) => {
+    mockChanges.mockResolvedValue(result);
+    await open();
+    await waitFor(() => expect(mockChanges).toHaveBeenCalled());
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(screen.queryByText(HEADING)).toBeNull();
+  });
+
+  it("a rejected read shows nothing and never blocks the rerun", async () => {
+    mockChanges.mockRejectedValue(new Error("network"));
+    const user = await open();
+    await user.type(screen.getByLabelText(/reason/i), "re-check");
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: /confirm rerun/i,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 });

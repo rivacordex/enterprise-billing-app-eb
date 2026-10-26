@@ -29,6 +29,7 @@ vi.mock("@/db/repositories/billing/bill-template-family", () => ({
     findDefault: vi.fn(),
     findById: vi.fn(),
     listAll: vi.fn(),
+    listUsable: vi.fn(),
   },
 }));
 vi.mock("@/services/billing/invoice-template/load", () => ({
@@ -40,15 +41,23 @@ vi.mock(
   "@/services/billing/invoice-template/template-types",
   async (importOriginal) => ({
     ...(await importOriginal<object>()),
+    countBoundBans: vi.fn(),
     countBoundBansByType: vi.fn(),
+    listBoundBans: vi.fn(),
   }),
 );
 
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
-import { countBoundBansByType } from "@/services/billing/invoice-template/template-types";
 import {
+  countBoundBans,
+  countBoundBansByType,
+  listBoundBans,
+} from "@/services/billing/invoice-template/template-types";
+import {
+  getBoundBansPage,
   getInvoiceTemplatePageData,
+  getTemplateTypeRetireData,
   listTemplateTypes,
   type InvoiceTemplateEditorData,
   type InvoiceTemplatePageData,
@@ -382,5 +391,88 @@ describe("listTemplateTypes (bm77)", () => {
       },
     ]);
     expect(countBoundBansByType).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("bm83 — retired types and the Retire dialog's data", () => {
+  const WHOLESALE = "BTF00000002";
+  const RETIRED_AT = new Date("2026-10-26T01:00:00Z");
+  const BANS = [
+    { billingAccountId: "BAN00000001", name: "Acme", state: "active" },
+  ];
+
+  function familyIs(family: typeof STANDARD_FAMILY): void {
+    familyRepo.findById.mockImplementation(async (_db, id) =>
+      id === family.billTemplateFamilyId ? family : null,
+    );
+  }
+
+  it("a retired type lists no DRAFT or discarded row in its history, even with an open DRAFT pair", async () => {
+    familyIs({ ...STANDARD_FAMILY, retiredDatetime: RETIRED_AT });
+    const discarded = {
+      ...DRAFT_PLAIN,
+      billTemplateVersionId: "BTV00000005",
+      versionNo: 3,
+      status: "RETIRED",
+      usedByCount: 0,
+    };
+    repo.listForKind.mockImplementation(async (_db, { kind }) =>
+      kind === "layout"
+        ? [{ ...SEEDED_LAYOUT_ROW, usedByCount: 0 }]
+        : [
+            discarded,
+            { ...DRAFT_PLAIN, usedByCount: 0 },
+            { ...SEEDED_GENERATED_ROW, usedByCount: 5 },
+          ],
+    );
+    const data = await page(undefined, false);
+    expect(data.history.map((h) => [h.versionNo, h.status])).toEqual([
+      [1, "ACTIVE"],
+    ]);
+    expect(data.draft).toBeNull();
+    expect(data.typeStatus).toBe("RETIRED");
+  });
+
+  // Review fix (owner, 2026-10-26) — the retired rule is applied here, from
+  // this one read of the type, whatever `canEdit` the page passes.
+  it("an EDIT view of a retired type loads as for READ: no working DRAFT opened, no ?version=<draft>, retiredDatetime set", async () => {
+    familyIs({ ...STANDARD_FAMILY, retiredDatetime: RETIRED_AT });
+    const data = await page("BTV00000004", true);
+    expect(repo.findDraftWithModifier).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "generated" }),
+    );
+    expect(data.draft).toBeNull();
+    expect(data.shown.billTemplateVersionId).toBe("BTV00000002");
+    expect(data.retiredDatetime).toBe(RETIRED_AT);
+  });
+
+  it("a live type carries retiredDatetime: null and still opens the DRAFT for EDIT", async () => {
+    const data = await page(undefined, true);
+    expect(data.retiredDatetime).toBeNull();
+    expect(data.draft?.versionNo).toBe(2);
+  });
+
+  it("getTemplateTypeRetireData: the type's own count (not the all-types scan), the first page and the targets without itself", async () => {
+    vi.mocked(countBoundBans).mockResolvedValue(21);
+    vi.mocked(listBoundBans).mockResolvedValue(BANS);
+    familyRepo.listUsable.mockResolvedValue([
+      { billTemplateFamilyId: "BTF00000003", name: "Retail" },
+      { billTemplateFamilyId: WHOLESALE, name: "Wholesale" },
+    ]);
+    expect(await getTemplateTypeRetireData(WHOLESALE)).toEqual({
+      boundBanCount: 21,
+      firstBoundBans: BANS,
+      retireTargets: [{ billTemplateFamilyId: "BTF00000003", name: "Retail" }],
+    });
+    expect(countBoundBans).toHaveBeenCalledWith(expect.anything(), WHOLESALE);
+    expect(countBoundBansByType).not.toHaveBeenCalled();
+    expect(listBoundBans).toHaveBeenCalledWith(expect.anything(), WHOLESALE, 0);
+  });
+
+  it("getBoundBansPage reads the requested page", async () => {
+    vi.mocked(listBoundBans).mockResolvedValue(BANS);
+    expect(await getBoundBansPage(WHOLESALE, 2)).toBe(BANS);
+    expect(listBoundBans).toHaveBeenCalledWith(expect.anything(), WHOLESALE, 2);
   });
 });

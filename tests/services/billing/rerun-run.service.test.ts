@@ -58,7 +58,7 @@ import { udrStatusRepository } from "@/db/repositories/billing/udr-status.reposi
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
-import { rerunRun } from "@/services/billing/rerun-run";
+import { rerunRun, selectRerunEligible } from "@/services/billing/rerun-run";
 import { getAppTimezone } from "@/services/system-config/app-config-read.service";
 import type { RerunRunParams } from "@/services/billing/rerun-run";
 
@@ -375,4 +375,81 @@ describe("rerunRun (bm08-spec §Design/§1)", () => {
       "connection reset",
     );
   });
+});
+
+// bm84 (D1) — the eligibility rule, extracted verbatim so the rerun warning
+// read shares it. The rerun's own eligibility cases above still pass through it.
+describe("selectRerunEligible (bm84)", () => {
+  const ROWS = [
+    { billingAccountId: "BAN00000001", status: "PROCESSING_FAILED" },
+    { billingAccountId: "BAN00000002", status: "PROCESSED" },
+    { billingAccountId: "BAN00000003", status: "EXCLUDED" },
+    { billingAccountId: "BAN00000004", status: "PROCESSED" },
+  ];
+  const ids = (rows: { billingAccountId: string }[]) =>
+    rows.map((r) => r.billingAccountId);
+
+  it("an empty selection means every non-EXCLUDED, unposted account", () => {
+    expect(ids(selectRerunEligible(ROWS, [], []))).toEqual([
+      "BAN00000001",
+      "BAN00000002",
+      "BAN00000004",
+    ]);
+  });
+
+  it("drops EXCLUDED and posted accounts", () => {
+    expect(ids(selectRerunEligible(ROWS, ["BAN00000002"], []))).toEqual([
+      "BAN00000001",
+      "BAN00000004",
+    ]);
+  });
+
+  it("intersects with a non-empty selection, which never re-admits EXCLUDED or posted", () => {
+    expect(
+      ids(
+        selectRerunEligible(
+          ROWS,
+          ["BAN00000004"],
+          ["BAN00000003", "BAN00000004", "BAN00000001"],
+        ),
+      ),
+    ).toEqual(["BAN00000001"]);
+  });
+
+  it("a selection of only ineligible or unknown accounts is empty", () => {
+    expect(
+      selectRerunEligible(ROWS, [], ["BAN00000003", "BAN00000099"]),
+    ).toEqual([]);
+  });
+
+  it("keeps the extra fields of each row (the warning reads the stamp)", () => {
+    const rows = [
+      {
+        billingAccountId: "BAN00000001",
+        status: "PROCESSED",
+        refBillTemplateFamilyId: "BTF00000002",
+      },
+    ];
+    expect(selectRerunEligible(rows, [], [])[0]).toBe(rows[0]);
+  });
+
+  it.each([
+    ["all", [] as string[]],
+    ["a selection", ["BAN00000002", "BAN00000003"]],
+  ])(
+    "parity: rerunRun's accountCount equals selectRerunEligible(…).length (%s)",
+    async (_label, accountIds) => {
+      mockFindByIdForUpdate.mockResolvedValue(run());
+      mockListForRerun.mockResolvedValue(ACCOUNTS);
+      mockListPosted.mockResolvedValue(["BAN00000001"]);
+      const result = await rerunRun(params({ accountIds }), "user-1");
+      const expected = selectRerunEligible(
+        ACCOUNTS as unknown as { billingAccountId: string; status: string }[],
+        ["BAN00000001"],
+        accountIds,
+      ).length;
+      expect(expected).toBeGreaterThan(0);
+      expect(result.ok && result.value.accountCount).toBe(expected);
+    },
+  );
 });

@@ -2,7 +2,7 @@
 
 - **Unit:** 19 of 22 (`cm00-build-plan.md` Phase 2 — Invoice Template Binding update). **Boundary:** APP.
 - **Dependencies:** delivered `cm05` (`app/(app)/customers/view/[id]/page.tsx`, `OrganizationSection`, `CustomerRoleSection`, `ContactDetailsSection`, `InconsistencyBanner`). No dependency on cm17/cm18; may be built alongside them (`custmgmt-ai-workflow-rules.md` §9.2).
-- **Authorizing sections:** binding plan §7.1, D5; `custmgmt-update-overview.md` *Core user flow 2*, *Features → View Customer tabs*; `custmgmt-architecture.md` §7.1, §7.2, Inv. #14; `custmgmt-ui-context.md` §9.1; `custmgmt-ai-workflow-rules.md` §9.3 items 8–9, §9.4 items 3–4.
+- **Authorizing sections:** binding plan §7.1, D5; the binding update overview (folded into `custmgmt-project-overview.md`) *Core user flow 2*, *Features → View Customer tabs*; `custmgmt-architecture.md` §7.1, §7.2, Inv. #14; `custmgmt-ui-context.md` §9.1; `custmgmt-ai-workflow-rules.md` §9.3 items 8–9, §9.4 items 3–4.
 - **Codebase verified against:** `enterprise-billing-app` working tree, 2026-10-10.
 
 > **Framing.** View Customer is today one server component that stacks three sections. This unit turns it into three URL-driven tabs without changing any section, the guard, the not-found state, or the banner rule. The Accounts tab is an empty placeholder here; cm20 fills it. The pattern is copied from the bill-run detail page (`app/(app)/billing/bill-runs/[runId]/page.tsx` + `components/billing/run-detail-tabs.tsx`): a Zod-parsed `?tab=` with a lenient fallback, and a server-rendered strip of plain `<Link>`s.

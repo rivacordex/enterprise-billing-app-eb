@@ -8,7 +8,11 @@ import { LEVELS, PERMISSIONS } from "@/auth/permission-constants";
 import { GeneratedHbsViewer } from "@/components/billing/invoice-settings/generated-hbs-viewer";
 import { InvoiceSettingsTabs } from "@/components/billing/invoice-settings/invoice-settings-tabs";
 import { InvoiceStructureForm } from "@/components/billing/invoice-settings/invoice-structure-form";
-import { TEMPLATE_TYPE_MESSAGES } from "@/components/billing/invoice-settings/template-type-messages";
+import { RetireTemplateTypeDialog } from "@/components/billing/invoice-settings/retire-template-type-dialog";
+import {
+  TEMPLATE_TYPE_MESSAGES,
+  retiredStatusLine,
+} from "@/components/billing/invoice-settings/template-type-messages";
 import { UploadLayoutDialog } from "@/components/billing/invoice-settings/upload-layout-dialog";
 import { TemplateVersionStatusBadge } from "@/components/billing/invoice-settings/template-version-status-badge";
 import { VersionHistoryTable } from "@/components/billing/invoice-settings/version-history-table";
@@ -16,10 +20,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   getGeneratedHbsSources,
   getInvoiceTemplatePageData,
+  getTemplateTypeRetireData,
   listRecentPostedBills,
   type InvoiceTemplateEditorData,
 } from "@/services/billing/read/invoice-template-settings";
-import { formatRelativeTime } from "@/lib/formatters";
+import { formatDatetime, formatRelativeTime } from "@/lib/formatters";
 import {
   getAppLocale,
   getAppTimezone,
@@ -38,8 +43,10 @@ import {
 // type comes from the `[typeId]` segment, never the default. READ views
 // everything (form read-only, preview, Generated .hbs, history); EDIT only
 // makes the form editable — `canEdit` is a show/hide gate, never enforcement.
-// Save draft (bm57), Activate (bm58) and Discard (bm79) are server actions that
-// re-check EDIT.
+// Save draft (bm57), Activate (bm58), Discard (bm79) and Retire (bm83) are
+// server actions that re-check EDIT. bm83 (D7) — a retired type renders
+// read-only for everyone: its page data loads as for a READ user, so no DRAFT
+// or discarded row is opened or listed; history and Export stay.
 // A type with no settings yet ("Not yet usable") shows the empty state; bm78
 // adds the Upload button inside it.
 export const dynamic = "force-dynamic";
@@ -82,15 +89,26 @@ export default async function InvoiceTemplateTypePage({
 
   const typeId = templateTypeIdParamSchema.safeParse((await params).typeId);
   if (!typeId.success) notFound();
+  // bm83 (D7) — the loader applies the retired rule from its one read of the
+  // type (review fix); the page takes the same answer from the data.
   const data = await getInvoiceTemplatePageData(typeId.data, version, {
     canEdit,
   });
   if (!data) notFound();
+  const retiredAt = data.retiredDatetime;
+  const editView = canEdit && retiredAt === null;
+  // bm83 (D8) — the Retire dialog's data: EDIT, a non-Standard live type.
+  const retire =
+    editView && !data.isDefaultType
+      ? await getTemplateTypeRetireData(data.typeId)
+      : null;
+  // bm83 (D7) — no bill can preview a retired type, so none is offered.
+  const canPreviewTypeBills = canPreviewBills && retiredAt === null;
 
   // bm78 — EDIT holders upload a layout package to a non-retired type. bm80:
   // over an open layout DRAFT the dialog carries the overwrite warning, built
   // from this server data (Next.js rule 5).
-  const canUpload = canEdit && data.typeStatus !== "RETIRED";
+  const canUpload = editView;
   const locale = await getAppLocale();
   const timezone = getAppTimezone();
   const upload = (
@@ -154,7 +172,26 @@ export default async function InvoiceTemplateTypePage({
           </span>
         </p>
         {canUpload && !data.empty ? upload : null}
+        {/* bm83 — EDIT, a non-Standard, non-retired type. */}
+        {retire ? (
+          <RetireTemplateTypeDialog
+            typeId={data.typeId}
+            typeName={data.typeName}
+            boundBanCount={retire.boundBanCount}
+            firstBoundBans={retire.firstBoundBans}
+            retireTargets={retire.retireTargets}
+          />
+        ) : null}
       </div>
+      {retiredAt !== null ? (
+        <p
+          role="status"
+          className="inline-flex items-center gap-2 rounded-sm bg-[color:var(--color-info-50)] px-3 py-2 text-body-sm text-[color:var(--color-info-700)]"
+        >
+          <Info size={14} aria-hidden />
+          {retiredStatusLine(formatDatetime(retiredAt, locale, timezone))}
+        </p>
+      ) : null}
     </div>
   );
 
@@ -165,13 +202,15 @@ export default async function InvoiceTemplateTypePage({
       <div className="space-y-4">
         <InvoiceSettingsTabs active="invoice-template" />
         {heading}
-        <Alert>
-          <Info aria-hidden />
-          <AlertDescription className="space-y-3">
-            <p>{TEMPLATE_TYPE_MESSAGES.emptyState}</p>
-            {canUpload ? upload : null}
-          </AlertDescription>
-        </Alert>
+        {retiredAt === null ? (
+          <Alert>
+            <Info aria-hidden />
+            <AlertDescription className="space-y-3">
+              <p>{TEMPLATE_TYPE_MESSAGES.emptyState}</p>
+              {canUpload ? upload : null}
+            </AlertDescription>
+          </Alert>
+        ) : null}
       </div>
     );
   }
@@ -232,7 +271,7 @@ export default async function InvoiceTemplateTypePage({
         ))}
       </nav>
 
-      {tab === "edit" && canEdit && draft && !shownIsDraft ? (
+      {tab === "edit" && editView && draft && !shownIsDraft ? (
         <p
           role="status"
           className="inline-flex flex-wrap items-center gap-2 rounded-sm bg-[color:var(--color-info-50)] px-3 py-2 text-body-sm text-[color:var(--color-info-700)]"
@@ -271,7 +310,7 @@ export default async function InvoiceTemplateTypePage({
           // a save can never silently replace it with another version's
           // content (the token below is the draft's).
           editable={
-            canEdit &&
+            editView &&
             (shownIsDraft ||
               (!draft &&
                 shown.billTemplateVersionId === current?.billTemplateVersionId))
@@ -282,8 +321,8 @@ export default async function InvoiceTemplateTypePage({
           activeStructure={data.currentStructure}
           familyId={data.typeId}
           layoutChange={data.layoutChange}
-          canPreviewBills={canPreviewBills}
-          recentBills={canPreviewBills ? await listRecentPostedBills() : []}
+          canPreviewBills={canPreviewTypeBills}
+          recentBills={canPreviewTypeBills ? await listRecentPostedBills() : []}
         />
       ) : tab === "generated" ? (
         await renderGenerated(shown)
@@ -291,7 +330,7 @@ export default async function InvoiceTemplateTypePage({
         <VersionHistoryTable
           rows={data.history}
           shownVersionId={shown.billTemplateVersionId}
-          canViewDrafts={canEdit}
+          canViewDrafts={editView}
           // bm79 — EDIT on a non-retired type (the upload gate) may discard
           // the DRAFT pair.
           discard={

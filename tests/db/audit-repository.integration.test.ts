@@ -6,7 +6,10 @@ import type postgresjs from "postgres";
 
 import * as schema from "@/db/schema";
 import { auditLog } from "@/db/schema/audit";
-import { insertAuditEvent } from "@/db/repositories/audit.repository";
+import {
+  insertAuditEvent,
+  insertAuditEvents,
+} from "@/db/repositories/audit.repository";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -61,10 +64,44 @@ describe.skipIf(!databaseUrl)(
       expect(rows[0]?.targetId).toBe("some-user-id");
     });
 
+    // bm83 — the retire switch's multi-row insert (one statement per chunk).
+    it("insertAuditEvents writes every event in one call, and nothing for an empty list", async () => {
+      const before = (await db.select().from(auditLog)).length;
+      await insertAuditEvents(db, []);
+      expect(await db.select().from(auditLog)).toHaveLength(before);
+      await insertAuditEvents(
+        db,
+        ["BAN00000001", "BAN00000002"].map((targetId) => ({
+          eventType: "BILLING_ACCOUNT_TEMPLATE_CHANGED" as const,
+          actorUserId: null,
+          targetEntity: "BILLING_ACCOUNT",
+          targetId,
+          beforeData: { refBillTemplateFamilyId: "BTF00000002" },
+          afterData: { refBillTemplateFamilyId: null },
+        })),
+      );
+      const rows = await db.select().from(auditLog);
+      expect(rows).toHaveLength(before + 2);
+      expect(
+        rows
+          .filter((r) => r.eventType === "BILLING_ACCOUNT_TEMPLATE_CHANGED")
+          .map((r) => r.targetId)
+          .sort(),
+      ).toEqual(["BAN00000001", "BAN00000002"]);
+    });
+
+    // bm85 gate finding (review fix) — the rule, not a name list: the audit
+    // log is append-only, so the module exports inserts and nothing else.
     it("exposes no update or delete methods on the repository module", async () => {
       const repo: Record<string, unknown> =
         await import("@/db/repositories/audit.repository");
-      expect(Object.keys(repo).sort()).toEqual(["insertAuditEvent"]);
+      const names = Object.keys(repo);
+      expect(names).toContain("insertAuditEvent");
+      expect(names).toContain("insertAuditEvents");
+      expect(names.filter((n) => !/^insert[A-Z]/.test(n))).toEqual([]);
+      expect(
+        names.filter((n) => /update|delete|upsert|remove|truncate/i.test(n)),
+      ).toEqual([]);
     });
   },
 );

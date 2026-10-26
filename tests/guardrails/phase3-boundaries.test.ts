@@ -14,7 +14,9 @@ import { describe, expect, it } from "vitest";
 //   3. No file under `services/billing/**` or `actions/billing/**` imports
 //      `services/accounts/**` or `actions/accounts/**` (D46), except the
 //      ledger posting path below.
-//   4. No billing file writes `billing_account` (D46: read at run start only).
+//   4. No billing file writes `billing_account` (D46: read at run start only),
+//      except one pinned site: the bm83 retire switch in `template-types.ts`
+//      (Invoice Template Types guardrail 79; superseded-rules table).
 
 const ROOT = process.cwd();
 
@@ -182,14 +184,44 @@ describe("Invoice Template Phase 3 boundaries (guardrail item 66, D46, D31)", ()
     const RAW_WRITE =
       /\b(UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+"?billing"?\s*\.\s*"?billing_account"?(?![\w])/i;
 
-    it("no services/billing, actions/billing or db/repositories/billing file writes billing_account", () => {
+    // bm83 — the one pinned writer: a single Drizzle update inside
+    // `retireTemplateType`, and no raw write anywhere in the file.
+    const RETIRE_SWITCH = {
+      file: "services/billing/invoice-template/template-types.ts",
+      fn: "export async function retireTemplateType(",
+    };
+
+    function isPinnedRetireSwitch(file: string, source: string): boolean {
+      if (file !== RETIRE_SWITCH.file || RAW_WRITE.test(source)) return false;
+      const writes = [
+        ...source.matchAll(new RegExp(DRIZZLE_WRITE.source, "g")),
+      ];
+      const start = source.indexOf(RETIRE_SWITCH.fn);
+      const end = source.indexOf("\nasync function ", start);
+      return (
+        writes.length === 1 &&
+        writes[0]![1] === "update" &&
+        start !== -1 &&
+        writes[0]!.index! > start &&
+        (end === -1 || writes[0]!.index! < end)
+      );
+    }
+
+    it("no services/billing, actions/billing or db/repositories/billing file writes billing_account (bar the pinned retire switch)", () => {
       const offenders = BILLING_SOURCE_DIRS.flatMap(listSourceFiles).filter(
         (file) => {
           const source = read(file);
+          if (isPinnedRetireSwitch(file, source)) return false;
           return DRIZZLE_WRITE.test(source) || RAW_WRITE.test(source);
         },
       );
       expect(offenders).toEqual([]);
+    });
+
+    it("the pinned retire switch still exists and writes billing_account (non-vacuous)", () => {
+      const source = read(RETIRE_SWITCH.file);
+      expect(DRIZZLE_WRITE.test(source)).toBe(true);
+      expect(isPinnedRetireSwitch(RETIRE_SWITCH.file, source)).toBe(true);
     });
 
     it("the write patterns match both forms (non-vacuous)", () => {

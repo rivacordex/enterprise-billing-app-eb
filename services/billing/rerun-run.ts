@@ -6,6 +6,7 @@ import { customerBillRepository } from "@/db/repositories/billing/customer-bill.
 import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import { firstOfMonth } from "@/services/billing/derive-periods";
+import { selectRerunEligible } from "@/services/billing/rerun-eligibility";
 import { computeRunCounters } from "@/services/billing/compute-run-status";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
@@ -76,6 +77,9 @@ const RERUNNABLE_RUN_STATUSES: ReadonlySet<string> = new Set([
   "PROCESSING_FAILED",
 ]);
 
+// bm84 (D1) — the eligibility rule, shared with the rerun warning read.
+export { selectRerunEligible };
+
 // Internal-only signal thrown from inside `db.transaction` so an engine failure
 // rolls the whole rerun back (throwing is drizzle's rollback trigger) while the
 // outer call still returns a typed result instead of rejecting (bm03 pattern).
@@ -109,13 +113,10 @@ export async function rerunRun(
         billRunAccountRepository.listForRerun(tx, run.billRunId),
         customerBillRepository.listPostedAccountIds(tx, run.billRunId),
       ]);
-      const posted = new Set(postedIds);
-      const requested = new Set(params.accountIds);
-      const eligible = accounts.filter(
-        (a) =>
-          a.status !== "EXCLUDED" &&
-          !posted.has(a.billingAccountId) &&
-          (requested.size === 0 || requested.has(a.billingAccountId)),
+      const eligible = selectRerunEligible(
+        accounts,
+        postedIds,
+        params.accountIds,
       );
       if (eligible.length === 0) {
         return { ok: false, code: "NO_ACCOUNTS_SELECTED" } as const;

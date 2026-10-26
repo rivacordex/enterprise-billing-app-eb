@@ -68,6 +68,19 @@ function migrationsBefore0053(): string {
   return dir;
 }
 
+// The journal entries from 0053 on: what migrating a 0052 database applies
+// (0053 itself, then every later migration, e.g. cm23's 0054).
+function migrationsFrom0053Count(): number {
+  const journal = JSON.parse(
+    readFileSync(path.join(MIGRATIONS_FOLDER, "meta", "_journal.json"), "utf8"),
+  ) as { entries: { tag: string; when: number }[] };
+  const bm74 = journal.entries.find((e) => e.tag === BM74_MIGRATION_TAG);
+  if (!bm74) {
+    throw new Error(`${BM74_MIGRATION_TAG} is missing from the journal.`);
+  }
+  return journal.entries.filter((e) => e.when >= bm74.when).length;
+}
+
 describe.skipIf(!databaseUrl)(
   "bm74 type-scoped invoice template catalog (requires DATABASE_URL)",
   () => {
@@ -262,7 +275,7 @@ describe.skipIf(!databaseUrl)(
 
         const before = await appliedCount();
         await migrateAll();
-        expect(await appliedCount()).toBe(before + 1);
+        expect(await appliedCount()).toBe(before + migrationsFrom0053Count());
       }, 180_000);
 
       it("backfills Standard's layout_code and the default layout's type", async () => {
