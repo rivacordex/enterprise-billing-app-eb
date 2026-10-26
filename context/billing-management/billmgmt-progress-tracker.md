@@ -9,7 +9,7 @@ invariant audit) trimmed to durable facts + decisions. Full history:
 `5b5f746`); per-unit detail: `context/billing-management/specs/bm*.md`; defect detail:
 `billmgmt-known-issues.md`._
 
-## Current state (2026-10-25)
+## Current state (2026-10-26)
 
 - **Invoice Template Phase 3 (bm64–bm73) COMPLETED — signed off at the bm73 ship gate (2026-10-18).**
   Criteria 1–15 with evidence in `billmgmt-project-overview.md`; the manual run on the owner's data
@@ -43,7 +43,7 @@ invariant audit) trimmed to durable facts + decisions. Full history:
 
 ## Invoice Template Types — DELIVERED 2026-10-26 (bm74–bm85; manual pass pending)
 
-Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` Part 6.
+Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` (Part 6, now the `74–85` numbering-record row).
 
 **bm77–bm79 Sonar duplication follow-up (2026-10-25):** test-side shared helpers —
 `tests/db/helpers/template-type-db-harness.ts` (fresh migrated + seeded DB lifecycle, blob cleanup,
@@ -423,7 +423,7 @@ a compliance-only probe.
   - Integration on the disposable DB + Azurite: 146 of 148 files passed in the full batch (1403 passed). The two failures: `tests/db/activate-template.integration.test.ts` (bm58, order-dependent in a full batch, known-issues §31d; passes alone, 15/0) and `tests/db/audit-repository.integration.test.ts` (a gate finding, fixed below; then 3/0).
   - Chromium e2e (`RUN_CHROMIUM_E2E=1`): 4 files 27/0 (render, upload gate, activation, visible compliance).
   - Admin browser e2e after a fresh `next build`: 5/0.
-  - `invoice-editor`: 10 files 147/0, incl. the contract-drift test. Its `contract/CONTRACT.json` snapshot is from app commit `8517e723`; `compliance.ts`, `generate.ts`, `compile.ts`, `helpers.ts`, `layout-manifest.schema.ts` and `layout-page-setup.schema.ts` are unchanged since, so no editor contract refresh is due.
+  - `invoice-editor`: 10 files 147/0, incl. the contract-drift test. Since the snapshot's source commit (recorded in its `contract/CONTRACT.json`), `compliance.ts`, `generate.ts`, `compile.ts`, `helpers.ts`, `layout-manifest.schema.ts` and `layout-page-setup.schema.ts` are unchanged since, so no editor contract refresh is due.
 - **Journey (new block "bm85 + cm24" in `tests/e2e/invoice-template-journey.integration.test.ts`): 9/0**, steps 1–8 plus cm24's step-4 checks, on a fresh `db:setup` + `ci` database. Built with bm78's `tests/helpers/layout-package.ts`, which gains a `baseDir` option (`STANDARD_PACKAGE_DIR`) for the Standard v2 export. Step 8 creates a second database on the throwaway server, marks it disposable (`markDatabaseDisposable`), builds it with the harness's `freshTemplateDatabase`, and points the services at it through a switchable `@/db/client` mock (pass-through for the other journeys).
 - **Gate finding (fixed, test-only):** `tests/db/audit-repository.integration.test.ts` pinned the audit repository's exports to `insertAuditEvent`; bm83 added `insertAuditEvents` (insert-only). The pin lists both, plus a multi-row / empty-list case.
 - **Manual run (bm85 §3): PENDING with the owner.** Export `INVTPL-WHOLESALE` v1 from the real editor; run steps 1–3 and step 9 in two browser sessions (MANAGER, RevOps) on the local Postgres + Azurite stack; record the type id, run id, the zip's sha256, the overwrite warning text as shown, and the stale-Activate result.
@@ -434,7 +434,7 @@ a compliance-only probe.
 | # | Criterion | Evidence |
 |---|---|---|
 | 1 | New type to live invoice | Types journey steps 1–3 and 6; `upload-layout-package`, `activate-template-pair`, `run-template-capture` (Wholesale case) integration suites |
-| 2 | New version of an existing type | Types journey step 7 (Standard v2 from an editor export; v1 rows byte-identical; no BAN row changes); `invoice-template-v1-pin.test.ts` green |
+| 2 | New version of an existing type | Types journey step 7 (Standard v2 from a fixture export: Standard v1's files re-versioned and marked, the marker rendered for every NULL `ci` BAN and a fixture BAN; v1 rows byte-identical; no BAN row changes); `invoice-template-v1-pin.test.ts` green |
 | 3 | Overwrite with warning | `overwrite-layout-draft.integration.test.ts`; journey step 9 (manual, **pending**) |
 | 4 | Bad packages rejected, nothing written | `upload-layout-gate.test.ts`, the no-write cases in `upload-layout-package.integration.test.ts` (guardrail 69); `invoice-layout-compliance.test.ts`, `compliance-visible.e2e.test.ts` (guardrails 72, 73) |
 | 5 | Drafts never reach a bill | `load-layout-draft.test.ts` and the capture DRAFT case (guardrail 70); the stale-preview cases in `activate-template-pair` and `overwrite-layout-draft` (guardrail 71) |
@@ -443,7 +443,7 @@ a compliance-only probe.
 | 8 | Binding and retire race-safe | `retire-template-type.integration.test.ts` race cases (guardrail 76); cm23's bind-gate lock tests |
 | 9 | Migrations on a populated DB | `invoice-template-types-catalog.integration.test.ts` (guardrail 75); `billing-account-template-type-migration.integration.test.ts` (cm23) |
 | 10 | Access holds | `invoice-settings-authz-matrix.test.ts` (every new action and route); CM's authz rows |
-| 11 | The editor and the app agree | `invoice-editor`: 147/0 incl. contract-drift, snapshot from `8517e723`, no contract file changed since; a manual export uploaded cleanly (journey, manual pass, **pending**) |
+| 11 | The editor and the app agree | `invoice-editor`: 147/0 incl. contract-drift, no contract file changed since the snapshot's source commit (in `contract/CONTRACT.json`); the automated Types journey passed on fixture exports. Uploading a real editor export (the manual pass) is **pending**, so this criterion is not yet fully verified |
 
 **bm85 invariant audit (every cite opened in the current tree):**
 
@@ -469,6 +469,18 @@ a compliance-only probe.
 No invariant lacks code or a test. Audit notes: the raw-text lint can be passed by an empty-block-split URL (`url(http{{#if company}}{{/if}}://…)`), which the gate's network-blocked render still refuses (`LAYOUT_EXTERNAL_FETCH`, e2e-proven; tracker line 271); the Chromium tiers run only with `RUN_CHROMIUM_E2E=1` (re-run green here); the un-retire refusal is proven by the bm64-era catalog suite, not the retire suite.
 
 **Docs (bm85 §4, with cm24 §3.3 in the same change):** `billmgmt-project-overview.md` gains "Invoice Template Types — editor upload, type catalog, BAN binding (delivered, bm74–bm85)" and its Current state; `billmgmt-update-overview.md` and `custmgmt-update-overview.md` are deleted together, and every link in the Billing and CM docs and specs is repointed (`AGENTS.md` left as is, owner 2026-10-26); architecture #59–#68 and the amendments → built; code standards: guardrails 68–79 → built with their test files; workflow rules: §0 item 9 carries the Types rules forward plus a "What changed" entry; UI context §10a/§10e → delivered; known issues: new §32 (the audit pin, resolved), a dated §31d line, §31c closed; `bm00-build-plan.md` Part 6 → delivered and compacted; `TODOS.md` (the `_plan_enterprise-billing-app` repo, left uncommitted there, owner-approved): the "Phase 3: catalog + posting reads the BAN binding" entry closed, the three Types follow-ups kept open. The bm85 spec's status → delivered.
+
+**bm85 + cm24 code review fixes (2026-10-26):** xhigh review of the ship-gate change (15 findings, plus 4 inline/outside-diff comments on the tracker and the CM architecture status; the Retire-dialog inline comment was already fixed). Owner: repoint `AGENTS.md` now (it was left as is at the gate); keep step 8 in the shared journey file with the `@/db/client` override hardened rather than moving it out.
+- **Journey evidence (`tests/e2e/invoice-template-journey.integration.test.ts`):**
+  - Step 8 (criterion 7) now proves the restore wrote every file: Wholesale's layout blobs are deleted after step 6's export and before the restore (write-once would otherwise adopt step 1's blobs at the same content-addressed path), and the restored prefix must hold every layout file plus the index.
+  - Step 7 (criterion 2): the Standard v2 package carries a visible marker; every NULL `ci` BAN (with a trial bill on the new run) and the fixture BAN render on layout v2 with the marker.
+  - Step 4: exactly one retire-switch audit row, and two `BILLING_ACCOUNT_TEMPLATE_CHANGED` rows in total (the bind and the switch).
+  - Step 8 safety: the second database's URL is checked before anything is dropped or created, and the `DROP`/`CREATE DATABASE` run on a short-lived `BOOTSTRAP_DATABASE_URL` (superuser) connection, also in `afterAll`. The override is set and cleared inside a `try/finally` in step 8 only.
+  - Cleanups: `signalStage` and `runStampsOf` are shared file-level helpers (the bm73 and Types blocks); `settingsDraft` uses the repository's `findDraft` (its token format); the redundant `generated/INVOICE/WHOLESALE/` deletes are gone (`purgeInvoiceBlobs` covers them).
+- **Helpers:** `tests/helpers/layout-package.ts` `readPackageFiles(dir)` (renamed from `readBasicPackageFiles`), and an unset `layoutCode`/`layoutVersion` now keeps the base package's own manifest values; `tests/db/audit-repository.integration.test.ts` asserts the rule (every export is an `insert…`, none updates or deletes) rather than an exact name list.
+- **Docs:** `AGENTS.md` reading list → the two project overviews (no update in flight); workflow rules §1–§2 marked as the Types update's record (the "write/build `bm00` Part 6" instructions were planning-time; Part 6 is now the `74–85` numbering-record row), with the tracker and `cm00` pointers updated; UI context points at CM UI §10.1–§10.3; criterion 2's evidence says "fixture export"; no commit hash in this tracker (the editor snapshot's commit is named by `contract/CONTRACT.json`); criterion 11 says the real-editor upload is pending; the "Current state" heading is dated 2026-10-26; `custmgmt-architecture.md` status → BUILT.
+- **Found while re-running:** `tests/app/route-manifest.test.ts` flags any `(admin)` text in code (the retired route group), and the new `withBootstrap((admin) => …)` callbacks tripped it; the parameter is `superuser`.
+- **Full set on the disposable DB + Azurite (2026-10-26):** typecheck and `npm run lint` clean; unit 5050 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); **integration 148/148 files, 1416 passed, 0 failed** (bm58 passed in the batch this time); the whole journey file 28/28 (bm63, bm73 and the Types block); Chromium e2e 27/0; admin browser e2e 5/0. The bm85 manual pass with a real editor export is still pending with the owner.
 
 **bm83–84 code review fixes (2026-10-26):**
 - **Inline comment — the Retire dialog kept a refused retire's form.** One `resetForm` (typed name, target back to Standard, message) runs on every close, `handleOpenChange(false)` and `retire()` alike; a thrown action keeps the dialog open for a retry.

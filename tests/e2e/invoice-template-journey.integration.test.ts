@@ -58,6 +58,8 @@ import type * as TemplateTypes from "@/services/billing/invoice-template/templat
 import type * as UploadLayoutPackage from "@/services/billing/invoice-template/upload-layout-package";
 import type * as Preview from "@/services/billing/invoice-template/preview";
 import type * as LayoutPackageFixtures from "@/tests/helpers/layout-package";
+import type * as BillTemplateVersionRepo from "@/db/repositories/billing/bill-template-version";
+import type * as DbClient from "@/db/client";
 import type * as PolygonFixtures from "@/tests/db/helpers/capacity-polygon-fixtures";
 import { INVOICE_USAGE_ROW_LIMIT } from "@/types/billing";
 import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixtures";
@@ -155,8 +157,9 @@ vi.mock("next/headers", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // bm85 step 8 — the restore runs on a SECOND fresh database: while
-// `typesDb.override` is set, every service reads and writes it. Otherwise the
-// real client (the journeys above never set it).
+// `typesDb.override` is set, every service reads and writes it. Step 8 sets
+// it inside a try/finally that clears it, so no other step or journey ever
+// sees it; for them this mock is a pass-through to the real client.
 const typesDb = vi.hoisted(() => ({ override: undefined as unknown }));
 vi.mock("@/db/client", async (importOriginal) => {
   const actual = await importOriginal<object & { db: unknown }>();
@@ -221,6 +224,53 @@ async function processAccountOnFlowSql(
   expect((await signal("taxation", ban, attempt)).status).toBe(200);
   await runVerification(sql, { runId, ban, attempt, businessTimezone });
   expect((await signal("verification", ban, attempt)).status).toBe(200);
+}
+
+// bm73/bm85 — one stage signal for `runId` through the real M2M route, as
+// the flow sends it.
+async function signalStage(
+  stageComplete: Services["stageComplete"],
+  runId: string,
+  stage: string,
+  ban: string,
+  attempt: number,
+): Promise<{ status: number }> {
+  const response = await stageComplete(
+    new Request(
+      `http://localhost/api/billrun/${runId}/stage/${stage}/complete`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${SERVICE_TOKEN}`,
+        },
+        body: JSON.stringify({ ban_id: ban, attempt, status: "DONE" }),
+      },
+    ),
+    { params: Promise.resolve({ runId, stage }) },
+  );
+  return { status: response.status };
+}
+
+// bm73/bm85 — a run's captured template stamps, by BAN.
+async function runStampsOf(sql: postgresjs.Sql, runId: string) {
+  const rows = await sql<
+    {
+      ref_billing_account_id: string;
+      status: string;
+      ref_bill_template_family_id: string | null;
+      ref_bill_template_version_id: string | null;
+      ref_invoice_profile_version: number | null;
+      ref_csv_template_version_id: string | null;
+      template_captured_at: string | null;
+    }[]
+  >`
+    SELECT ref_billing_account_id, status, ref_bill_template_family_id,
+           ref_bill_template_version_id, ref_invoice_profile_version,
+           ref_csv_template_version_id, template_captured_at::text
+    FROM billing.bill_run_account
+    WHERE ref_bill_run_id = ${runId} ORDER BY ref_billing_account_id`;
+  return new Map(rows.map((r) => [r.ref_billing_account_id, r]));
 }
 
 // Chromium PDFs write one `/Type /Page` dictionary per page.
@@ -956,46 +1006,22 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
     let polyBan = "";
     let seededFootnote: readonly string[] = [];
 
-    async function signal(
+    function signal(
       stage: string,
       ban: string,
       attempt: number,
     ): Promise<{ status: number }> {
-      const response = await svc.stageComplete(
-        new Request(
-          `http://localhost/api/billrun/${run.bill_run_id}/stage/${stage}/complete`,
-          {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              authorization: `Bearer ${SERVICE_TOKEN}`,
-            },
-            body: JSON.stringify({ ban_id: ban, attempt, status: "DONE" }),
-          },
-        ),
-        { params: Promise.resolve({ runId: run.bill_run_id, stage }) },
+      return signalStage(
+        svc.stageComplete,
+        run.bill_run_id,
+        stage,
+        ban,
+        attempt,
       );
-      return { status: response.status };
     }
 
-    async function runStamps(runId: string) {
-      const rows = await sql<
-        {
-          ref_billing_account_id: string;
-          status: string;
-          ref_bill_template_family_id: string | null;
-          ref_bill_template_version_id: string | null;
-          ref_invoice_profile_version: number | null;
-          ref_csv_template_version_id: string | null;
-          template_captured_at: string | null;
-        }[]
-      >`
-        SELECT ref_billing_account_id, status, ref_bill_template_family_id,
-               ref_bill_template_version_id, ref_invoice_profile_version,
-               ref_csv_template_version_id, template_captured_at::text
-        FROM billing.bill_run_account
-        WHERE ref_bill_run_id = ${runId} ORDER BY ref_billing_account_id`;
-      return new Map(rows.map((r) => [r.ref_billing_account_id, r]));
+    function runStamps(runId: string) {
+      return runStampsOf(sql, runId);
     }
 
     async function runStatus(runId: string): Promise<string | undefined> {
@@ -1721,6 +1747,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
 // Step 9 (overwrite + stale preview in two browser sessions) and one pass of
 // steps 1–3 with a real editor export are run manually (bm85 §3).
 const TYPES_WHOLESALE_MARKER = "bm85 Wholesale layout";
+const TYPES_STANDARD_V2_MARKER = "bm85 Standard v2 layout";
 const TYPES_BAN_A_NAME = "_SAMPLE_ Billing Account 1 (Recurring + Usage)";
 const TYPES_RUN_STD_V2 = "BRN09085001";
 const TYPES_RESTORE_SUFFIX = "_bm85_restore";
@@ -1761,6 +1788,8 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
     let rerunRun: (typeof RerunRun)["rerunRun"];
     let previewAction: (typeof PreviewAction)["previewInvoiceTemplateAction"];
     let pkg: typeof LayoutPackageFixtures;
+    let versionRepo: (typeof BillTemplateVersionRepo)["billTemplateVersionRepository"];
+    let appDb: (typeof DbClient)["db"];
     const service = blobConnection
       ? BlobServiceClient.fromConnectionString(blobConnection)
       : null;
@@ -1778,42 +1807,22 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
     let preRetireLastModified: Date | null = null;
     let standardName = "";
 
-    async function signal(
+    function signal(
       stage: string,
       ban: string,
       attempt: number,
     ): Promise<{ status: number }> {
-      const response = await svc.stageComplete(
-        new Request(
-          `http://localhost/api/billrun/${run.bill_run_id}/stage/${stage}/complete`,
-          {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              authorization: `Bearer ${SERVICE_TOKEN}`,
-            },
-            body: JSON.stringify({ ban_id: ban, attempt, status: "DONE" }),
-          },
-        ),
-        { params: Promise.resolve({ runId: run.bill_run_id, stage }) },
+      return signalStage(
+        svc.stageComplete,
+        run.bill_run_id,
+        stage,
+        ban,
+        attempt,
       );
-      return { status: response.status };
     }
 
-    async function runStamps(runId: string) {
-      const rows = await sql<
-        {
-          ref_billing_account_id: string;
-          status: string;
-          ref_bill_template_family_id: string | null;
-          ref_bill_template_version_id: string | null;
-        }[]
-      >`
-        SELECT ref_billing_account_id, status, ref_bill_template_family_id,
-               ref_bill_template_version_id
-        FROM billing.bill_run_account
-        WHERE ref_bill_run_id = ${runId} ORDER BY ref_billing_account_id`;
-      return new Map(rows.map((r) => [r.ref_billing_account_id, r]));
+    function runStamps(runId: string) {
+      return runStampsOf(sql, runId);
     }
 
     async function auditCount(eventType: string): Promise<number> {
@@ -1822,23 +1831,14 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       return row!.n;
     }
 
+    // The type's settings DRAFT and its token, as the page loads them.
     async function settingsDraft(familyId: string) {
-      const [row] = await sql<
-        {
-          bill_template_version_id: string;
-          token: string;
-          structure: unknown;
-        }[]
-      >`
-        SELECT bill_template_version_id,
-               to_char(last_modified_datetime AT TIME ZONE 'UTC',
-                       'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS token,
-               structure
-        FROM billing.bill_template_version
-        WHERE ref_bill_template_family_id = ${familyId}
-          AND kind = 'generated' AND status = 'DRAFT'`;
-      if (!row) throw new Error(`no settings DRAFT for ${familyId}`);
-      return row;
+      const draft = await versionRepo.findDraft(appDb, {
+        kind: "generated",
+        familyId,
+      });
+      if (!draft) throw new Error(`no settings DRAFT for ${familyId}`);
+      return draft;
     }
 
     async function versionRows(familyId: string) {
@@ -1866,7 +1866,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
     async function activatePair(familyId: string, note: string) {
       const draft = await settingsDraft(familyId);
       const activated = await svc.activateTemplateAction({
-        draftId: draft.bill_template_version_id,
+        draftId: draft.billTemplateVersionId,
         expectedDraftToken: draft.token,
         changeNote: note,
         familyId,
@@ -1883,6 +1883,43 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       const row = accounts.bans.find((b) => b.billingAccountId === banId);
       if (!row) throw new Error(`no panel row for ${banId}`);
       return row;
+    }
+
+    // A short-lived superuser connection (BOOTSTRAP_DATABASE_URL, which
+    // `runScript` already pins to this throwaway server) for database DDL.
+    async function withBootstrap<T>(
+      fn: (superuser: postgresjs.Sql) => Promise<T>,
+    ): Promise<T> {
+      const superuser = postgres(bootstrapUrl as string, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        return await fn(superuser);
+      } finally {
+        await superuser.end();
+      }
+    }
+
+    // Every `invoice-templates` blob under `prefix`; returns how many.
+    async function deleteTemplateBlobs(prefix: string): Promise<number> {
+      const templates = service!.getContainerClient("invoice-templates");
+      let n = 0;
+      for await (const b of templates.listBlobsFlat({ prefix })) {
+        await templates.deleteBlob(b.name).catch(() => undefined);
+        n++;
+      }
+      return n;
+    }
+
+    async function templateBlobCount(prefix: string): Promise<number> {
+      let n = 0;
+      for await (const _ of service!
+        .getContainerClient("invoice-templates")
+        .listBlobsFlat({ prefix })) {
+        n++;
+      }
+      return n;
     }
 
     function wholesaleZip() {
@@ -1907,17 +1944,10 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       sql = postgres(databaseUrl as string, { max: 5, onnotice: () => {} });
 
       await freshDatabase(sql, service!);
-      // Wholesale's blobs from an earlier run (content-addressed, so a
-      // re-run would otherwise adopt them).
-      const templates = service!.getContainerClient("invoice-templates");
-      for (const prefix of [
-        "layouts/INVTPL-WHOLESALE/",
-        "generated/INVOICE/WHOLESALE/",
-      ]) {
-        for await (const b of templates.listBlobsFlat({ prefix })) {
-          await templates.deleteBlob(b.name).catch(() => undefined);
-        }
-      }
+      // Wholesale's layout blobs from an earlier run (content-addressed, so a
+      // re-run would otherwise adopt them). `freshDatabase` already purged
+      // every generated version but the seeded `v1/`.
+      await deleteTemplateBlobs("layouts/INVTPL-WHOLESALE/");
       runScript("db/seeds/sample/seed-billrun-sample.ts", {
         SAMPLE_SEED_PROFILE: "ci",
       });
@@ -1968,6 +1998,9 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       ({ previewInvoiceTemplateAction: previewAction } =
         await import("@/actions/billing/invoice-settings/preview-invoice-template.action"));
       pkg = await import("@/tests/helpers/layout-package");
+      ({ billTemplateVersionRepository: versionRepo } =
+        await import("@/db/repositories/billing/bill-template-version"));
+      ({ db: appDb } = await import("@/db/client"));
       svc.clearLoadedTemplateMemo();
 
       const [admin] = await sql<{ user_id: string; user_name: string }[]>`
@@ -1992,23 +2025,17 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       typesDb.override = undefined;
       svc?.clearLoadedTemplateMemo();
       if (restoreSql) await restoreSql.end().catch(() => undefined);
-      if (sql && restoreDbName) {
-        await sql
-          .unsafe(`DROP DATABASE IF EXISTS "${restoreDbName}" WITH (FORCE)`)
-          .catch(() => undefined);
+      if (restoreDbName) {
+        await withBootstrap((superuser) =>
+          superuser.unsafe(
+            `DROP DATABASE IF EXISTS "${restoreDbName}" WITH (FORCE)`,
+          ),
+        ).catch(() => undefined);
       }
       if (service) {
         await purgeInvoiceBlobs(service).catch(() => undefined);
-        const templates = service.getContainerClient("invoice-templates");
-        for (const prefix of [
-          "layouts/INVTPL-WHOLESALE/",
-          "generated/INVOICE/WHOLESALE/",
-          "layouts/INVTPL-STD-A4/v2-",
-        ]) {
-          for await (const b of templates.listBlobsFlat({ prefix })) {
-            await templates.deleteBlob(b.name).catch(() => undefined);
-          }
-        }
+        await deleteTemplateBlobs("layouts/INVTPL-WHOLESALE/");
+        await deleteTemplateBlobs("layouts/INVTPL-STD-A4/v2-");
       }
       if (sql) {
         await dropAllSchemas(sql).catch(() => undefined);
@@ -2194,11 +2221,14 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       expect(retired).toEqual({ ok: true, movedBanCount: 1 });
 
       expect((await banRow(banA)).refBillTemplateFamilyId).toBeNull();
-      const [move] = await sql<{ target_id: string; after_data: unknown }[]>`
+      const moves = await sql<{ target_id: string; after_data: unknown }[]>`
         SELECT target_id, after_data FROM core.audit_log
         WHERE event_type = 'BILLING_ACCOUNT_TEMPLATE_CHANGED'
           AND after_data->>'reason' = 'TEMPLATE_TYPE_RETIRED'`;
-      expect(move).toMatchObject({
+      expect(moves).toHaveLength(1);
+      // The step-2 bind and this one switch, nothing else.
+      expect(await auditCount("BILLING_ACCOUNT_TEMPLATE_CHANGED")).toBe(2);
+      expect(moves[0]).toMatchObject({
         target_id: banA,
         after_data: {
           refBillTemplateFamilyId: null,
@@ -2351,7 +2381,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       }
     }, 900_000);
 
-    it("step 7 — an editor export of INVTPL-STD-A4 v2 uploaded to Standard and activated: a new run captures every NULL BAN on v2 and renders on layout v2; no billing_account row changes; Standard v1 is byte-identical (criterion 2)", async () => {
+    it("step 7 — a fixture export of INVTPL-STD-A4 v2 (Standard v1's files, re-versioned and marked) uploaded to Standard and activated: a new run captures every NULL BAN on v2 and renders each on layout v2; no billing_account row changes; Standard v1 is byte-identical (criterion 2)", async () => {
       const standardV1 = () => sql`
         SELECT * FROM billing.bill_template_version
         WHERE ref_bill_template_family_id = 'BTF00000001' AND version_no = 1
@@ -2360,10 +2390,19 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       const bansBefore = await sql`
         SELECT * FROM billing.billing_account ORDER BY billing_account_id`;
 
+      // Standard v1's files re-versioned, with a visible marker so a render
+      // proves it read v2's files, not only the v2 row.
       const zip = pkg.buildLayoutPackage({
         baseDir: pkg.STANDARD_PACKAGE_DIR,
         layoutCode: "INVTPL-STD-A4",
         layoutVersion: 2,
+        edit: (f) =>
+          pkg.replaceInFile(
+            f,
+            "partials/header.hbs",
+            "<h1>Invoice</h1>",
+            `<h1>Invoice</h1><div class="bm85-marker">${TYPES_STANDARD_V2_MARKER}</div>`,
+          ),
       }).zip;
       expect(
         await uploadPackage("BTF00000001", zip, "INVTPL-STD-A4-v2.zip"),
@@ -2411,15 +2450,42 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
           ref_bill_template_version_id: activated.versionId,
         });
       }
-      const draft = await svc.buildInvoiceHtml({
-        runId: TYPES_RUN_STD_V2,
-        banId: fresh,
-        mode: "draft",
-      });
-      expect(draft.resolved.layout).toMatchObject({
-        layoutCode: "INVTPL-STD-A4",
-        versionNo: 2,
-      });
+      // A trial bill per ci BAN on the new run (the processor's output), so
+      // every NULL BAN's draft renders, as the fixture BAN's does.
+      for (const ban of ciBans) {
+        await sql.begin(async (tx) => {
+          await tx`SET LOCAL session_replication_role = replica`;
+          const [cb] = await tx<{ customer_bill_id: string }[]>`
+            INSERT INTO billing.customer_bill
+              (ref_bill_run_id, ref_billing_account_id, period_partition, category, state,
+               billing_period_start, billing_period_end, subtotal, tax_total, total_amount,
+               payment_due_date)
+            VALUES (${TYPES_RUN_STD_V2}, ${ban}, ${FIXTURE_PERIOD_START}, 'trial', 'new',
+                    ${FIXTURE_PERIOD_START}, ${FIXTURE_PERIOD_END}, '150.00', '0.00',
+                    '150.00', '2026-07-15')
+            RETURNING customer_bill_id`;
+          await tx`
+            INSERT INTO billing.customer_bill_line
+              (ref_customer_bill_id, period_partition, line_no, source, ref_product_offering_id,
+               gross_amount, discount_amount, net_amount, grouping_key, currency, description,
+               quantity, unit)
+            VALUES (${cb!.customer_bill_id}, ${FIXTURE_PERIOD_START}, 1, 'RECURRING', 'POF-BM85',
+                    '150.00', '0.00', '150.00', 'POF-BM85', 'MYR', 'BM85 Fibre',
+                    '1.000000', 'EA')`;
+        });
+      }
+      for (const ban of [...ciBans, fresh]) {
+        const draft = await svc.buildInvoiceHtml({
+          runId: TYPES_RUN_STD_V2,
+          banId: ban,
+          mode: "draft",
+        });
+        expect(draft.resolved.layout, ban).toMatchObject({
+          layoutCode: "INVTPL-STD-A4",
+          versionNo: 2,
+        });
+        expect(draft.html, ban).toContain(TYPES_STANDARD_V2_MARKER);
+      }
 
       // The fixture BAN is new; every BAN that existed is untouched.
       const bansAfter = await sql`
@@ -2439,93 +2505,117 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         WHERE config_group = 'app'`;
 
       // A second database on the same throwaway server, marked disposable.
+      // Its URL is checked BEFORE anything is dropped or created, and the
+      // DDL runs on the superuser bootstrap connection, not the app's.
       const url = new URL(databaseUrl as string);
       restoreDbName = `${url.pathname.slice(1)}${TYPES_RESTORE_SUFFIX}`;
-      await sql.unsafe(
-        `DROP DATABASE IF EXISTS "${restoreDbName}" WITH (FORCE)`,
-      );
-      await sql.unsafe(`CREATE DATABASE "${restoreDbName}"`);
       url.pathname = `/${restoreDbName}`;
       assertTestDatabaseUrl(url.toString());
+      await withBootstrap((superuser) =>
+        superuser.unsafe(
+          `DROP DATABASE IF EXISTS "${restoreDbName}" WITH (FORCE)`,
+        ),
+      );
+      await withBootstrap((superuser) =>
+        superuser.unsafe(`CREATE DATABASE "${restoreDbName}"`),
+      );
       restoreSql = postgres(url.toString(), { max: 5, onnotice: () => {} });
       const { markDatabaseDisposable } =
         await import("@/tests/helpers/disposable-database");
       await markDatabaseDisposable(restoreSql);
+
+      // An empty Wholesale layout prefix: the restore must write every file
+      // itself (write-once would otherwise adopt step 1's blobs at the same
+      // content-addressed path). The first database's Wholesale rows are not
+      // read again after this point.
+      expect(
+        await deleteTemplateBlobs("layouts/INVTPL-WHOLESALE/"),
+      ).toBeGreaterThan(0);
+
       const { freshTemplateDatabase } =
         await import("@/tests/db/helpers/template-type-db-harness");
+      // The services read and write the second database ONLY inside this try.
       typesDb.override = await freshTemplateDatabase(restoreSql, {
         id: adminId,
         name: adminName,
         email: ADMIN_EMAIL,
       });
-      // The same app settings (locale) as the first database, so the two
-      // previews share every input.
-      await restoreSql`DELETE FROM core.system_config WHERE config_group = 'app'`;
-      for (const { row } of localeRows) {
-        await restoreSql`
+      try {
+        // The same app settings (locale) as the first database, so the two
+        // previews share every input.
+        await restoreSql`DELETE FROM core.system_config WHERE config_group = 'app'`;
+        for (const { row } of localeRows) {
+          await restoreSql`
           INSERT INTO core.system_config
           SELECT * FROM jsonb_populate_record(NULL::core.system_config, ${JSON.stringify(row)}::jsonb)`;
-      }
+        }
 
-      const created = await types.createTemplateType(
-        { name: "Wholesale" },
-        adminId,
-      );
-      expect(created.ok).toBe(true);
-      if (!created.ok) return;
-      const restored = await types.uploadLayoutPackage(
-        {
-          familyId: created.typeId,
-          zip: wholesaleExport!,
-          expectedDraft: { none: true },
-        },
-        adminId,
-      );
-      expect(restored).toMatchObject({ ok: true, versionNo: 1 });
+        const created = await types.createTemplateType(
+          { name: "Wholesale" },
+          adminId,
+        );
+        expect(created.ok).toBe(true);
+        if (!created.ok) return;
+        const restored = await types.uploadLayoutPackage(
+          {
+            familyId: created.typeId,
+            zip: wholesaleExport!,
+            expectedDraft: { none: true },
+          },
+          adminId,
+        );
+        expect(restored).toMatchObject({ ok: true, versionNo: 1 });
+        // Every layout file and the index were written by the restore.
+        expect(await templateBlobCount("layouts/INVTPL-WHOLESALE/")).toBe(
+          Object.keys(exportFiles).length - 1,
+        );
 
-      const [layoutDraft] = await restoreSql<
-        { bill_template_version_id: string }[]
-      >`
+        const [layoutDraft] = await restoreSql<
+          { bill_template_version_id: string }[]
+        >`
         SELECT bill_template_version_id FROM billing.bill_template_version
         WHERE ref_bill_template_family_id = ${created.typeId}
           AND kind = 'layout' AND status = 'DRAFT' AND version_no = 1`;
-      expect(layoutDraft).toBeDefined();
-      const { billTemplateVersionRepository } =
-        await import("@/db/repositories/billing/bill-template-version");
-      const row = await billTemplateVersionRepository.findById(
-        typesDb.override as never,
-        layoutDraft!.bill_template_version_id,
-      );
-      const restoredFiles = await types.loadLayoutDraft(row!, {
-        includeIndex: true,
-      });
-      const layoutNames = Object.keys(exportFiles).filter(
-        (n) => n !== "settings.json",
-      );
-      expect([...restoredFiles.keys()].sort()).toEqual(layoutNames.sort());
-      for (const [name, bytes] of Object.entries(exportFiles)) {
-        if (name === "settings.json") continue;
-        expect(
-          Buffer.compare(restoredFiles.get(name)!, Buffer.from(bytes)),
-          name,
-        ).toBe(0);
-      }
+        expect(layoutDraft).toBeDefined();
+        const { billTemplateVersionRepository } =
+          await import("@/db/repositories/billing/bill-template-version");
+        const row = await billTemplateVersionRepository.findById(
+          typesDb.override as never,
+          layoutDraft!.bill_template_version_id,
+        );
+        const restoredFiles = await types.loadLayoutDraft(row!, {
+          includeIndex: true,
+        });
+        const layoutNames = Object.keys(exportFiles).filter(
+          (n) => n !== "settings.json",
+        );
+        expect([...restoredFiles.keys()].sort()).toEqual(layoutNames.sort());
+        for (const [name, bytes] of Object.entries(exportFiles)) {
+          if (name === "settings.json") continue;
+          expect(
+            Buffer.compare(restoredFiles.get(name)!, Buffer.from(bytes)),
+            name,
+          ).toBe(0);
+        }
 
-      const [settings] = await restoreSql<
-        { version_no: number; status: string; structure: unknown }[]
-      >`
+        const [settings] = await restoreSql<
+          { version_no: number; status: string; structure: unknown }[]
+        >`
         SELECT version_no, status, structure FROM billing.bill_template_version
         WHERE ref_bill_template_family_id = ${created.typeId} AND kind = 'generated'`;
-      expect(settings).toMatchObject({ version_no: 1, status: "DRAFT" });
-      expect(settings!.structure).toEqual(exportedSettings.structure);
+        expect(settings).toMatchObject({ version_no: 1, status: "DRAFT" });
+        expect(settings!.structure).toEqual(exportedSettings.structure);
 
-      const preview = await types.previewInvoiceTemplate({
-        structure: settings!.structure as never,
-        source: "sample",
-        familyId: created.typeId,
-        draft: true,
-      });
-      expect(preview.html).toBe(wholesalePreviewHtml);
+        const preview = await types.previewInvoiceTemplate({
+          structure: settings!.structure as never,
+          source: "sample",
+          familyId: created.typeId,
+          draft: true,
+        });
+        expect(preview.html).toBe(wholesalePreviewHtml);
+      } finally {
+        typesDb.override = undefined;
+      }
     }, 600_000);
   },
 );

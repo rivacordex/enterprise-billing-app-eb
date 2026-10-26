@@ -90,14 +90,18 @@ describe.skipIf(!databaseUrl)(
       ).toEqual(["BAN00000001", "BAN00000002"]);
     });
 
-    // bm85 gate finding — bm83 added `insertAuditEvents`, still insert-only.
+    // bm85 gate finding (review fix) — the rule, not a name list: the audit
+    // log is append-only, so the module exports inserts and nothing else.
     it("exposes no update or delete methods on the repository module", async () => {
       const repo: Record<string, unknown> =
         await import("@/db/repositories/audit.repository");
-      expect(Object.keys(repo).sort()).toEqual([
-        "insertAuditEvent",
-        "insertAuditEvents",
-      ]);
+      const names = Object.keys(repo);
+      expect(names).toContain("insertAuditEvent");
+      expect(names).toContain("insertAuditEvents");
+      expect(names.filter((n) => !/^insert[A-Z]/.test(n))).toEqual([]);
+      expect(
+        names.filter((n) => /update|delete|upsert|remove|truncate/i.test(n)),
+      ).toEqual([]);
     });
   },
 );

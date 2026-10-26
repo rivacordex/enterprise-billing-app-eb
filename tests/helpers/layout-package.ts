@@ -11,9 +11,12 @@ import type {
 import type { renderAndReadSections } from "@/services/billing/invoice-template/compliance-render";
 
 // bm78-spec §13 — layout package fixtures, built IN MEMORY (never on disk) from
-// the committed reference package `db/seeds/invoice-templates/INVTPL-BASIC-A4/v1/`:
-//   1. read every file of the reference package;
-//   2. rewrite `manifest.json` with the given `layoutCode` / `layoutVersion`;
+// a committed package directory: the reference package
+// `db/seeds/invoice-templates/INVTPL-BASIC-A4/v1/` by default, or `baseDir`
+// (bm85: Standard v1's files):
+//   1. read every file of the package;
+//   2. rewrite `manifest.json` with the given `layoutCode` / `layoutVersion`
+//      (each defaults to the base package's own manifest value);
 //   3. `edit` (optional) changes the file set BEFORE the index is built, so the
 //      package stays checksum-consistent (a lint fixture, a removed file …);
 //   4. regenerate `checksums.json` with `buildChecksumIndex` over every other file;
@@ -26,8 +29,8 @@ export const BASIC_PACKAGE_DIR = path.join(
   "db/seeds/invoice-templates/INVTPL-BASIC-A4/v1",
 );
 
-// bm85 — Standard v1's committed files, the base of the journey's "editor
-// export" of `INVTPL-STD-A4` v2 (re-versioned and re-checksummed).
+// bm85 — Standard v1's committed files, the base of the journey's fixture
+// export of `INVTPL-STD-A4` v2 (re-versioned, marked and re-checksummed).
 export const STANDARD_PACKAGE_DIR = path.join(
   process.cwd(),
   "db/seeds/invoice-templates/INVTPL-STD-A4/v1",
@@ -63,8 +66,9 @@ function walk(dir: string, base = dir, out: string[] = []): string[] {
   return out;
 }
 
-// The reference package's files, keyed by package path (`partials/header.hbs`).
-export function readBasicPackageFiles(
+// A package directory's files (default: the reference package), keyed by
+// package path (`partials/header.hbs`).
+export function readPackageFiles(
   dir: string = BASIC_PACKAGE_DIR,
 ): PackageFiles {
   return new Map(
@@ -94,14 +98,18 @@ export function zipFiles(files: ReadonlyMap<string, Uint8Array>): Uint8Array {
 export function buildLayoutPackage(
   opts: LayoutPackageOptions = {},
 ): LayoutPackage {
-  const files = readBasicPackageFiles(opts.baseDir);
+  const files = readPackageFiles(opts.baseDir);
   files.delete(INDEX_FILE);
 
   const manifest = JSON.parse(
     files.get("manifest.json")!.toString("utf-8"),
   ) as Record<string, unknown>;
-  manifest.layoutCode = opts.layoutCode ?? "INVTPL-BASIC-A4";
-  manifest.layoutVersion = opts.layoutVersion ?? 1;
+  // Unset → the base package's own values (review fix: not Basic's for a
+  // `baseDir` package).
+  if (opts.layoutCode !== undefined) manifest.layoutCode = opts.layoutCode;
+  if (opts.layoutVersion !== undefined) {
+    manifest.layoutVersion = opts.layoutVersion;
+  }
   opts.manifest?.(manifest);
   files.set(
     "manifest.json",

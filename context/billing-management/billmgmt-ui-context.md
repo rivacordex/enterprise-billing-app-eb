@@ -17,7 +17,7 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 1. Invoice Settings › Invoice template becomes a **type list** with a per-type detail page. Type statuses (Usable / Not yet usable / Retired) map onto the version families (§10a). The Standard-only heading is corrected (§10b).
 2. **Upload layout package**, **overwrite warning**, **retire** and **export** controls (§10e). Destructive confirms use the danger role **inside their dialog only** (§7).
 3. Upload rejections render as one Danger alert listing every problem, never a toast (§10e).
-4. Customer Management's BAN type select and labels are specified in `custmgmt-ui-context.md` §9.5, not here.
+4. Customer Management's BAN type labels, the type select with Save and the onboarding wording are specified in `custmgmt-ui-context.md` §10.1–§10.3 (delivered; §9.4–§9.5 are superseded), not here.
 
 Sources: `billmgmt-project-overview.md` › Invoice Template Types (the delivered design, folded from the update overview at bm85), `billmgmt-architecture.md` › Invoice Template Types deltas, `billmgmt-code-standards.md` › Invoice Template Types deltas (Styling rules 1–6). Earlier deltas: `billmgmt-project-overview.md` › Invoice Template Phase 3, and the matching architecture and code-standards sections.
 

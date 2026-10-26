@@ -87,8 +87,10 @@ These come from phases 1–4, Target Capacity Pricing, the Invoice Template upda
 
 ## 1. Operating Approach — This Update
 
+> **Record (Invoice Template Types, delivered 2026-10-26, bm85).** §1–§2 are kept as this update's record; the durable rules are carried forward in §0 item 9. "Write `bm00` Part 6 first" and "Build the units in Part 6" were the planning-time instructions: Part 6 is now the `74–85` row of `bm00`'s numbering record. The next update writes its own `bm00` Part and its own §1–§2.
+
 1. **Name the authorizing source before you write anything:** a `bm`/`cm` spec for this update, an Invariant (#59–#68, or an amended #44–#47, #49, #54), a guardrail item (68–79), or the Invoice Template Types section of `billmgmt-project-overview.md`. Cite the Invariant first whenever one exists. Never cite the plan as the authority.
-2. **Do not write code before its spec exists.** No spec for this update is written yet. The plan's §12 build order is a **proposal from analysis**, not a unit authority. Write `bm00-build-plan.md` Part 6 (and the matching Customer Management build-plan entries) first. Then write each unit's spec. Then build. If a spec turns out wrong, or a codebase fact has moved, correct the spec in this planning repo first, then build.
+2. **Do not write code before its spec exists.** At planning time no spec for this update was written yet (all are now written and delivered). The plan's §12 build order is a **proposal from analysis**, not a unit authority. Write `bm00-build-plan.md` Part 6 (and the matching Customer Management build-plan entries) first. Then write each unit's spec. Then build. If a spec turns out wrong, or a codebase fact has moved, correct the spec in this planning repo first, then build.
 3. **Assume a populated database.** This update's migrations (`0053`, `0054`) are additive and run on environments holding real runs and bills. Never edit `0046` or any other applied migration. Never empty a database or a blob container to make a change work. If a change only works on an empty database, it is wrong; stop and ask.
 4. **Route every layout write through `installLayoutPackage` (Inv #59).** Never insert or update a `kind = 'layout'` row anywhere else: not in a seed, a migration, a script or a test helper. Tests create layouts by calling the service.
 5. **Validate first, write last (Inv #60).** The upload gate runs every check and collects every problem before the first blob or row write. Never "write and roll back".
@@ -104,6 +106,8 @@ These come from phases 1–4, Target Capacity Pricing, the Invoice Template upda
 ---
 
 ## 2. Units and Sequencing
+
+> **Record (delivered 2026-10-26).** The units below are built; `bm00` keeps them as the `74–85` numbering-record row.
 
 1. **Build the units in `specs/bm00-build-plan.md` Part 6 (bm74–bm85), in that order.** It is the unit authority, written 2026-10-25 at the owner's request. Do not renumber, merge, split or reorder them. If a unit turns out too large, stop and ask before changing `bm00`. The Customer Management units are `cm00` Phase 3 (cm23–cm24).
 
