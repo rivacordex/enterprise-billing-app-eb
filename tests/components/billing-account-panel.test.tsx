@@ -92,7 +92,7 @@ describe("BillingAccountPanel (cm23)", () => {
     expect(within(item).getByText("· Primary")).toBeInTheDocument();
     expect(within(item).getByText("Active")).toBeInTheDocument();
     expect(
-      within(item).getByLabelText("Standard (default) · v1"),
+      within(item).getByText("Invoice template type: Standard (default) · v1"),
     ).toBeInTheDocument();
   });
 
@@ -193,6 +193,11 @@ describe("BillingAccountPanel (cm23)", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("listitem")).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
+    expect(
+      screen.queryByText(
+        "Changes apply from the next bill run start or rerun.",
+      ),
+    ).toBeNull();
   });
 
   it("a failed Accounts read (accounts: null) → the unavailable card and no BAN rows", () => {
@@ -209,6 +214,32 @@ describe("BillingAccountPanel (cm23)", () => {
       screen.getByText(/Account details could not be loaded/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("listitem")).toBeNull();
+    expect(
+      screen.queryByText(
+        "Changes apply from the next bill run start or rerun.",
+      ),
+    ).toBeNull();
+  });
+
+  it("an unsaved choice whose type left the list (retired) → placeholder and Save disabled", async () => {
+    const { rerender } = renderPanel([row()]);
+    await choose(banItem(), "Wholesale");
+    expect(screen.getByRole("button", { name: SAVE })).toBeEnabled();
+
+    // Another row's save refreshed the page; Wholesale was retired meanwhile.
+    rerender(
+      <BillingAccountPanel
+        partyRoleId="PTRL00000001"
+        accounts={{ onboarded: true, bans: [row()] }}
+        templateTypes={TYPES.filter((t) => t.typeId !== "BTF00000002")}
+        canEditAccounts
+      />,
+    );
+
+    expect(
+      within(banItem()).getByRole("combobox", { name: SELECT }),
+    ).toHaveTextContent("Choose a type");
+    expect(screen.getByRole("button", { name: SAVE })).toBeDisabled();
   });
 
   it("while one save is in flight, every other row's Save is disabled too", async () => {

@@ -32,19 +32,23 @@ export function TemplateLabel({
   label: BanTemplateLabel;
 }): React.JSX.Element {
   return (
-    <p
-      aria-label={label.text}
-      className="flex flex-wrap items-start gap-1.5 text-body-sm text-[color:var(--text-body)]"
-    >
+    // A <p> can't carry an accessible name (aria-prohibited-attr), so the full
+    // `text` is read from visually hidden text and the styled parts are hidden
+    // from assistive tech.
+    <p className="flex flex-wrap items-start gap-1.5 text-body-sm text-[color:var(--text-body)]">
+      <span className="sr-only">{`${TEMPLATE_TYPE_FIELD_LABEL}: ${label.text}`}</span>
       <FileText
         size={14}
         aria-hidden="true"
         className="mt-0.5 shrink-0 text-[color:var(--color-neutral-600)]"
       />
-      <span className="text-caption text-[color:var(--text-muted)]">
+      <span
+        aria-hidden="true"
+        className="text-caption text-[color:var(--text-muted)]"
+      >
         {TEMPLATE_TYPE_FIELD_LABEL}
       </span>
-      <span>
+      <span aria-hidden="true">
         {label.name}
         {label.versionNo !== null && (
           <>
@@ -54,7 +58,10 @@ export function TemplateLabel({
         )}
       </span>
       {label.kind === "NOT_USABLE" && (
-        <span className="inline-flex items-center gap-1 text-[color:var(--color-warning-700)]">
+        <span
+          aria-hidden="true"
+          className="inline-flex items-center gap-1 text-[color:var(--color-warning-700)]"
+        >
           <AlertTriangle
             size={14}
             aria-hidden="true"

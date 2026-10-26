@@ -22,6 +22,17 @@ const STANDARD_LABEL: BanTemplateLabel = {
 // page's AccountsLockedCard; the tab body never sees it), document deep-links
 // and pagination links.
 
+// The label's accessible text is visually hidden ("Invoice template type:
+// {text}"), since a <p> can't carry an aria-label; returns the label's <p>.
+function templateLabel(
+  text: string,
+  scope: Pick<typeof screen, "getByText"> = screen,
+): HTMLElement {
+  const p = scope.getByText(`Invoice template type: ${text}`).closest("p");
+  if (p === null) throw new Error(`no template label for ${text}`);
+  return p;
+}
+
 function doc(n: number): TransactionDocumentRow {
   return {
     documentId: `DBN0000000${n}`,
@@ -125,7 +136,7 @@ describe("Accounts tab states", () => {
     // The BAN receivable is in the BAN's own currency, not the FA's.
     expect(within(banCard).getByText("USD")).toBeInTheDocument();
     expect(within(banCard).queryByText("MYR")).not.toBeInTheDocument();
-    const label = within(banCard).getByLabelText("Standard (default) · v1");
+    const label = templateLabel("Standard (default) · v1", within(banCard));
     expect(label).toHaveTextContent(
       "Invoice template typeStandard (default) · v1",
     );
@@ -240,7 +251,7 @@ describe("TemplateLabel (cm23)", () => {
       />,
     );
 
-    const label = screen.getByLabelText("Wholesale · v3");
+    const label = templateLabel("Wholesale · v3");
     expect(
       within(label).getByText("Invoice template type"),
     ).toBeInTheDocument();
@@ -263,7 +274,7 @@ describe("TemplateLabel (cm23)", () => {
     const banCard = screen.getByRole("region", {
       name: "Billing account BAN00000001",
     });
-    expect(within(banCard).getByLabelText("Wholesale · v1")).toHaveTextContent(
+    expect(templateLabel("Wholesale · v1", within(banCard))).toHaveTextContent(
       "Wholesale · v1",
     );
   });
@@ -280,12 +291,37 @@ describe("TemplateLabel (cm23)", () => {
       />,
     );
 
-    const label = screen.getByLabelText("Wholesale · not usable");
+    const label = templateLabel("Wholesale · not usable");
     const warning = within(label).getByText("· not usable");
     expect(warning.className).toContain("--color-warning-700");
     const icon = warning.querySelector("svg");
     expect(icon).not.toBeNull();
     expect(icon?.getAttribute("class")).toContain("--color-warning-500");
     expect(within(label).queryByText(/^v\d+$/)).toBeNull();
+  });
+
+  it("assistive tech reads one string: the hidden text, with the styled parts aria-hidden", () => {
+    render(
+      <TemplateLabel
+        label={{
+          kind: "TYPE",
+          text: "Wholesale · v3",
+          name: "Wholesale",
+          versionNo: 3,
+        }}
+      />,
+    );
+
+    const label = templateLabel("Wholesale · v3");
+    expect(label).not.toHaveAttribute("aria-label");
+    expect(
+      screen.getByText("Invoice template type: Wholesale · v3"),
+    ).toHaveClass("sr-only");
+    for (const part of [
+      screen.getByText("Invoice template type"),
+      screen.getByText("v3").closest("span[aria-hidden]"),
+    ]) {
+      expect(part).toHaveAttribute("aria-hidden", "true");
+    }
   });
 });

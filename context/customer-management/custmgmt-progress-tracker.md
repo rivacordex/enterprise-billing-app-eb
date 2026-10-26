@@ -46,6 +46,16 @@ Bind a BAN to a template **type** (`billing.billing_account.ref_bill_template_fa
   - Component, app and guardrail: 105/1.
   - DB-gated on the disposable `ebill-test` DB: 26/0 across 7 files. Covers bind, onboarding template, summary, the journey, the column and the new `0054` migration suite; V7 atomicity is green, unedited.
 - **bm82 landed (2026-10-26):** capture reads the type column, the Billing fixtures moved to `ref_bill_template_family_id`; guardrail 11 is green (11/11) and the capture/trigger suites pass.
+- **cm23 + bm82 code review fixes (2026-10-26, xhigh review, 12 findings).** Owner: #1 (0054 drops the old column in the same release) accepted as expected, minimal impact; #2 (the "Standard (default)" name isn't reserved) not an issue. Fixed:
+  - **Panel save:** state set after the action's `await` is wrapped in a nested transition, and `busy` is the transition's `isPending`. The cleared selection now commits together with the refreshed props, so there is no flash of the old type and no Save against a stale `lastModified`.
+  - **Panel selection:** Save also requires the selection to be in `templateTypes`, so an unsaved choice whose type was retired can't be sent.
+  - **Panel layout:** the next-run caption shows only for onboarded customers, and Save is back to `h-8`.
+  - **`TemplateLabel` accessibility:** the full text is visually hidden (`sr-only`, "Invoice template type: {text}") with the styled parts `aria-hidden`, replacing the prohibited `aria-label` on `<p>`.
+  - **Accounts summary:** the labels and bill-cycle reads run in one `Promise.all`.
+  - **Messages:** the onboarding constants reuse `STANDARD_TYPE_NAME` and `TEMPLATE_TYPE_FIELD_LABEL`.
+  - **Billing side:** see the billmgmt tracker.
+  - **Left as is (owner, 2026-10-26):** #3, the usable-type rule written four times. It disagrees only for an explicit Standard id written by SQL bypass, and the label then shows a warning. The "· not usable" label is kept: it is the edge-case (SQL bypass only) warning that the next run will block that BAN's approval. Retired types never appear in the select (`listUsable`).
+  - **Tests:** panel/tab/page/guardrail unit 499/1 (the failure is the pre-existing `ratecard-demo-seed-boundary`); DB on the disposable DB 24/0 (bind, summary, journey, type list).
 - **Not edited (approval needed):** `ac04` (Accounts spec) still quotes the old wizard wording. acctmgmt docs need owner approval (workflow rules §10.6 item 5).
 
 ## Carried forward (not blocking)

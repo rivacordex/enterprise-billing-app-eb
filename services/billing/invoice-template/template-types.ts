@@ -169,9 +169,9 @@ export async function countBoundBansByType(
     SELECT COALESCE(ba.ref_bill_template_family_id, dft.bill_template_family_id) AS type_id,
            count(*)::int AS n
     FROM billing.billing_account ba
-    CROSS JOIN (
+    LEFT JOIN (
       SELECT bill_template_family_id FROM billing.bill_template_family WHERE is_default
-    ) dft
+    ) dft ON true
     GROUP BY 1`);
   const counts = new Map<string, number>();
   for (const r of rows) {

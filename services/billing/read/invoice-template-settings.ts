@@ -267,6 +267,13 @@ export async function getInvoiceTemplatePageData(
   };
 }
 
+// bm77 / bm82 review — Standard's id for the legacy `?tab=` / `?version=`
+// bookmark redirect, without the type list's Bound BANs aggregate.
+export async function getStandardTemplateTypeId(): Promise<string | null> {
+  const standard = await billTemplateFamilyRepository.findDefault(db);
+  return standard?.billTemplateFamilyId ?? null;
+}
+
 // bm77 — the type list: every type, the default first, with its derived
 // status, the settings version new invoices of that type use, and (bm82) the
 // number of BANs bound to it.

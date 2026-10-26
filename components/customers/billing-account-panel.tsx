@@ -64,8 +64,15 @@ function BillingAccountRow({
 }): React.JSX.Element {
   const closed = ban.state === "closed";
   const title = canEditAccounts ? undefined : EDIT_DISABLED_TITLE;
+  // A selection no longer in the list (its type was retired while the choice
+  // was unsaved) shows the placeholder, so Save must not send it (Styling
+  // rule 1: Save stays disabled until a listed choice is made).
+  const listed = templateTypes.some((t) => t.typeId === selection);
   const enabled =
-    canEditAccounts && selection !== ban.refBillTemplateFamilyId && !busy;
+    canEditAccounts &&
+    listed &&
+    selection !== ban.refBillTemplateFamilyId &&
+    !busy;
   return (
     <li
       aria-label={`Billing account ${ban.billingAccountId}`}
@@ -104,7 +111,7 @@ function BillingAccountRow({
             title={title}
             onClick={onSave}
             className={cn(
-              "inline-flex h-9 items-center gap-1.5 rounded-sm px-3 text-body-sm font-medium focus-visible:[box-shadow:var(--focus-ring)] focus-visible:outline-none",
+              "inline-flex h-8 items-center gap-1.5 rounded-sm px-3 text-body-sm font-medium focus-visible:[box-shadow:var(--focus-ring)] focus-visible:outline-none",
               enabled
                 ? "border border-[color:var(--action-secondary-border)] bg-[color:var(--action-secondary-bg)] text-[color:var(--action-secondary-text)] hover:bg-[color:var(--action-ghost-hover)]"
                 : "cursor-not-allowed bg-[color:var(--action-disabled-bg)] text-[color:var(--text-disabled)]",
@@ -127,12 +134,13 @@ export function BillingAccountPanel({
 }: BillingAccountPanelProps): React.JSX.Element {
   const router = useRouter();
   const [message, setMessage] = useState<string | null>(null);
+  // The row whose save is in flight; meaningful only while `isPending`.
   const [pendingId, setPendingId] = useState<string | null>(null);
   // Per-BAN selection; a BAN absent from the map shows its current type.
   const [selections, setSelections] = useState<Map<string, string | null>>(
     () => new Map(),
   );
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
 
   function selectionOf(ban: CustomerBillingAccountRow): string | null {
     return selections.has(ban.billingAccountId)
@@ -153,7 +161,7 @@ export function BillingAccountPanel({
   }
 
   function handleSave(ban: CustomerBillingAccountRow): void {
-    if (pendingId !== null) return;
+    if (isPending) return;
     const typeId = selectionOf(ban);
     setMessage(null);
     setPendingId(ban.billingAccountId);
@@ -165,21 +173,25 @@ export function BillingAccountPanel({
           typeId,
           lastModified: ban.lastModified,
         });
-        if (result.ok) {
-          clearSelection(ban.billingAccountId);
-          router.refresh();
-        } else {
+        // State set after an `await` is outside the action's transition, so it
+        // is wrapped again: the cleared selection then commits together with
+        // the refreshed props, and the row stays busy until they arrive — no
+        // flash of the old type, no Save against a stale lastModified.
+        startTransition(() => {
+          if (result.ok) {
+            clearSelection(ban.billingAccountId);
+            router.refresh();
+            return;
+          }
           setMessage(BIND_FAILURE_MESSAGES[result.code]);
           if (result.code === "TEMPLATE_NOT_BINDABLE") {
             // Reload the BAN's current type and the usable-type list.
             clearSelection(ban.billingAccountId);
             router.refresh();
           }
-        }
+        });
       } catch {
-        setMessage(GENERIC_FAILURE);
-      } finally {
-        setPendingId(null);
+        startTransition(() => setMessage(GENERIC_FAILURE));
       }
     });
   }
@@ -201,28 +213,31 @@ export function BillingAccountPanel({
       {accounts === null ? (
         <AccountsUnavailableCard />
       ) : accounts.onboarded ? (
-        <ul className="flex flex-col gap-3">
-          {accounts.bans.map((ban) => (
-            <BillingAccountRow
-              key={ban.billingAccountId}
-              ban={ban}
-              templateTypes={templateTypes}
-              canEditAccounts={canEditAccounts}
-              selection={selectionOf(ban)}
-              pending={pendingId === ban.billingAccountId}
-              busy={pendingId !== null}
-              onSelect={(typeId) => setSelection(ban.billingAccountId, typeId)}
-              onSave={() => handleSave(ban)}
-            />
-          ))}
-        </ul>
+        <>
+          <ul className="flex flex-col gap-3">
+            {accounts.bans.map((ban) => (
+              <BillingAccountRow
+                key={ban.billingAccountId}
+                ban={ban}
+                templateTypes={templateTypes}
+                canEditAccounts={canEditAccounts}
+                selection={selectionOf(ban)}
+                pending={isPending && pendingId === ban.billingAccountId}
+                busy={isPending}
+                onSelect={(typeId) =>
+                  setSelection(ban.billingAccountId, typeId)
+                }
+                onSave={() => handleSave(ban)}
+              />
+            ))}
+          </ul>
+          <p className="text-caption text-[color:var(--text-muted)]">
+            {NEXT_RUN_CAPTION}
+          </p>
+        </>
       ) : (
         <AccountsNotOnboardedCard />
       )}
-
-      <p className="text-caption text-[color:var(--text-muted)]">
-        {NEXT_RUN_CAPTION}
-      </p>
     </section>
   );
 }

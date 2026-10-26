@@ -123,17 +123,18 @@ export async function getCustomerAccountsSummary(
     }),
   );
 
-  const labels = await resolveBanTemplateLabels(
-    db,
-    perFa.flatMap((f) => f.bans.map((b) => b.refBillTemplateFamilyId)),
-  );
-
   const cycleIds = [
     ...new Set(perFa.flatMap((f) => f.bans.map((b) => b.refBillCycleId))),
   ];
-  const cycleRows = await Promise.all(
-    cycleIds.map((id) => billCycleRepository.findById(db, id)),
-  );
+  // The template labels and the bill cycles are independent reads: one round
+  // of both.
+  const [labels, cycleRows] = await Promise.all([
+    resolveBanTemplateLabels(
+      db,
+      perFa.flatMap((f) => f.bans.map((b) => b.refBillTemplateFamilyId)),
+    ),
+    Promise.all(cycleIds.map((id) => billCycleRepository.findById(db, id))),
+  ]);
   const cycles = new Map<string, BillCycle>();
   for (const cycle of cycleRows) {
     if (cycle !== null) cycles.set(cycle.billCycleId, cycle);

@@ -3,6 +3,7 @@
 // change (custmgmt workflow rules §10.5).
 
 import type { SetBillingAccountTemplateActionResult } from "@/actions/accounts/set-billing-account-template";
+import { STANDARD_TYPE_NAME } from "@/types/accounts";
 
 export const GENERIC_FAILURE = "Something went wrong. Please try again.";
 
@@ -29,7 +30,7 @@ export const NEXT_RUN_CAPTION =
 
 export const TEMPLATE_TYPE_FIELD_LABEL = "Invoice template type";
 
-export const ONBOARDING_TEMPLATE_LABEL = "Invoice template type";
-export const ONBOARDING_TEMPLATE_VALUE = "Standard (default)";
+export const ONBOARDING_TEMPLATE_LABEL = TEMPLATE_TYPE_FIELD_LABEL;
+export const ONBOARDING_TEMPLATE_VALUE = STANDARD_TYPE_NAME;
 export const ONBOARDING_TEMPLATE_HELP =
   "New billing accounts use the Standard invoice template. Choose another type afterwards in Manage Customer › Billing account.";

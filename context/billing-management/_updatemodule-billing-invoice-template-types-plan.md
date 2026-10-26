@@ -191,8 +191,8 @@ All template flows live under **Administration → Invoice Settings → Invoice 
    5. If the draft changed after the warning was shown, the upload fails `DRAFT_CHANGED_SINCE_WARNING`, and the dialog reloads and warns again.
    6. Preview → Activate as in flow 3.
 9. *(Removed by D118: no release-seed install. Upload, flow 8, is the only path.)*
-10. **Export a version, and restore it elsewhere** (`invoice_settings` READ to export; EDIT to upload; D126, D127)
-    1. Type detail → version history → "Export" on any version pair (ACTIVE, RETIRED or DRAFT). The browser downloads `<layout_code>-v<N>-s<M>.zip`; audit `INVOICE_TEMPLATE_EXPORTED`.
+10. **Export a version, and restore it elsewhere** (`invoice_settings` READ to export an ACTIVE or RETIRED pair, EDIT for a DRAFT or discarded pair; EDIT to upload; D126, D127)
+    1. Type detail → version history → "Export" on any version pair (ACTIVE, RETIRED or DRAFT; a DRAFT or discarded pair only for EDIT, D126 amended). The browser downloads `<layout_code>-v<N>-s<M>.zip`; audit `INVOICE_TEMPLATE_EXPORTED`.
     2. In the target environment, create a type with the **same name** if it doesn't exist (so the code matches, D75), or open the existing one.
     3. Upload the zip (flow 8). The dialog says the package's settings will replace the draft settings, and shows "restored from v*N*". The version-number check is skipped for an export (D127).
     4. Preview → Activate as in flow 3.
@@ -242,7 +242,8 @@ No new tables.
 | Action | Permission | Roles |
 |---|---|---|
 | View the type list, type detail, versions, retired types | `invoice_settings` READ | all |
-| Export any version pair (D126) | `invoice_settings` READ, audited | all |
+| Export an ACTIVE or RETIRED version pair (D126) | `invoice_settings` READ, audited | all |
+| Export a DRAFT or discarded version pair (D126 amended) | `invoice_settings` EDIT, audited; a READ request is `NOT_FOUND` | all |
 | Create type, edit/preview/activate/discard a pair | `invoice_settings` EDIT | ADMIN, MANAGER |
 | Upload a layout package (creates or overwrites the DRAFT after a warning, D108, D109) | `invoice_settings` EDIT | ADMIN, MANAGER |
 | Retire a type + bulk switch BANs | `invoice_settings` EDIT (only; D73), typed-name confirmation | ADMIN, MANAGER |
@@ -415,7 +416,7 @@ Every server action re-checks its permission (cm16 guardrail). The bulk switch w
     - **D125 (OV-12):** a settings save after an upload replaced the layout shows the "layout was replaced by an upload" message and keeps the unsaved values; opening the type page writes nothing.
     - **D114:** `installLayoutPackage` is the only code that writes a layout DRAFT (a guardrail test greps for other writers).
 18. **Export and restore (D126, D127):**
-    - exporting an ACTIVE, a RETIRED and a DRAFT pair, and Standard v1, yields layout files and `checksums.json` byte-identical to the stored blobs, plus a `settings.json` matching that settings version; audit row written; `invoice_settings` READ suffices
+    - exporting an ACTIVE, a RETIRED and a DRAFT pair, and Standard v1, yields layout files and `checksums.json` byte-identical to the stored blobs, plus a `settings.json` matching that settings version; audit row written; `invoice_settings` READ suffices for the ACTIVE and RETIRED pairs, and the DRAFT (or discarded) pair needs EDIT: a READ request for it returns `NOT_FOUND` (404) and writes no audit row
     - a tampered blob makes the export fail, naming the file
     - **round trip:** export Wholesale v3 + settings v4 from environment A, then upload it into a fresh environment B's empty "Wholesale" → DRAFT v1 with the same layout bytes and settings; the version check is skipped; audit `restoredFrom`; preview renders the same HTML as in A for the same input
     - the same zip without `settings.json` and with a wrong version number is still refused (`LAYOUT_VERSION_MISMATCH`); with the wrong type code, refused (`LAYOUT_CODE_MISMATCH`)
