@@ -7,7 +7,10 @@ import { CreateTemplateTypeDialog } from "@/components/billing/invoice-settings/
 import { InvoiceSettingsTabs } from "@/components/billing/invoice-settings/invoice-settings-tabs";
 import { TemplateTypeList } from "@/components/billing/invoice-settings/template-type-list";
 import { TEMPLATE_TYPE_MESSAGES } from "@/components/billing/invoice-settings/template-type-messages";
-import { listTemplateTypes } from "@/services/billing/read/invoice-template-settings";
+import {
+  getStandardTemplateTypeId,
+  listTemplateTypes,
+} from "@/services/billing/read/invoice-template-settings";
 import {
   getAppLocale,
   getAppTimezone,
@@ -45,22 +48,20 @@ export default async function InvoiceTemplateTypesPage({
     LEVELS.EDIT,
   );
 
-  const rows = await listTemplateTypes();
-
   if (params.tab !== undefined || params.version !== undefined) {
-    const standard = rows.find((r) => r.isDefault);
-    if (standard) {
+    const standardId = await getStandardTemplateTypeId();
+    if (standardId !== null) {
       const query = new URLSearchParams();
       for (const [key, value] of Object.entries(params)) {
         for (const v of Array.isArray(value) ? value : [value]) {
           if (v !== undefined) query.append(key, v);
         }
       }
-      redirect(
-        `${DETAIL_BASE}/${standard.billTemplateFamilyId}?${query.toString()}`,
-      );
+      redirect(`${DETAIL_BASE}/${standardId}?${query.toString()}`);
     }
   }
+
+  const rows = await listTemplateTypes();
 
   return (
     <div className="space-y-4">

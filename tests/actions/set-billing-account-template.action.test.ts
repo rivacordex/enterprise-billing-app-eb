@@ -26,7 +26,7 @@ const LOCK = new Date("2026-01-01T00:00:00.000Z");
 const VALID_INPUT = {
   partyRoleId: "PTRL00000001",
   billingAccountId: "BAN000001",
-  billTemplateVersionId: null,
+  typeId: null,
   lastModified: LOCK.toISOString(),
 };
 
@@ -105,17 +105,50 @@ describe("setBillingAccountTemplateAction (cm21-spec §3.6)", () => {
       ...VALID_INPUT,
       partyRoleId: "nope",
       billingAccountId: "FIN000001",
-      billTemplateVersionId: "BTV1",
+      typeId: "BTF1x",
     });
 
     expect(result).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
     if (result.ok || result.code !== "VALIDATION_ERROR") return;
     expect(Object.keys(result.fieldErrors).sort()).toEqual([
-      "billTemplateVersionId",
       "billingAccountId",
       "partyRoleId",
+      "typeId",
     ]);
     expect(mockService).not.toHaveBeenCalled();
+  });
+
+  it("cm23 — a template VERSION id (BTV…) is not a type id → VALIDATION_ERROR", async () => {
+    const result = await setBillingAccountTemplateAction({
+      ...VALID_INPUT,
+      typeId: "BTV00000002",
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "VALIDATION_ERROR" });
+    if (result.ok || result.code !== "VALIDATION_ERROR") return;
+    expect(Object.keys(result.fieldErrors)).toEqual(["typeId"]);
+    expect(mockService).not.toHaveBeenCalled();
+  });
+
+  it("cm23 — a well-formed type id (BTF…) parses and reaches the service", async () => {
+    mockService.mockResolvedValue({
+      ok: true,
+      value: {
+        billingAccountId: "BAN000001",
+        changed: true,
+        lastModified: LOCK,
+      },
+    });
+
+    await setBillingAccountTemplateAction({
+      ...VALID_INPUT,
+      typeId: "BTF00000002",
+    });
+
+    expect(mockService).toHaveBeenCalledWith(
+      expect.objectContaining({ typeId: "BTF00000002" }),
+      "user-1",
+    );
   });
 
   it("on success, calls the service with the parsed input and revalidates both customer pages", async () => {
@@ -134,7 +167,7 @@ describe("setBillingAccountTemplateAction (cm21-spec §3.6)", () => {
       {
         partyRoleId: "PTRL00000001",
         billingAccountId: "BAN000001",
-        billTemplateVersionId: null,
+        typeId: null,
         lastModified: LOCK,
       },
       "user-1",

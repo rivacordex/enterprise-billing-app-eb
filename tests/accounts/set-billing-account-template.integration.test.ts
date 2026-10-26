@@ -6,32 +6,44 @@ import {
   setUpOnboardingDatabase,
   tearDownOnboardingDatabase,
 } from "@/tests/helpers/onboarding-database";
+import {
+  insertTemplateType,
+  retireTemplateType,
+} from "@/tests/helpers/bindable-template-type";
 import { onboardCustomerAccounts } from "@/services/accounts/onboard-customer-accounts";
 import { setBillingAccountTemplate } from "@/services/accounts/set-billing-account-template";
 
-// cm21-spec §3.9 — the template reset on a real transaction: a BAN pointed at
-// BTV00000002 by raw SQL (v1 can't write a non-NULL value through the app)
-// resets to NULL with last_edited_by / last_modified / one audit row; a
-// replay with the stale token is a CONFLICT; party_role is never touched
-// (Inv. #17); a closed BAN is refused. Same fresh-migrate setup as cm18.
+// cm21-spec §3.9 / cm23-spec §3.12 (CM guardrail 12) — the type bind on a real
+// transaction. Fixtures create, through raw SQL, a usable type (family + ACTIVE
+// settings row), a retired one and a not-yet-usable one (layout only). Binding
+// NULL → usable → NULL is one update, one audit row with type names and a
+// bumped last_modified each time, with party_role untouched (Inv. #17);
+// Standard's id, an unknown id, the retired and the not-yet-usable type are
+// TEMPLATE_NOT_BINDABLE and write nothing; a stale replay is a CONFLICT; a
+// closed BAN is refused. Same fresh-migrate setup as cm18.
 const databaseUrl = process.env.DATABASE_URL;
 
+const STANDARD = "BTF00000001";
+const WHOLESALE = "BTF00000101";
+const RETIRED = "BTF00000102";
+const NOT_YET_USABLE = "BTF00000103";
+
 describe.skipIf(!databaseUrl)(
-  "cm21 billing account template reset (requires DATABASE_URL)",
+  "cm23 billing account template type bind (requires DATABASE_URL)",
   () => {
     let db: OnboardingDatabase;
-    let resetActorId: string;
+    let actorId: string;
 
-    // Onboards a customer, then points its BAN at BTV00000002 by raw SQL.
-    async function onboardedBanWithTemplate(orgName: string) {
+    // Onboards a customer (its BAN starts NULL) and backdates the BAN's lock.
+    async function onboardedBan(orgName: string) {
       const pr = await seedInitializedCustomer(db, orgName);
       const onboarded = await onboardCustomerAccounts(
         {
           partyRoleId: pr.id,
           billCycleId: db.cycleId,
           currency: "MYR",
-          billTemplateVersionId: null,
-          statusReason: "cm21 template reset test",
+          templateTypeId: null,
+          statusReason: "cm23 template bind test",
           lastModifiedDatetime: pr.ts,
         },
         db.appuserId,
@@ -42,8 +54,7 @@ describe.skipIf(!databaseUrl)(
 
       const [ban] = await db.sql<{ lastModified: Date }[]>`
         UPDATE billing.billing_account
-        SET ref_bill_template_version_id = 'BTV00000002',
-            last_modified = now() - interval '1 minute'
+        SET last_modified = now() - interval '1 minute'
         WHERE billing_account_id = ${banId}
         RETURNING last_modified AS "lastModified"
       `;
@@ -61,55 +72,21 @@ describe.skipIf(!databaseUrl)(
       };
     }
 
-    beforeAll(async () => {
-      db = await setUpOnboardingDatabase(databaseUrl as string, "cm21");
-      const [actor] = await db.sql<{ id: string }[]>`
-        INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
-        VALUES ('test-user-cm21-reset', 'cm21 Reset User', 'cm21-reset@example.com', 'LOCAL', 'ACTIVE')
-        RETURNING user_id AS id
-      `;
-      resetActorId = actor!.id;
-    }, 60_000);
-
-    afterAll(async () => {
-      if (db) await tearDownOnboardingDatabase(db.sql);
-    }, 60_000);
-
-    it("resets a non-NULL reference to NULL with actor, bumped lock and one audit row; a stale replay conflicts; party_role untouched", async () => {
-      const fx = await onboardedBanWithTemplate("cm21 Org A");
-      const input = {
-        partyRoleId: fx.partyRoleId,
-        billingAccountId: fx.banId,
-        billTemplateVersionId: null,
-        lastModified: fx.lastModified,
-      };
-
-      const result = await setBillingAccountTemplate(input, resetActorId);
-      expect(result).toMatchObject({
-        ok: true,
-        value: { billingAccountId: fx.banId, changed: true },
-      });
-
-      const [ban] = await db.sql<
+    async function banRow(banId: string) {
+      const [row] = await db.sql<
         { ref: string | null; editedBy: string; lastModified: Date }[]
       >`
-        SELECT ref_bill_template_version_id AS ref,
+        SELECT ref_bill_template_family_id AS ref,
                last_edited_by AS "editedBy",
                last_modified AS "lastModified"
-        FROM billing.billing_account WHERE billing_account_id = ${fx.banId}
+        FROM billing.billing_account WHERE billing_account_id = ${banId}
       `;
-      expect(ban?.ref).toBeNull();
-      expect(ban?.editedBy).toBe(resetActorId);
-      expect(ban!.lastModified.getTime()).toBeGreaterThan(
-        fx.lastModified.getTime(),
-      );
-      if (result.ok) {
-        expect(result.value.lastModified.getTime()).toBe(
-          ban!.lastModified.getTime(),
-        );
-      }
+      if (!row) throw new Error(`billing_account ${banId} not found`);
+      return row;
+    }
 
-      const audits = await db.sql<
+    async function auditRows(banId: string) {
+      return db.sql<
         {
           actor: string;
           before: Record<string, unknown>;
@@ -120,27 +97,176 @@ describe.skipIf(!databaseUrl)(
         FROM core.audit_log
         WHERE event_type = 'BILLING_ACCOUNT_TEMPLATE_CHANGED'
           AND target_entity = 'BILLING_ACCOUNT'
-          AND target_id = ${fx.banId}
+          AND target_id = ${banId}
+        ORDER BY created_datetime, audit_id
       `;
-      expect(audits).toHaveLength(1);
-      expect(audits[0]).toEqual({
-        actor: resetActorId,
-        before: { refBillTemplateVersionId: "BTV00000002" },
-        after: { refBillTemplateVersionId: null },
-      });
+    }
 
-      const replay = await setBillingAccountTemplate(input, resetActorId);
-      expect(replay).toEqual({ ok: false, code: "CONFLICT" });
-
+    async function partyRoleTs(partyRoleId: string): Promise<number> {
       const [party] = await db.sql<{ ts: Date }[]>`
         SELECT last_modified_datetime AS ts
-        FROM customer.party_role WHERE party_role_id = ${fx.partyRoleId}
+        FROM customer.party_role WHERE party_role_id = ${partyRoleId}
       `;
-      expect(party!.ts.getTime()).toBe(fx.partyRoleTs.getTime());
+      return party!.ts.getTime();
+    }
+
+    beforeAll(async () => {
+      db = await setUpOnboardingDatabase(databaseUrl as string, "cm23");
+      const [actor] = await db.sql<{ id: string }[]>`
+        INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
+        VALUES ('test-user-cm23-bind', 'cm23 Bind User', 'cm23-bind@example.com', 'LOCAL', 'ACTIVE')
+        RETURNING user_id AS id
+      `;
+      actorId = actor!.id;
+
+      await insertTemplateType(db.sql, {
+        typeId: WHOLESALE,
+        code: "WHOLESALE",
+        name: "Wholesale",
+        versionSeed: 101,
+        withActiveSettings: true,
+      });
+      await insertTemplateType(db.sql, {
+        typeId: RETIRED,
+        code: "RETIREDTYPE",
+        name: "Retired Type",
+        versionSeed: 102,
+        withActiveSettings: true,
+      });
+      await retireTemplateType(db.sql, RETIRED);
+      await insertTemplateType(db.sql, {
+        typeId: NOT_YET_USABLE,
+        code: "PENDING",
+        name: "Pending Type",
+        versionSeed: 103,
+        withActiveSettings: false,
+      });
+    }, 60_000);
+
+    afterAll(async () => {
+      if (db) await tearDownOnboardingDatabase(db.sql);
+    }, 60_000);
+
+    it("binds NULL → Wholesale → NULL: one update, one audit row with type names and a bumped lock each; a stale replay conflicts; party_role untouched", async () => {
+      const fx = await onboardedBan("cm23 Org A");
+
+      // NULL → NULL is unchanged: no write, no audit.
+      const noop = await setBillingAccountTemplate(
+        {
+          partyRoleId: fx.partyRoleId,
+          billingAccountId: fx.banId,
+          typeId: null,
+          lastModified: fx.lastModified,
+        },
+        actorId,
+      );
+      expect(noop).toMatchObject({ ok: true, value: { changed: false } });
+      expect(await auditRows(fx.banId)).toHaveLength(0);
+      expect((await banRow(fx.banId)).lastModified.getTime()).toBe(
+        fx.lastModified.getTime(),
+      );
+
+      // NULL → Wholesale.
+      const toWholesale = {
+        partyRoleId: fx.partyRoleId,
+        billingAccountId: fx.banId,
+        typeId: WHOLESALE,
+        lastModified: fx.lastModified,
+      };
+      const bound = await setBillingAccountTemplate(toWholesale, actorId);
+      expect(bound).toMatchObject({
+        ok: true,
+        value: { billingAccountId: fx.banId, changed: true },
+      });
+      const afterBind = await banRow(fx.banId);
+      expect(afterBind.ref).toBe(WHOLESALE);
+      expect(afterBind.editedBy).toBe(actorId);
+      expect(afterBind.lastModified.getTime()).toBeGreaterThan(
+        fx.lastModified.getTime(),
+      );
+      if (bound.ok) {
+        expect(bound.value.lastModified.getTime()).toBe(
+          afterBind.lastModified.getTime(),
+        );
+      }
+      expect(await auditRows(fx.banId)).toEqual([
+        {
+          actor: actorId,
+          before: {
+            refBillTemplateFamilyId: null,
+            typeName: "Standard (default)",
+          },
+          after: { refBillTemplateFamilyId: WHOLESALE, typeName: "Wholesale" },
+        },
+      ]);
+
+      // A replay with the stale token is a CONFLICT and writes nothing.
+      const replay = await setBillingAccountTemplate(toWholesale, actorId);
+      expect(replay).toEqual({ ok: false, code: "CONFLICT" });
+      expect(await auditRows(fx.banId)).toHaveLength(1);
+
+      // Wholesale → NULL (Standard).
+      const back = await setBillingAccountTemplate(
+        {
+          partyRoleId: fx.partyRoleId,
+          billingAccountId: fx.banId,
+          typeId: null,
+          lastModified: afterBind.lastModified,
+        },
+        actorId,
+      );
+      expect(back).toMatchObject({ ok: true, value: { changed: true } });
+      const afterBack = await banRow(fx.banId);
+      expect(afterBack.ref).toBeNull();
+      expect(afterBack.lastModified.getTime()).toBeGreaterThan(
+        afterBind.lastModified.getTime(),
+      );
+      const audits = await auditRows(fx.banId);
+      expect(audits).toHaveLength(2);
+      expect(audits[1]).toEqual({
+        actor: actorId,
+        before: { refBillTemplateFamilyId: WHOLESALE, typeName: "Wholesale" },
+        after: {
+          refBillTemplateFamilyId: null,
+          typeName: "Standard (default)",
+        },
+      });
+
+      expect(await partyRoleTs(fx.partyRoleId)).toBe(fx.partyRoleTs.getTime());
     });
 
+    it.each([
+      { label: "Standard's explicit id", typeId: STANDARD },
+      { label: "an unknown id", typeId: "BTF99999999" },
+      { label: "a retired type", typeId: RETIRED },
+      { label: "a not-yet-usable type", typeId: NOT_YET_USABLE },
+    ])(
+      "$label → TEMPLATE_NOT_BINDABLE, no write, no audit",
+      async ({ typeId }) => {
+        const fx = await onboardedBan(`cm23 Org ${typeId}`);
+        const result = await setBillingAccountTemplate(
+          {
+            partyRoleId: fx.partyRoleId,
+            billingAccountId: fx.banId,
+            typeId,
+            lastModified: fx.lastModified,
+          },
+          actorId,
+        );
+        expect(result).toEqual({ ok: false, code: "TEMPLATE_NOT_BINDABLE" });
+
+        const ban = await banRow(fx.banId);
+        expect(ban.ref).toBeNull();
+        expect(ban.lastModified.getTime()).toBe(fx.lastModified.getTime());
+        expect(await auditRows(fx.banId)).toHaveLength(0);
+        expect(await partyRoleTs(fx.partyRoleId)).toBe(
+          fx.partyRoleTs.getTime(),
+        );
+      },
+    );
+
     it("a closed BAN → BAN_CLOSED and nothing written", async () => {
-      const fx = await onboardedBanWithTemplate("cm21 Org B");
+      const fx = await onboardedBan("cm23 Org Closed");
       const [closed] = await db.sql<{ lastModified: Date }[]>`
         UPDATE billing.billing_account SET state = 'closed'
         WHERE billing_account_id = ${fx.banId}
@@ -151,18 +277,14 @@ describe.skipIf(!databaseUrl)(
         {
           partyRoleId: fx.partyRoleId,
           billingAccountId: fx.banId,
-          billTemplateVersionId: null,
+          typeId: WHOLESALE,
           lastModified: closed!.lastModified,
         },
-        resetActorId,
+        actorId,
       );
       expect(result).toEqual({ ok: false, code: "BAN_CLOSED" });
-
-      const [ban] = await db.sql<{ ref: string | null }[]>`
-        SELECT ref_bill_template_version_id AS ref
-        FROM billing.billing_account WHERE billing_account_id = ${fx.banId}
-      `;
-      expect(ban?.ref).toBe("BTV00000002");
+      expect((await banRow(fx.banId)).ref).toBeNull();
+      expect(await auditRows(fx.banId)).toHaveLength(0);
     });
   },
 );

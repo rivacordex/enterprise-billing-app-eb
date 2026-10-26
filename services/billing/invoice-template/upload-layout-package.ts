@@ -19,13 +19,16 @@ import {
   generate,
   layoutFilesFromVerified,
 } from "@/services/billing/invoice-template/generate";
-import { installLayoutPackage } from "@/services/billing/invoice-template/install-layout-package";
+import {
+  installLayoutPackage,
+  matchExpectedDraft,
+} from "@/services/billing/invoice-template/install-layout-package";
 import { parseSampleData } from "@/services/billing/invoice-template/sample-data";
 import {
-  LAYOUT_PACKAGE_FONT_FILE,
+  LAYOUT_PACKAGE_FILES,
   LAYOUT_PACKAGE_MAX_ENTRIES,
   LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES,
-  LAYOUT_PACKAGE_REQUIRED_FILES,
+  LAYOUT_PACKAGE_SETTINGS_MAX_BYTES,
   type ExpectedDraft,
   type LayoutProblem,
   type LayoutProblemCode,
@@ -35,12 +38,17 @@ import {
   layoutManifestSchema,
   type LayoutManifest,
 } from "@/validation/billing/layout-manifest.schema";
+import {
+  templateExportSettingsSchema,
+  type TemplateExportSettings,
+} from "@/validation/billing/template-export-settings.schema";
 
 // bm78-spec §7 (Inv #60, code-standards › Invoice Template Types, General
 // rule 2) — the layout package GATE and the upload orchestration. The gate owns
 // no writes: only a fully clean package reaches `installLayoutPackage`, the one
 // writer (Inv #59). Stages 1–3 are blocking (later stages need valid files);
-// stages 4–7 collect every problem. The zip is read in memory with fflate,
+// stages 4–7 collect every problem. bm80: an upload over the type's open
+// layout DRAFT (the expected draft the warning named) overwrites it in place. The zip is read in memory with fflate,
 // never written to disk, in two passes: the central directory (no inflate),
 // then a streamed inflate with a running byte cap that trusts no declared size.
 
@@ -54,6 +62,8 @@ export type GateResult =
       files: Map<string, Buffer>;
       manifest: LayoutManifest;
       indexDigest: string;
+      // bm81 — a schema-valid `settings.json` bound to these files (a restore).
+      restore: TemplateExportSettings | null;
     }
   | { ok: false; problems: LayoutProblem[] };
 
@@ -61,6 +71,7 @@ type Render = typeof renderAndReadSections;
 
 const INDEX_FILE = "checksums.json";
 const MANIFEST_FILE = "manifest.json";
+const SETTINGS_FILE = LAYOUT_PACKAGE_FILES.settings;
 const RENDER_FILE = "(render)";
 const PACKAGE_FILE = "(package)";
 const MAX_LISTED_URLS = 10;
@@ -70,7 +81,8 @@ const MAX_LISTED_URLS = 10;
 // bomb expand ~1000:1 before the cap ran. At 1 KiB per push, at most about
 // 1 MiB is inflated past the cap before pushing stops.
 const INFLATE_PUSH_BYTES = 1024;
-const REQUIRED = new Set<string>(LAYOUT_PACKAGE_REQUIRED_FILES);
+const REQUIRED = new Set<string>(LAYOUT_PACKAGE_FILES.required);
+const OPTIONAL = new Set<string>(LAYOUT_PACKAGE_FILES.optional);
 
 function problem(
   file: string,
@@ -95,15 +107,32 @@ function isUnsafePath(name: string): boolean {
   );
 }
 
-// The exact allow-list: the required files and `fonts/<name>.woff2` /
-// `fonts/OFL.txt`. Anything else — `*.editor.json`, `settings.json` (bm81
-// restore), another partial — is refused.
+// The exact allow-list (LAYOUT_PACKAGE_FILES): the required files, the
+// optional `settings.json` (bm81 restore) and `fonts/<name>.woff2` /
+// `fonts/OFL.txt`. Anything else — `*.editor.json`, another partial — is
+// refused.
 function isAllowedName(name: string): boolean {
   if (isUnsafePath(name)) return false;
-  return REQUIRED.has(name) || LAYOUT_PACKAGE_FONT_FILE.test(name);
+  return (
+    REQUIRED.has(name) ||
+    OPTIONAL.has(name) ||
+    LAYOUT_PACKAGE_FILES.font.test(name)
+  );
 }
 
 const isDirectory = (name: string): boolean => name.endsWith("/");
+// bm81 review fix (owner, #5/#9) — `settings.json` has its own budget
+// (LAYOUT_PACKAGE_SETTINGS_MAX_BYTES), outside the layout's entry and byte caps,
+// so a layout accepted at a cap still round-trips through its export.
+const isSettings = (name: string): boolean => name === SETTINGS_FILE;
+
+function settingsTooLarge(bytes: number): LayoutProblem {
+  return problem(
+    SETTINGS_FILE,
+    "ZIP_TOO_LARGE",
+    `is ${bytes} bytes; at most ${LAYOUT_PACKAGE_SETTINGS_MAX_BYTES} are allowed`,
+  );
+}
 
 // Stage 1 — the zip's shape and size.
 export function readZip(
@@ -132,12 +161,13 @@ export function readZip(
 
   const problems: LayoutProblem[] = [];
   const fileEntries = entries.filter((e) => !isDirectory(e.name));
-  if (fileEntries.length > LAYOUT_PACKAGE_MAX_ENTRIES) {
+  const layoutEntries = fileEntries.filter((e) => !isSettings(e.name));
+  if (layoutEntries.length > LAYOUT_PACKAGE_MAX_ENTRIES) {
     problems.push(
       problem(
         PACKAGE_FILE,
         "ZIP_TOO_MANY_ENTRIES",
-        `the package has ${fileEntries.length} entries; at most ${LAYOUT_PACKAGE_MAX_ENTRIES} are allowed`,
+        `the package has ${layoutEntries.length} entries; at most ${LAYOUT_PACKAGE_MAX_ENTRIES} are allowed`,
       ),
     );
   }
@@ -152,7 +182,15 @@ export function readZip(
       );
     }
   }
-  const declared = fileEntries.reduce((n, e) => n + e.originalSize, 0);
+  for (const e of fileEntries) {
+    if (
+      isSettings(e.name) &&
+      e.originalSize > LAYOUT_PACKAGE_SETTINGS_MAX_BYTES
+    ) {
+      problems.push(settingsTooLarge(e.originalSize));
+    }
+  }
+  const declared = layoutEntries.reduce((n, e) => n + e.originalSize, 0);
   if (declared > LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES) {
     problems.push(
       problem(
@@ -173,6 +211,7 @@ export function readZip(
   const seen = new Set<string>();
   let started = 0;
   let total = 0;
+  let settingsTotal = 0;
   let overCap = false;
   const unzip = new Unzip();
   unzip.register(UnzipInflate);
@@ -189,7 +228,7 @@ export function readZip(
       return;
     }
     seen.add(file.name);
-    started++;
+    if (!isSettings(file.name)) started++;
     // Review fix — the local header must name an entry the central directory
     // listed (pass 1 approved those names, not these).
     if (
@@ -216,6 +255,16 @@ export function readZip(
         return;
       }
       if (overCap) return;
+      if (isSettings(file.name)) {
+        settingsTotal += data.length;
+        if (settingsTotal > LAYOUT_PACKAGE_SETTINGS_MAX_BYTES) {
+          overCap = true;
+          problems.push(settingsTooLarge(settingsTotal));
+          return;
+        }
+        chunks.push(data);
+        return;
+      }
       total += data.length;
       if (total > LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES) {
         overCap = true;
@@ -254,7 +303,7 @@ export function readZip(
   for (const [name, chunks] of parts) {
     files.set(name, Buffer.concat(chunks));
   }
-  for (const name of LAYOUT_PACKAGE_REQUIRED_FILES) {
+  for (const name of LAYOUT_PACKAGE_FILES.required) {
     if (!files.has(name)) {
       problems.push(
         problem(name, "ZIP_MISSING_FILE", "is missing from the package"),
@@ -295,7 +344,16 @@ function checkChecksums(
   const problems: LayoutProblem[] = [];
   for (const [name, digest] of Object.entries(index.files)) {
     const bytes = files.get(name);
-    if (bytes === undefined) {
+    // bm81 — an export never lists its settings.json.
+    if (name === SETTINGS_FILE) {
+      problems.push(
+        problem(
+          name,
+          "CHECKSUM_MISMATCH",
+          "must not be listed in checksums.json",
+        ),
+      );
+    } else if (bytes === undefined) {
       problems.push(
         problem(
           name,
@@ -314,7 +372,11 @@ function checkChecksums(
     }
   }
   for (const name of files.keys()) {
-    if (name !== INDEX_FILE && !(name in index.files)) {
+    if (
+      name !== INDEX_FILE &&
+      name !== SETTINGS_FILE &&
+      !(name in index.files)
+    ) {
       problems.push(
         problem(name, "CHECKSUM_MISMATCH", "is not listed in checksums.json"),
       );
@@ -325,13 +387,75 @@ function checkChecksums(
     : { ok: true, indexDigest: sha256(indexBytes) };
 }
 
+// bm81 — an export's settings.json counts only when it parses with the one
+// schema AND its `source.layoutChecksum` is the digest of THIS package's
+// checksums.json, so one export's settings can't skip the version check for
+// other files. No code reads where a zip came from (General rule 3).
+function checkRestoreSettings(
+  files: ReadonlyMap<string, Buffer>,
+  indexDigest: string,
+):
+  | { ok: true; restore: TemplateExportSettings | null }
+  | { ok: false; problems: LayoutProblem[] } {
+  const bytes = files.get(SETTINGS_FILE);
+  if (bytes === undefined) return { ok: true, restore: null };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(bytes.toString("utf-8"));
+  } catch {
+    return {
+      ok: false,
+      problems: [
+        problem(SETTINGS_FILE, "SETTINGS_INVALID", "is not valid JSON"),
+      ],
+    };
+  }
+  const parsed = templateExportSettingsSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      problems: parsed.error.issues.map((i) =>
+        problem(
+          SETTINGS_FILE,
+          "SETTINGS_INVALID",
+          `${i.path.join(".") || "(root)"}: ${i.message}`,
+        ),
+      ),
+    };
+  }
+  if (parsed.data.source.layoutChecksum !== indexDigest) {
+    return {
+      ok: false,
+      problems: [
+        problem(
+          SETTINGS_FILE,
+          "SETTINGS_INVALID",
+          "settings.json does not belong to these layout files",
+        ),
+      ],
+    };
+  }
+  return { ok: true, restore: parsed.data };
+}
+
 // Stage 3 — the manifest, the type's layout code and the computed version.
+// bm81: a valid restore skips the version comparison; the code check always runs.
+// Review fix (#12) — an invalid settings.json no longer hides the manifest's
+// own problems (the code check included); the version comparison is skipped
+// for it, as the package claims to be a restore.
 function checkManifest(
   files: ReadonlyMap<string, Buffer>,
   ctx: GateContext,
+  indexDigest: string,
 ):
-  | { ok: true; manifest: LayoutManifest }
+  | {
+      ok: true;
+      manifest: LayoutManifest;
+      restore: TemplateExportSettings | null;
+    }
   | { ok: false; problems: LayoutProblem[] } {
+  const settings = checkRestoreSettings(files, indexDigest);
+  const settingsProblems = settings.ok ? [] : settings.problems;
   let manifest: LayoutManifest;
   try {
     const parsed = layoutManifestSchema.safeParse(
@@ -340,13 +464,16 @@ function checkManifest(
     if (!parsed.success) {
       return {
         ok: false,
-        problems: parsed.error.issues.map((i) =>
-          problem(
-            MANIFEST_FILE,
-            "MANIFEST_INVALID",
-            `${i.path.join(".") || "(root)"}: ${i.message}`,
+        problems: [
+          ...settingsProblems,
+          ...parsed.error.issues.map((i) =>
+            problem(
+              MANIFEST_FILE,
+              "MANIFEST_INVALID",
+              `${i.path.join(".") || "(root)"}: ${i.message}`,
+            ),
           ),
-        ),
+        ],
       };
     }
     manifest = parsed.data;
@@ -354,11 +481,12 @@ function checkManifest(
     return {
       ok: false,
       problems: [
+        ...settingsProblems,
         problem(MANIFEST_FILE, "MANIFEST_INVALID", "is not valid JSON"),
       ],
     };
   }
-  const problems: LayoutProblem[] = [];
+  const problems: LayoutProblem[] = [...settingsProblems];
   if (manifest.layoutCode !== ctx.layoutCode) {
     problems.push(
       problem(
@@ -368,7 +496,11 @@ function checkManifest(
       ),
     );
   }
-  if (manifest.layoutVersion !== ctx.expectedVersionNo) {
+  if (
+    settings.ok &&
+    settings.restore === null &&
+    manifest.layoutVersion !== ctx.expectedVersionNo
+  ) {
     problems.push(
       problem(
         MANIFEST_FILE,
@@ -377,7 +509,9 @@ function checkManifest(
       ),
     );
   }
-  return problems.length > 0 ? { ok: false, problems } : { ok: true, manifest };
+  return problems.length > 0
+    ? { ok: false, problems }
+    : { ok: true, manifest, restore: settings.ok ? settings.restore : null };
 }
 
 // Stages 4–7 alone, over already-verified files. checkLayoutPackage calls it;
@@ -458,21 +592,37 @@ export async function checkLayoutPackage(
   if (!read.ok) return read;
   const checksums = checkChecksums(read.files);
   if (!checksums.ok) return checksums;
-  const manifest = checkManifest(read.files, ctx);
+  const manifest = checkManifest(read.files, ctx, checksums.indexDigest);
   if (!manifest.ok) return manifest;
 
-  const problems = await checkLayoutFiles(read.files, render);
+  // bm81 review fix (#15) — settings.json is split off here, once: stages 4–7,
+  // install and every consumer of `files` see only the layout files.
+  const files = new Map(read.files);
+  files.delete(SETTINGS_FILE);
+  const problems = await checkLayoutFiles(files, render);
   if (problems.length > 0) return { ok: false, problems };
   return {
     ok: true,
-    files: read.files,
+    files,
     manifest: manifest.manifest,
     indexDigest: checksums.indexDigest,
+    restore: manifest.restore,
   };
 }
 
+// bm80 — `matchExpectedDraft` lives beside its second caller, install (an
+// import from here would be a cycle: this module imports install).
+export { matchExpectedDraft };
+
 export async function uploadLayoutPackage(
-  input: { familyId: string; zip: Uint8Array; expectedDraft: ExpectedDraft },
+  input: {
+    familyId: string;
+    zip: Uint8Array;
+    expectedDraft: ExpectedDraft;
+    // bm81 review fix (#2) — the settings DRAFT token the dialog saw, checked
+    // under the lock when a restore would replace the draft settings.
+    expectedSettingsToken?: string | null;
+  },
   actorId: string,
   deps: { render?: Render } = {},
 ): Promise<UploadLayoutPackageResult> {
@@ -482,22 +632,26 @@ export async function uploadLayoutPackage(
     return { ok: false, code: "TEMPLATE_TYPE_RETIRED", problems: [] };
   }
 
-  // One open layout draft at a time until bm80 adds the overwrite path. The
-  // expected version is computed, never typed: max over every layout row of
-  // the type (RETIRED included) + 1. Review fix — a plain read, no lock: an
-  // advisory xact lock here would run in autocommit and protect nothing;
-  // install re-checks both under its locks.
-  const layoutRows = await billTemplateVersionRepository.listForKind(db, {
+  // Review fix — plain reads, no lock: an advisory xact lock here would run
+  // in autocommit and protect nothing; install re-checks under its locks.
+  const openLayoutDraft = await billTemplateVersionRepository.findDraft(db, {
     kind: "layout",
-    withUsage: false,
     familyId: input.familyId,
   });
-  const openLayoutDraft = layoutRows.some((l) => l.status === "DRAFT");
-  if (openLayoutDraft && "none" in input.expectedDraft) {
+  const mode = matchExpectedDraft(openLayoutDraft, input.expectedDraft);
+  if (mode === "stale") {
     return { ok: false, code: "DRAFT_CHANGED_SINCE_WARNING", problems: [] };
   }
+  // The expected version is computed, never typed: an overwrite keeps the
+  // open DRAFT's number (the editor exports vN again to replace draft vN); a
+  // create is max over every layout row of the type (RETIRED included) + 1.
   const expectedVersionNo =
-    layoutRows.reduce((max, l) => Math.max(max, l.versionNo), 0) + 1;
+    mode === "overwrite" && openLayoutDraft
+      ? openLayoutDraft.versionNo
+      : await billTemplateVersionRepository.nextVersionNo(db, {
+          kind: "layout",
+          familyId: input.familyId,
+        });
 
   const gate = await checkLayoutPackage(
     input.zip,
@@ -515,6 +669,10 @@ export async function uploadLayoutPackage(
     files: gate.files,
     manifest: gate.manifest,
     indexDigest: gate.indexDigest,
+    restore: gate.restore,
+    expectedSettingsToken: input.expectedSettingsToken ?? null,
     actorId,
+    mode,
+    expectedDraft: input.expectedDraft,
   });
 }

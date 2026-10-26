@@ -63,6 +63,7 @@ import { COMPLIANCE_SECTION_KEYS } from "@/services/billing/invoice-template/com
 import type { renderAndReadSections } from "@/services/billing/invoice-template/compliance-render";
 import {
   checkLayoutPackage,
+  matchExpectedDraft,
   readZip,
 } from "@/services/billing/invoice-template/upload-layout-package";
 import {
@@ -76,6 +77,7 @@ import {
   LAYOUT_PACKAGE_MAX_ENTRIES,
   LAYOUT_PACKAGE_MAX_UNCOMPRESSED_BYTES,
   LAYOUT_PACKAGE_REQUIRED_FILES,
+  LAYOUT_PACKAGE_SETTINGS_MAX_BYTES,
   type LayoutProblem,
 } from "@/types/billing";
 import { LAYOUT_PART_KEYS } from "@/validation/billing/layout-manifest.schema";
@@ -322,7 +324,8 @@ describe("bm78 layout package gate — stage 1, zip shape and size (blocking)", 
     "/abs",
     "C:\\x",
     "x.editor.json",
-    "settings.json",
+    // bm81: `settings.json` is now an allowed optional file.
+    "notes.txt",
     "fonts/x.ttf",
     "partials/extra.hbs",
   ])("ZIP_UNEXPECTED_FILE: %s is refused before any inflate", async (name) => {
@@ -391,7 +394,7 @@ describe("bm78 layout package gate — stage 1, zip shape and size (blocking)", 
   it("stage 1 stops at its own stage: an unexpected file plus an edited file (a checksum mismatch) reports only the zip problem", async () => {
     const built = pkg({
       override: (f) => {
-        f.set("settings.json", Buffer.from("{}"));
+        f.set("notes.txt", Buffer.from("{}"));
         replaceInFile(
           f,
           "partials/header.hbs",
@@ -512,6 +515,292 @@ describe("bm78 layout package gate — stage 3, manifest (blocking)", () => {
     );
     expect(codes(problems)).toEqual(["MANIFEST_INVALID"]);
     expect(render).not.toHaveBeenCalled();
+  });
+});
+
+describe("bm81 — restore: an export's settings.json", () => {
+  // A schema-valid settings.json bound to `files`' own checksums.json.
+  function exportSettings(
+    files: Map<string, Buffer>,
+    edit: (s: Record<string, unknown>) => void = () => {},
+  ): Buffer {
+    const settings: Record<string, unknown> = {
+      exportFormat: 1,
+      source: {
+        typeCode: "BASIC",
+        typeName: "Basic",
+        layoutVersion: 3,
+        settingsVersion: 4,
+        status: "ACTIVE",
+        layoutChecksum: sha256(files.get("checksums.json")!),
+        exportedAt: "2026-10-25T01:02:03.000Z",
+        exportedBy: "Exporter",
+      },
+      structure: {
+        sections: { payment: false },
+        columns: {},
+        footnote: ["Restored footnote"],
+      },
+    };
+    edit(settings);
+    return Buffer.from(`${JSON.stringify(settings, null, 2)}\n`, "utf-8");
+  }
+
+  it("a valid, bound settings.json skips the version check and is returned as `restore`", async () => {
+    // The package says v3; the type expects v1.
+    const built = pkg({
+      layoutVersion: 3,
+      override: (f) => f.set("settings.json", exportSettings(f)),
+    });
+    const result = await gate(built.zip);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.restore).toMatchObject({
+      source: { layoutVersion: 3, settingsVersion: 4 },
+      structure: { footnote: ["Restored footnote"] },
+    });
+  });
+
+  it("without settings.json the same package keeps the version check, and `restore` is null when clean", async () => {
+    const v3 = problemsOf(await gate(pkg({ layoutVersion: 3 }).zip));
+    expect(codes(v3)).toEqual(["LAYOUT_VERSION_MISMATCH"]);
+    const v1 = await gate(pkg().zip);
+    expect(v1.ok && v1.restore).toBeNull();
+  });
+
+  it("SETTINGS_INVALID: a settings.json that fails the schema, with the issue paths; stages 4–7 never run", async () => {
+    const render = cleanRender();
+    const built = pkg({
+      layoutVersion: 3,
+      override: (f) =>
+        f.set(
+          "settings.json",
+          exportSettings(f, (s) => {
+            s.exportFormat = 2;
+          }),
+        ),
+    });
+    const problems = problemsOf(
+      await checkLayoutPackage(built.zip, CTX, render),
+    );
+    expect(problems).toEqual([
+      expect.objectContaining({
+        file: "settings.json",
+        code: "SETTINGS_INVALID",
+        message: expect.stringContaining("exportFormat"),
+      }),
+    ]);
+    expect(render).not.toHaveBeenCalled();
+  });
+
+  it("SETTINGS_INVALID: a settings.json bound to other files (another layoutChecksum)", async () => {
+    const built = pkg({
+      layoutVersion: 3,
+      override: (f) =>
+        f.set(
+          "settings.json",
+          exportSettings(f, (s) => {
+            (s.source as Record<string, unknown>).layoutChecksum = "0".repeat(
+              64,
+            );
+          }),
+        ),
+    });
+    expect(problemsOf(await gate(built.zip))).toEqual([
+      {
+        file: "settings.json",
+        code: "SETTINGS_INVALID",
+        message: "settings.json does not belong to these layout files",
+      },
+    ]);
+  });
+
+  it("CHECKSUM_MISMATCH: a settings.json listed in checksums.json", async () => {
+    const built = pkg({
+      edit: (f) => f.set("settings.json", Buffer.from("{}")),
+    });
+    expect(problemsOf(await gate(built.zip))).toEqual([
+      expect.objectContaining({
+        file: "settings.json",
+        code: "CHECKSUM_MISMATCH",
+      }),
+    ]);
+  });
+
+  it("LAYOUT_CODE_MISMATCH still applies with a valid settings.json", async () => {
+    const built = pkg({
+      layoutCode: "INVTPL-OTHER",
+      layoutVersion: 3,
+      override: (f) => f.set("settings.json", exportSettings(f)),
+    });
+    expect(codes(problemsOf(await gate(built.zip)))).toEqual([
+      "LAYOUT_CODE_MISMATCH",
+    ]);
+  });
+
+  it("review fix (#12) — an unbound settings.json no longer hides the manifest's code mismatch", async () => {
+    const built = pkg({
+      layoutCode: "INVTPL-OTHER",
+      layoutVersion: 3,
+      override: (f) =>
+        f.set(
+          "settings.json",
+          exportSettings(f, (s) => {
+            (s.source as Record<string, unknown>).layoutChecksum = "0".repeat(
+              64,
+            );
+          }),
+        ),
+    });
+    expect(codes(problemsOf(await gate(built.zip)))).toEqual([
+      "SETTINGS_INVALID",
+      "LAYOUT_CODE_MISMATCH",
+    ]);
+  });
+
+  it("review fix (#15) — a clean restore's `files` hold only the layout files", async () => {
+    const built = pkg({
+      layoutVersion: 3,
+      override: (f) => f.set("settings.json", exportSettings(f)),
+    });
+    const result = await gate(built.zip);
+    expect(result.ok && result.files.has("settings.json")).toBe(false);
+    expect(result.ok && result.files.size).toBe(built.files.size - 1);
+  });
+
+  describe("review fix (owner, #5/#9) — settings.json has its own budget", () => {
+    // Pad the layout with small font entries until it has exactly `entries`
+    // layout files (checksums.json included).
+    function atEntries(entries: number) {
+      return pkg({
+        layoutVersion: 3,
+        edit: (f) => {
+          for (let i = 0; f.size + 1 < entries; i++) {
+            f.set(`fonts/pad${i}.woff2`, Buffer.from(`font ${i}`));
+          }
+        },
+        override: (f) => f.set("settings.json", exportSettings(f)),
+      });
+    }
+
+    it(`a layout at ${LAYOUT_PACKAGE_MAX_ENTRIES} entries plus settings.json passes stage 1`, () => {
+      const built = atEntries(LAYOUT_PACKAGE_MAX_ENTRIES);
+      expect(built.files.size).toBe(LAYOUT_PACKAGE_MAX_ENTRIES + 1);
+      expect(readZip(built.zip).ok).toBe(true);
+    });
+
+    it("one layout entry more is still ZIP_TOO_MANY_ENTRIES", () => {
+      const read = readZip(atEntries(LAYOUT_PACKAGE_MAX_ENTRIES + 1).zip);
+      expect(read.ok ? [] : codes(read.problems)).toEqual([
+        "ZIP_TOO_MANY_ENTRIES",
+      ]);
+    });
+
+    it("a settings.json over LAYOUT_PACKAGE_SETTINGS_MAX_BYTES is ZIP_TOO_LARGE on that file", () => {
+      const built = pkg({
+        layoutVersion: 3,
+        override: (f) =>
+          f.set(
+            "settings.json",
+            Buffer.alloc(LAYOUT_PACKAGE_SETTINGS_MAX_BYTES + 1, 0x20),
+          ),
+      });
+      const read = readZip(built.zip);
+      expect(read.ok ? [] : read.problems).toEqual([
+        expect.objectContaining({
+          file: "settings.json",
+          code: "ZIP_TOO_LARGE",
+        }),
+      ]);
+    });
+
+    it("a source field over its bound is SETTINGS_INVALID", async () => {
+      const built = pkg({
+        layoutVersion: 3,
+        override: (f) =>
+          f.set(
+            "settings.json",
+            exportSettings(f, (s) => {
+              (s.source as Record<string, unknown>).exportedBy = "A".repeat(
+                256,
+              );
+            }),
+          ),
+      });
+      expect(codes(problemsOf(await gate(built.zip)))).toEqual([
+        "SETTINGS_INVALID",
+      ]);
+    });
+  });
+});
+
+describe("bm80 — stage 3 against an open DRAFT's own number (overwrite)", () => {
+  // The type has an open layout DRAFT v2: an overwrite expects v2 again, not
+  // max + 1.
+  const OVERWRITE_CTX = { layoutCode: CODE, expectedVersionNo: 2 };
+
+  it("a package exported as v2 passes stage 3", async () => {
+    const built = pkg({ layoutVersion: 2 });
+    const result = await checkLayoutPackage(
+      built.zip,
+      OVERWRITE_CTX,
+      cleanRender(),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("a package numbered max + 1 is LAYOUT_VERSION_MISMATCH", async () => {
+    const built = pkg({ layoutVersion: 3 });
+    const problems = problemsOf(
+      await checkLayoutPackage(built.zip, OVERWRITE_CTX, cleanRender()),
+    );
+    expect(problems).toEqual([
+      expect.objectContaining({
+        code: "LAYOUT_VERSION_MISMATCH",
+        message: expect.stringMatching(/3.*2/),
+      }),
+    ]);
+  });
+});
+
+describe("bm80 — matchExpectedDraft (the expected-draft table)", () => {
+  const TOKEN = "2026-10-25T01:02:03.123456Z";
+  const DRAFT = { billTemplateVersionId: "BTV00000010", token: TOKEN };
+
+  it.each([
+    ["{ none } and no layout DRAFT → create", null, { none: true }, "create"],
+    [
+      "{ none } and a layout DRAFT → stale (one appeared)",
+      DRAFT,
+      { none: true },
+      "stale",
+    ],
+    [
+      "that DRAFT with that token → overwrite",
+      DRAFT,
+      { versionId: "BTV00000010", lastModified: TOKEN },
+      "overwrite",
+    ],
+    [
+      "that DRAFT with a newer token → stale (overwritten since the warning)",
+      { ...DRAFT, token: "2026-10-25T01:02:04.000001Z" },
+      { versionId: "BTV00000010", lastModified: TOKEN },
+      "stale",
+    ],
+    [
+      "no layout DRAFT → stale (activated or discarded)",
+      null,
+      { versionId: "BTV00000010", lastModified: TOKEN },
+      "stale",
+    ],
+    [
+      "another DRAFT → stale (replaced)",
+      { ...DRAFT, billTemplateVersionId: "BTV00000011" },
+      { versionId: "BTV00000010", lastModified: TOKEN },
+      "stale",
+    ],
+  ] as const)("%s", (_c, open, expected, mode) => {
+    expect(matchExpectedDraft(open, expected)).toBe(mode);
   });
 });
 

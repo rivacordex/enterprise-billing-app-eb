@@ -16,7 +16,7 @@ vi.mock("@/db/repositories/billing/bill-template-version", () => ({
     findDefault: vi.fn(),
     findById: vi.fn(),
     findDraft: vi.fn(),
-    findLatestDraftSaver: vi.fn(),
+    findDraftWithModifier: vi.fn(),
     listForKind: vi.fn(),
     listActiveSettingsByFamily: vi.fn(),
   },
@@ -34,9 +34,19 @@ vi.mock("@/db/repositories/billing/bill-template-family", () => ({
 vi.mock("@/services/billing/invoice-template/load", () => ({
   loadGeneratedFiles: vi.fn(),
 }));
+// bm82 — the Bound BANs count is its own raw-SQL read; the derived status
+// stays the real function.
+vi.mock(
+  "@/services/billing/invoice-template/template-types",
+  async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    countBoundBansByType: vi.fn(),
+  }),
+);
 
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
+import { countBoundBansByType } from "@/services/billing/invoice-template/template-types";
 import {
   getInvoiceTemplatePageData,
   listTemplateTypes,
@@ -50,6 +60,12 @@ import {
 
 const repo = vi.mocked(billTemplateVersionRepository);
 const familyRepo = vi.mocked(billTemplateFamilyRepository);
+
+// The two DRAFTs findDraftWithModifier serves, by kind (set per case).
+const drafts: { generated: unknown; layout: unknown } = {
+  generated: null,
+  layout: null,
+};
 
 const DRAFT_ROW = {
   ...SEEDED_GENERATED_ROW,
@@ -110,8 +126,15 @@ beforeEach(() => {
         ? SEEDED_GENERATED_ROW
         : null,
   );
-  repo.findDraft.mockResolvedValue(DRAFT_ROW);
-  repo.findLatestDraftSaver.mockResolvedValue("Draft Saver");
+  // bm81 review fix (#4) — the settings DRAFT (with its last writer) and the
+  // layout DRAFT both come from findDraftWithModifier; no open layout DRAFT
+  // unless a case adds one (bm80).
+  drafts.generated = { ...DRAFT_ROW, lastModifiedByName: "Draft Saver" };
+  drafts.layout = null;
+  repo.findDraftWithModifier.mockImplementation(
+    async (_db, { kind }) =>
+      (kind === "layout" ? drafts.layout : drafts.generated) as never,
+  );
   familyRepo.findById.mockImplementation(async (_db, id) =>
     id === STANDARD ? STANDARD_FAMILY : null,
   );
@@ -147,6 +170,31 @@ describe("getInvoiceTemplatePageData: the type from the URL (bm66, bm77)", () =>
     });
   });
 
+  it("bm80 — carries the open layout DRAFT's version, token, last change and author (the overwrite warning's server data)", async () => {
+    const modified = new Date("2026-10-25T03:04:05.000Z");
+    drafts.layout = {
+      ...SEEDED_LAYOUT_ROW,
+      billTemplateVersionId: "BTV00000010",
+      versionNo: 2,
+      status: "DRAFT",
+      lastModifiedDatetime: modified,
+      token: "2026-10-25T03:04:05.123456Z",
+      lastModifiedByName: "a deleted user",
+    };
+    const data = await page(undefined, true);
+    expect(data?.openLayoutDraft).toEqual({
+      versionId: "BTV00000010",
+      versionNo: 2,
+      token: "2026-10-25T03:04:05.123456Z",
+      lastModifiedDatetime: modified,
+      lastModifiedByName: "a deleted user",
+    });
+    expect(repo.findDraftWithModifier).toHaveBeenCalledWith(expect.anything(), {
+      kind: "layout",
+      familyId: STANDARD,
+    });
+  });
+
   it("an unknown type is null (the page calls notFound)", async () => {
     expect(
       await getInvoiceTemplatePageData("BTF00000099", undefined, {
@@ -165,7 +213,7 @@ describe("getInvoiceTemplatePageData: the type from the URL (bm66, bm77)", () =>
       isDefault: false,
     });
     repo.findDefault.mockResolvedValue(null);
-    repo.findDraft.mockResolvedValue(null);
+    drafts.generated = null;
     repo.listForKind.mockResolvedValue([]);
     const data = await getInvoiceTemplatePageData("BTF00000002", undefined, {
       canEdit: true,
@@ -229,7 +277,10 @@ describe("getInvoiceTemplatePageData: the working draft", () => {
 
   it("never loads or shows the DRAFT for a READ user", async () => {
     const data = await page(undefined, false);
-    expect(repo.findDraft).not.toHaveBeenCalled();
+    expect(repo.findDraftWithModifier).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "generated" }),
+    );
     expect(data.draft).toBeNull();
     expect(data.shown.billTemplateVersionId).toBe("BTV00000002");
     expect(data.defaultShown.billTemplateVersionId).toBe("BTV00000002");
@@ -250,16 +301,27 @@ describe("getInvoiceTemplatePageData: the working draft", () => {
   });
 
   it("opens on the current version when an EDIT user has no draft", async () => {
-    repo.findDraft.mockResolvedValue(null);
+    drafts.generated = null;
     const data = await page(undefined, true);
     expect(data.draft).toBeNull();
     expect(data.shown.billTemplateVersionId).toBe("BTV00000002");
-    expect(repo.findLatestDraftSaver).not.toHaveBeenCalled();
+  });
+
+  it("bm81 review fix (#4) — a draft with no recorded writer is saved by 'an unknown user'", async () => {
+    drafts.generated = { ...DRAFT_ROW, lastModifiedByName: null };
+    const data = await page(undefined, true);
+    expect(data.draft?.savedBy).toBe("an unknown user");
   });
 });
 
 describe("listTemplateTypes (bm77)", () => {
-  it("joins every type with its active settings version and derives the status", async () => {
+  it("joins every type with its active settings version, derives the status and (bm82) merges the Bound BANs count, default 0", async () => {
+    vi.mocked(countBoundBansByType).mockResolvedValue(
+      new Map([
+        [STANDARD, 3],
+        ["BTF00000003", 1],
+      ]),
+    );
     familyRepo.listAll.mockResolvedValue([
       STANDARD_FAMILY,
       {
@@ -296,6 +358,7 @@ describe("listTemplateTypes (bm77)", () => {
         activeVersionNo: 1,
         activeSince: new Date("2026-10-08T00:00:00Z"),
         retiredAt: null,
+        boundBanCount: 3,
       },
       {
         billTemplateFamilyId: "BTF00000002",
@@ -305,6 +368,7 @@ describe("listTemplateTypes (bm77)", () => {
         activeVersionNo: null,
         activeSince: null,
         retiredAt: null,
+        boundBanCount: 0,
       },
       {
         billTemplateFamilyId: "BTF00000003",
@@ -314,7 +378,9 @@ describe("listTemplateTypes (bm77)", () => {
         activeVersionNo: null,
         activeSince: null,
         retiredAt: new Date("2026-10-20T00:00:00Z"),
+        boundBanCount: 1,
       },
     ]);
+    expect(countBoundBansByType).toHaveBeenCalledTimes(1);
   });
 });

@@ -38,7 +38,7 @@ invariant audit) trimmed to durable facts + decisions. Full history:
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
 - **Next update:** Invoice Template Types (bm74–bm85, with CM cm23–cm24;
   `_updatemodule-billing-invoice-template-types-plan.md`, `billmgmt-update-overview.md`), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**. Parts 1 and 2 and Phase 3 are folded into
+  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**; **bm80 built**; **bm81 built**; **bm82 built** with **cm23** (one merge; `custmgmt-progress-tracker.md`): capture reads `billing_account.ref_bill_template_family_id`. Parts 1 and 2 and Phase 3 are folded into
   `billmgmt-project-overview.md`.
 
 ## Invoice Template Types — IN PROGRESS (bm74–bm85)
@@ -99,6 +99,114 @@ fix (15 findings); owner decisions on the draft preview and the upload message.
   capture and preview to import a live resolver.
 - Results: unit 4848 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); integration 166/0
   (16 template suites + journey); Chromium e2e 27/0; admin browser e2e 5/0 after `next build`.
+
+**bm81 code review fixes (2026-10-26):** max review of the bm81 build (15 findings, 5 cleanups). The owner
+decided the design items; the rest were unambiguous.
+
+- **#1 (owner: plain conflict):** restored settings are written with `clock_timestamp()` (`repointDraftLayout`'s
+  `restore`, `insertDraft`'s `distinctToken`), so their token differs from the layout row's and a stale
+  editor gets `DRAFT_CONFLICT`, not bm80's `DRAFT_LAYOUT_REPLACED`. Plain uploads are unchanged.
+- **#2 (owner: carry the settings token):** the page passes the settings DRAFT token to the upload dialog,
+  which sends `expectedSettingsToken`. Install checks it under the lock when a restore would replace the
+  settings, and the re-point UPDATE is token-guarded; a mismatch is `DRAFT_CHANGED_SINCE_WARNING`, with nothing
+  written. Plain uploads ignore it.
+- **#3 (plan D127):** over an open DRAFT, a detected restore swaps the warning's "are kept" sentence for the
+  restore note (`OVERWRITE_WARNING(…, settingsReplaced)`), and the Info note then carries only
+  "Restored from v{n}".
+- **#4 (owner: extend the upload audit):** `INVOICE_TEMPLATE_LAYOUT_UPLOADED` gains `settingsBefore` /
+  `settingsAfter` on a restore. The edit-tab banner's "saved by" now reads the settings DRAFT's
+  `last_modified_by` (`findDraftWithModifier`; NULL → "an unknown user"); `findLatestDraftSaver` is removed
+  (its integration tests were replaced). This changes bm57's banner, per the owner's choice.
+- **#5/#9 (owner: own 64 KiB budget):** `LAYOUT_PACKAGE_SETTINGS_MAX_BYTES = 64 KiB` sits outside the
+  layout's entry and byte caps (stage 1, both passes), and `LAYOUT_PACKAGE_MAX_BYTES` gains the same
+  headroom. The schema bounds `exportedAt` (`datetime({ precision: 3 })`) and `exportedBy` (`max(255)`, the
+  user-name bound; 120 would refuse real names).
+- **#6 (owner: GET + guards):** the export route refuses `HEAD` (405) and a browser request whose
+  `Sec-Fetch-Site` is not same-origin or none (403), before any read or audit. This is recorded as a module
+  exception to platform rule §5.9 in code-standards › Invoice Template Types, Next.js rule 2.
+- **#14 (owner: EDIT only, update the overview):** the overview (goal 6, Export and restore, the permission
+  table) and plan D126 now say a DRAFT or discarded pair exports for EDIT.
+- **Unambiguous:**
+  - #7: a ref guards the restore-note read against superseded picks.
+  - #8: files over the upload limit are never read.
+  - #10: a BOM is kept (`TextDecoder` `ignoreBOM`), so the note matches the server.
+  - #11: the export reads settings, layout and type in one read-only REPEATABLE READ snapshot.
+  - #12: `SETTINGS_INVALID` no longer hides the manifest's own problems.
+  - #13: the history table decides `draftLike` once per row, with the defaulted `canViewDrafts`.
+  - #15: `LAYOUT_PACKAGE_FILES.settings` is the one name source, and the gate splits `settings.json` off
+    before stages 4–7.
+  - Cleanups: woff2 is stored at level 0; there are no redundant payload copies; a restore skips install's
+    base reads; the tests use the message constants.
+- **Out of scope, logged:** known-issues §31 covers the "Next layout version" display (pre-existing), the
+  opaque `INTERNAL` route logging, bm83's spec note, and the order-dependent bm58 suite (four older
+  suites leave `generated/INVOICE/STANDARD/` blobs; test-only, since bm79).
+- **Test results:** in the 20-suite template batch, everything except the bm58 activation suite passes
+  (175/0). The bm58 suite passes 15/0 on its own (twice) but fails 11 cases when it runs after those
+  suites (known-issues §31d).
+
+**bm81 notes (2026-10-25):**
+
+- Export: `exportTemplateVersion` (settings version → its layout + type) zips `loadLayoutForExport`'s verified
+  bytes (every file + `checksums.json`; DRAFT rows via `loadLayoutDraft`, `verifyVersionFiles`'
+  `includeIndex`) plus `settings.json` written through `templateExportSettingsSchema`, then audits
+  `INVOICE_TEMPLATE_EXPORTED` ("Additive") before returning. Route Handler on the `files/[file]` shape
+  (401/403/422/404/500 with no bytes). Version history gains an Export link per viewable row.
+- Restore: the gate allows the optional `settings.json` (`LAYOUT_PACKAGE_OPTIONAL_FILES`), skips it in
+  stage 2 (and refuses it when listed in `checksums.json`), and in stage 3 accepts it only when it parses
+  and its `layoutChecksum` is this package's index digest (`SETTINGS_INVALID` otherwise); a valid one
+  skips only the version comparison. Install never stores it as a blob, applies its `structure` on create
+  or in the re-point UPDATE (`repointDraftLayout` gains an optional `structure`), and audits
+  `restoredFrom`. The upload dialog reads the note client-side (only `settings.json`, ≤ 64 KiB).
+- **Review findings applied (owner, during the build):** (1) a discarded pair (RETIRED, never activated)
+  exports for EDIT only — what `isShowable` already does since the bm79 review; spec §Design and the
+  checklist amended. (2) The restore round trip previews with `draft: true` (bm79's preview path); spec
+  amended. (3) The suite uses the shared `template-type-db-harness.ts`; spec wording amended. Not done
+  here: the bm83 spec's note that the retired-type preview check also applies on the draft path (outside
+  bm81's boundary).
+- **Deviation 1 — `isShowable` / `isDraftLike` moved to `services/billing/invoice-template/version-visibility.ts`**
+  (behaviour unchanged), imported by the read service and the export service.
+- **Deviation 2 — guardrail-driven equivalents:** the route's `canEdit` uses `hasLevel(…, EDIT)` rather than
+  `meetsLevel` (guardrail 56 requires EDIT on a READ surface to be a `hasLevel` show/hide gate; same
+  result); the schema's `status` is `z.enum(CONFIG_STATUSES)` (the `TemplateVersionStatus` source, same
+  three values) instead of an inline enum that the status-literal sweep refused.
+- **Deviation 3 — small additions:** `LAYOUT_PACKAGE_FILES` is an object grouping the required, optional and
+  font rules; the audit's `fileCount` counts layout files only (not `settings.json`); bm78's gate and
+  upload tests that used `settings.json` as the "unexpected file" now use `notes.txt` (it is allowed now).
+
+**bm80 notes (2026-10-25):**
+
+- Upload over an open layout DRAFT: the FormData carries `expectedDraftVersionId` + `expectedDraftToken`
+  (both or neither); `matchExpectedDraft` (create / overwrite / stale) runs in the service without a lock and
+  again in install under the type lock on a `findDraftForUpdate` row; stage 3 expects the DRAFT's own
+  `version_no`. `overwriteLayoutDraft` changes only the files, checksum, page setup and `last_modified_*`,
+  guarded by kind, status and token; files land in a new `v<N>-<digest12>/` folder and the old ones stay.
+  The settings DRAFT is re-pointed as in bm78 (token bumped, structure kept). One
+  `INVOICE_TEMPLATE_LAYOUT_UPLOADED` with `replaced: true`, `beforeData` = previous `blobRef`/`checksum`/
+  `pageSetup`, `afterData.previousBlobRef`/`previousChecksum`.
+- Save draft: a stale token whose settings DRAFT token equals the layout DRAFT's is `DRAFT_LAYOUT_REPLACED`
+  with the current token; the form adopts it with no `reset`/`refresh`, shows the Warning alert and bumps
+  the preview. UI: `UploadLayoutDialog` is an `AlertDialog` with the exact warning (server data via
+  `findDraftWithModifier`, formatted with the app locale/timezone) and a danger "Overwrite draft"; bm78's
+  disabled trigger, its caption and `uploadDraftOpen` are gone.
+- **Deviation 1 — `matchExpectedDraft` is defined in `install-layout-package.ts`** and re-exported from
+  `upload-layout-package.ts`: defining it in the upload module made install import it back — the import
+  cycle bm79 Deviation 1 removed. Callers and tests import it from the upload module as specified.
+- **Deviation 2 — dialog behaviour on new server data:** when a refusal's re-fetch changes the open DRAFT
+  (appears, replaced, gone), the dialog stays open on the new data (warning or plain create form), keeps the
+  refusal message and drops the selected file — replacing bm78's review fix that closed it beside a
+  disabled trigger (that trigger no longer exists). bm78's two tests for it were rewritten accordingly.
+  The create path also toasts "Draft v{n} created" (bm78 had no success toast to reuse).
+- **Deviation 3 — small additions:** the form also clears the layout-replaced alert when it adopts a newer
+  server state (a Reload), not only on the next successful save; `ActivateTemplateErrorCode` excludes
+  `DRAFT_LAYOUT_REPLACED` (activation never returns it; the Activate message map is exhaustive); the
+  save-draft suite (DB-only, no Azurite) stands in for an upload by writing the layout DRAFT and the
+  re-point in one transaction through the repositories — the real upload's equal tokens are asserted in
+  the overwrite suite; the preview-after-overwrite case passes `draft: true` (bm79 review fix).
+- **Finding (resolved, owner decision) — a NULL author reads "an unknown user", as specified:**
+  `last_modified_by` is `ON DELETE SET NULL`, so a deleted uploader leaves NULL (layout DRAFTs are only
+  created by upload, which always records the writer) and the spec'd join-miss → "a deleted user" branch
+  can't occur. The owner kept "an unknown user" (`TEMPLATE_TYPE_MESSAGES.overwriteNoAuthor`) — accurate
+  in every NULL case, unlike "a deleted user" or "default seed"; the repository still returns `null`.
 
 **bm79 notes (2026-10-25):**
 
@@ -298,6 +406,17 @@ a compliance-only probe.
 | bm77 | Invoice template type list, create type, per-type detail page (`[typeId]`), `app_runtime` grant | **Built** (2026-10-25, `e251953`) — tsc/ESLint/Prettier clean; unit 4735 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) — incl. new template-types 9/0, list page 6/0, detail page 6/0, read service 13/0, authz matrix + nav guard + audit filters 39/0; integration on the disposable DB: 22 template/grant/invoice suites 250+/0 incl. new create-type 10/0, save-draft + activate 31/0, template journey 19/0; admin browser e2e 5/0 after a fresh `next build` (`RUN_INVOICE_SETTINGS_E2E=1`; the first run had one company-profile `waitFor` timeout, passed on rerun) |
 | bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`, draft-layout preview) | **Built** (2026-10-25, `6366487` fflate, `1f1c895`) — tsc/ESLint/Prettier clean; unit 4797 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new gate 35/0, load-layout-draft 14/0, single-layout-writer 5/0 (mutation-checked), authz matrix 32/0; integration on the disposable DB 83/0 incl. new upload 9/0, preview 2/0, capture +1 DRAFT-only case; Chromium e2e 26/0 incl. new upload gate 3/0 |
 | bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4829 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new discard action 15/0, Discard + discarded-row component cases, pair form cases 5/0, authz matrix + discard READ refusal; integration on the disposable DB 163/0 across 16 template suites incl. new pair activation 8/0 (guardrail 71 activation half, interleaved upload, compliance re-run, retired type, frozen files, Standard untouched), new discard 6/0, bm58 activate suite on the `STANDARD/` path, template journey; Chromium e2e 27/0 incl. new activation re-run 1/0; admin browser e2e 5/0 after a fresh `next build` |
+| bm80 | Overwrite an open layout draft by upload, with the warning (`overwriteLayoutDraft`, `DRAFT_LAYOUT_REPLACED`) | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4877 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 46/0 (`matchExpectedDraft` table + stage 3 at the DRAFT's number), upload dialog 12/0, structure form 54/0, upload + save-draft actions, read service 14/0, single-layout-writer (`overwriteLayoutDraft` added); integration on the disposable DB 179/0 across 19 template suites incl. new overwrite 7/0 (in place, stale warning, same bytes, stale Activate, activated meanwhile, two guardrail-71 races), upload +1 overwrite case, preview +1 (guardrail 70), save-draft +2 (`DRAFT_LAYOUT_REPLACED` / `DRAFT_CONFLICT`). Chromium and admin browser e2e not re-run (no gate, render or route change) |
+| bm81 | Export a version pair and restore it by upload (export Route Handler, `settings.json` schema, restore path) | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4907 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 52/0 (6 restore cases), load-layout-draft 19/0 (`loadLayoutForExport`), new export route 9/0, upload dialog 19/0 (restore note, 64 KiB cap), Version history Export 27/0, authz matrix + export row, status-literal sweep, audit filters 92; integration on the disposable DB 191/0 across 20 template suites incl. new export/restore 12/0 (byte identity for ACTIVE, Standard v1, DRAFT (EDIT only) and RETIRED pairs; tamper; four refusals writing nothing; fresh-environment round trip with equal preview HTML; restore over an open DRAFT). Chromium and admin browser e2e not re-run (no render or compliance change) |
+| bm81 code review fixes | max review of bm81 (15 findings + 5 cleanups; owner decisions on #1, #2, #4, #5/#9, #6, #14) | **Built** (2026-10-26) — tsc/ESLint/Prettier clean; unit 4925 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 58/0 (settings budget, #12, #15), upload dialog 23/0 (D127 wording, race, size, BOM, settings token), export route 15/0 (HEAD 405, cross-site 403), action, read service; integration on the disposable DB: 19 template suites 175/0, bm58 activation 15/0 on its own (order-dependent in a batch, known-issues §31d), incl. export/restore 12/0 with the restore-over-draft case covering #1, #2 and #4 (mutation-checked: #1 fails with `now()`) |
+| bm82 | Bill run captures the BAN's template type (`listBanFamilies` on `ref_bill_template_family_id`, Bound BANs column). One merge with cm23 | **Built** (2026-10-26) — tsc/ESLint/Prettier clean; unit (guardrails, invoice-settings components, billing services, app) 1719 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. CM guardrail 11 green (`listBanFamilies` names the type column, the old column gone everywhere); integration on the disposable DB 77/0 across 13 suites: capture 7 cases (retired / empty / DRAFT-only types → NULL version, approval blocked by `template_versions_captured`; new Wholesale case: bound via cm23's `setBillingAccountTemplate`, stamped Wholesale v1, draft HTML on `INVTPL-WHOLESALE`, NULL BAN on Standard), bm77 type list Bound BANs (NULL and closed BANs counted), posting-skips, draft-uses-run-stamps, template journey, trigger-run, cm23 bind/journey/column/`0054`, customer-bill-stamps, default-resolution, version-pinning |
+
+**bm82 code review fixes (2026-10-26; joint with cm23, see `custmgmt-progress-tracker.md`):**
+- `countBoundBansByType` uses `LEFT JOIN … ON true` (was `CROSS JOIN`). A missing default family no longer zeroes every type's count, and the NULL-row guard is now live.
+- The type list page's legacy `?tab=` / `?version=` redirect reads Standard's id through the new `getStandardTemplateTypeId` (`findDefault`) before the list loads, so it skips the Bound BANs aggregate.
+- Tests: page test asserts the redirect never calls `listTemplateTypes`; type-list integration green.
+
+**bm82 notes (2026-10-26):** built as specified — `listBanFamilies` is `COALESCE(ba.ref_bill_template_family_id, default family)` (the old non-generated-version case is gone); `captureTemplateStamps` comment only; `countBoundBansByType` in `template-types.ts` (NULL under Standard via `is_default`, every BAN state), merged by `listTemplateTypes` into `boundBanCount`; `TemplateTypeList` "Bound BANs" column after Status, right-aligned tabular numerals. Inv #54's amendment marked built. **Deviations:** the visible-result case renders the draft as HTML (`buildInvoiceHtml`), not PDF, from a SQL trial-bill fixture (no engine in the suite); there is no separate `TemplateTypeList` component test, so the column is asserted in `invoice-template-types-page.test.tsx`.
 
 ## Delivered units
 
@@ -584,7 +703,7 @@ logs, test runs and the Inv #51–#58 code ↔ test audit are in this file's git
 - **After pulling grant-file changes:** re-run `db:bootstrap-billrun-roles`.
 - **DB verification:** run DB-gated suites + `db:seed-sample` only against a disposable/CI
   Postgres — never the shared dev DB (see test-safety gotchas).
-- **Deferred from the bm77–bm79 review (owner, 2026-10-25):** (a) one shared server-action guard
+- **Deferred from the bm77–bm79 review (owner, 2026-10-25; known-issues §30, improvements):** (a) one shared server-action guard
   (`requirePermission` + `isRedirectError` → FORBIDDEN/SERVER_ERROR), repeated in ~84 action files across
   every domain — its own cross-domain unit; (b) move the older template DB suites (bm58 activation,
   preview, capture, upload-logo) and `load.test.ts`'s blob mock onto

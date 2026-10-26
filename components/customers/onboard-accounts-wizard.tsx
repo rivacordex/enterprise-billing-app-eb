@@ -5,6 +5,11 @@ import { useEffect, useId, useState } from "react";
 import { getWizardOptionsAction } from "@/actions/accounts/get-wizard-options";
 import type { WizardOptions } from "@/types/accounts";
 import { onboardCustomerAccountsAction } from "@/actions/accounts/onboard-customer-accounts";
+import {
+  ONBOARDING_TEMPLATE_HELP,
+  ONBOARDING_TEMPLATE_LABEL,
+  ONBOARDING_TEMPLATE_VALUE,
+} from "@/components/customers/billing-account-messages";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -168,7 +173,7 @@ export function OnboardAccountsWizard({
         form.paymentDueDaysOverride.trim() !== ""
           ? parseInt(form.paymentDueDaysOverride.trim(), 10)
           : undefined,
-      billTemplateVersionId: null,
+      templateTypeId: null,
       statusReason,
       lastModifiedDatetime,
     });
@@ -312,21 +317,20 @@ export function OnboardAccountsWizard({
               />
             </Field>
 
-            {/* Invoice template — read-only in v1 (cm18, O1) */}
+            {/* Invoice template type: always Standard at onboarding (cm23) */}
             <Field>
               <FieldLabel htmlFor={templateInputId}>
-                Invoice template
+                {ONBOARDING_TEMPLATE_LABEL}
               </FieldLabel>
               <Input
                 id={templateInputId}
                 aria-describedby={templateDescriptionId}
-                value="Follow active template"
+                value={ONBOARDING_TEMPLATE_VALUE}
                 readOnly
                 className="bg-muted/50 text-muted-foreground"
               />
               <FieldDescription id={templateDescriptionId}>
-                Invoices use the active template. Per-customer templates are not
-                available yet.
+                {ONBOARDING_TEMPLATE_HELP}
               </FieldDescription>
             </Field>
 

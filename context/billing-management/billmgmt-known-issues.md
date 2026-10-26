@@ -1196,3 +1196,53 @@ That usage is now final as "billed" but was never invoiced, and no later run can
 **Mitigated:** approval no longer runs the informational checks (`zero_total_bills`, `orphan_count`, `prior_period_usage`) under the run lock; it runs the blocking checks only and re-runs the full list just to return a failed checklist (`approve-run.ts`, `runPreApprovalChecks(…, { informational: false })`). The approval page and the Exceptions tab still run these reads.
 
 **Deferred (cross-domain, rating):** a partial index on unclaimed live `RATED` rows, e.g. `(udr_subscription_ref_id, start_datetime) WHERE status = 'RATED' AND billrun_ban_id IS NULL AND is_live`. It is a rating-schema migration, owned by rating, and should be designed together with the Revenue Ops earlier-period dashboard (§28), which reads the same rows.
+
+## 30. 🔵 IMPROVEMENT (deferred, owner decision, 2026-10-25): two codebase clean-ups from the bm77–bm79 reviews
+
+Not defects: the code behaves correctly and the guardrails pass. These are maintainability improvements the bm77–bm79 code review (batch 2) raised and the owner deferred, so each can be done as its own unit.
+
+### 30a. One shared server-action guard (cross-domain)
+
+**What:** almost every Server Action (about 84 files under `actions/**`, every domain) opens with the same block: `requirePermission(PERMISSION, LEVEL)` in a `try`, then `isRedirectError(error)` → `FORBIDDEN`, any other error → `SERVER_ERROR`. bm78's upload action used a copied `guardEdit` helper from `upload-logo.action.ts`; the Sonar duplication follow-up replaced it with the inline block its sibling actions use, which is still a copy of that pattern.
+
+**ELI5:** every door in the building has its own hand-built lock that works the same way. One standard lock, fitted everywhere, would be easier to keep right.
+
+**Recommendation:** one helper in `auth/` (e.g. `guardAction(permission, level): Promise<{ ok: true; actorId } | { ok: false; code: "FORBIDDEN" | "SERVER_ERROR" }>`), adopted action by action. It touches every domain (billing, customer, product, rating, identity), so it needs its own unit and owner sign-off. The static authz guardrails (e.g. `tests/guardrails/invoice-settings-authz-matrix.test.ts`, which reads `requirePermission(PERMISSIONS.…, LEVELS.…)` from each action's source) must learn to recognise the helper in the same change.
+
+### 30b. Move the older template DB suites onto the shared harness
+
+**What:** bm79's review added `tests/db/helpers/template-type-db-harness.ts` (fresh migrated + seeded DB, guarded blob cleanup, upload / settings-draft / audit helpers) and `tests/helpers/in-memory-blob-store.ts`. The upload, pair-activation and discard suites use them; the older template suites still carry their own copies: `tests/db/activate-template.integration.test.ts` (bm58), `preview-invoice-template`, `run-template-capture`, the upload-logo suite, and `load.test.ts`'s blob-store mock.
+
+**ELI5:** we built one good test workbench, but some older tests still use their own home-made ones. They work, but a fix to the workbench (like the blob-cleanup safety check) doesn't reach them.
+
+**Recommendation:** move them over in one test-only change. Notably, the harness only deletes blobs after both store guards pass (Vitest runs `afterAll` even when `beforeAll` fails); the older copies still clean up whenever a blob client exists. Only the global `DESTRUCTIVE_DB_OK` + disposable-sentinel preflight protects them today. No production code changes.
+
+## 31. 🟡 OPEN (logged 2026-10-26): items outside bm81's scope, found during the bm80–bm81 reviews
+
+Recorded so they are fixed in their own units. None blocks bm81: export, restore and the fixes from the bm81 review are built and tested.
+
+### 31a. The type page's "Next layout version" ignores an open layout DRAFT (pre-existing, bm77/bm78)
+
+**What:** the type detail heading shows max(`version_no`) + 1 even while a layout DRAFT is open. Plan D106 says it should show the open DRAFT's number when one exists, since an upload then overwrites that DRAFT (bm80), and the gate expects that number.
+
+**ELI5:** the label tells the layout author to export "v3", but the page actually wants "v2" again to replace the open draft.
+
+**Recommendation:** derive it from `openLayoutDraft?.versionNo ?? max + 1` in `services/billing/read/invoice-template-settings.ts`, with a read-service test. Small; billing-only.
+
+### 31b. The file and export Route Handlers log failures as an opaque `code: "INTERNAL"` (pre-existing pattern)
+
+**What:** `…/versions/[versionId]/files/[file]/route.ts` (bm55) logs any error that isn't an `InvoiceRenderError` as `code: "INTERNAL"` with no message, and bm81's export route copied the pattern. A blob-store outage or a DB error leaves no detail in the log.
+
+**Recommendation:** log `error.message` (and the error's class name) for the non-typed case in both handlers, together.
+
+### 31c. bm83's spec needs a note that the retired-type preview check applies on the draft path too
+
+**What:** since the bm79 review, `previewInvoiceTemplate` renders a working draft only with `draft: true` (for EDIT). bm83's retired-type check in preview should state that it also covers that draft path. Spec text only; to update when bm83 is picked up.
+
+### 31d. The bm58 activation suite fails when it runs after suites that activate Standard (test-only, since bm79)
+
+**What:** since bm79, activating Standard writes its generated files under `generated/INVOICE/STANDARD/`. Four older suites activate Standard and never clean that prefix: `draft-uses-run-stamps`, `run-template-capture`, `invoice-template-journey` and `invoice-version-pinning`. When one of them runs before `tests/db/activate-template.integration.test.ts` (bm58), which cleans that prefix only in `afterAll`, the bm58 orphan-count cases find extra blobs and 11 cases fail. Run alone, or first, it passes 15/0. It was seen in the bm80 batch and again in the bm81 review-fix batch; batch order decides the result. A batch without bm58 leaves 24 blobs under the prefix (6 versions × 4 files).
+
+**ELI5:** several tests leave their rubbish in a shared bin, and one test counts what's in the bin.
+
+**Recommendation:** fold into §30b. On the shared harness, every suite that activates Standard cleans `generated/INVOICE/STANDARD/` in `beforeAll` and `afterAll` (behind the blob-store guard), and bm58 also cleans it in `beforeAll`. Test-only, with no production change.

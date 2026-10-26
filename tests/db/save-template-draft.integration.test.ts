@@ -41,6 +41,7 @@ import {
 import { resolveTemplate } from "@/services/billing/invoice-template/resolve-template";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 import type { Database } from "@/db/client";
+import type { LayoutPageSetup } from "@/types/billing";
 
 const ACTOR = "bm57-actor";
 
@@ -434,7 +435,9 @@ describe.skipIf(!databaseUrl)(
       expect(isDraftRaceViolation(err)).toBe(true);
     });
 
-    it('reports the latest saver, and "a deleted user" when that user was removed, never an older saver', async () => {
+    // bm81 review fix (owner, #4) — the "saved by" banner reads the draft's
+    // last writer (`last_modified_by`), not the last DRAFT_SAVED audit row.
+    it("the draft's last writer is the latest saver; a removed user leaves no name (an unknown user on the page)", async () => {
       const OTHER = "bm57-other";
       await sql`
         INSERT INTO core.appuser (user_id, user_name, user_email, auth_method, status)
@@ -459,29 +462,16 @@ describe.skipIf(!databaseUrl)(
       );
       if (!second.ok) throw new Error("expected ok");
 
-      expect(
-        await billTemplateVersionRepository.findLatestDraftSaver(
-          db,
-          first.versionId,
-        ),
-      ).toBe("Second Saver");
+      const draft = () =>
+        billTemplateVersionRepository.findDraftWithModifier(db, {
+          kind: "generated",
+          familyId: "BTF00000001",
+        });
+      expect((await draft())?.lastModifiedByName).toBe("Second Saver");
 
+      // `last_modified_by` is ON DELETE SET NULL: no recorded writer.
       await sql`DELETE FROM core.appuser WHERE user_id = ${OTHER}`;
-      expect(
-        await billTemplateVersionRepository.findLatestDraftSaver(
-          db,
-          first.versionId,
-        ),
-      ).toBe("a deleted user");
-    });
-
-    it("findLatestDraftSaver is null when the draft has no audit row", async () => {
-      expect(
-        await billTemplateVersionRepository.findLatestDraftSaver(
-          db,
-          "BTV00009999",
-        ),
-      ).toBeNull();
+      expect((await draft())?.lastModifiedByName).toBeNull();
     });
 
     it("a saved DRAFT shows in the version history and the default is untouched", async () => {
@@ -547,6 +537,116 @@ describe.skipIf(!databaseUrl)(
       );
       expect(result).toEqual({ ok: false, code: "DRAFT_CONFLICT" });
       expect(await auditRows()).toHaveLength(0);
+    });
+
+    // bm80 — what install writes on an upload: the layout DRAFT and the
+    // re-pointed settings DRAFT in ONE transaction, so both carry the same
+    // `now()` (equal tokens). DB-only: the files are never read here.
+    async function simulateUpload(settingsDraftId: string): Promise<void> {
+      const [v1] = await sql<{ page_setup: LayoutPageSetup }[]>`
+        SELECT page_setup FROM billing.bill_template_version
+        WHERE ref_bill_template_family_id = 'BTF00000001' AND kind = 'layout'
+          AND version_no = 1`;
+      await db.transaction(async (tx) => {
+        const layout = await billTemplateVersionRepository.insertLayoutDraft(
+          tx,
+          {
+            familyId: "BTF00000001",
+            layoutCode: "INVTPL-STD-A4",
+            versionNo: 2,
+            pageSetup: v1!.page_setup,
+            blobRef: "invoice-templates/layouts/INVTPL-STD-A4/v2-000000000000/",
+            checksum: "0".repeat(64),
+            createdBy: ACTOR,
+          },
+        );
+        await billTemplateVersionRepository.repointDraftLayout(tx, {
+          id: settingsDraftId,
+          layoutVersionId: layout.billTemplateVersionId,
+          actorId: ACTOR,
+        });
+      });
+    }
+
+    it("bm80 — a save with the token from before an upload is DRAFT_LAYOUT_REPLACED with the current token; saving with it succeeds", async () => {
+      const first = await saveTemplateDraft(
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
+        ACTOR,
+      );
+      if (!first.ok) throw new Error("expected ok");
+      await simulateUpload(first.versionId);
+      const current = await billTemplateVersionRepository.findDraft(db, {
+        kind: "generated",
+        familyId: "BTF00000001",
+      });
+      expect(current!.token).not.toBe(first.draftToken);
+
+      const replaced = await saveTemplateDraft(
+        {
+          structure: structure({ footnote: EDITED_FOOTNOTE }),
+          expectedDraftToken: first.draftToken,
+          familyId: "BTF00000001",
+        },
+        ACTOR,
+      );
+      expect(replaced).toEqual({
+        ok: false,
+        code: "DRAFT_LAYOUT_REPLACED",
+        draftToken: current!.token,
+      });
+      // Nothing written: one audit row (the first save) only.
+      expect(await auditRows()).toHaveLength(1);
+
+      const again = await saveTemplateDraft(
+        {
+          structure: structure({ footnote: EDITED_FOOTNOTE }),
+          expectedDraftToken: current!.token,
+          familyId: "BTF00000001",
+        },
+        ACTOR,
+      );
+      expect(again).toMatchObject({ ok: true, versionId: first.versionId });
+    });
+
+    it("bm80 — after another manager's save, a stale token stays DRAFT_CONFLICT (the tokens are unequal)", async () => {
+      const first = await saveTemplateDraft(
+        {
+          structure: structure(),
+          expectedDraftToken: null,
+          familyId: "BTF00000001",
+        },
+        ACTOR,
+      );
+      if (!first.ok) throw new Error("expected ok");
+      await simulateUpload(first.versionId);
+      const afterUpload = await billTemplateVersionRepository.findDraft(db, {
+        kind: "generated",
+        familyId: "BTF00000001",
+      });
+      // Another manager saves over the upload with the fresh token.
+      const other = await saveTemplateDraft(
+        {
+          structure: structure({ payment: false }),
+          expectedDraftToken: afterUpload!.token,
+          familyId: "BTF00000001",
+        },
+        ACTOR,
+      );
+      if (!other.ok) throw new Error("expected ok");
+
+      const stale = await saveTemplateDraft(
+        {
+          structure: structure({ footnote: EDITED_FOOTNOTE }),
+          expectedDraftToken: afterUpload!.token,
+          familyId: "BTF00000001",
+        },
+        ACTOR,
+      );
+      expect(stale).toEqual({ ok: false, code: "DRAFT_CONFLICT" });
     });
 
     it("bm77 — every DRAFT write records last_modified_by", async () => {

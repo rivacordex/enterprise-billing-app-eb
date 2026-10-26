@@ -32,12 +32,26 @@ const mockRevalidate = vi.mocked(revalidatePath);
 
 const ZIP = new Uint8Array([0x50, 0x4b, 0x05, 0x06]);
 
+const TOKEN = "2026-10-25T01:02:03.123456Z";
+
+// bm80 — the expected draft is two optional fields; omitted = absent.
 function form(
-  overrides: { familyId?: string; expectedDraft?: string; file?: File } = {},
+  overrides: {
+    familyId?: string;
+    expectedDraftVersionId?: string;
+    expectedDraftToken?: string;
+    expectedSettingsToken?: string;
+    file?: File;
+  } = {},
 ): FormData {
   const f = new FormData();
   f.set("familyId", overrides.familyId ?? "BTF00000002");
-  f.set("expectedDraft", overrides.expectedDraft ?? "none");
+  if (overrides.expectedDraftVersionId !== undefined)
+    f.set("expectedDraftVersionId", overrides.expectedDraftVersionId);
+  if (overrides.expectedDraftToken !== undefined)
+    f.set("expectedDraftToken", overrides.expectedDraftToken);
+  if (overrides.expectedSettingsToken !== undefined)
+    f.set("expectedSettingsToken", overrides.expectedSettingsToken);
   f.set(
     "file",
     overrides.file ??
@@ -85,7 +99,20 @@ describe("uploadLayoutPackageAction (bm78)", () => {
 
   it.each([
     ["a malformed familyId", form({ familyId: "wholesale" })],
-    ["a malformed expectedDraft", form({ expectedDraft: "{not json" })],
+    // bm80 — the two expected-draft fields go together.
+    [
+      "only expectedDraftVersionId",
+      form({ expectedDraftVersionId: "BTV00000010" }),
+    ],
+    ["only expectedDraftToken", form({ expectedDraftToken: TOKEN })],
+    [
+      "a malformed expectedDraftVersionId",
+      form({ expectedDraftVersionId: "draft-1", expectedDraftToken: TOKEN }),
+    ],
+    [
+      "an empty expectedDraftToken",
+      form({ expectedDraftVersionId: "BTV00000010", expectedDraftToken: "" }),
+    ],
   ])("%s → VALIDATION_ERROR before the service", async (_c, input) => {
     expect(await uploadLayoutPackageAction(input)).toEqual({
       ok: false,
@@ -124,13 +151,68 @@ describe("uploadLayoutPackageAction (bm78)", () => {
       replaced: false,
     });
     expect(mockService).toHaveBeenCalledWith(
-      { familyId: "BTF00000002", zip: ZIP, expectedDraft: { none: true } },
+      {
+        familyId: "BTF00000002",
+        zip: ZIP,
+        expectedDraft: { none: true },
+        expectedSettingsToken: null,
+      },
       "actor-1",
     );
     expect(mockRevalidate).toHaveBeenCalledWith(
       "/administration/invoice-settings",
       "layout",
     );
+  });
+
+  it("bm80 — both expected-draft fields pass `{ versionId, lastModified }` to the service", async () => {
+    mockService.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000010",
+      versionNo: 1,
+      replaced: true,
+    });
+    const result = await uploadLayoutPackageAction(
+      form({
+        expectedDraftVersionId: "BTV00000010",
+        expectedDraftToken: TOKEN,
+      }),
+    );
+    expect(result).toMatchObject({ ok: true, replaced: true });
+    expect(mockService).toHaveBeenCalledWith(
+      {
+        familyId: "BTF00000002",
+        zip: ZIP,
+        expectedDraft: { versionId: "BTV00000010", lastModified: TOKEN },
+        expectedSettingsToken: null,
+      },
+      "actor-1",
+    );
+  });
+
+  it("bm81 review fix (#2) — passes the settings DRAFT token through, and refuses a malformed one", async () => {
+    mockService.mockResolvedValue({
+      ok: true,
+      versionId: "BTV00000010",
+      versionNo: 1,
+      replaced: false,
+    });
+    const SETTINGS_TOKEN = "2026-10-25T04:05:06.654321Z";
+    await uploadLayoutPackageAction(
+      form({ expectedSettingsToken: SETTINGS_TOKEN }),
+    );
+    expect(mockService).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedSettingsToken: SETTINGS_TOKEN }),
+      "actor-1",
+    );
+
+    mockService.mockClear();
+    expect(
+      await uploadLayoutPackageAction(
+        form({ expectedSettingsToken: "not-a-token" }),
+      ),
+    ).toEqual({ ok: false, code: "VALIDATION_ERROR", problems: [] });
+    expect(mockService).not.toHaveBeenCalled();
   });
 
   it("returns a service refusal as-is without revalidating", async () => {

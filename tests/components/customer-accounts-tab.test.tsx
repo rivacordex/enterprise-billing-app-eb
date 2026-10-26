@@ -2,16 +2,36 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { AccountsLockedCard } from "@/components/customers/accounts-locked-card";
+import { TemplateLabel } from "@/components/customers/billing-account-card";
 import { CustomerAccountsTab } from "@/components/customers/customer-accounts-tab";
 import type {
   AccountState,
+  BanTemplateLabel,
   CustomerAccountsSummary,
   TransactionDocumentRow,
 } from "@/types/accounts";
 
+const STANDARD_LABEL: BanTemplateLabel = {
+  kind: "STANDARD",
+  text: "Standard (default) · v1",
+  name: "Standard (default)",
+  versionNo: 1,
+};
+
 // cm20-spec §3.8 — the four Accounts tab states (the locked state is the
 // page's AccountsLockedCard; the tab body never sees it), document deep-links
 // and pagination links.
+
+// The label's accessible text is visually hidden ("Invoice template type:
+// {text}"), since a <p> can't carry an aria-label; returns the label's <p>.
+function templateLabel(
+  text: string,
+  scope: Pick<typeof screen, "getByText"> = screen,
+): HTMLElement {
+  const p = scope.getByText(`Invoice template type: ${text}`).closest("p");
+  if (p === null) throw new Error(`no template label for ${text}`);
+  return p;
+}
 
 function doc(n: number): TransactionDocumentRow {
   return {
@@ -39,6 +59,7 @@ function onboarded(
   documents: { rows: TransactionDocumentRow[]; total: number; page: number },
   banState: AccountState = "active",
   faState: AccountState = "active",
+  templateLabel: BanTemplateLabel = STANDARD_LABEL,
 ): CustomerAccountsSummary {
   return {
     kind: "onboarded",
@@ -59,8 +80,7 @@ function onboarded(
             billCycleName: "Monthly – Day 1",
             paymentTermDays: 30,
             receivableBalance: "1250.00",
-            templateLabel:
-              "Follows active template (currently: INVTPL-STD-A4 v1), as of now",
+            templateLabel,
           },
         ],
         documents: { ...documents, pageSize: 2 },
@@ -116,14 +136,10 @@ describe("Accounts tab states", () => {
     // The BAN receivable is in the BAN's own currency, not the FA's.
     expect(within(banCard).getByText("USD")).toBeInTheDocument();
     expect(within(banCard).queryByText("MYR")).not.toBeInTheDocument();
-    expect(
-      within(banCard).getByText(
-        (_, el) =>
-          el?.tagName === "P" &&
-          el.textContent ===
-            "Follows active template (currently: INVTPL-STD-A4 v1), as of now",
-      ),
-    ).toBeInTheDocument();
+    const label = templateLabel("Standard (default) · v1", within(banCard));
+    expect(label).toHaveTextContent(
+      "Invoice template typeStandard (default) · v1",
+    );
 
     expect(screen.getByText("No transactions yet.")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
@@ -218,5 +234,94 @@ describe("Accounts tab pagination", () => {
     expect(
       screen.queryByRole("link", { name: "Next" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// cm23-spec §3.10 / custmgmt-ui-context §10.1 — the structured type label.
+describe("TemplateLabel (cm23)", () => {
+  it("a bound type: the field label, the name, and v{N} in mono", () => {
+    render(
+      <TemplateLabel
+        label={{
+          kind: "TYPE",
+          text: "Wholesale · v3",
+          name: "Wholesale",
+          versionNo: 3,
+        }}
+      />,
+    );
+
+    const label = templateLabel("Wholesale · v3");
+    expect(
+      within(label).getByText("Invoice template type"),
+    ).toBeInTheDocument();
+    expect(label).toHaveTextContent("Wholesale · v3");
+    const version = within(label).getByText("v3");
+    expect(version).toHaveClass("font-mono");
+    expect(within(label).queryByText(/not usable/)).toBeNull();
+  });
+
+  it("the BAN card renders the summary's label", () => {
+    renderTab(
+      onboarded({ rows: [], total: 0, page: 1 }, "active", "active", {
+        kind: "TYPE",
+        text: "Wholesale · v1",
+        name: "Wholesale",
+        versionNo: 1,
+      }),
+    );
+
+    const banCard = screen.getByRole("region", {
+      name: "Billing account BAN00000001",
+    });
+    expect(templateLabel("Wholesale · v1", within(banCard))).toHaveTextContent(
+      "Wholesale · v1",
+    );
+  });
+
+  it("NOT_USABLE: '· not usable' in the warning family with the warning icon, no version", () => {
+    render(
+      <TemplateLabel
+        label={{
+          kind: "NOT_USABLE",
+          text: "Wholesale · not usable",
+          name: "Wholesale",
+          versionNo: null,
+        }}
+      />,
+    );
+
+    const label = templateLabel("Wholesale · not usable");
+    const warning = within(label).getByText("· not usable");
+    expect(warning.className).toContain("--color-warning-700");
+    const icon = warning.querySelector("svg");
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute("class")).toContain("--color-warning-500");
+    expect(within(label).queryByText(/^v\d+$/)).toBeNull();
+  });
+
+  it("assistive tech reads one string: the hidden text, with the styled parts aria-hidden", () => {
+    render(
+      <TemplateLabel
+        label={{
+          kind: "TYPE",
+          text: "Wholesale · v3",
+          name: "Wholesale",
+          versionNo: 3,
+        }}
+      />,
+    );
+
+    const label = templateLabel("Wholesale · v3");
+    expect(label).not.toHaveAttribute("aria-label");
+    expect(
+      screen.getByText("Invoice template type: Wholesale · v3"),
+    ).toHaveClass("sr-only");
+    for (const part of [
+      screen.getByText("Invoice template type"),
+      screen.getByText("v3").closest("span[aria-hidden]"),
+    ]) {
+      expect(part).toHaveAttribute("aria-hidden", "true");
+    }
   });
 });

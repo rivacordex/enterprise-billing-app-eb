@@ -31,6 +31,15 @@ vi.mock("@/db/repositories/accounts/ledger.repository", () => ({
 vi.mock("@/db/repositories/audit.repository", () => ({
   insertAuditEvent: vi.fn(),
 }));
+// cm23 — the real gate (null → ok, no DB call), wrapped so a test can observe
+// the call or force the refusal arm.
+vi.mock(
+  "@/services/accounts/assert-bindable-template",
+  async (importOriginal) => {
+    const actual = await importOriginal<typeof GateModule>();
+    return { assertBindableTemplate: vi.fn(actual.assertBindableTemplate) };
+  },
+);
 
 import { partyRoleRepository } from "@/db/repositories/party-role";
 import { billCycleRepository } from "@/db/repositories/accounts/bill-cycle.repository";
@@ -39,6 +48,8 @@ import { billingAccountRepository } from "@/db/repositories/accounts/billing-acc
 import { ledgerBindingRepository } from "@/db/repositories/accounts/ledger-binding.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import { insertAuditEvent } from "@/db/repositories/audit.repository";
+import { assertBindableTemplate } from "@/services/accounts/assert-bindable-template";
+import type * as GateModule from "@/services/accounts/assert-bindable-template";
 import { onboardCustomerAccounts } from "@/services/accounts/onboard-customer-accounts";
 import { resolveTerm } from "@/services/accounts/term-resolution";
 import type { OnboardCustomerAccountsInput } from "@/validation/accounts/onboard-customer-accounts.schema";
@@ -53,6 +64,7 @@ const mockBanInsert = vi.mocked(billingAccountRepository.insert);
 const mockBindingInsert = vi.mocked(ledgerBindingRepository.insert);
 const mockCreateAccount = vi.mocked(ledgerRepository.createAccount);
 const mockInsertAuditEvent = vi.mocked(insertAuditEvent);
+const mockAssertBindable = vi.mocked(assertBindableTemplate);
 
 const LOCK = new Date("2026-01-01T00:00:00.000Z");
 const BUMPED = new Date("2026-01-01T00:00:01.000Z");
@@ -397,34 +409,34 @@ describe("onboardCustomerAccounts", () => {
   });
 });
 
-// ── cm18 — invoice template binding (Inv. #18, D13) ───────────────────────
-describe("onboardCustomerAccounts — invoice template binding (cm18)", () => {
-  it("BAN insert carries refBillTemplateVersionId: null when the field is omitted", async () => {
+// ── cm18 / cm23 — invoice template type (Inv. #19, D7) ─────────────────────
+describe("onboardCustomerAccounts — invoice template type (cm23)", () => {
+  it("BAN insert carries refBillTemplateFamilyId: null when the field is omitted", async () => {
     setupHappyPath();
 
     await onboardCustomerAccounts(buildInput(), "actor-1");
 
     expect(mockBanInsert).toHaveBeenCalledWith(
       txStub,
-      expect.objectContaining({ refBillTemplateVersionId: null }),
+      expect.objectContaining({ refBillTemplateFamilyId: null }),
     );
   });
 
-  it("BAN insert carries refBillTemplateVersionId: null when the field is null", async () => {
+  it("BAN insert carries refBillTemplateFamilyId: null when the field is null", async () => {
     setupHappyPath();
 
     await onboardCustomerAccounts(
-      buildInput({ billTemplateVersionId: null }),
+      buildInput({ templateTypeId: null }),
       "actor-1",
     );
 
     expect(mockBanInsert).toHaveBeenCalledWith(
       txStub,
-      expect.objectContaining({ refBillTemplateVersionId: null }),
+      expect.objectContaining({ refBillTemplateFamilyId: null }),
     );
   });
 
-  it("ACCOUNTS_ONBOARDED afterData includes refBillTemplateVersionId: null", async () => {
+  it("ACCOUNTS_ONBOARDED afterData includes refBillTemplateFamilyId: null", async () => {
     setupHappyPath();
 
     await onboardCustomerAccounts(buildInput(), "actor-1");
@@ -433,18 +445,31 @@ describe("onboardCustomerAccounts — invoice template binding (cm18)", () => {
       txStub,
       expect.objectContaining({
         eventType: "ACCOUNTS_ONBOARDED",
-        afterData: expect.objectContaining({ refBillTemplateVersionId: null }),
+        afterData: expect.objectContaining({ refBillTemplateFamilyId: null }),
       }),
     );
+    const afterData = mockInsertAuditEvent.mock.calls
+      .map((c) => c[1])
+      .find((e) => e.eventType === "ACCOUNTS_ONBOARDED")?.afterData;
+    expect(afterData).not.toHaveProperty("refBillTemplateVersionId");
   });
 
-  it("TEMPLATE_NOT_BINDABLE for a non-null id, before any write", async () => {
+  it("still runs the gate with null inside the transaction (General rule 2)", async () => {
     setupHappyPath();
 
-    const result = await onboardCustomerAccounts(
-      buildInput({ billTemplateVersionId: "BTV00000002" }),
-      "actor-1",
-    );
+    await onboardCustomerAccounts(buildInput(), "actor-1");
+
+    expect(mockAssertBindable).toHaveBeenCalledWith(txStub, null);
+  });
+
+  it("TEMPLATE_NOT_BINDABLE from the gate, before any write (kept for the gate's contract)", async () => {
+    setupHappyPath();
+    mockAssertBindable.mockResolvedValueOnce({
+      ok: false,
+      code: "TEMPLATE_NOT_BINDABLE",
+    });
+
+    const result = await onboardCustomerAccounts(buildInput(), "actor-1");
 
     expect(result).toEqual({ ok: false, code: "TEMPLATE_NOT_BINDABLE" });
     expect(mockCompareAndUpdateStatus).not.toHaveBeenCalled();

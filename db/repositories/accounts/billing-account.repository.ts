@@ -88,19 +88,19 @@ export const billingAccountRepository = {
   },
 
   // cm21 (binding plan D15, custmgmt Inv. #17) — CAS write of the BAN's
-  // invoice template reference, same four-outcome shape as `close`. Locks on
+  // invoice template type (cm23; NULL = Standard), same four-outcome shape as `close`. Locks on
   // the BAN's own last_modified; never touches party_role.
   async setTemplateRef(
     tx: Database,
     billingAccountId: string,
     lastModified: Date,
-    refBillTemplateVersionId: string | null,
+    refBillTemplateFamilyId: string | null,
     actorId: string,
   ): Promise<"updated" | "conflict" | "closed" | "not_found"> {
     const [updated] = await tx
       .update(billingAccount)
       .set({
-        refBillTemplateVersionId,
+        refBillTemplateFamilyId,
         lastEditedBy: actorId,
         lastModified: sql`now()`,
       })

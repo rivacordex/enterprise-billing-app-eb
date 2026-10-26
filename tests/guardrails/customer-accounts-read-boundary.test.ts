@@ -27,6 +27,10 @@ const ALLOWED_ACCOUNTS_ACTIONS: Record<string, string[]> = {
   "components/customers/billing-account-panel.tsx": [
     "actions/accounts/set-billing-account-template",
   ],
+  // cm23 — type-only: BIND_FAILURE_MESSAGES is keyed by the action's codes.
+  "components/customers/billing-account-messages.ts": [
+    "actions/accounts/set-billing-account-template",
+  ],
 };
 
 const ROOT = process.cwd();

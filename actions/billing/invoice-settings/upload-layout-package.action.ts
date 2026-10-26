@@ -32,13 +32,15 @@ export async function uploadLayoutPackageAction(
 
   const parsed = layoutUploadSchema.safeParse({
     familyId: formData.get("familyId"),
-    expectedDraft: formData.get("expectedDraft"),
+    expectedDraftVersionId: formData.get("expectedDraftVersionId"),
+    expectedDraftToken: formData.get("expectedDraftToken"),
+    expectedSettingsToken: formData.get("expectedSettingsToken"),
     file: formData.get("file"),
   });
   if (!parsed.success) {
     return { ok: false, code: "VALIDATION_ERROR", problems: [] };
   }
-  const { familyId, expectedDraft, file } = parsed.data;
+  const { familyId, expectedDraft, expectedSettingsToken, file } = parsed.data;
   if (file.size > LAYOUT_PACKAGE_MAX_BYTES) {
     return {
       ok: false,
@@ -56,7 +58,7 @@ export async function uploadLayoutPackageAction(
   try {
     const zip = new Uint8Array(await file.arrayBuffer());
     const result = await uploadLayoutPackage(
-      { familyId, zip, expectedDraft },
+      { familyId, zip, expectedDraft, expectedSettingsToken },
       actorId,
     );
     if (result.ok) {

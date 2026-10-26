@@ -8,6 +8,10 @@ import type { listCustomerBillingAccounts as ListCustomerBillingAccounts } from 
 import type { onboardCustomerAccounts as OnboardCustomerAccounts } from "@/services/accounts/onboard-customer-accounts";
 import type { setBillingAccountTemplate as SetBillingAccountTemplate } from "@/services/accounts/set-billing-account-template";
 import {
+  insertTemplateType,
+  retireTemplateType,
+} from "@/tests/helpers/bindable-template-type";
+import {
   type OnboardingDatabase,
   setUpOnboardingDatabase,
   tearDownOnboardingDatabase,
@@ -15,10 +19,13 @@ import {
 
 const databaseUrl = process.env.DATABASE_URL;
 
-// cm22-spec §3.2 — the Invoice Template Binding update end to end, at the
-// service level: create → not onboarded → onboard (NULL template) → Accounts
-// tab summary and label → Manage Customer panel row → no-op reset → reset of
-// a Phase-3-style non-NULL value → non-NULL refused. Calls services, not
+const WHOLESALE = "BTF00000101";
+
+// cm22-spec §3.2 / cm23-spec §3.12 — the Invoice Template Binding and Types
+// updates end to end, at the service level: create → not onboarded → onboard
+// (Standard, NULL) → Accounts tab summary and label → Manage Customer panel
+// row → no-op bind → bind the usable type "Wholesale" → retired by SQL, the
+// label turns "not usable" → rebinding it refused. Calls services, not
 // actions: `requirePermission` needs a real session this suite doesn't build,
 // and the action guards are covered by the cm18/cm21 action tests (same
 // boundary as customer-core-flow.integration.test.ts). Services are imported
@@ -26,7 +33,7 @@ const databaseUrl = process.env.DATABASE_URL;
 // shared onboarding fixture (appuser + active monthly bill cycle), plus the
 // `customer` config row createCustomer reads.
 describe.skipIf(!databaseUrl)(
-  "customer accounts journey: onboard → accounts summary → template label → reset (requires DATABASE_URL)",
+  "customer accounts journey: onboard → accounts summary → template label → bind (requires DATABASE_URL)",
   () => {
     let db: OnboardingDatabase;
     let createCustomer: typeof CreateCustomer;
@@ -42,6 +49,14 @@ describe.skipIf(!databaseUrl)(
         INSERT INTO core.system_config (config_group, config_key, config_value, description, is_secret, status)
         VALUES ('customer', 'CUSTOMER_SEARCH_RESULT_LIMIT', '5', 'cm22 journey', false, 'ACTIVE')
       `;
+
+      await insertTemplateType(db.sql, {
+        typeId: WHOLESALE,
+        code: "WHOLESALE",
+        name: "Wholesale",
+        versionSeed: 101,
+        withActiveSettings: true,
+      });
 
       ({ createCustomer } =
         await import("@/services/customer/create-customer"));
@@ -70,7 +85,7 @@ describe.skipIf(!databaseUrl)(
 
     async function banRow(banId: string) {
       const [row] = await db.sql<{ ref: string | null; lastModified: Date }[]>`
-        SELECT ref_bill_template_version_id AS ref,
+        SELECT ref_bill_template_family_id AS ref,
                last_modified AS "lastModified"
         FROM billing.billing_account WHERE billing_account_id = ${banId}
       `;
@@ -87,7 +102,7 @@ describe.skipIf(!databaseUrl)(
       return row;
     }
 
-    it("chains onboarding, the Accounts tab, the template label and the reset, end to end", async () => {
+    it("chains onboarding, the Accounts tab, the template label and the type bind, end to end", async () => {
       // 1. Create → organization REGISTERED, customer INITIALIZED.
       const created = await createCustomer(
         {
@@ -119,13 +134,13 @@ describe.skipIf(!databaseUrl)(
         { kind: "notOnboarded" },
       );
 
-      // 3. Onboard with "Follow active template" (NULL).
+      // 3. Onboard on Standard (NULL).
       const onboarded = await onboardCustomerAccounts(
         {
           partyRoleId,
           billCycleId: db.cycleId,
           currency: "MYR",
-          billTemplateVersionId: null,
+          templateTypeId: null,
           statusReason: "cm22 journey onboarding",
           lastModifiedDatetime: initialized.ts,
         },
@@ -147,7 +162,7 @@ describe.skipIf(!databaseUrl)(
           AND target_id = ${financialAccountId}
       `;
       expect(onboardAudit?.afterData).toHaveProperty(
-        "refBillTemplateVersionId",
+        "refBillTemplateFamilyId",
         null,
       );
 
@@ -160,27 +175,31 @@ describe.skipIf(!databaseUrl)(
       expect(fa?.bans).toHaveLength(1);
       expect(fa?.bans[0]).toMatchObject({
         billingAccountId: banId,
-        templateLabel:
-          "Follows active template (currently: INVTPL-STD-A4 v1), as of now",
+        templateLabel: {
+          kind: "STANDARD",
+          text: "Standard (default) · v1",
+          name: "Standard (default)",
+          versionNo: 1,
+        },
       });
       expect(fa?.documents.total).toBe(0);
 
-      // 5. Manage Customer panel row: NULL reference (reset disabled).
+      // 5. Manage Customer panel row: NULL (Standard).
       const panel = await listCustomerBillingAccounts(partyRoleId);
       if (!panel.onboarded) throw new Error("expected onboarded");
       expect(panel.bans).toHaveLength(1);
       const [panelBan] = panel.bans;
       expect(panelBan).toMatchObject({
         billingAccountId: banId,
-        refBillTemplateVersionId: null,
+        refBillTemplateFamilyId: null,
       });
 
-      // 6. Resetting an already-NULL reference is a no-op: no write, no audit.
+      // 6. Binding an already-NULL BAN to Standard is a no-op: no write, no audit.
       const noop = await setBillingAccountTemplate(
         {
           partyRoleId,
           billingAccountId: banId,
-          billTemplateVersionId: null,
+          typeId: null,
           lastModified: panelBan!.lastModified,
         },
         db.appuserId,
@@ -188,55 +207,72 @@ describe.skipIf(!databaseUrl)(
       expect(noop).toMatchObject({ ok: true, value: { changed: false } });
       expect(await templateAuditCount(banId)).toBe(0);
 
-      // 7. A Phase-3-style non-NULL value (raw SQL; v1 can't write one) is
-      //    labelled honestly, then reset to NULL with one audit row and
-      //    party_role untouched (Inv. #17).
-      const [phase3] = await db.sql<{ lastModified: Date }[]>`
-        UPDATE billing.billing_account
-        SET ref_bill_template_version_id = 'BTV00000002', last_modified = now()
-        WHERE billing_account_id = ${banId}
-        RETURNING last_modified AS "lastModified"
-      `;
-      const phase3Summary = await getCustomerAccountsSummary(partyRoleId, 1);
-      if (phase3Summary.kind !== "onboarded") {
-        throw new Error("expected onboarded");
-      }
-      expect(phase3Summary.financialAccounts[0]?.bans[0]?.templateLabel).toBe(
-        "Template reference not supported yet",
-      );
-
-      const reset = await setBillingAccountTemplate(
+      // 7. Bind the usable type: one audit row, the label names it, and
+      //    party_role is untouched (Inv. #17).
+      const bound = await setBillingAccountTemplate(
         {
           partyRoleId,
           billingAccountId: banId,
-          billTemplateVersionId: null,
-          lastModified: phase3!.lastModified,
+          typeId: WHOLESALE,
+          lastModified: panelBan!.lastModified,
         },
         db.appuserId,
       );
-      expect(reset).toMatchObject({ ok: true, value: { changed: true } });
+      expect(bound).toMatchObject({ ok: true, value: { changed: true } });
       expect(await templateAuditCount(banId)).toBe(1);
-      const afterReset = await banRow(banId);
-      expect(afterReset.ref).toBeNull();
+      const afterBind = await banRow(banId);
+      expect(afterBind.ref).toBe(WHOLESALE);
       expect((await partyRoleRow(partyRoleId)).ts.getTime()).toBe(
         afterOnboarding.ts.getTime(),
       );
+      const boundSummary = await getCustomerAccountsSummary(partyRoleId, 1);
+      if (boundSummary.kind !== "onboarded") {
+        throw new Error("expected onboarded");
+      }
+      expect(boundSummary.financialAccounts[0]?.bans[0]?.templateLabel).toEqual(
+        {
+          kind: "TYPE",
+          text: "Wholesale · v1",
+          name: "Wholesale",
+          versionNo: 1,
+        },
+      );
 
-      // 8. A non-NULL id is refused (v1 NULL-only, D13) and writes nothing.
+      // 8. Retired by raw SQL (a bypass of the retire switch): the label
+      //    turns "not usable" on both screens.
+      await retireTemplateType(db.sql, WHOLESALE);
+      const notUsable = {
+        kind: "NOT_USABLE",
+        text: "Wholesale · not usable",
+        name: "Wholesale",
+        versionNo: null,
+      };
+      const retiredSummary = await getCustomerAccountsSummary(partyRoleId, 1);
+      if (retiredSummary.kind !== "onboarded") {
+        throw new Error("expected onboarded");
+      }
+      expect(
+        retiredSummary.financialAccounts[0]?.bans[0]?.templateLabel,
+      ).toEqual(notUsable);
+      const retiredPanel = await listCustomerBillingAccounts(partyRoleId);
+      if (!retiredPanel.onboarded) throw new Error("expected onboarded");
+      expect(retiredPanel.bans[0]?.templateLabel).toEqual(notUsable);
+
+      // 9. Rebinding the retired type is refused and writes nothing.
       const refused = await setBillingAccountTemplate(
         {
           partyRoleId,
           billingAccountId: banId,
-          billTemplateVersionId: "BTV00000002",
-          lastModified: afterReset.lastModified,
+          typeId: WHOLESALE,
+          lastModified: afterBind.lastModified,
         },
         db.appuserId,
       );
       expect(refused).toEqual({ ok: false, code: "TEMPLATE_NOT_BINDABLE" });
       const afterRefusal = await banRow(banId);
-      expect(afterRefusal.ref).toBeNull();
+      expect(afterRefusal.ref).toBe(WHOLESALE);
       expect(afterRefusal.lastModified.getTime()).toBe(
-        afterReset.lastModified.getTime(),
+        afterBind.lastModified.getTime(),
       );
       expect(await templateAuditCount(banId)).toBe(1);
     });

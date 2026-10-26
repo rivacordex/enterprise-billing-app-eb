@@ -31,6 +31,16 @@ export const TEMPLATE_TYPE_MESSAGES = {
     "This type's drafts changed since you opened the page. The page has been reloaded — check the draft and try again.",
   uploadTypeRetired:
     "This invoice template type has been retired, so a layout can no longer be uploaded to it.",
+  // bm80 — the overwrite path (Styling rules 3 and 6).
+  overwriteTitle: "Overwrite the draft layout?",
+  overwriteConfirm: "Overwrite draft",
+  // A layout DRAFT with no recorded writer: `last_modified_by` is SET NULL when
+  // the uploader is deleted (the approve-and-post panel's wording).
+  overwriteNoAuthor: "an unknown user",
+  overwriteStale:
+    "The draft changed since this warning was shown. Review the updated warning and try again.",
+  layoutReplacedSave:
+    "The layout was replaced by an upload. Your unsaved changes are kept below; review and save again.",
   // bm79 — Activate (the pair) and Discard.
   firstVersionOfType: "First version of this type.",
   activateLayoutRejected:
@@ -42,18 +52,51 @@ export const TEMPLATE_TYPE_MESSAGES = {
   discardConfirm: "Discard draft",
   discardFailed: "The draft could not be discarded. Please try again.",
   discardForbidden: "You do not have permission to discard a draft.",
+  // bm81 — Export (Version history) and the restore note (upload dialog).
+  exportLink: "Export",
 } as const;
 
-// "A new draft v{n} will be created." / "Create draft v{n}" /
-// "This type already has a draft layout v{n}." (bm80 replaces the last).
+// "A new draft v{n} will be created." / "Create draft v{n}".
 export function uploadCreatesDraft(n: number): string {
   return `A new draft v${n} will be created.`;
 }
 export function uploadConfirm(n: number): string {
   return `Create draft v${n}`;
 }
-export function uploadDraftOpen(n: number): string {
-  return `This type already has a draft layout v${n}.`;
+
+// bm80 — the upload success toasts: created (bm78's wording) or replaced.
+export function uploadCreatedToast(n: number): string {
+  return `Draft v${n} created`;
+}
+export function uploadReplacedToast(n: number): string {
+  return `Draft v${n} replaced`;
+}
+
+// bm80 — the exact overwrite warning (code-standards › Invoice Template Types,
+// Styling rule 6), from the page's server data. bm81 review fix (#3, plan
+// D127): when the chosen package is an app export, its settings replace the
+// draft settings, so the last sentence becomes RESTORE_NOTE instead of "kept".
+export function OVERWRITE_WARNING(
+  n: number,
+  date: string,
+  user: string,
+  settingsReplaced = false,
+): string {
+  const settings = settingsReplaced
+    ? RESTORE_NOTE
+    : "Your draft settings (Payment and footnote) are kept.";
+  return `This type already has a draft (layout v${n}, last changed ${date} by ${user}). Uploading will overwrite the existing draft layout. ${settings}`;
+}
+export const LAYOUT_REPLACED_SAVE_MESSAGE =
+  TEMPLATE_TYPE_MESSAGES.layoutReplacedSave;
+
+// bm81 (code-standards › Invoice Template Types, Styling rule 6; ui-context
+// §10e) — the upload dialog's restore note, shown when the chosen zip carries a
+// schema-valid settings.json. Advisory only: the server decides.
+export const RESTORE_NOTE =
+  "The package's settings (Payment and footnote) will replace the draft settings.";
+export function RESTORED_FROM(n: number): string {
+  return `Restored from v${n}`;
 }
 
 // bm79 — the Activate dialog's layout line: "Layout: <code> v<old> → v<new>",

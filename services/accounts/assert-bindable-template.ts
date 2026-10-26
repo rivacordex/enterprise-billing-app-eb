@@ -1,18 +1,36 @@
 import type { Database } from "@/db/client";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
+import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
 
-// cm18 (custmgmt Inv. #18, binding plan D13/D15) — the single gate for any
-// value written to billing_account.ref_bill_template_version_id. v1 accepts
-// NULL only ("follow the active template"); a non-NULL id is rejected until
-// Phase 3 lifts this rule together with the posting change (plan §9 tripwire).
-// Shared by onboardCustomerAccounts (cm18) and setBillingAccountTemplate (cm21).
+// cm23 (Inv. #19, #20; code-standards §10 General rules 1–3) — the single gate for any
+// value written to billing_account.ref_bill_template_family_id. null (Standard) needs no
+// lock. A type id is locked FOR SHARE in the CALLER's transaction before it is judged, so
+// the bind and a retire (FOR UPDATE) serialise; never opens its own transaction.
+// Shared by onboardCustomerAccounts (always null) and setBillingAccountTemplate.
 export type AssertBindableTemplateResult =
-  | { ok: true }
+  | { ok: true; typeName: string | null }
   | { ok: false; code: "TEMPLATE_NOT_BINDABLE" };
 
 export async function assertBindableTemplate(
-  _tx: Database,
-  billTemplateVersionId: string | null,
+  tx: Database,
+  typeId: string | null,
 ): Promise<AssertBindableTemplateResult> {
-  if (billTemplateVersionId === null) return { ok: true };
-  return { ok: false, code: "TEMPLATE_NOT_BINDABLE" };
+  if (typeId === null) return { ok: true, typeName: null };
+  const type = await billTemplateFamilyRepository.lockTemplateType(
+    tx,
+    typeId,
+    "share",
+  );
+  // `isDefault` is a column read, not an id comparison (General rule 1):
+  // Standard is stored only as NULL, so its explicit id is refused.
+  if (!type || type.isDefault || type.retiredDatetime !== null) {
+    return { ok: false, code: "TEMPLATE_NOT_BINDABLE" };
+  }
+  const active = await billTemplateVersionRepository.findActive(tx, {
+    kind: "generated",
+    familyId: typeId,
+  });
+  return active
+    ? { ok: true, typeName: type.name }
+    : { ok: false, code: "TEMPLATE_NOT_BINDABLE" };
 }

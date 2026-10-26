@@ -1444,7 +1444,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         runId: PHASE3_RUN_NULL,
       });
       await sql`
-        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000099'
+        UPDATE billing.billing_account SET ref_bill_template_family_id = 'BTF00000099'
         WHERE billing_account_id = ${nullBan}`;
       await captured(PHASE3_RUN_NULL, nullBan);
       expect((await runStamps(PHASE3_RUN_NULL)).get(nullBan)).toMatchObject({
@@ -1578,7 +1578,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       await fx.newRun(runId);
       const { banId } = await fx.postableBill({ label: "REC", runId });
       await sql`
-        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000099'
+        UPDATE billing.billing_account SET ref_bill_template_family_id = 'BTF00000099'
         WHERE billing_account_id = ${banId}`;
       await captured(runId, banId);
       expect((await runStamps(runId)).get(banId)).toMatchObject({

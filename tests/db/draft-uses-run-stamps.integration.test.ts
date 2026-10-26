@@ -207,7 +207,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         FROM billing.bill_template_version WHERE bill_template_version_id = 'BTV00000002'`;
       const { banId } = await fx.draftBill({ label: "NUL", runId: RUN });
       await sql`
-        UPDATE billing.billing_account SET ref_bill_template_version_id = 'BTV00000099'
+        UPDATE billing.billing_account SET ref_bill_template_family_id = 'BTF00000099'
         WHERE billing_account_id = ${banId}`;
       // Re-capture, as a rerun would: the family has no ACTIVE version.
       await captureTemplateStamps(fx.db, RUN, [banId], "2026-06-01");

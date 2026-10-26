@@ -8,6 +8,9 @@ import postgres from "postgres";
 import type postgresjs from "postgres";
 
 import * as schema from "@/db/schema";
+import { billingAccount, financialAccount } from "@/db/schema/billing/accounts";
+import { billCycle } from "@/db/schema/billing/catalogs";
+import { organization, partyRole } from "@/db/schema/customer";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
 // bm77-spec §11 (Inv #65, guardrail 79 grant half) — create type on a real
@@ -29,7 +32,11 @@ vi.mock("@/db/client", () => ({
 }));
 
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
-import { createTemplateType } from "@/services/billing/invoice-template/template-types";
+import {
+  countBoundBansByType,
+  createTemplateType,
+} from "@/services/billing/invoice-template/template-types";
+import { listTemplateTypes } from "@/services/billing/read/invoice-template-settings";
 import type { Database } from "@/db/client";
 
 const ACTOR = "bm77-actor";
@@ -295,6 +302,77 @@ describe.skipIf(!databaseUrl)(
       expect(await billTemplateFamilyRepository.listUsable(db)).toEqual([
         { billTemplateFamilyId: "BTF00000910", name: "Usable One" },
       ]);
+    });
+
+    // bm82 (D4) — the "Bound BANs" count: one GROUP BY over the BAN type column,
+    // NULL counted under Standard, every state (closed included), and the type
+    // list carries it (0 for a type nothing is bound to).
+    it("countBoundBansByType counts NULL BANs under Standard and bound BANs under their type, closed included; listTemplateTypes shows the counts", async () => {
+      const drizzleDb = db as unknown as ReturnType<
+        typeof drizzle<typeof schema>
+      >;
+      const [cycle] = await drizzleDb
+        .insert(billCycle)
+        .values({ name: "BM82 Bound BANs Cycle", lastEditedBy: null })
+        .returning({ billCycleId: billCycle.billCycleId });
+      const [org] = await drizzleDb
+        .insert(organization)
+        .values({
+          name: "BM82 Bound BANs Customer",
+          organizationType: "COMPANY",
+          status: "ACTIVE",
+          lastModifiedBy: ACTOR,
+        })
+        .returning({ organizationId: organization.organizationId });
+      const [role] = await drizzleDb
+        .insert(partyRole)
+        .values({
+          engagedParty: org!.organizationId,
+          status: "ACTIVE",
+          lastModifiedBy: ACTOR,
+        })
+        .returning({ partyRoleId: partyRole.partyRoleId });
+      const [fa] = await drizzleDb
+        .insert(financialAccount)
+        .values({
+          name: "BM82 FA",
+          refPartyRoleId: role!.partyRoleId,
+          currency: "MYR",
+          lastEditedBy: ACTOR,
+        })
+        .returning({ financialAccountId: financialAccount.financialAccountId });
+      async function ban(
+        state: "active" | "closed",
+        typeId: string | null,
+      ): Promise<void> {
+        await drizzleDb.insert(billingAccount).values({
+          name: "BM82 BAN",
+          state,
+          refPartyRoleId: role!.partyRoleId,
+          refFinancialAccountId: fa!.financialAccountId,
+          currency: "MYR",
+          refBillCycleId: cycle!.billCycleId,
+          refBillTemplateFamilyId: typeId,
+          lastEditedBy: ACTOR,
+        });
+      }
+      // Two NULL BANs (one closed) → Standard; two on Usable One (one closed).
+      await ban("active", null);
+      await ban("closed", null);
+      await ban("active", "BTF00000910");
+      await ban("closed", "BTF00000910");
+
+      const counts = await countBoundBansByType(db);
+      expect(Object.fromEntries(counts)).toEqual({
+        BTF00000001: 2,
+        BTF00000910: 2,
+      });
+
+      const rows = await listTemplateTypes();
+      const byId = new Map(rows.map((r) => [r.billTemplateFamilyId, r]));
+      expect(byId.get("BTF00000001")?.boundBanCount).toBe(2);
+      expect(byId.get("BTF00000910")?.boundBanCount).toBe(2);
+      expect(byId.get("BTF00000912")?.boundBanCount).toBe(0);
     });
   },
 );

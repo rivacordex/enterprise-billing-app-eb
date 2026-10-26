@@ -4,7 +4,7 @@ This file holds the in-flight update to the Customer Management module. It is fo
 
 | Update | Status |
 |---|---|
-| Invoice Template Types: Customer Management part (bind a BAN to a template type) | Planned; build order proposed; specs not yet written |
+| Invoice Template Types: Customer Management part (bind a BAN to a template type) | In progress: cm23 built (lands in one merge with Billing bm82); cm24 not started |
 
 _Date: 2026-10-25 · **Users:** RevOps staff holding `customers : EDIT` + `accounts_transactions : EDIT` bind BANs, and everyone holding `customers : READ` (+ `accounts_view : READ`) sees the binding. **Owning update:** Billing, `context/billing-management/billmgmt-update-overview.md`, which defines template types, upload, activation, retire and export. **This file defines only what changes in Customer Management.**_
 

@@ -110,7 +110,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       [
         "ZIP_UNEXPECTED_FILE",
         wholesalePackageFixture({
-          override: (f) => f.set("settings.json", Buffer.from("{}")),
+          // bm81: settings.json is now an allowed optional file.
+          override: (f) => f.set("notes.txt", Buffer.from("{}")),
         }),
         cleanRender(),
       ],
@@ -283,6 +284,48 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       expect(await counts(wholesaleId, "layouts/INVTPL-WHOLESALE/")).toEqual(
         before,
       );
+    });
+
+    it("bm80 — a second upload carrying the open draft's { versionId, lastModified } overwrites it in place", async () => {
+      const open = await billTemplateVersionRepository.findDraft(h.db, {
+        kind: "layout",
+        familyId: wholesaleId,
+      });
+      if (!open) throw new Error("no layout draft");
+      const built = wholesalePackage({
+        edit: (f) =>
+          replaceInFile(
+            f,
+            "partials/header.hbs",
+            "<h1>Invoice</h1>",
+            "<h1>Invoice (rev)</h1>",
+          ),
+      });
+      const result = await uploadLayoutPackage(
+        {
+          familyId: wholesaleId,
+          zip: built.zip,
+          expectedDraft: {
+            versionId: open.billTemplateVersionId,
+            lastModified: open.token,
+          },
+        },
+        ACTOR,
+        { render: cleanRender() },
+      );
+      expect(result).toEqual({
+        ok: true,
+        versionId: open.billTemplateVersionId,
+        versionNo: 1,
+        replaced: true,
+      });
+      const [layout] = await h.sql`
+        SELECT checksum, status FROM billing.bill_template_version
+        WHERE bill_template_version_id = ${open.billTemplateVersionId}`;
+      expect(layout).toMatchObject({
+        status: "DRAFT",
+        checksum: sha256(built.indexBytes!),
+      });
     });
 
     it("an open settings DRAFT is re-pointed at the new layout DRAFT, bumping its token (Inv #62)", async () => {

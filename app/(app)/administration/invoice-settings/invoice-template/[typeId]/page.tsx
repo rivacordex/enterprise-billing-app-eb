@@ -87,15 +87,22 @@ export default async function InvoiceTemplateTypePage({
   });
   if (!data) notFound();
 
-  // bm78 — EDIT holders upload a layout package to a non-retired type. While a
-  // layout DRAFT is open the trigger is disabled with a caption (bm80 adds
-  // the overwrite path).
+  // bm78 — EDIT holders upload a layout package to a non-retired type. bm80:
+  // over an open layout DRAFT the dialog carries the overwrite warning, built
+  // from this server data (Next.js rule 5).
   const canUpload = canEdit && data.typeStatus !== "RETIRED";
+  const locale = await getAppLocale();
+  const timezone = getAppTimezone();
   const upload = (
     <UploadLayoutDialog
       familyId={data.typeId}
       nextVersionNo={data.nextLayoutVersionNo}
       openLayoutDraft={data.openLayoutDraft}
+      // bm81 review fix (#2) — a restore must not replace settings changed
+      // since this page loaded (the draft is loaded for EDIT, as upload needs).
+      settingsDraftToken={data.empty ? null : (data.draft?.token ?? null)}
+      locale={locale}
+      timezone={timezone}
     />
   );
 
@@ -302,8 +309,8 @@ export default async function InvoiceTemplateTypePage({
                 }
               : null
           }
-          locale={await getAppLocale()}
-          timezone={getAppTimezone()}
+          locale={locale}
+          timezone={timezone}
         />
       )}
     </div>

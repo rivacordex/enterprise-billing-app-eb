@@ -1,7 +1,6 @@
 import { and, desc, eq, getTableColumns, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
-import { auditLog } from "@/db/schema/audit";
 import { billTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import { customerBill } from "@/db/schema/billing/customer-bill";
 import { appuser } from "@/db/schema/identity";
@@ -236,6 +235,44 @@ export const billTemplateVersionRepository = {
     return row ? { ...row.version, token: row.token } : null;
   },
 
+  // bm80 — `findDraft` plus the name of the DRAFT's last writer, for the
+  // overwrite warning (code-standards › Invoice Template Types, Next.js rule
+  // 5). A LEFT join: a since-deleted writer is "a deleted user"; no recorded
+  // writer is `null`. bm81 review fix: also the settings draft's "saved by".
+  async findDraftWithModifier(
+    db: Database,
+    { kind, familyId }: { kind: TemplateKind; familyId?: string },
+  ): Promise<
+    (TemplateDraftRow & { lastModifiedByName: string | null }) | null
+  > {
+    const [row] = await db
+      .select({
+        version: billTemplateVersion,
+        token: draftToken,
+        name: appuser.userName,
+      })
+      .from(billTemplateVersion)
+      .leftJoin(
+        appuser,
+        sql`${appuser.id} = ${billTemplateVersion.lastModifiedBy}`,
+      )
+      .where(
+        and(
+          eq(billTemplateVersion.refBillFormatId, INVOICE),
+          eq(billTemplateVersion.kind, kind),
+          familyScope(familyId),
+          eq(billTemplateVersion.status, "DRAFT"),
+        ),
+      )
+      .limit(1);
+    if (!row) return null;
+    const lastModifiedByName =
+      row.version.lastModifiedBy === null
+        ? null
+        : (row.name ?? "a deleted user");
+    return { ...row.version, token: row.token, lastModifiedByName };
+  },
+
   // bm57 D1 — first save: insert the working DRAFT. No files
   // (`btv_draft_has_no_files`, which applies to settings DRAFTs only since
   // bm74), never the default. A concurrent first save is refused by
@@ -250,6 +287,10 @@ export const billTemplateVersionRepository = {
       refBillTemplateFamilyId: string;
       structure: InvoiceTemplateStructureInput;
       createdBy: string;
+      // bm81 review fix — stamp clock_timestamp(), not the transaction's
+      // now(), so the token differs from a layout row written in the same
+      // transaction (restored settings).
+      distinctToken?: boolean;
     },
   ): Promise<TemplateDraftRow> {
     const [row] = await tx
@@ -266,6 +307,9 @@ export const billTemplateVersionRepository = {
         createdBy: input.createdBy,
         // bm77 (D128) — every DRAFT write records its last writer.
         lastModifiedBy: input.createdBy,
+        ...(input.distinctToken
+          ? { lastModifiedDatetime: sql`clock_timestamp()` }
+          : {}),
       })
       .returning({
         ...getTableColumns(billTemplateVersion),
@@ -316,27 +360,88 @@ export const billTemplateVersionRepository = {
     return row;
   },
 
+  // bm80 (Inv #59) — layout DRAFT → DRAFT, in place: same row and version_no, new files.
+  // Called only by install-layout-package.ts (guardrail 68). null → the token moved.
+  // The bm74 guard allows exactly these columns on a layout DRAFT → DRAFT;
+  // `change_note` stays NULL.
+  async overwriteLayoutDraft(
+    tx: Database,
+    input: {
+      id: string;
+      expectedToken: string;
+      blobRef: string;
+      checksum: string;
+      pageSetup: LayoutPageSetup;
+      actorId: string;
+    },
+  ): Promise<{ row: BillTemplateVersion; token: string } | null> {
+    const [row] = await tx
+      .update(billTemplateVersion)
+      .set({
+        blobRef: input.blobRef,
+        checksum: input.checksum,
+        checksumAlgorithm: "sha256",
+        pageSetup: input.pageSetup,
+        lastModifiedDatetime: sql`now()`,
+        lastModifiedBy: input.actorId,
+      })
+      .where(
+        and(
+          eq(billTemplateVersion.billTemplateVersionId, input.id),
+          eq(billTemplateVersion.kind, "layout"),
+          eq(billTemplateVersion.status, "DRAFT"),
+          sql`${draftToken} = ${input.expectedToken}`,
+        ),
+      )
+      .returning({
+        ...getTableColumns(billTemplateVersion),
+        token: draftToken,
+      });
+    if (!row) return null;
+    const { token, ...version } = row;
+    return { row: version, token };
+  },
+
   // bm78 (Inv #62) — point the settings DRAFT at a new layout DRAFT. Bumps the
   // draft's token (`last_modified_datetime`), so an editor holding the old token
   // gets DRAFT_CONFLICT. bm74's guard allows a settings DRAFT to change
   // `ref_layout_version_id`. Returns the new token, or `null` when the row is no
-  // longer a settings DRAFT.
+  // longer a settings DRAFT. bm81: a restore also sets `structure` in the same
+  // UPDATE (the guard allows `structure` on a settings DRAFT). Review fix: a
+  // restore is guarded by the token the dialog saw (#2), and stamped with
+  // clock_timestamp() so its token differs from the layout row written in the
+  // same transaction — restored settings are a settings change, so a stale
+  // editor gets DRAFT_CONFLICT, not bm80's "layout replaced" (#1).
   async repointDraftLayout(
     tx: Database,
-    input: { id: string; layoutVersionId: string; actorId: string },
+    input: {
+      id: string;
+      layoutVersionId: string;
+      actorId: string;
+      restore?: {
+        structure: InvoiceTemplateStructureInput;
+        expectedToken: string;
+      };
+    },
   ): Promise<string | null> {
     const rows = await tx
       .update(billTemplateVersion)
       .set({
         refLayoutVersionId: input.layoutVersionId,
+        ...(input.restore ? { structure: input.restore.structure } : {}),
         lastModifiedBy: input.actorId,
-        lastModifiedDatetime: sql`now()`,
+        lastModifiedDatetime: input.restore
+          ? sql`clock_timestamp()`
+          : sql`now()`,
       })
       .where(
         and(
           eq(billTemplateVersion.billTemplateVersionId, input.id),
           eq(billTemplateVersion.status, "DRAFT"),
           eq(billTemplateVersion.kind, "generated"),
+          input.restore
+            ? sql`${draftToken} = ${input.restore.expectedToken}`
+            : undefined,
         ),
       )
       .returning({ token: draftToken });
@@ -523,30 +628,5 @@ export const billTemplateVersionRepository = {
       )
       .returning();
     return row ?? null;
-  },
-
-  // bm57 D4 — who last saved the draft: the actor of the newest
-  // `INVOICE_TEMPLATE_DRAFT_SAVED` audit row for it (the table keeps only the
-  // creator, not the last modifier). A LEFT join, so a save by a since-deleted
-  // user (`actor_user_id` is SET NULL) still counts as the newest save and is
-  // reported as "a deleted user" instead of being skipped for an older saver.
-  // `null` only when no audit row exists at all.
-  async findLatestDraftSaver(
-    db: Database,
-    versionId: string,
-  ): Promise<string | null> {
-    const [row] = await db
-      .select({ name: appuser.userName })
-      .from(auditLog)
-      .leftJoin(appuser, sql`${appuser.id} = ${auditLog.actorUserId}`)
-      .where(
-        and(
-          eq(auditLog.eventType, "INVOICE_TEMPLATE_DRAFT_SAVED"),
-          eq(auditLog.targetId, versionId),
-        ),
-      )
-      .orderBy(desc(auditLog.createdDatetime))
-      .limit(1);
-    return row ? (row.name ?? "a deleted user") : null;
   },
 };

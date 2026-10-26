@@ -8,6 +8,7 @@ import {
 } from "@/tests/helpers/onboarding-database";
 import { db as appDb } from "@/db/client";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
+import { logger } from "@/lib/logger";
 import { getBillingAccountDetail } from "@/services/accounts/get-billing-account-detail";
 import { getCustomerAccountsSummary } from "@/services/accounts/get-customer-accounts-summary";
 import { getFinancialAccountDetail } from "@/services/accounts/get-financial-account-detail";
@@ -159,7 +160,14 @@ describe.skipIf(!databaseUrl)(
     });
 
     it("lists all N BANs, including the closed one, with cycle, term and template label", async () => {
-      const summary = await getCustomerAccountsSummary(partyRoleId, 1);
+      const warn = vi.spyOn(logger, "warn");
+      let summary: Awaited<ReturnType<typeof getCustomerAccountsSummary>>;
+      try {
+        summary = await getCustomerAccountsSummary(partyRoleId, 1);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
       if (summary.kind !== "onboarded") throw new Error("expected onboarded");
       const bans = summary.financialAccounts[0]!.bans;
 
@@ -172,9 +180,13 @@ describe.skipIf(!databaseUrl)(
       for (const ban of bans) {
         expect(ban.billCycleName).toBe("Monthly – Day 1");
         expect(ban.paymentTermDays).toBe(30);
-        expect(ban.templateLabel).toBe(
-          "Follows active template (currently: INVTPL-STD-A4 v1), as of now",
-        );
+        // cm23 (D4) — every BAN is NULL (Standard) on the seeded catalog.
+        expect(ban.templateLabel).toEqual({
+          kind: "STANDARD",
+          text: "Standard (default) · v1",
+          name: "Standard (default)",
+          versionNo: 1,
+        });
       }
     });
 

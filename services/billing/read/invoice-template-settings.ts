@@ -7,11 +7,16 @@ import {
   loadGeneratedFiles,
   type GeneratedVersionFile,
 } from "@/services/billing/invoice-template/load";
-import { deriveTemplateTypeStatus } from "@/services/billing/invoice-template/template-types";
+import {
+  countBoundBansByType,
+  deriveTemplateTypeStatus,
+} from "@/services/billing/invoice-template/template-types";
+import { isShowable } from "@/services/billing/invoice-template/version-visibility";
 import {
   InvoiceRenderError,
   type InvoiceErrorCode,
   type InvoiceTemplateStructure,
+  type OpenLayoutDraftInfo,
   type RecentPostedBill,
   type TemplateDraftInfo,
   type TemplateTypeListRow,
@@ -39,9 +44,9 @@ export interface InvoiceTemplateTypeHeader {
   layoutCode: string;
   // The version the type's next layout upload gets (bm78): max + 1, or 1.
   nextLayoutVersionNo: number;
-  // bm78 — the type's open layout DRAFT (an upload not yet activated). While
-  // one exists the Upload trigger is disabled (bm80 adds the overwrite path).
-  openLayoutDraft: { versionId: string; versionNo: number } | null;
+  // bm78 — the type's open layout DRAFT (an upload not yet activated). bm80:
+  // with its token and last writer, the overwrite warning's server data.
+  openLayoutDraft: OpenLayoutDraftInfo | null;
 }
 
 // The type has settings: today's editor data.
@@ -126,23 +131,6 @@ function parseStoredStructure(
   return parsed.data;
 }
 
-// A version the page may show: a stored generated version, or a draft for an
-// EDIT user (bm57 D4). Review fix (bm79) — a discarded draft (RETIRED, never
-// activated) has no files and is still a draft: only EDIT users may open it,
-// and it is never a stored version (no file download, no Generated files).
-function isDraftLike(row: BillTemplateVersion): boolean {
-  return row.status === "DRAFT" || row.activatedDatetime === null;
-}
-
-function isShowable(
-  row: BillTemplateVersion | null,
-  canEdit: boolean,
-): row is BillTemplateVersion {
-  return (
-    row !== null && row.kind === "generated" && (!isDraftLike(row) || canEdit)
-  );
-}
-
 export async function getInvoiceTemplatePageData(
   typeId: string,
   versionId: string | undefined,
@@ -154,36 +142,46 @@ export async function getInvoiceTemplatePageData(
   const type = await billTemplateFamilyRepository.findById(db, typeId);
   if (!type) return null;
   const familyId = type.billTemplateFamilyId;
-  const [active, fallback, selected, generatedRows, layoutRows, draftRow] =
-    await Promise.all([
-      billTemplateVersionRepository.findActive(db, {
-        kind: "generated",
-        familyId,
-      }),
-      billTemplateVersionRepository.findDefault(db, {
-        kind: "generated",
-        familyId,
-      }),
-      versionId === undefined
-        ? Promise.resolve(null)
-        : billTemplateVersionRepository.findById(db, versionId),
-      billTemplateVersionRepository.listForKind(db, {
-        kind: "generated",
-        familyId,
-      }),
-      billTemplateVersionRepository.listForKind(db, {
-        kind: "layout",
-        withUsage: false,
-        familyId,
-      }),
-      canEdit
-        ? billTemplateVersionRepository.findDraft(db, {
-            kind: "generated",
-            familyId,
-          })
-        : Promise.resolve(null),
-    ]);
-  const openLayout = layoutRows.find((l) => l.status === "DRAFT") ?? null;
+  const [
+    active,
+    fallback,
+    selected,
+    generatedRows,
+    layoutRows,
+    draftRow,
+    openLayout,
+  ] = await Promise.all([
+    billTemplateVersionRepository.findActive(db, {
+      kind: "generated",
+      familyId,
+    }),
+    billTemplateVersionRepository.findDefault(db, {
+      kind: "generated",
+      familyId,
+    }),
+    versionId === undefined
+      ? Promise.resolve(null)
+      : billTemplateVersionRepository.findById(db, versionId),
+    billTemplateVersionRepository.listForKind(db, {
+      kind: "generated",
+      familyId,
+    }),
+    billTemplateVersionRepository.listForKind(db, {
+      kind: "layout",
+      withUsage: false,
+      familyId,
+    }),
+    canEdit
+      ? billTemplateVersionRepository.findDraftWithModifier(db, {
+          kind: "generated",
+          familyId,
+        })
+      : Promise.resolve(null),
+    billTemplateVersionRepository.findDraftWithModifier(db, {
+      kind: "layout",
+      familyId,
+    }),
+  ]);
 
   const current = active ?? fallback;
   const header: InvoiceTemplateTypeHeader = {
@@ -198,6 +196,9 @@ export async function getInvoiceTemplatePageData(
       ? {
           versionId: openLayout.billTemplateVersionId,
           versionNo: openLayout.versionNo,
+          token: openLayout.token,
+          lastModifiedDatetime: openLayout.lastModifiedDatetime,
+          lastModifiedByName: openLayout.lastModifiedByName,
         }
       : null,
   };
@@ -222,10 +223,10 @@ export async function getInvoiceTemplatePageData(
         versionNo: draftRow.versionNo,
         token: draftRow.token,
         savedAt: draftRow.lastModifiedDatetime,
-        savedBy: await billTemplateVersionRepository.findLatestDraftSaver(
-          db,
-          draftRow.billTemplateVersionId,
-        ),
+        // bm81 review fix (owner, #4) — the draft's last writer, recorded on
+        // every DRAFT write since bm77 (a save, an upload's re-point, a
+        // restore), not only the last form save's audit row.
+        savedBy: draftRow.lastModifiedByName ?? "an unknown user",
       }
     : null;
   const layoutById = new Map(
@@ -266,12 +267,21 @@ export async function getInvoiceTemplatePageData(
   };
 }
 
+// bm77 / bm82 review — Standard's id for the legacy `?tab=` / `?version=`
+// bookmark redirect, without the type list's Bound BANs aggregate.
+export async function getStandardTemplateTypeId(): Promise<string | null> {
+  const standard = await billTemplateFamilyRepository.findDefault(db);
+  return standard?.billTemplateFamilyId ?? null;
+}
+
 // bm77 — the type list: every type, the default first, with its derived
-// status and the settings version new invoices of that type use.
+// status, the settings version new invoices of that type use, and (bm82) the
+// number of BANs bound to it.
 export async function listTemplateTypes(): Promise<TemplateTypeListRow[]> {
-  const [types, activeByType] = await Promise.all([
+  const [types, activeByType, boundBans] = await Promise.all([
     billTemplateFamilyRepository.listAll(db),
     billTemplateVersionRepository.listActiveSettingsByFamily(db),
+    countBoundBansByType(db),
   ]);
   return types.map((t) => {
     const active = activeByType.get(t.billTemplateFamilyId) ?? null;
@@ -283,6 +293,7 @@ export async function listTemplateTypes(): Promise<TemplateTypeListRow[]> {
       activeVersionNo: active?.versionNo ?? null,
       activeSince: active?.activatedDatetime ?? null,
       retiredAt: t.retiredDatetime,
+      boundBanCount: boundBans.get(t.billTemplateFamilyId) ?? 0,
     };
   });
 }

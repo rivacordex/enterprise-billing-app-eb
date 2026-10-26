@@ -135,6 +135,13 @@ const MATRIX: MatrixRow[] = [
     kind: "route",
   },
   {
+    // bm81 — export a version pair (READ; EDIT only shows a DRAFT pair).
+    surface: "GET …/invoice-template/versions/[versionId]/export",
+    file: "app/(app)/administration/invoice-settings/invoice-template/versions/[versionId]/export/route.ts",
+    level: "READ",
+    kind: "route",
+  },
+  {
     surface: "live preview (sample, or a bill with billrun_view)",
     file: "actions/billing/invoice-settings/preview-invoice-template.action.ts",
     level: "READ",
@@ -496,7 +503,6 @@ describe("invoice-settings authz matrix — a READ user's mutation is FORBIDDEN 
   function layoutForm(): FormData {
     const form = new FormData();
     form.set("familyId", "BTF00000002");
-    form.set("expectedDraft", "none");
     form.set(
       "file",
       new File([new Uint8Array([0x50, 0x4b, 0x05, 0x06])], "layout.zip", {

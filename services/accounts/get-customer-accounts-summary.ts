@@ -15,13 +15,12 @@ import { billingAccountRepository } from "@/db/repositories/accounts/billing-acc
 import { financialAccountRepository } from "@/db/repositories/accounts/financial-account.repository";
 import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import { systemConfigRepository } from "@/db/repositories/system-config.repository";
-import { logger } from "@/lib/logger";
 import { getFinancialAccountDetail } from "@/services/accounts/get-financial-account-detail";
 import { listTransactionDocuments } from "@/services/accounts/list-transaction-documents";
 import { sum } from "@/services/accounts/money";
 import {
-  banTemplateLabel,
-  resolveCurrentTemplateLabel,
+  resolveBanTemplateLabels,
+  templateLabelFor,
 } from "@/services/accounts/resolve-ban-template-label";
 import { resolveTerm } from "@/services/accounts/term-resolution";
 import type {
@@ -96,10 +95,7 @@ export async function getCustomerAccountsSummary(
   ]);
   if (fas.length === 0) return { kind: "notOnboarded" };
 
-  const [pageSize, currentLabel] = await Promise.all([
-    resolveDocumentsPageSize(),
-    resolveCurrentTemplateLabel(db),
-  ]);
+  const pageSize = await resolveDocumentsPageSize();
 
   const sorted = [...fas].sort((a, b) =>
     a.financialAccountId.localeCompare(b.financialAccountId),
@@ -130,9 +126,15 @@ export async function getCustomerAccountsSummary(
   const cycleIds = [
     ...new Set(perFa.flatMap((f) => f.bans.map((b) => b.refBillCycleId))),
   ];
-  const cycleRows = await Promise.all(
-    cycleIds.map((id) => billCycleRepository.findById(db, id)),
-  );
+  // The template labels and the bill cycles are independent reads: one round
+  // of both.
+  const [labels, cycleRows] = await Promise.all([
+    resolveBanTemplateLabels(
+      db,
+      perFa.flatMap((f) => f.bans.map((b) => b.refBillTemplateFamilyId)),
+    ),
+    Promise.all(cycleIds.map((id) => billCycleRepository.findById(db, id))),
+  ]);
   const cycles = new Map<string, BillCycle>();
   for (const cycle of cycleRows) {
     if (cycle !== null) cycles.set(cycle.billCycleId, cycle);
@@ -162,13 +164,6 @@ export async function getCustomerAccountsSummary(
                 `bill cycle ${ban.refBillCycleId} not found for ${ban.billingAccountId}`,
               );
             }
-            if (ban.refBillTemplateVersionId !== null) {
-              // Unreachable in v1 (cm18/cm21 reject it); never resolved here.
-              logger.warn("Unsupported BAN invoice template reference.", {
-                billingAccountId: ban.billingAccountId,
-                refBillTemplateVersionId: ban.refBillTemplateVersionId,
-              });
-            }
             return {
               billingAccountId: ban.billingAccountId,
               name: ban.name,
@@ -181,9 +176,9 @@ export async function getCustomerAccountsSummary(
               ),
               receivableBalance:
                 receivables.get(ban.billingAccountId) ?? "0.00",
-              templateLabel: banTemplateLabel(
-                ban.refBillTemplateVersionId,
-                currentLabel,
+              templateLabel: templateLabelFor(
+                labels,
+                ban.refBillTemplateFamilyId,
               ),
             };
           }),

@@ -264,7 +264,7 @@ _**Planned.** The Customer Management part is in `custmgmt-update-overview.md`; 
 2. **One validator.** `assertBindableTemplate` is defined once in `services/accounts/assert-bindable-template.ts`, and called only by `onboard-customer-accounts.ts` (always `null`) and `set-billing-account-template.ts`.
 3. **Lock inside the caller's transaction.** `assertBindableTemplate(tx, typeId)` takes the caller's `tx` and calls Billing's `lockTemplateType(tx, typeId, 'share')` **before** reading usability, so the check and the BAN update commit together. It never opens its own transaction (Inv. #20).
 4. **Read Billing through repositories only.** `services/accounts/**` may import `db/repositories/billing/bill-template-family.ts` and `bill-template-version.ts` (reads plus `lockTemplateType`). No file under `services/accounts/**`, `app/(app)/customers/**` or `components/customers/**` imports `services/billing/**` or `actions/billing/**` (Inv. #11, #22).
-5. **The label is computed, never stored.** `resolveBanTemplateLabel` runs per request; no column, cache or client state holds a label (Inv. #21).
+5. **The label is computed, never stored.** `resolveBanTemplateLabels` runs per request (one read per distinct type); no column, cache or client state holds a label (Inv. #21).
 6. **Never touch bill-run stamps.** Binding writes only `billing_account`. It reads and writes nothing in `bill_run_account` or `customer_bill`.
 
 ### TypeScript conventions (adds to §2)
@@ -283,6 +283,8 @@ _**Planned.** The Customer Management part is in `custmgmt-update-overview.md`; 
 ### Styling (adds to §4)
 
 1. **`TemplateTypeSelect`** uses the shadcn/ui `Select`, with options from `listBindableTemplateTypes()`, labelled **"Invoice template type"**. It shows one row per open BAN, inside `BillingAccountPanel`.
+   - **When the BAN's current type isn't in the list** (a `NOT_USABLE` label, reachable only by an SQL bypass, because retire moves every BAN): the select adds no option for it. It shows the placeholder **"Choose a type"**, and the label above it carries the warning (rule 4).
+   - **What the user can do:** every Standard and usable-type option stays available, so the BAN can be rebound. Save stays disabled until a choice is made (rule 2; cm23 D6).
 2. **Save** is a secondary button labelled **"Save"**, enabled only when the selection differs from the BAN's current type and the viewer holds `accounts_transactions : EDIT`. One save runs at a time, as for the delivered reset.
 3. **Panel copy**, defined once in `components/customers/billing-account-messages.ts`:
    - **Caption:** "Changes apply from the next bill run start or rerun."
@@ -311,7 +313,7 @@ services/accounts/
   set-billing-account-template.ts    # CHANGED: typeId | null
   onboard-customer-accounts.ts       # CHANGED: type reference field, always null
   list-bindable-template-types.ts    # NEW: Standard first, then usable types (Billing repository read)
-  resolve-ban-template-label.ts      # CHANGED: type label
+  resolve-ban-template-label.ts      # CHANGED (built cm23): exports resolveBanTemplateLabels (+ templateLabelFor map lookup)
   list-customer-billing-accounts.ts  get-customer-accounts-summary.ts   # CHANGED: type id + label
 actions/accounts/set-billing-account-template.ts                       # CHANGED: schema only
 validation/accounts/
@@ -319,11 +321,11 @@ validation/accounts/
 components/customers/
   billing-account-panel.tsx          # CHANGED: TemplateTypeSelect + Save replaces Reset
   template-type-select.tsx           # NEW
-  billing-account-messages.ts        # NEW: panel and onboarding copy
+  billing-account-messages.ts        # NEW (built cm23, as planned): panel and onboarding copy
   billing-account-card.tsx           # CHANGED: TemplateLabel shows the type label
   onboard-accounts-wizard.tsx        # CHANGED: field wording
 db/schema/billing/accounts.ts        # CHANGED: column swap
-db/migrations/<next>_billing_account_template_type.sql                 # NEW
+db/migrations/0054_billing_account_template_type.sql                   # NEW (built cm23)
 ```
 
 ### Permission names & per-page permission map (adds to §8)
@@ -353,7 +355,7 @@ The authz matrix gains: a `customers : EDIT`-only user's bind is refused server-
     - `CONFLICT`, `BAN_CLOSED`, `BAN_NOT_FOUND` and unchanged-value no-op behave as before.
     - The CM half of Billing's parallel test (billing guardrail 76): a bind racing a retire commits first and is switched, or fails.
 13. **Panel and labels.**
-    - The select lists Standard first, then usable types; retired and not-yet-usable types are absent.
+    - The select lists Standard first, then usable types; retired and not-yet-usable types are absent. A BAN whose current type isn't usable shows the "Choose a type" placeholder with Save disabled until a choice is made.
     - Save is disabled when unchanged and for a `customers : EDIT`-only user.
     - The retired-mid-edit save shows the agreed message and reloads.
     - Labels render "Standard (default) · vN" and "{type} · vN", and "· not usable" with the warning style.

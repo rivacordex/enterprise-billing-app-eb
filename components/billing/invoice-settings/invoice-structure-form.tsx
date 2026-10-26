@@ -29,12 +29,18 @@
 // needs objects, so a line is `{ text }` in the form and a plain string in the
 // structure (`toStructure` / `toFormValues`), and the schema's errors are
 // mapped back onto the lines.
+//
+// bm80 (ui-context §10e) — a save refused with `DRAFT_LAYOUT_REPLACED` (an
+// upload overwrote the layout and bumped the settings token) adopts the
+// returned token WITHOUT `reset()` or `router.refresh()`, so the inputs keep
+// the unsaved values; a Warning alert above the settings says so, and the
+// preview re-renders with the new layout. The next successful save clears it.
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFieldArray, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Info, Lock, Plus, X } from "lucide-react";
+import { AlertTriangle, Info, Lock, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import type { FieldErrors, Resolver } from "react-hook-form";
 
@@ -62,6 +68,7 @@ import {
 import { DRAFT_CONFLICT_MESSAGE } from "@/components/billing/invoice-settings/draft-messages";
 import { LayoutProblemsAlert } from "@/components/billing/invoice-settings/layout-problems-alert";
 import {
+  LAYOUT_REPLACED_SAVE_MESSAGE,
   TEMPLATE_TYPE_MESSAGES,
   layoutChangeLine,
 } from "@/components/billing/invoice-settings/template-type-messages";
@@ -293,6 +300,8 @@ export function InvoiceStructureForm({
   const router = useRouter();
   // bm79 — the compliance re-run's problems from the last refused Activate.
   const [layoutProblems, setLayoutProblems] = useState<LayoutProblem[]>([]);
+  // bm80 — the last save found the layout replaced by an upload.
+  const [layoutReplaced, setLayoutReplaced] = useState(false);
   const {
     control,
     register,
@@ -362,6 +371,7 @@ export function InvoiceStructureForm({
       // this form held; a newer server state (discarded, replaced, activated)
       // drops them.
       setLayoutProblems([]);
+      setLayoutReplaced(false);
     }
   }
   useEffect(() => {
@@ -513,12 +523,19 @@ export function InvoiceStructureForm({
         setDraftToken(result.draftToken);
         setDraftId(result.versionId);
         setDraftNo(result.versionNo);
+        setLayoutReplaced(false);
         toast.success(
           `Draft v${result.versionNo} saved — not used on invoices`,
         );
         return;
       }
-      if (result.code === "DRAFT_CONFLICT") {
+      if (result.code === "DRAFT_LAYOUT_REPLACED") {
+        // No `reset` and no `router.refresh()`: the values stay; the fresh
+        // token makes "review and save again" save over the replaced pair.
+        setDraftToken(result.draftToken);
+        setLayoutReplaced(true);
+        setRetryToken((n) => n + 1);
+      } else if (result.code === "DRAFT_CONFLICT") {
         toast.warning(ACTIVATE_MESSAGES.DRAFT_CONFLICT, {
           action: { label: "Reload", onClick: () => router.refresh() },
         });
@@ -573,6 +590,15 @@ export function InvoiceStructureForm({
   return (
     <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
       <div className="space-y-6">
+        {layoutReplaced ? (
+          <p
+            role="alert"
+            className="flex items-start gap-2 rounded-sm bg-[color:var(--color-warning-50)] px-3 py-2 text-body-sm text-[color:var(--color-warning-700)]"
+          >
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
+            {LAYOUT_REPLACED_SAVE_MESSAGE}
+          </p>
+        ) : null}
         <fieldset className="space-y-3 rounded-md border border-border bg-card p-4">
           <legend className="px-1 text-overline font-semibold tracking-wider text-muted-foreground uppercase">
             Sections

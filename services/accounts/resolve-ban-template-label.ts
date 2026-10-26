@@ -1,49 +1,103 @@
-// cm20 (binding plan D11, custmgmt Inv. #18) — the customer-screen label for a
-// BAN's invoice template reference. Live lookup, never cached or persisted,
-// never presented as what a future bill will use. Mirrors the resolver's
-// "current" rule (findActive ?? findDefault, kind generated) but does NOT call
-// resolveTemplate/resolveVersionsForPosting.
+// cm23 (custmgmt Inv. #21, #22; code-standards §10 General rules 4–5) — the
+// customer-screen label for a BAN's invoice template type: the type and the
+// version the next bill run will capture. Computed live per request, never
+// cached or stored. Reads Billing's repositories only; never calls
+// resolveTemplate, resolveVersionsForPosting or resolveCurrentVersionsForFamily.
+//
+//   NULL (Standard)  → STANDARD    "Standard (default) · v{N}" (findActive ?? findDefault)
+//   usable type      → TYPE        "{name} · v{N}" (its ACTIVE settings version)
+//   retired, or no ACTIVE settings (SQL bypass only)
+//                    → NOT_USABLE  "{name} · not usable"
 
 import type { Database } from "@/db/client";
+import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
+import { STANDARD_TYPE_NAME } from "@/types/accounts";
+import type { BanTemplateLabel } from "@/types/accounts";
 
-export const TEMPLATE_REFERENCE_NOT_SUPPORTED =
-  "Template reference not supported yet";
-
-// "INVTPL-STD-A4 v1"-style text: the layout code of the current generated
-// version's layout, plus the generated version's number. The seeded catalog
-// always has a default generated version (bm50), so the fallbacks below only
-// guard a damaged catalog — the tab still renders.
-export async function resolveCurrentTemplateLabel(
+// One read per distinct value: callers pass every BAN's type id (duplicates
+// and nulls included) once per request and look each BAN up in the map.
+export async function resolveBanTemplateLabels(
   db: Database,
-): Promise<string> {
-  const current =
-    (await billTemplateVersionRepository.findActive(db, {
-      kind: "generated",
-    })) ??
-    (await billTemplateVersionRepository.findDefault(db, {
-      kind: "generated",
-    }));
-  if (current === null) return "unavailable";
-
-  const layout =
-    current.refLayoutVersionId === null
-      ? null
-      : await billTemplateVersionRepository.findById(
-          db,
-          current.refLayoutVersionId,
-        );
-  const name = layout?.layoutCode ?? current.billTemplateVersionId;
-  return `${name} v${current.versionNo}`;
+  typeIds: (string | null)[],
+): Promise<Map<string | null, BanTemplateLabel>> {
+  const entries = await Promise.all(
+    [...new Set(typeIds)].map(
+      async (typeId): Promise<[string | null, BanTemplateLabel]> => [
+        typeId,
+        typeId === null ? await standardLabel(db) : await typeLabel(db, typeId),
+      ],
+    ),
+  );
+  return new Map(entries);
 }
 
-// v1 BANs are always NULL (cm18/cm21 reject anything else). A non-NULL value
-// is never resolved here (Phase 3); the caller logs a warning.
-export function banTemplateLabel(
-  refBillTemplateVersionId: string | null,
-  current: string,
-): string {
-  if (refBillTemplateVersionId !== null)
-    return TEMPLATE_REFERENCE_NOT_SUPPORTED;
-  return `Follows active template (currently: ${current}), as of now`;
+// The label of one BAN from the map `resolveBanTemplateLabels` built over the
+// same request's BANs.
+export function templateLabelFor(
+  labels: Map<string | null, BanTemplateLabel>,
+  typeId: string | null,
+): BanTemplateLabel {
+  const label = labels.get(typeId);
+  if (label === undefined) throw new Error(`no template label for ${typeId}`);
+  return label;
+}
+
+// Standard is found by lookup (`findDefault`), never by id (General rule 1).
+// A missing Standard row or version (impossible after 0046) still renders.
+async function standardLabel(db: Database): Promise<BanTemplateLabel> {
+  const standard = await billTemplateFamilyRepository.findDefault(db);
+  const version =
+    standard === null
+      ? null
+      : ((await billTemplateVersionRepository.findActive(db, {
+          kind: "generated",
+          familyId: standard.billTemplateFamilyId,
+        })) ??
+        (await billTemplateVersionRepository.findDefault(db, {
+          kind: "generated",
+          familyId: standard.billTemplateFamilyId,
+        })));
+  if (version === null) {
+    return {
+      kind: "STANDARD",
+      text: STANDARD_TYPE_NAME,
+      name: STANDARD_TYPE_NAME,
+      versionNo: null,
+    };
+  }
+  return {
+    kind: "STANDARD",
+    text: `${STANDARD_TYPE_NAME} · v${version.versionNo}`,
+    name: STANDARD_TYPE_NAME,
+    versionNo: version.versionNo,
+  };
+}
+
+async function typeLabel(
+  db: Database,
+  typeId: string,
+): Promise<BanTemplateLabel> {
+  const [type, active] = await Promise.all([
+    billTemplateFamilyRepository.findById(db, typeId),
+    billTemplateVersionRepository.findActive(db, {
+      kind: "generated",
+      familyId: typeId,
+    }),
+  ]);
+  const name = type?.name ?? typeId;
+  if (type === null || type.retiredDatetime !== null || active === null) {
+    return {
+      kind: "NOT_USABLE",
+      text: `${name} · not usable`,
+      name,
+      versionNo: null,
+    };
+  }
+  return {
+    kind: "TYPE",
+    text: `${name} · v${active.versionNo}`,
+    name,
+    versionNo: active.versionNo,
+  };
 }

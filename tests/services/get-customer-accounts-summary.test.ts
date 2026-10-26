@@ -31,7 +31,7 @@ vi.mock("@/services/accounts/resolve-ban-template-label", async () => {
   const actual = await vi.importActual<typeof LabelModule>(
     "@/services/accounts/resolve-ban-template-label",
   );
-  return { ...actual, resolveCurrentTemplateLabel: vi.fn() };
+  return { ...actual, resolveBanTemplateLabels: vi.fn() };
 });
 vi.mock("@/lib/logger", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -50,9 +50,10 @@ import {
 } from "@/services/accounts/get-customer-accounts-summary";
 import { getFinancialAccountDetail } from "@/services/accounts/get-financial-account-detail";
 import { listTransactionDocuments } from "@/services/accounts/list-transaction-documents";
-import { resolveCurrentTemplateLabel } from "@/services/accounts/resolve-ban-template-label";
+import { resolveBanTemplateLabels } from "@/services/accounts/resolve-ban-template-label";
 import type * as LabelModule from "@/services/accounts/resolve-ban-template-label";
 import type {
+  BanTemplateLabel,
   BillCycle,
   BillingAccount,
   FinancialAccount,
@@ -70,7 +71,20 @@ const mockReceivables = vi.mocked(
 const mockConfig = vi.mocked(systemConfigRepository.findActiveValue);
 const mockFaDetail = vi.mocked(getFinancialAccountDetail);
 const mockListDocs = vi.mocked(listTransactionDocuments);
-const mockCurrentLabel = vi.mocked(resolveCurrentTemplateLabel);
+const mockLabels = vi.mocked(resolveBanTemplateLabels);
+
+const STANDARD_LABEL: BanTemplateLabel = {
+  kind: "STANDARD",
+  text: "Standard (default) · v1",
+  name: "Standard (default)",
+  versionNo: 1,
+};
+const WHOLESALE_LABEL: BanTemplateLabel = {
+  kind: "TYPE",
+  text: "Wholesale · v2",
+  name: "Wholesale",
+  versionNo: 2,
+};
 
 const FA = {
   financialAccountId: "FIN00000001",
@@ -86,7 +100,7 @@ function ban(overrides: Partial<BillingAccount>): BillingAccount {
     currency: "MYR",
     refBillCycleId: "BCY00000001",
     paymentDueDaysOverride: null,
-    refBillTemplateVersionId: null,
+    refBillTemplateFamilyId: null,
     ...overrides,
   } as BillingAccount;
 }
@@ -115,7 +129,12 @@ beforeEach(() => {
     depositBalance: "0.00",
   } as Awaited<ReturnType<typeof getFinancialAccountDetail>>);
   mockListDocs.mockResolvedValue({ rows: [DOC], total: 1 });
-  mockCurrentLabel.mockResolvedValue("INVTPL-STD-A4 v1");
+  mockLabels.mockResolvedValue(
+    new Map<string | null, BanTemplateLabel>([
+      [null, STANDARD_LABEL],
+      ["BTF00000002", WHOLESALE_LABEL],
+    ]),
+  );
 });
 
 describe("getCustomerAccountsSummary", () => {
@@ -155,8 +174,7 @@ describe("getCustomerAccountsSummary", () => {
               billCycleName: "Monthly – Day 1",
               paymentTermDays: 30,
               receivableBalance: "500.00",
-              templateLabel:
-                "Follows active template (currently: INVTPL-STD-A4 v1), as of now",
+              templateLabel: STANDARD_LABEL,
             },
           ],
           documents: { rows: [DOC], total: 21, page: 2, pageSize: 20 },
@@ -176,7 +194,7 @@ describe("getCustomerAccountsSummary", () => {
       },
       20,
     );
-    expect(mockCurrentLabel).toHaveBeenCalledTimes(1);
+    expect(mockLabels).toHaveBeenCalledTimes(1);
   });
 
   it("an out-of-range page is clamped to the last page", async () => {
@@ -306,18 +324,27 @@ describe("getCustomerAccountsSummary", () => {
     expect(mockReceivables).toHaveBeenCalledTimes(1);
   });
 
-  it("a non-NULL template reference → 'not supported' label and a warning, never resolved", async () => {
+  it("cm23 — a structured label on every BAN from one resolve over all BAN types, no warning", async () => {
     mockFindBans.mockResolvedValue([
-      ban({ refBillTemplateVersionId: "BTV00000002" }),
+      ban({ billingAccountId: "BAN00000001" }),
+      ban({
+        billingAccountId: "BAN00000002",
+        refBillTemplateFamilyId: "BTF00000002",
+      }),
     ]);
 
     const result = await getCustomerAccountsSummary("PTRL00000001", 1);
 
     if (result.kind !== "onboarded") throw new Error("expected onboarded");
-    expect(result.financialAccounts[0]!.bans[0]!.templateLabel).toBe(
-      "Template reference not supported yet",
-    );
-    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(
+      result.financialAccounts[0]!.bans.map((b) => b.templateLabel),
+    ).toEqual([STANDARD_LABEL, WHOLESALE_LABEL]);
+    expect(mockLabels).toHaveBeenCalledTimes(1);
+    expect(mockLabels).toHaveBeenCalledWith(expect.anything(), [
+      null,
+      "BTF00000002",
+    ]);
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });
 

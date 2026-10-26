@@ -9,6 +9,7 @@ import { render } from "@testing-library/react";
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/read/invoice-template-settings", () => ({
   listTemplateTypes: vi.fn(),
+  getStandardTemplateTypeId: vi.fn(),
 }));
 vi.mock("@/services/system-config/app-config-read.service", () => ({
   getAppLocale: vi.fn(),
@@ -29,7 +30,10 @@ vi.mock("@/components/billing/invoice-settings/invoice-settings-tabs", () => ({
 
 import InvoiceTemplateTypesPage from "@/app/(app)/administration/invoice-settings/invoice-template/page";
 import { requirePermission } from "@/auth/guard";
-import { listTemplateTypes } from "@/services/billing/read/invoice-template-settings";
+import {
+  getStandardTemplateTypeId,
+  listTemplateTypes,
+} from "@/services/billing/read/invoice-template-settings";
 import {
   getAppLocale,
   getAppTimezone,
@@ -47,6 +51,7 @@ const STANDARD: TemplateTypeListRow = {
   activeVersionNo: 1,
   activeSince: new Date("2026-10-08T00:00:00Z"),
   retiredAt: null,
+  boundBanCount: 4,
 };
 const WHOLESALE: TemplateTypeListRow = {
   billTemplateFamilyId: "BTF00000002",
@@ -56,6 +61,7 @@ const WHOLESALE: TemplateTypeListRow = {
   activeVersionNo: null,
   activeSince: null,
   retiredAt: null,
+  boundBanCount: 0,
 };
 
 function grant(level: "READ" | "EDIT") {
@@ -106,6 +112,31 @@ describe("InvoiceTemplateTypesPage (bm77)", () => {
     expect(row.textContent).toContain("—");
   });
 
+  it("shows a right-aligned Bound BANs column after Status, with each type's count (bm82)", async () => {
+    const { getByRole, getAllByRole } = render(
+      await InvoiceTemplateTypesPage(props()),
+    );
+    const headers = getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toEqual([
+      "Name",
+      "Status",
+      "Bound BANs",
+      "Active version",
+      "Active since",
+    ]);
+    const header = getByRole("columnheader", { name: "Bound BANs" });
+    expect(header.className).toContain("text-right");
+
+    const cellOf = (name: string): HTMLElement => {
+      const row = getByRole("link", { name }).closest("tr")!;
+      return row.querySelectorAll("td")[2] as HTMLElement;
+    };
+    expect(cellOf("Standard").textContent).toBe("4");
+    expect(cellOf("Wholesale").textContent).toBe("0");
+    expect(cellOf("Standard").className).toContain("text-right");
+    expect(cellOf("Standard").className).toContain("tabular-nums");
+  });
+
   it("an EDIT user sees 'New invoice template type'; a READ user does not", async () => {
     const edit = render(await InvoiceTemplateTypesPage(props()));
     expect(
@@ -145,6 +176,7 @@ describe("InvoiceTemplateTypesPage (bm77)", () => {
   });
 
   it("an old ?tab=history&version=BTV… bookmark redirects to Standard's detail page with the same query", async () => {
+    vi.mocked(getStandardTemplateTypeId).mockResolvedValue("BTF00000001");
     await expect(
       InvoiceTemplateTypesPage(
         props({ tab: "history", version: "BTV00000002" }),
@@ -154,5 +186,7 @@ describe("InvoiceTemplateTypesPage (bm77)", () => {
         "/administration/invoice-settings/invoice-template/BTF00000001?tab=history&version=BTV00000002",
       ),
     });
+    // The redirect needs only Standard's id, not the list's Bound BANs scan.
+    expect(mockListTemplateTypes).not.toHaveBeenCalled();
   });
 });

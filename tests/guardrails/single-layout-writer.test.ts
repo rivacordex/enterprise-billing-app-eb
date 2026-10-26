@@ -10,7 +10,8 @@ import { stripComments } from "@/tests/helpers/strip-code-comments";
 // ONE writer of layout DRAFTs: `services/billing/invoice-template/
 // install-layout-package.ts`. A DB-free static-source scan of every production
 // file (comments stripped, so a comment that merely NAMES a call is ignored):
-//   1. calls to `insertLayoutDraft(` / `repointDraftLayout(`;
+//   1. calls to `insertLayoutDraft(` / `overwriteLayoutDraft(` (bm80) /
+//      `repointDraftLayout(`;
 //   2. any SQL inserting a `'layout'` row into `bill_template_version` (raw SQL,
 //      or a Drizzle `.insert(billTemplateVersion)` with `kind: "layout"`);
 //   3. any `putObject(` in a file that names a `layouts/` blob path;
@@ -39,7 +40,8 @@ const EXCLUDED_PREFIXES = ["db/repositories/", "db/migrations/", "db/seeds/"];
 const WRITER_FILE =
   "services/billing/invoice-template/install-layout-package.ts";
 
-const LAYOUT_DRAFT_CALL = /\b(?:insertLayoutDraft|repointDraftLayout)\s*\(/;
+const LAYOUT_DRAFT_CALL =
+  /\b(?:insertLayoutDraft|overwriteLayoutDraft|repointDraftLayout)\s*\(/;
 const SQL_LAYOUT_INSERT =
   /INSERT\s+INTO\s+(?:"?billing"?\s*\.\s*)?"?bill_template_version"?[\s\S]{0,1000}?'layout'/i;
 const DRIZZLE_LAYOUT_INSERT =

@@ -941,6 +941,66 @@ describe("InvoiceStructureForm — Save draft (bm57)", () => {
   });
 });
 
+describe("InvoiceStructureForm — layout replaced by an upload (bm80)", () => {
+  const FRESH = "2026-10-25T04:05:06.654321Z";
+  const MESSAGE =
+    "The layout was replaced by an upload. Your unsaved changes are kept below; review and save again.";
+
+  async function typeAndSave(text: string): Promise<void> {
+    fireEvent.change(screen.getByLabelText("Line 1"), {
+      target: { value: text },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+  }
+
+  it("shows the Warning alert, keeps the typed values, adopts the returned token without a refresh, and re-runs the preview", async () => {
+    mockSave.mockResolvedValueOnce({
+      ok: false,
+      code: "DRAFT_LAYOUT_REPLACED",
+      draftToken: FRESH,
+    });
+    renderForm({
+      expectedDraftToken: TOKEN,
+      draftVersionId: "BTV00000004",
+      draftVersionNo: 2,
+    });
+    await flushDebounce();
+    const previewsBefore = mockPreview.mock.calls.length;
+
+    await typeAndSave("Unsaved manager wording");
+    expect(screen.getByRole("alert")).toHaveTextContent(MESSAGE);
+    expect(screen.getByLabelText("Line 1")).toHaveValue(
+      "Unsaved manager wording",
+    );
+    expect(refresh).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+    // `retryToken` bumped: the preview renders again with the new layout.
+    await flushDebounce();
+    expect(mockPreview.mock.calls.length).toBeGreaterThan(previewsBefore);
+
+    // "Review and save again" sends the returned token; success clears it.
+    mockSave.mockResolvedValueOnce({
+      ok: true,
+      versionId: "BTV00000004",
+      versionNo: 2,
+      draftToken: "2026-10-25T04:10:00.000001Z",
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(mockSave.mock.calls[1]?.[0]).toMatchObject({
+      expectedDraftToken: FRESH,
+      structure: {
+        footnote: ["Unsaved manager wording", ...SEEDED_FOOTNOTE.slice(1)],
+      },
+    });
+    expect(screen.queryByText(MESSAGE)).toBeNull();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
 describe("InvoiceStructureForm — read-only (READ user)", () => {
   it("renders sections as text, not inputs", () => {
     renderForm({
