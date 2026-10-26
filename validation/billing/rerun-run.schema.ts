@@ -33,3 +33,10 @@ export const rerunRunSchema = z.object({
 });
 
 export type RerunRunInput = z.infer<typeof rerunRunSchema>;
+
+// bm84 (D4) — the rerun confirm's template-type warning read: the rerun's own
+// scope fields, so the same BAN-id regex, 5,000 cap and empty-means-all default.
+export const listRerunTemplateChangesSchema = rerunRunSchema.pick({
+  billRunId: true,
+  accountIds: true,
+});

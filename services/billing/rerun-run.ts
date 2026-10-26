@@ -76,6 +76,22 @@ const RERUNNABLE_RUN_STATUSES: ReadonlySet<string> = new Set([
   "PROCESSING_FAILED",
 ]);
 
+// bm84 (D1) — the rerun's eligible set: every scoped account, minus EXCLUDED and posted,
+// intersected with the selection (empty ⇒ all). Shared with the rerun warning read so the
+// two can never disagree.
+export function selectRerunEligible<
+  T extends { billingAccountId: string; status: string },
+>(accounts: T[], postedIds: string[], accountIds: string[]): T[] {
+  const posted = new Set(postedIds);
+  const requested = new Set(accountIds);
+  return accounts.filter(
+    (a) =>
+      a.status !== "EXCLUDED" &&
+      !posted.has(a.billingAccountId) &&
+      (requested.size === 0 || requested.has(a.billingAccountId)),
+  );
+}
+
 // Internal-only signal thrown from inside `db.transaction` so an engine failure
 // rolls the whole rerun back (throwing is drizzle's rollback trigger) while the
 // outer call still returns a typed result instead of rejecting (bm03 pattern).
@@ -109,13 +125,10 @@ export async function rerunRun(
         billRunAccountRepository.listForRerun(tx, run.billRunId),
         customerBillRepository.listPostedAccountIds(tx, run.billRunId),
       ]);
-      const posted = new Set(postedIds);
-      const requested = new Set(params.accountIds);
-      const eligible = accounts.filter(
-        (a) =>
-          a.status !== "EXCLUDED" &&
-          !posted.has(a.billingAccountId) &&
-          (requested.size === 0 || requested.has(a.billingAccountId)),
+      const eligible = selectRerunEligible(
+        accounts,
+        postedIds,
+        params.accountIds,
       );
       if (eligible.length === 0) {
         return { ok: false, code: "NO_ACCOUNTS_SELECTED" } as const;

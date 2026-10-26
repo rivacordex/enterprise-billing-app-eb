@@ -287,13 +287,20 @@ export const billRunAccountRepository = {
     tx: Database,
     billRunId: string,
   ): Promise<
-    { billingAccountId: string; status: AccountStatus; attemptCount: number }[]
+    {
+      billingAccountId: string;
+      status: AccountStatus;
+      attemptCount: number;
+      // bm84 — the run-start template stamp (the rerun warning compares it).
+      refBillTemplateFamilyId: string | null;
+    }[]
   > {
     const rows = await tx
       .select({
         billingAccountId: billRunAccount.refBillingAccountId,
         status: billRunAccount.status,
         attemptCount: billRunAccount.attemptCount,
+        refBillTemplateFamilyId: billRunAccount.refBillTemplateFamilyId,
       })
       .from(billRunAccount)
       .where(eq(billRunAccount.refBillRunId, billRunId))
