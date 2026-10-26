@@ -1,13 +1,23 @@
-import { sql } from "drizzle-orm";
+import { asc, count, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import type { Database } from "@/db/client";
-import { insertAuditEvent } from "@/db/repositories/audit.repository";
+import {
+  insertAuditEvent,
+  insertAuditEvents,
+} from "@/db/repositories/audit.repository";
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
-import type {
-  BillTemplateFamily,
-  TemplateTypeErrorCode,
-  TemplateTypeStatus,
+import { billTemplateVersionRepository } from "@/db/repositories/billing/bill-template-version";
+import { billingAccount } from "@/db/schema/billing/accounts";
+import { STANDARD_TYPE_NAME } from "@/types/accounts";
+import {
+  RETIRE_AUDIT_CHUNK_SIZE,
+  RETIRE_BAN_PAGE_SIZE,
+  type BillTemplateFamily,
+  type BoundBanRow,
+  type RetireTemplateTypeResult,
+  type TemplateTypeErrorCode,
+  type TemplateTypeStatus,
 } from "@/types/billing";
 import { templateTypeNameSchema } from "@/validation/billing/template-type.schema";
 
@@ -86,7 +96,10 @@ export type CreateTemplateTypeResult =
   | { ok: true; typeId: string; code: string; layoutCode: string }
   | {
       ok: false;
-      code: TemplateTypeErrorCode;
+      code: Extract<
+        TemplateTypeErrorCode,
+        "TEMPLATE_TYPE_NAME_TAKEN" | "TEMPLATE_TYPE_NAME_INVALID"
+      >;
       fieldErrors?: Record<string, string[]>;
     };
 
@@ -178,4 +191,191 @@ export async function countBoundBansByType(
     if (r.type_id !== null) counts.set(r.type_id, r.n);
   }
   return counts;
+}
+
+type RetireFailureCode = Extract<
+  RetireTemplateTypeResult,
+  { ok: false }
+>["code"];
+
+// Thrown inside the transaction to roll it back, then mapped to a result
+// outside (a returned value would COMMIT) — the ActivationRollback pattern.
+class RetireRollback extends Error {
+  constructor(readonly code: RetireFailureCode) {
+    super(code);
+  }
+}
+
+// bm83 (Inv #66, #67) — retire a type and move every BAN bound to it to one usable target,
+// in ONE transaction. The only Billing writer of billing_account.ref_bill_template_family_id
+// (CM guardrail 11; billing guardrail 79). Never touches bill_template_version.
+//
+//   1. lock both type rows in ascending id order (General rule 7): the retired
+//      type FOR UPDATE, a non-NULL target FOR SHARE; Standard (NULL) takes none
+//   2. re-check under the locks → VALIDATION_ERROR, DEFAULT_TYPE_NOT_RETIRABLE,
+//      TEMPLATE_TYPE_RETIRED, RETIRE_NAME_MISMATCH, RETIRE_TARGET_NOT_USABLE
+//   3. one set-based switch of every bound BAN, every state (Standard → NULL,
+//      General rule 8), bumping last_modified so an open BAN panel gets CONFLICT
+//   4. one BILLING_ACCOUNT_TEMPLATE_CHANGED per moved BAN, in chunks of 500
+//   5. zero BANs left on the type, or the whole transaction rolls back
+//   6. retireType (the one update the type guard allows)
+//   7. one INVOICE_TEMPLATE_TYPE_RETIRED
+export async function retireTemplateType(
+  input: { typeId: string; targetTypeId: string | null; confirmName: string },
+  actorId: string,
+): Promise<RetireTemplateTypeResult> {
+  const { typeId, targetTypeId } = input;
+  try {
+    return await db.transaction(
+      async (tx): Promise<RetireTemplateTypeResult> => {
+        // 1. Ascending id order, shared with the bind gate and every retire.
+        const ids = [
+          ...new Set(
+            [typeId, targetTypeId].filter((id): id is string => id !== null),
+          ),
+        ].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+        const locked = new Map<string, BillTemplateFamily | null>();
+        for (const id of ids) {
+          locked.set(
+            id,
+            await billTemplateFamilyRepository.lockTemplateType(
+              tx,
+              id,
+              id === typeId ? "update" : "share",
+            ),
+          );
+        }
+
+        // 2. The re-checks, in D3's order.
+        const type = locked.get(typeId) ?? null;
+        if (!type) throw new RetireRollback("VALIDATION_ERROR");
+        if (type.isDefault) {
+          throw new RetireRollback("DEFAULT_TYPE_NOT_RETIRABLE");
+        }
+        if (type.retiredDatetime !== null) {
+          throw new RetireRollback("TEMPLATE_TYPE_RETIRED");
+        }
+        if (input.confirmName.trim() !== type.name) {
+          throw new RetireRollback("RETIRE_NAME_MISMATCH");
+        }
+        const target =
+          targetTypeId === null ? null : (locked.get(targetTypeId) ?? null);
+        if (
+          targetTypeId !== null &&
+          (targetTypeId === typeId || !(await isUsable(tx, target)))
+        ) {
+          throw new RetireRollback("RETIRE_TARGET_NOT_USABLE");
+        }
+        const targetTypeName = target?.name ?? STANDARD_TYPE_NAME;
+
+        // 3. The switch: one statement, closed BANs included.
+        const moved = await tx
+          .update(billingAccount)
+          .set({
+            refBillTemplateFamilyId: targetTypeId,
+            lastModified: sql`now()`,
+            lastEditedBy: actorId,
+          })
+          .where(eq(billingAccount.refBillTemplateFamilyId, typeId))
+          .returning({ billingAccountId: billingAccount.billingAccountId });
+
+        // 4. Each move audited as a bind is, plus the reason (CM Data rule 4).
+        for (let i = 0; i < moved.length; i += RETIRE_AUDIT_CHUNK_SIZE) {
+          await insertAuditEvents(
+            tx,
+            moved.slice(i, i + RETIRE_AUDIT_CHUNK_SIZE).map((ban) => ({
+              eventType: "BILLING_ACCOUNT_TEMPLATE_CHANGED",
+              actorUserId: actorId,
+              targetEntity: "BILLING_ACCOUNT",
+              targetId: ban.billingAccountId,
+              beforeData: {
+                refBillTemplateFamilyId: typeId,
+                typeName: type.name,
+              },
+              afterData: {
+                refBillTemplateFamilyId: targetTypeId,
+                typeName: targetTypeName,
+                reason: "TEMPLATE_TYPE_RETIRED",
+              },
+            })),
+          );
+        }
+
+        // 5. Inv #66 — no BAN may be left on a retired type.
+        const [remaining] = await tx
+          .select({ n: count() })
+          .from(billingAccount)
+          .where(eq(billingAccount.refBillTemplateFamilyId, typeId));
+        if ((remaining?.n ?? 0) > 0) throw new Error("RETIRE_BANS_REMAIN");
+
+        // 6. One-way; the version rows are untouched (Inv #67).
+        const retired = await billTemplateFamilyRepository.retireType(
+          tx,
+          typeId,
+        );
+        if (!retired) throw new RetireRollback("TEMPLATE_TYPE_RETIRED");
+
+        // 7.
+        await insertAuditEvent(tx, {
+          eventType: "INVOICE_TEMPLATE_TYPE_RETIRED",
+          actorUserId: actorId,
+          targetEntity: "BILL_TEMPLATE_FAMILY",
+          targetId: typeId,
+          beforeData: {
+            name: type.name,
+            code: type.code,
+            retiredDatetime: null,
+          },
+          afterData: {
+            retiredDatetime: retired.retiredDatetime?.toISOString() ?? null,
+            targetTypeId,
+            targetTypeName,
+            movedBanCount: moved.length,
+          },
+        });
+
+        return { ok: true, movedBanCount: moved.length };
+      },
+    );
+  } catch (error) {
+    if (error instanceof RetireRollback) {
+      return { ok: false, code: error.code };
+    }
+    throw error;
+  }
+}
+
+// A retire target, read under its FOR SHARE lock: not Standard (which is NULL),
+// not retired, with an ACTIVE settings version — what the bind gate accepts.
+async function isUsable(
+  tx: Database,
+  target: BillTemplateFamily | null,
+): Promise<boolean> {
+  if (!target || target.isDefault || target.retiredDatetime !== null) {
+    return false;
+  }
+  const active = await billTemplateVersionRepository.findActive(tx, {
+    kind: "generated",
+    familyId: target.billTemplateFamilyId,
+  });
+  return active !== null;
+}
+
+// bm83 (D8) — the BANs bound to a type, by billing_account_id, for the retire dialog.
+export async function listBoundBans(
+  db: Database,
+  typeId: string,
+  page: number,
+): Promise<BoundBanRow[]> {
+  return db
+    .select({
+      billingAccountId: billingAccount.billingAccountId,
+      name: billingAccount.name,
+      state: billingAccount.state,
+    })
+    .from(billingAccount)
+    .where(eq(billingAccount.refBillTemplateFamilyId, typeId))
+    .orderBy(asc(billingAccount.billingAccountId))
+    .limit(RETIRE_BAN_PAGE_SIZE)
+    .offset(page * RETIRE_BAN_PAGE_SIZE);
 }

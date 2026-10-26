@@ -939,6 +939,19 @@ describe("InvoiceStructureForm — Save draft (bm57)", () => {
     });
     expect(toast.error).toHaveBeenCalled();
   });
+
+  it("bm83 — a save on a retired type toasts the retired-type message and refreshes (the page re-renders read-only)", async () => {
+    mockSave.mockResolvedValue({ ok: false, code: "TEMPLATE_TYPE_RETIRED" });
+    renderForm({ expectedDraftToken: TOKEN });
+    togglePayment();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    });
+    expect(toast.error).toHaveBeenCalledWith(
+      "This invoice template type has been retired, so it can no longer be edited or previewed.",
+    );
+    expect(refresh).toHaveBeenCalledOnce();
+  });
 });
 
 describe("InvoiceStructureForm — layout replaced by an upload (bm80)", () => {

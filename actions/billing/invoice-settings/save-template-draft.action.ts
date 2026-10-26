@@ -18,6 +18,8 @@ export type SaveTemplateDraftActionResult =
   | { ok: false; code: "FORBIDDEN" | "DRAFT_CONFLICT" | "SERVER_ERROR" }
   // bm80 — mapped through unchanged from the service.
   | { ok: false; code: "DRAFT_LAYOUT_REPLACED"; draftToken: string }
+  // bm83 — mapped through unchanged from the service.
+  | { ok: false; code: "TEMPLATE_TYPE_RETIRED" }
   | {
       ok: false;
       code: "VALIDATION_ERROR" | "MANDATORY_SECTION_HIDDEN";
@@ -69,6 +71,9 @@ export async function saveTemplateDraftAction(
 
   if (!result.ok) {
     if (result.code === "DRAFT_LAYOUT_REPLACED") return result;
+    if (result.code === "TEMPLATE_TYPE_RETIRED") {
+      return { ok: false, code: "TEMPLATE_TYPE_RETIRED" };
+    }
     return result.code === "DRAFT_CONFLICT"
       ? { ok: false, code: "DRAFT_CONFLICT" }
       : { ok: false, code: result.code, fieldErrors: {} };

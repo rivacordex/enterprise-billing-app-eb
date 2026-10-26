@@ -541,6 +541,10 @@ export function InvoiceStructureForm({
         });
       } else if (result.code === "FORBIDDEN") {
         toast.error("You do not have permission to save the draft.");
+      } else if (result.code === "TEMPLATE_TYPE_RETIRED") {
+        // bm83 — the page re-renders read-only for a retired type.
+        toast.error(TEMPLATE_TYPE_MESSAGES.typeRetiredEdit);
+        router.refresh();
       } else if (
         !("fieldErrors" in result) ||
         !showServerErrors(result.fieldErrors)

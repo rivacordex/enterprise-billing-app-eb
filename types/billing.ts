@@ -1417,10 +1417,39 @@ export const TEMPLATE_TYPE_STATUSES = [
 ] as const;
 export type TemplateTypeStatus = (typeof TEMPLATE_TYPE_STATUSES)[number];
 
-// code-standards › Invoice Template Types, TS rule 2 (later units add their codes).
+// code-standards › Invoice Template Types, TS rule 2. bm83 adds the retire codes.
 export type TemplateTypeErrorCode =
   | "TEMPLATE_TYPE_NAME_TAKEN"
-  | "TEMPLATE_TYPE_NAME_INVALID";
+  | "TEMPLATE_TYPE_NAME_INVALID"
+  | "TEMPLATE_TYPE_RETIRED"
+  | "DEFAULT_TYPE_NOT_RETIRABLE"
+  | "RETIRE_TARGET_NOT_USABLE"
+  | "RETIRE_NAME_MISMATCH";
+
+// bm83 (Inv #66, #67) — retire a type with a bulk switch of its BANs. The
+// dialog lists the bound BANs a page at a time; the switch audits in chunks.
+export const RETIRE_BAN_PAGE_SIZE = 20;
+export const RETIRE_AUDIT_CHUNK_SIZE = 500;
+export interface BoundBanRow {
+  billingAccountId: string;
+  name: string | null;
+  state: string;
+}
+export type RetireTemplateTypeResult =
+  | { ok: true; movedBanCount: number }
+  | {
+      ok: false;
+      code:
+        | "FORBIDDEN"
+        | "VALIDATION_ERROR"
+        | "SERVER_ERROR"
+        | Exclude<
+            TemplateTypeErrorCode,
+            | "TEMPLATE_TYPE_NAME_TAKEN"
+            | "TEMPLATE_TYPE_NAME_INVALID"
+            | "TEMPLATE_NOT_BINDABLE"
+          >;
+    };
 
 export interface TemplateTypeListRow {
   billTemplateFamilyId: string;

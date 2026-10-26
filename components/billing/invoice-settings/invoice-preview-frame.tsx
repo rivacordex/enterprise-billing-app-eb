@@ -10,6 +10,7 @@
 
 import { AlertTriangle } from "lucide-react";
 
+import { TEMPLATE_TYPE_MESSAGES } from "@/components/billing/invoice-settings/template-type-messages";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
@@ -33,6 +34,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   NOT_FOUND: "That bill no longer exists.",
   FORBIDDEN: "You do not have permission to preview this source.",
   VALIDATION_ERROR: "The structure is not valid.",
+  // bm83 — a retired type has no live preview.
+  TEMPLATE_TYPE_RETIRED: TEMPLATE_TYPE_MESSAGES.typeRetiredEdit,
 };
 
 function Skeleton({ queued }: { queued: boolean }): React.JSX.Element {

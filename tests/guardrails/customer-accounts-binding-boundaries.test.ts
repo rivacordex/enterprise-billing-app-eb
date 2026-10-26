@@ -482,6 +482,8 @@ describe("Invoice Template Binding boundaries (cm22 ship gate)", () => {
       [
         "db/repositories/accounts/billing-account.repository.ts#setTemplateRef:update",
         "services/accounts/onboard-customer-accounts.ts#onboardCustomerAccounts:insert",
+        // bm83 (billing guardrail 79, boundary half) — the retire switch.
+        "services/billing/invoice-template/template-types.ts#retireTemplateType:update",
       ].sort(),
     );
     expect(opaque).toEqual([

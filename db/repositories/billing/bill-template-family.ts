@@ -1,4 +1,4 @@
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, not, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client";
 import { billTemplateFamily } from "@/db/schema/billing/bill-template-family";
@@ -105,6 +105,26 @@ export const billTemplateFamilyRepository = {
       .returning();
     if (!row) throw new Error("insertType returned no row");
     return row;
+  },
+
+  // bm83 (Inv #65, #67) — the ONE update the type guard allows: retirement. null when the
+  // row is already retired or is the default (callers re-check first; this is the backstop).
+  async retireType(
+    tx: Database,
+    typeId: string,
+  ): Promise<BillTemplateFamily | null> {
+    const [row] = await tx
+      .update(billTemplateFamily)
+      .set({ retiredDatetime: sql`now()` })
+      .where(
+        and(
+          eq(billTemplateFamily.billTemplateFamilyId, typeId),
+          isNull(billTemplateFamily.retiredDatetime),
+          not(billTemplateFamily.isDefault),
+        ),
+      )
+      .returning();
+    return row ?? null;
   },
 
   // bm77 — the types a BAN may be bound to, besides Standard (which is NULL): not default,

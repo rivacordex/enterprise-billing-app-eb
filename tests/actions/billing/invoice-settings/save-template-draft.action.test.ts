@@ -244,6 +244,20 @@ describe("saveTemplateDraftAction", () => {
     expect(mockRevalidate).not.toHaveBeenCalled();
   });
 
+  it("bm83 — maps TEMPLATE_TYPE_RETIRED through unchanged, without revalidating", async () => {
+    mockService.mockResolvedValue({
+      ok: false,
+      code: "TEMPLATE_TYPE_RETIRED",
+    });
+    const result = await saveTemplateDraftAction({
+      structure: STRUCTURE,
+      expectedDraftToken: TOKEN,
+      familyId: "BTF00000002",
+    });
+    expect(result).toEqual({ ok: false, code: "TEMPLATE_TYPE_RETIRED" });
+    expect(mockRevalidate).not.toHaveBeenCalled();
+  });
+
   it("maps a service throw to SERVER_ERROR", async () => {
     mockService.mockRejectedValue(new Error("boom"));
     const result = await saveTemplateDraftAction({

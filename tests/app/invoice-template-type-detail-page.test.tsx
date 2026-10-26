@@ -11,6 +11,7 @@ import { render } from "@testing-library/react";
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/read/invoice-template-settings", () => ({
   getInvoiceTemplatePageData: vi.fn(),
+  getTemplateTypeRetirement: vi.fn(),
   getGeneratedHbsSources: vi.fn(),
   listRecentPostedBills: vi.fn(),
 }));
@@ -35,6 +36,21 @@ vi.mock("@/components/billing/invoice-settings/upload-layout-dialog", () => ({
     </button>
   ),
 }));
+// bm83 — the Retire dialog's actions pull the db/service graph.
+const retireProps = vi.hoisted(() => ({ last: null as unknown }));
+vi.mock(
+  "@/components/billing/invoice-settings/retire-template-type-dialog",
+  () => ({
+    RetireTemplateTypeDialog: (props: unknown) => {
+      retireProps.last = props;
+      return (
+        <button type="button" data-testid="retire-type">
+          Retire type…
+        </button>
+      );
+    },
+  }),
+);
 vi.mock("@/components/billing/invoice-settings/generated-hbs-viewer", () => ({
   GeneratedHbsViewer: () => <div data-testid="generated-viewer" />,
 }));
@@ -44,7 +60,10 @@ vi.mock("@/components/billing/invoice-settings/invoice-settings-tabs", () => ({
 
 import InvoiceTemplateTypePage from "@/app/(app)/administration/invoice-settings/invoice-template/[typeId]/page";
 import { requirePermission } from "@/auth/guard";
-import { getInvoiceTemplatePageData } from "@/services/billing/read/invoice-template-settings";
+import {
+  getInvoiceTemplatePageData,
+  getTemplateTypeRetirement,
+} from "@/services/billing/read/invoice-template-settings";
 import {
   getAppLocale,
   getAppTimezone,
@@ -56,6 +75,7 @@ import {
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockPageData = vi.mocked(getInvoiceTemplatePageData);
+const mockRetirement = vi.mocked(getTemplateTypeRetirement);
 
 const STRUCTURE = {
   sections: { payment: true },
@@ -105,6 +125,8 @@ function props(typeId: string, search: Record<string, string> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   formProps.last = null;
+  retireProps.last = null;
+  mockRetirement.mockResolvedValue({ retiredDatetime: null, retire: null });
   mockRequirePermission.mockResolvedValue({
     userId: "user-1",
     userEmail: "user@example.com",
@@ -189,5 +211,134 @@ describe("InvoiceTemplateTypePage (bm77)", () => {
     expect(mockPageData).toHaveBeenCalledWith("BTF00000001", "BTV00000099", {
       canEdit: true,
     });
+  });
+});
+
+describe("InvoiceTemplateTypePage — retire (bm83)", () => {
+  const RETIRED_AT = new Date("2026-10-26T01:00:00Z");
+  const HISTORY_ROW = {
+    billTemplateVersionId: "BTV00000020",
+    versionNo: 1,
+    status: "ACTIVE" as const,
+    isDefault: false,
+    layoutLabel: "INVTPL-WHOLESALE v1",
+    createdBy: null,
+    createdAt: new Date("2026-10-20T00:00:00Z"),
+    activatedAt: new Date("2026-10-20T00:00:00Z"),
+    retiredAt: null,
+    changeNote: "Wholesale v1",
+    usedByCount: 0,
+  };
+  const WHOLESALE_ROW = {
+    ...SEEDED_GENERATED_ROW,
+    billTemplateVersionId: "BTV00000020",
+    refBillTemplateFamilyId: "BTF00000002",
+    isDefault: false,
+  };
+  const WHOLESALE_DATA = {
+    ...STANDARD_DATA,
+    typeId: "BTF00000002",
+    typeName: "Wholesale",
+    isDefaultType: false,
+    layoutCode: "INVTPL-WHOLESALE",
+    current: WHOLESALE_ROW,
+    shown: WHOLESALE_ROW,
+    defaultShown: WHOLESALE_ROW,
+    history: [HISTORY_ROW],
+  };
+  const RETIRED_DATA = { ...WHOLESALE_DATA, typeStatus: "RETIRED" as const };
+  const RETIRE = {
+    boundBanCount: 2,
+    firstBoundBans: [
+      { billingAccountId: "BAN00000001", name: "Acme", state: "active" },
+    ],
+    retireTargets: [{ billTemplateFamilyId: "BTF00000003", name: "Retail" }],
+  };
+
+  it("EDIT on a live non-Standard type shows Retire type… with the server data", async () => {
+    mockPageData.mockResolvedValue(WHOLESALE_DATA);
+    mockRetirement.mockResolvedValue({ retiredDatetime: null, retire: RETIRE });
+    const { getByTestId } = render(
+      await InvoiceTemplateTypePage(props("BTF00000002")),
+    );
+    expect(getByTestId("retire-type")).toBeTruthy();
+    expect(retireProps.last).toEqual({
+      typeId: "BTF00000002",
+      typeName: "Wholesale",
+      ...RETIRE,
+    });
+    expect(mockRetirement).toHaveBeenCalledWith("BTF00000002", {
+      canEdit: true,
+    });
+  });
+
+  it("no Retire control without retire data (Standard, READ)", async () => {
+    const { queryByTestId } = render(
+      await InvoiceTemplateTypePage(props("BTF00000001")),
+    );
+    expect(queryByTestId("retire-type")).toBeNull();
+  });
+
+  it("an unknown type (no retirement read) is notFound() before the page data loads", async () => {
+    mockRetirement.mockResolvedValue(null);
+    await expect(
+      InvoiceTemplateTypePage(props("BTF00009999")),
+    ).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
+    expect(mockPageData).not.toHaveBeenCalled();
+  });
+
+  it("a retired type for an EDIT user: the Info line, no Upload, Save, Activate, Discard or Retire control, a read-only form, data loaded with canEdit: false", async () => {
+    mockPageData.mockResolvedValue(RETIRED_DATA);
+    mockRetirement.mockResolvedValue({
+      retiredDatetime: RETIRED_AT,
+      retire: null,
+    });
+    const { getByRole, queryByTestId, getByText } = render(
+      await InvoiceTemplateTypePage(props("BTF00000002")),
+    );
+    expect(mockPageData).toHaveBeenCalledWith("BTF00000002", undefined, {
+      canEdit: false,
+    });
+    expect(
+      getByText(/^Retired .+\. History and exports remain available\.$/),
+    ).toBeTruthy();
+    expect(getByText("Retired")).toBeTruthy();
+    expect(queryByTestId("upload-layout")).toBeNull();
+    expect(queryByTestId("retire-type")).toBeNull();
+    expect(
+      getByRole("navigation", { name: "Invoice template tabs" }),
+    ).toBeTruthy();
+    // The form owns Save and Activate; it is not editable.
+    expect(formProps.last).toMatchObject({ editable: false });
+  });
+
+  it("a retired type's history keeps Export and has no Discard", async () => {
+    mockPageData.mockResolvedValue(RETIRED_DATA);
+    mockRetirement.mockResolvedValue({
+      retiredDatetime: RETIRED_AT,
+      retire: null,
+    });
+    const { getByRole, queryByRole } = render(
+      await InvoiceTemplateTypePage(props("BTF00000002", { tab: "history" })),
+    );
+    expect(getByRole("link", { name: /Export/ })).toBeTruthy();
+    expect(queryByRole("button", { name: "Discard" })).toBeNull();
+  });
+
+  it("a retired type with only a never-activated pair shows the status line, not the upload empty state", async () => {
+    mockPageData.mockResolvedValue({ ...EMPTY_DATA, typeStatus: "RETIRED" });
+    mockRetirement.mockResolvedValue({
+      retiredDatetime: RETIRED_AT,
+      retire: null,
+    });
+    const { queryByText, getByText } = render(
+      await InvoiceTemplateTypePage(props("BTF00000002")),
+    );
+    expect(getByText(/History and exports remain available\./)).toBeTruthy();
+    expect(
+      queryByText(
+        "No layout uploaded yet. Upload a layout package to create the first draft.",
+      ),
+    ).toBeNull();
   });
 });

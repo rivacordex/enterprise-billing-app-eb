@@ -60,6 +60,8 @@ export const AUDIT_EVENT_CATEGORY_MAP: Record<
   INVOICE_PROFILE_DRAFT_SAVED: "Change",
   INVOICE_PROFILE_ACTIVATED: "Change",
   INVOICE_TEMPLATE_TYPE_CREATED: "Additive",
+  // bm83 — a type taken out of service (one-way).
+  INVOICE_TEMPLATE_TYPE_RETIRED: "Removal",
   USER_AUTH_METHOD_CHANGED: "Change",
   USER_DISABLED: "Removal",
   USER_DELETED: "Removal",

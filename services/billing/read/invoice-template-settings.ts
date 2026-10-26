@@ -10,10 +10,15 @@ import {
 import {
   countBoundBansByType,
   deriveTemplateTypeStatus,
+  listBoundBans,
 } from "@/services/billing/invoice-template/template-types";
-import { isShowable } from "@/services/billing/invoice-template/version-visibility";
+import {
+  isDraftLike,
+  isShowable,
+} from "@/services/billing/invoice-template/version-visibility";
 import {
   InvoiceRenderError,
+  type BoundBanRow,
   type InvoiceErrorCode,
   type InvoiceTemplateStructure,
   type OpenLayoutDraftInfo,
@@ -263,8 +268,62 @@ export async function getInvoiceTemplatePageData(
     shownStructure: parseStoredStructure(shown),
     currentStructure: current ? parseStoredStructure(current) : null,
     layoutChange,
-    history: generatedRows.map((r) => toHistoryRow(r, layoutLabels)),
+    // bm83 (D7) — a retired type's open DRAFT pair and discarded drafts are
+    // not listed at all (a READ view of a live type still lists them, linkless).
+    history: generatedRows
+      .filter((r) => type.retiredDatetime === null || !isDraftLike(r))
+      .map((r) => toHistoryRow(r, layoutLabels)),
   };
+}
+
+// bm83 — what the Retire dialog needs, loaded only for an EDIT user on a
+// non-Standard, non-retired type: the bound-BAN count and first page (every
+// BAN state, as the switch moves them) and the usable targets besides
+// Standard (this type excluded).
+export interface TemplateTypeRetireData {
+  boundBanCount: number;
+  firstBoundBans: BoundBanRow[];
+  retireTargets: { billTemplateFamilyId: string; name: string }[];
+}
+
+export interface TemplateTypeRetirement {
+  retiredDatetime: Date | null;
+  retire: TemplateTypeRetireData | null;
+}
+
+// bm83 (D7, D8) — read before the page data: a retired type's page loads with
+// `canEdit` false (no DRAFT or discarded row is opened or listed). `null` for
+// an unknown type.
+export async function getTemplateTypeRetirement(
+  typeId: string,
+  { canEdit }: { canEdit: boolean },
+): Promise<TemplateTypeRetirement | null> {
+  const type = await billTemplateFamilyRepository.findById(db, typeId);
+  if (!type) return null;
+  if (!canEdit || type.isDefault || type.retiredDatetime !== null) {
+    return { retiredDatetime: type.retiredDatetime, retire: null };
+  }
+  const [counts, firstBoundBans, usable] = await Promise.all([
+    countBoundBansByType(db),
+    listBoundBans(db, typeId, 0),
+    billTemplateFamilyRepository.listUsable(db),
+  ]);
+  return {
+    retiredDatetime: null,
+    retire: {
+      boundBanCount: counts.get(typeId) ?? 0,
+      firstBoundBans,
+      retireTargets: usable.filter((t) => t.billTemplateFamilyId !== typeId),
+    },
+  };
+}
+
+// bm83 (D8) — a later page of the Retire dialog's BAN list ("Show more").
+export async function getBoundBansPage(
+  typeId: string,
+  page: number,
+): Promise<BoundBanRow[]> {
+  return listBoundBans(db, typeId, page);
 }
 
 // bm77 / bm82 review — Standard's id for the legacy `?tab=` / `?version=`
