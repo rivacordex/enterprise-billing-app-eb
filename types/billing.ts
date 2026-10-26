@@ -1445,9 +1445,7 @@ export type RetireTemplateTypeResult =
         | "SERVER_ERROR"
         | Exclude<
             TemplateTypeErrorCode,
-            | "TEMPLATE_TYPE_NAME_TAKEN"
-            | "TEMPLATE_TYPE_NAME_INVALID"
-            | "TEMPLATE_NOT_BINDABLE"
+            "TEMPLATE_TYPE_NAME_TAKEN" | "TEMPLATE_TYPE_NAME_INVALID"
           >;
     };
 

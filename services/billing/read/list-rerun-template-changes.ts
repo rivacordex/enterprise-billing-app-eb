@@ -2,7 +2,7 @@ import { db } from "@/db/client";
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";
 import { customerBillRepository } from "@/db/repositories/billing/customer-bill.repository";
-import { selectRerunEligible } from "@/services/billing/rerun-run";
+import { selectRerunEligible } from "@/services/billing/rerun-eligibility";
 
 // bm84 (Inv #52, #66) — the rerun confirm's advisory warning. A rerun
 // re-captures each rerun BAN's type (bm65), so a BAN rebound (cm23) or

@@ -158,7 +158,9 @@ export function retireSuccessToast(
   n: number,
   target: string,
 ): string {
-  return `${name} retired. ${n} billing accounts moved to ${target}.`;
+  // Review fix (owner, 2026-10-26) — singular for one account.
+  const accounts = n === 1 ? "billing account" : "billing accounts";
+  return `${name} retired. ${n} ${accounts} moved to ${target}.`;
 }
 // bm83 (ui-context §10e) — the retired type's Info status line.
 export function retiredStatusLine(date: string): string {

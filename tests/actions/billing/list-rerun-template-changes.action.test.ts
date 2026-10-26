@@ -61,6 +61,17 @@ describe("listRerunTemplateChangesAction (bm84)", () => {
     expect(mockService).not.toHaveBeenCalled();
   });
 
+  it("a non-redirect guard failure is a typed SERVER_ERROR, not a rejection, and the service is never called", async () => {
+    mockGuard.mockRejectedValue(new Error("db down"));
+    expect(
+      await listRerunTemplateChangesAction({
+        billRunId: "BRN00000001",
+        accountIds: [],
+      }),
+    ).toEqual({ ok: false, code: "SERVER_ERROR" });
+    expect(mockService).not.toHaveBeenCalled();
+  });
+
   it("an omitted accountIds defaults to [] (all eligible), as for the rerun", async () => {
     mockService.mockResolvedValue([]);
     await listRerunTemplateChangesAction({ billRunId: "BRN00000001" });

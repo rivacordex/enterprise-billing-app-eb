@@ -174,6 +174,19 @@ describe("RetireTemplateTypeDialog (bm83)", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
+  it("says '1 billing account' when one moved (review fix)", async () => {
+    mockRetire.mockResolvedValue({ ok: true, movedBanCount: 1 });
+    renderDialog();
+    const dialog = openDialog();
+    typeName(dialog, "Wholesale");
+    await act(async () => {
+      fireEvent.click(confirmButton(dialog));
+    });
+    expect(toast.success).toHaveBeenCalledWith(
+      "Wholesale retired. 1 billing account moved to Standard (default).",
+    );
+  });
+
   it("retires to a chosen usable type by its id", async () => {
     mockRetire.mockResolvedValue({ ok: true, movedBanCount: 3 });
     renderDialog();
@@ -216,4 +229,104 @@ describe("RetireTemplateTypeDialog (bm83)", () => {
       expect(refresh).toHaveBeenCalledOnce();
     },
   );
+
+  it("a refused retirement leaves no stale typed name or target when reopened", async () => {
+    mockRetire.mockResolvedValue({
+      ok: false,
+      code: "RETIRE_TARGET_NOT_USABLE",
+    });
+    renderDialog();
+    const first = openDialog();
+    fireEvent.click(within(first).getByRole("combobox"));
+    fireEvent.click(screen.getByRole("option", { name: "Retail" }));
+    typeName(first, "Wholesale");
+    await act(async () => {
+      fireEvent.click(confirmButton(first));
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    const reopened = openDialog();
+    expect(
+      within(reopened).getByLabelText(TEMPLATE_TYPE_MESSAGES.retireNameLabel),
+    ).toHaveValue("");
+    expect(within(reopened).getByRole("combobox")).toHaveTextContent(
+      "Standard (default)",
+    );
+    expect(confirmButton(reopened)).toBeDisabled();
+  });
+
+  // Review fixes (bm83–84) — OFFSET paging over a live set, and props that a
+  // refresh replaces between openings.
+  it("a row that shifted onto the next page is listed once", async () => {
+    mockList.mockResolvedValue({
+      ok: true,
+      rows: [FIRST[1]!, ...SECOND],
+    });
+    renderDialog();
+    const dialog = openDialog();
+    await act(async () => {
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Show more" }),
+      );
+    });
+    expect(
+      within(dialog)
+        .getAllByRole("listitem")
+        .map((li) => within(li).getByText(/^BAN/).textContent),
+    ).toEqual(["BAN00000001", "BAN00000002", "BAN00000003"]);
+  });
+
+  it("an empty next page hides Show more even when the count says there are more", async () => {
+    mockList.mockResolvedValue({ ok: true, rows: [] });
+    renderDialog({ boundBanCount: 25 });
+    const dialog = openDialog();
+    await act(async () => {
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Show more" }),
+      );
+    });
+    expect(
+      within(dialog).queryByRole("button", { name: "Show more" }),
+    ).toBeNull();
+    expect(within(dialog).getAllByRole("listitem")).toHaveLength(2);
+  });
+
+  it("each opening lists from the current props, not the list of an earlier opening", async () => {
+    mockList.mockResolvedValue({ ok: true, rows: SECOND });
+    const props = {
+      typeId: "BTF00000002",
+      typeName: "Wholesale",
+      retireTargets: [],
+    };
+    const { rerender } = render(
+      <RetireTemplateTypeDialog
+        {...props}
+        boundBanCount={3}
+        firstBoundBans={FIRST}
+      />,
+    );
+    const first = openDialog();
+    await act(async () => {
+      fireEvent.click(within(first).getByRole("button", { name: "Show more" }));
+    });
+    expect(within(first).getAllByRole("listitem")).toHaveLength(3);
+    fireEvent.click(within(first).getByRole("button", { name: "Cancel" }));
+
+    // A refresh: one BAN left, still unlisted pages.
+    rerender(
+      <RetireTemplateTypeDialog
+        {...props}
+        boundBanCount={1}
+        firstBoundBans={[FIRST[0]!]}
+      />,
+    );
+    const reopened = openDialog();
+    expect(within(reopened).getAllByRole("listitem")).toHaveLength(1);
+    expect(
+      within(reopened).getByTestId("retire-bound-ban-count"),
+    ).toHaveTextContent("1");
+    expect(
+      within(reopened).queryByRole("button", { name: "Show more" }),
+    ).toBeNull();
+  });
 });

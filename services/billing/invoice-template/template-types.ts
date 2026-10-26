@@ -361,6 +361,20 @@ async function isUsable(
   return active !== null;
 }
 
+// bm83 review fix (D8 deviation, owner 2026-10-26) — one type's bound BANs, every state, for
+// the Retire dialog's count (countBoundBansByType scans every BAN). Never Standard: retire is
+// not offered on it, so its NULL rows need no default folding here.
+export async function countBoundBans(
+  db: Database,
+  typeId: string,
+): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(billingAccount)
+    .where(eq(billingAccount.refBillTemplateFamilyId, typeId));
+  return row?.n ?? 0;
+}
+
 // bm83 (D8) — the BANs bound to a type, by billing_account_id, for the retire dialog.
 export async function listBoundBans(
   db: Database,

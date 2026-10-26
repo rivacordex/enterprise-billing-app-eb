@@ -460,8 +460,12 @@ describe("invoice-settings authz matrix (bm55, guardrail 56 — routes)", () => 
     expect(src).toMatch(
       /canPreviewBills = hasLevel\(\s*permissionMap,\s*PERMISSIONS\.BILLRUN_VIEW,\s*LEVELS\.READ,?\s*\)/,
     );
+    // bm83 review fix — and never on a retired type (no bill can preview it).
     expect(src).toContain(
-      "recentBills={canPreviewBills ? await listRecentPostedBills() : []}",
+      "const canPreviewTypeBills = canPreviewBills && retiredAt === null;",
+    );
+    expect(src).toMatch(
+      /recentBills=\{\s*canPreviewTypeBills \? await listRecentPostedBills\(\) : \[\]\s*\}/,
     );
   });
 

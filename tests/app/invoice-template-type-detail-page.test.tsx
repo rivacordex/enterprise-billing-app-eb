@@ -11,7 +11,7 @@ import { render } from "@testing-library/react";
 vi.mock("@/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/services/billing/read/invoice-template-settings", () => ({
   getInvoiceTemplatePageData: vi.fn(),
-  getTemplateTypeRetirement: vi.fn(),
+  getTemplateTypeRetireData: vi.fn(),
   getGeneratedHbsSources: vi.fn(),
   listRecentPostedBills: vi.fn(),
 }));
@@ -62,7 +62,8 @@ import InvoiceTemplateTypePage from "@/app/(app)/administration/invoice-settings
 import { requirePermission } from "@/auth/guard";
 import {
   getInvoiceTemplatePageData,
-  getTemplateTypeRetirement,
+  getTemplateTypeRetireData,
+  listRecentPostedBills,
 } from "@/services/billing/read/invoice-template-settings";
 import {
   getAppLocale,
@@ -75,7 +76,7 @@ import {
 
 const mockRequirePermission = vi.mocked(requirePermission);
 const mockPageData = vi.mocked(getInvoiceTemplatePageData);
-const mockRetirement = vi.mocked(getTemplateTypeRetirement);
+const mockRetireData = vi.mocked(getTemplateTypeRetireData);
 
 const STRUCTURE = {
   sections: { payment: true },
@@ -87,6 +88,7 @@ const STANDARD_DATA = {
   typeId: "BTF00000001",
   typeName: "Standard",
   typeStatus: "USABLE" as const,
+  retiredDatetime: null as Date | null,
   isDefaultType: true,
   layoutCode: "INVTPL-STD-A4",
   nextLayoutVersionNo: 2,
@@ -106,6 +108,7 @@ const EMPTY_DATA = {
   typeId: "BTF00000002",
   typeName: "Wholesale",
   typeStatus: "NOT_YET_USABLE" as const,
+  retiredDatetime: null as Date | null,
   isDefaultType: false,
   layoutCode: "INVTPL-WHOLESALE",
   nextLayoutVersionNo: 1,
@@ -126,7 +129,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   formProps.last = null;
   retireProps.last = null;
-  mockRetirement.mockResolvedValue({ retiredDatetime: null, retire: null });
   mockRequirePermission.mockResolvedValue({
     userId: "user-1",
     userEmail: "user@example.com",
@@ -246,7 +248,11 @@ describe("InvoiceTemplateTypePage — retire (bm83)", () => {
     defaultShown: WHOLESALE_ROW,
     history: [HISTORY_ROW],
   };
-  const RETIRED_DATA = { ...WHOLESALE_DATA, typeStatus: "RETIRED" as const };
+  const RETIRED_DATA = {
+    ...WHOLESALE_DATA,
+    typeStatus: "RETIRED" as const,
+    retiredDatetime: RETIRED_AT,
+  };
   const RETIRE = {
     boundBanCount: 2,
     firstBoundBans: [
@@ -257,7 +263,7 @@ describe("InvoiceTemplateTypePage — retire (bm83)", () => {
 
   it("EDIT on a live non-Standard type shows Retire type… with the server data", async () => {
     mockPageData.mockResolvedValue(WHOLESALE_DATA);
-    mockRetirement.mockResolvedValue({ retiredDatetime: null, retire: RETIRE });
+    mockRetireData.mockResolvedValue(RETIRE);
     const { getByTestId } = render(
       await InvoiceTemplateTypePage(props("BTF00000002")),
     );
@@ -267,38 +273,47 @@ describe("InvoiceTemplateTypePage — retire (bm83)", () => {
       typeName: "Wholesale",
       ...RETIRE,
     });
-    expect(mockRetirement).toHaveBeenCalledWith("BTF00000002", {
-      canEdit: true,
-    });
+    expect(mockRetireData).toHaveBeenCalledWith("BTF00000002");
   });
 
-  it("no Retire control without retire data (Standard, READ)", async () => {
-    const { queryByTestId } = render(
+  it("no Retire control, and no retire read, on Standard or for a READ user", async () => {
+    const standard = render(
       await InvoiceTemplateTypePage(props("BTF00000001")),
     );
-    expect(queryByTestId("retire-type")).toBeNull();
-  });
+    expect(standard.queryByTestId("retire-type")).toBeNull();
+    standard.unmount();
 
-  it("an unknown type (no retirement read) is notFound() before the page data loads", async () => {
-    mockRetirement.mockResolvedValue(null);
-    await expect(
-      InvoiceTemplateTypePage(props("BTF00009999")),
-    ).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
-    expect(mockPageData).not.toHaveBeenCalled();
-  });
-
-  it("a retired type for an EDIT user: the Info line, no Upload, Save, Activate, Discard or Retire control, a read-only form, data loaded with canEdit: false", async () => {
-    mockPageData.mockResolvedValue(RETIRED_DATA);
-    mockRetirement.mockResolvedValue({
-      retiredDatetime: RETIRED_AT,
-      retire: null,
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: { invoice_settings: "READ" } as never,
     });
+    mockPageData.mockResolvedValue(WHOLESALE_DATA);
+    const read = render(await InvoiceTemplateTypePage(props("BTF00000002")));
+    expect(read.queryByTestId("retire-type")).toBeNull();
+    expect(mockRetireData).not.toHaveBeenCalled();
+  });
+
+  // Review fix (owner, 2026-10-26) — the loader applies the retired rule from
+  // its one read of the type; the page takes the same answer from the data.
+  it("a retired type for an EDIT user: the Info line, no Upload, Save, Activate, Discard or Retire control, a read-only form; retired comes from the page data's one read", async () => {
+    // billrun_view too, so a live type would offer posted bills to preview.
+    mockRequirePermission.mockResolvedValue({
+      userId: "user-1",
+      userEmail: "user@example.com",
+      permissionMap: {
+        invoice_settings: "EDIT",
+        billrun_view: "READ",
+      } as never,
+    });
+    mockPageData.mockResolvedValue(RETIRED_DATA);
     const { getByRole, queryByTestId, getByText } = render(
       await InvoiceTemplateTypePage(props("BTF00000002")),
     );
     expect(mockPageData).toHaveBeenCalledWith("BTF00000002", undefined, {
-      canEdit: false,
+      canEdit: true,
     });
+    expect(mockRetireData).not.toHaveBeenCalled();
     expect(
       getByText(/^Retired .+\. History and exports remain available\.$/),
     ).toBeTruthy();
@@ -308,16 +323,18 @@ describe("InvoiceTemplateTypePage — retire (bm83)", () => {
     expect(
       getByRole("navigation", { name: "Invoice template tabs" }),
     ).toBeTruthy();
-    // The form owns Save and Activate; it is not editable.
-    expect(formProps.last).toMatchObject({ editable: false });
+    // The form owns Save and Activate; it is not editable, and (review fix)
+    // offers no posted bill to preview a retired type with.
+    expect(formProps.last).toMatchObject({
+      editable: false,
+      canPreviewBills: false,
+      recentBills: [],
+    });
+    expect(listRecentPostedBills).not.toHaveBeenCalled();
   });
 
   it("a retired type's history keeps Export and has no Discard", async () => {
     mockPageData.mockResolvedValue(RETIRED_DATA);
-    mockRetirement.mockResolvedValue({
-      retiredDatetime: RETIRED_AT,
-      retire: null,
-    });
     const { getByRole, queryByRole } = render(
       await InvoiceTemplateTypePage(props("BTF00000002", { tab: "history" })),
     );
@@ -326,10 +343,10 @@ describe("InvoiceTemplateTypePage — retire (bm83)", () => {
   });
 
   it("a retired type with only a never-activated pair shows the status line, not the upload empty state", async () => {
-    mockPageData.mockResolvedValue({ ...EMPTY_DATA, typeStatus: "RETIRED" });
-    mockRetirement.mockResolvedValue({
+    mockPageData.mockResolvedValue({
+      ...EMPTY_DATA,
+      typeStatus: "RETIRED",
       retiredDatetime: RETIRED_AT,
-      retire: null,
     });
     const { queryByText, getByText } = render(
       await InvoiceTemplateTypePage(props("BTF00000002")),

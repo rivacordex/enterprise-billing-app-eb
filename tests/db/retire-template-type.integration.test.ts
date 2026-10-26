@@ -49,6 +49,7 @@ import {
 } from "@/services/billing/invoice-template/preview";
 import { saveTemplateDraft } from "@/services/billing/invoice-template/save-template-draft";
 import {
+  countBoundBans,
   deriveTemplateTypeCode,
   retireTemplateType,
 } from "@/services/billing/invoice-template/template-types";
@@ -571,11 +572,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       const w2 = await usableType("Wholesale Two");
       const ban = await newBan();
       await bindOk(ban, w2);
+      // Review fix — the Retire dialog's single-type count.
+      expect(await countBoundBans(h.db, w2)).toBe(1);
       expect(await retire(w2, retailId)).toEqual({
         ok: true,
         movedBanCount: 1,
       });
       expect((await banRow(ban)).ref_bill_template_family_id).toBe(retailId);
+      expect(await countBoundBans(h.db, w2)).toBe(0);
       const [move] = await switchAuditFrom(w2);
       expect(move!.after_data).toEqual({
         refBillTemplateFamilyId: retailId,

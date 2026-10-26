@@ -174,7 +174,7 @@ export async function listBoundBans(db: Database, typeId: string, page: number):
     - an `Input` for the typed name
     - the confirm **Retire type** in the danger role, disabled until `input.trim() === type.name`
   - **On a refusal:** the code's message from `template-type-messages.ts`, then `router.refresh()`.
-  - **On success:** `toast.success("{name} retired. {n} billing accounts moved to {target}.")`, then a refresh.
+  - **On success:** `toast.success("{name} retired. {n} billing accounts moved to {target}.")` ("1 billing account" when one moved; review fix, owner 2026-10-26), then a refresh.
 - **`[typeId]/page.tsx`:** the page data gains `retiredDatetime`, `boundBanCount`, `firstBoundBans` and `retireTargets` (loaded only for EDIT on a non-Standard, non-retired type). The page data already carries `typeStatus`. When retired:
   - the Info line "Retired {date}. History and exports remain available."
   - `getInvoiceTemplatePageData(typeId, version, { canEdit: canEdit && !retired })`, so no DRAFT or discarded row is opened or listed (D7)

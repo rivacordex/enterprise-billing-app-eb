@@ -44,7 +44,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { STANDARD_TYPE_NAME } from "@/types/accounts";
-import type { BoundBanRow, RetireTemplateTypeResult } from "@/types/billing";
+import {
+  RETIRE_BAN_PAGE_SIZE,
+  type BoundBanRow,
+  type RetireTemplateTypeResult,
+} from "@/types/billing";
 
 // The Select needs string item values; Standard's null maps to this sentinel
 // inside this component only.
@@ -89,6 +93,8 @@ export function RetireTemplateTypeDialog({
   const [open, setOpen] = useState(false);
   const [bans, setBans] = useState<BoundBanRow[]>(firstBoundBans);
   const [page, setPage] = useState(0);
+  // A short page means the live set has no more rows, whatever the count says.
+  const [exhausted, setExhausted] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [target, setTarget] = useState(STANDARD_ITEM);
   const [typed, setTyped] = useState("");
@@ -101,13 +107,24 @@ export function RetireTemplateTypeDialog({
     retireTargets.find((t) => t.billTemplateFamilyId === targetTypeId)?.name ??
     STANDARD_TYPE_NAME;
 
+  // Every close starts the next opening clean (a refused retire included).
+  function resetForm(): void {
+    setTyped("");
+    setTarget(STANDARD_ITEM);
+    setMessage(null);
+  }
+
   function handleOpenChange(next: boolean): void {
     if (submitting) return;
     setOpen(next);
-    if (!next) {
-      setTyped("");
-      setTarget(STANDARD_ITEM);
-      setMessage(null);
+    if (next) {
+      // Review fix — each opening lists from the page's current server data
+      // (a refresh may have changed the count and the first page).
+      setBans(firstBoundBans);
+      setPage(0);
+      setExhausted(false);
+    } else {
+      resetForm();
     }
   }
 
@@ -117,8 +134,17 @@ export function RetireTemplateTypeDialog({
     try {
       const result = await listBoundBansAction({ typeId, page: page + 1 });
       if (result.ok) {
-        setBans((prev) => [...prev, ...result.rows]);
+        // Review fix — OFFSET paging over a live set: a row that shifted
+        // across pages is listed once.
+        setBans((prev) => {
+          const seen = new Set(prev.map((b) => b.billingAccountId));
+          return [
+            ...prev,
+            ...result.rows.filter((b) => !seen.has(b.billingAccountId)),
+          ];
+        });
         setPage((p) => p + 1);
+        if (result.rows.length < RETIRE_BAN_PAGE_SIZE) setExhausted(true);
       } else {
         setMessage(TEMPLATE_TYPE_MESSAGES.retireListFailed);
       }
@@ -139,6 +165,7 @@ export function RetireTemplateTypeDialog({
         confirmName: typed,
       });
       setOpen(false);
+      resetForm();
       if (result.ok) {
         toast.success(
           retireSuccessToast(typeName, result.movedBanCount, targetName),
@@ -206,7 +233,7 @@ export function RetireTemplateTypeDialog({
               ))}
             </ul>
           )}
-          {bans.length < boundBanCount ? (
+          {!exhausted && bans.length < boundBanCount ? (
             <Button
               type="button"
               variant="ghost"

@@ -6,6 +6,7 @@ import { customerBillRepository } from "@/db/repositories/billing/customer-bill.
 import { udrStatusRepository } from "@/db/repositories/billing/udr-status.repository";
 import { captureTemplateStamps } from "@/services/billing/capture-template-stamps";
 import { firstOfMonth } from "@/services/billing/derive-periods";
+import { selectRerunEligible } from "@/services/billing/rerun-eligibility";
 import { computeRunCounters } from "@/services/billing/compute-run-status";
 import { engineRegistry } from "@/services/billing/engine-registry";
 import { PROCESSING_FLOW_ID } from "@/services/billing/engine-client";
@@ -76,21 +77,8 @@ const RERUNNABLE_RUN_STATUSES: ReadonlySet<string> = new Set([
   "PROCESSING_FAILED",
 ]);
 
-// bm84 (D1) — the rerun's eligible set: every scoped account, minus EXCLUDED and posted,
-// intersected with the selection (empty ⇒ all). Shared with the rerun warning read so the
-// two can never disagree.
-export function selectRerunEligible<
-  T extends { billingAccountId: string; status: string },
->(accounts: T[], postedIds: string[], accountIds: string[]): T[] {
-  const posted = new Set(postedIds);
-  const requested = new Set(accountIds);
-  return accounts.filter(
-    (a) =>
-      a.status !== "EXCLUDED" &&
-      !posted.has(a.billingAccountId) &&
-      (requested.size === 0 || requested.has(a.billingAccountId)),
-  );
-}
+// bm84 (D1) — the eligibility rule, shared with the rerun warning read.
+export { selectRerunEligible };
 
 // Internal-only signal thrown from inside `db.transaction` so an engine failure
 // rolls the whole rerun back (throwing is drizzle's rollback trigger) while the

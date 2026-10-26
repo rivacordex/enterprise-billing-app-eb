@@ -24,8 +24,13 @@ export async function listRerunTemplateChangesAction(
   try {
     await requirePermission(PERMISSIONS.BILLRUN_OPERATE, LEVELS.EDIT);
   } catch (e) {
-    if (!isRedirectError(e)) throw e;
-    return { ok: false, code: "FORBIDDEN" };
+    // Review fix — advisory: a non-redirect guard failure is a typed
+    // SERVER_ERROR, never a rejected server action.
+    if (isRedirectError(e)) return { ok: false, code: "FORBIDDEN" };
+    logger.warn("rerun template-change guard failed", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return { ok: false, code: "SERVER_ERROR" };
   }
 
   const parsed = listRerunTemplateChangesSchema.safeParse(rawInput);

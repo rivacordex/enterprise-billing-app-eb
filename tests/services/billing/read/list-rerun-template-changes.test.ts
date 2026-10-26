@@ -15,8 +15,6 @@ vi.mock("@/db/repositories/billing/customer-bill.repository", () => ({
 vi.mock("@/db/repositories/billing/bill-template-family", () => ({
   billTemplateFamilyRepository: { listAll: vi.fn() },
 }));
-// The rerun module's engine graph is not needed for the shared helper.
-vi.mock("@/services/billing/engine-registry", () => ({ engineRegistry: {} }));
 
 import { billRunAccountRepository } from "@/db/repositories/billing/bill-run-account.repository";
 import { billTemplateFamilyRepository } from "@/db/repositories/billing/bill-template-family";

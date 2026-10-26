@@ -20,7 +20,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   getGeneratedHbsSources,
   getInvoiceTemplatePageData,
-  getTemplateTypeRetirement,
+  getTemplateTypeRetireData,
   listRecentPostedBills,
   type InvoiceTemplateEditorData,
 } from "@/services/billing/read/invoice-template-settings";
@@ -89,20 +89,26 @@ export default async function InvoiceTemplateTypePage({
 
   const typeId = templateTypeIdParamSchema.safeParse((await params).typeId);
   if (!typeId.success) notFound();
-  const retirement = await getTemplateTypeRetirement(typeId.data, { canEdit });
-  if (!retirement) notFound();
-  const retiredAt = retirement.retiredDatetime;
-  // bm83 — the EDIT view, never on a retired type.
-  const editView = canEdit && retiredAt === null;
+  // bm83 (D7) — the loader applies the retired rule from its one read of the
+  // type (review fix); the page takes the same answer from the data.
   const data = await getInvoiceTemplatePageData(typeId.data, version, {
-    canEdit: editView,
+    canEdit,
   });
   if (!data) notFound();
+  const retiredAt = data.retiredDatetime;
+  const editView = canEdit && retiredAt === null;
+  // bm83 (D8) — the Retire dialog's data: EDIT, a non-Standard live type.
+  const retire =
+    editView && !data.isDefaultType
+      ? await getTemplateTypeRetireData(data.typeId)
+      : null;
+  // bm83 (D7) — no bill can preview a retired type, so none is offered.
+  const canPreviewTypeBills = canPreviewBills && retiredAt === null;
 
   // bm78 — EDIT holders upload a layout package to a non-retired type. bm80:
   // over an open layout DRAFT the dialog carries the overwrite warning, built
   // from this server data (Next.js rule 5).
-  const canUpload = editView && data.typeStatus !== "RETIRED";
+  const canUpload = editView;
   const locale = await getAppLocale();
   const timezone = getAppTimezone();
   const upload = (
@@ -167,13 +173,13 @@ export default async function InvoiceTemplateTypePage({
         </p>
         {canUpload && !data.empty ? upload : null}
         {/* bm83 — EDIT, a non-Standard, non-retired type. */}
-        {retirement.retire ? (
+        {retire ? (
           <RetireTemplateTypeDialog
             typeId={data.typeId}
             typeName={data.typeName}
-            boundBanCount={retirement.retire.boundBanCount}
-            firstBoundBans={retirement.retire.firstBoundBans}
-            retireTargets={retirement.retire.retireTargets}
+            boundBanCount={retire.boundBanCount}
+            firstBoundBans={retire.firstBoundBans}
+            retireTargets={retire.retireTargets}
           />
         ) : null}
       </div>
@@ -315,8 +321,8 @@ export default async function InvoiceTemplateTypePage({
           activeStructure={data.currentStructure}
           familyId={data.typeId}
           layoutChange={data.layoutChange}
-          canPreviewBills={canPreviewBills}
-          recentBills={canPreviewBills ? await listRecentPostedBills() : []}
+          canPreviewBills={canPreviewTypeBills}
+          recentBills={canPreviewTypeBills ? await listRecentPostedBills() : []}
         />
       ) : tab === "generated" ? (
         await renderGenerated(shown)
