@@ -1,12 +1,12 @@
 # Billing Management — AI Workflow Rules (Module Supplement)
 
-Read `context/ai-workflow-rules.md` first and obey it in full; this supplement adds the Billing Management rules for the in-flight **Invoice Template Types** update (editor-package upload, type catalog, BAN binding, retire with bulk switch, export and restore) and the rules from delivered work that still bind every change. It never weakens the general rules. Where §6 below pre-authorizes an edit to a file that general §5 protects, that is the recorded instruction general §5 asks for. It does not skip general §5's "stop, explain why, and get explicit confirmation" step, which you still run at the start of that unit. Where a facet is not mentioned here, the general rule applies unchanged. If anything here appears to weaken a general rule or a Module Invariant, stop and treat it as a bug.
+Read `context/ai-workflow-rules.md` first and obey it in full; this supplement adds the Billing Management rules from delivered work that still bind every change (§0). **No update is in flight.** §1–§8 keep the **Invoice Template Types** update's discipline (editor-package upload, type catalog, BAN binding, retire with bulk switch, export and restore; delivered bm74–bm84, signed off by bm85 on 2026-10-26) as the record and the default discipline for the next update. It never weakens the general rules. Where §6 below pre-authorizes an edit to a file that general §5 protects, that is the recorded instruction general §5 asks for. It does not skip general §5's "stop, explain why, and get explicit confirmation" step, which you still run at the start of that unit. Where a facet is not mentioned here, the general rule applies unchanged. If anything here appears to weaken a general rule or a Module Invariant, stop and treat it as a bug.
 
 **Companion docs (authoritative; do not restate or contradict them):**
 
-- `billmgmt-update-overview.md`: **the authoritative design of the in-flight update**: goals, flows, features, scope and success criteria 1–11. `billmgmt-project-overview.md` holds everything delivered: phases 1–4 (bm01–bm39), Target Capacity Pricing (bm40–bm46), the Invoice Template update (bm47–bm63) and Invoice Template Phase 3 (bm64–bm73).
+- `billmgmt-project-overview.md`: everything delivered: phases 1–4 (bm01–bm39), Target Capacity Pricing (bm40–bm46), the Invoice Template update (bm47–bm63), Invoice Template Phase 3 (bm64–bm73) and Invoice Template Types (bm74–bm85; its section holds the update's goals, flows, features, scope and success criteria 1–11, folded from the update overview at bm85). The next update re-creates an update overview (§7.8).
 - `billmgmt-architecture.md`:
-  - **68 Module Invariants (§6).** **#59–#68** belong to this update and are planned. #51–#58 are Invoice Template Phase 3's (built). #15 is a retired tombstone.
+  - **68 Module Invariants (§6).** **#59–#68** are Invoice Template Types' (built, audited at bm85). #51–#58 are Invoice Template Phase 3's (built). #15 is a retired tombstone.
   - The 2026-10-25 amendment notes under #44, #45, #46, #47, #49 and #54.
   - The dated section _Invoice Template Types — architecture deltas_, including its contradiction table **T1–T10**.
 - `billmgmt-code-standards.md`:
@@ -14,11 +14,11 @@ Read `context/ai-workflow-rules.md` first and obey it in full; this supplement a
   - **Guardrail items 68–79**.
   - Its permission map and its _Rules superseded by this update_ table.
 - `_updatemodule-billing-invoice-template-types-plan.md`: the analysis record behind the design (decisions D61–D132, the eng review, the proposed build order). **Background only.** It is never the authority over the update overview, the architecture or the code standards.
-- `specs/bm00-build-plan.md`: the authority on unit numbering, boundaries and build order **once this update's part is written** (see §2). Parts 1–5 record delivered work.
+- `specs/bm00-build-plan.md`: the authority on unit numbering, boundaries and build order **once this update's part is written** (see §2). Parts 1–6 record delivered work.
 - `context/customer-management/custmgmt-ai-workflow-rules.md`: **binding on you** for every Customer Management file this update changes (§6.2).
 - The Invoice Template Editor repo (`F:\Projects\invoice-editor`): a separate repository with its own plan. Change it only as §6.9 authorizes.
 
-**Precedence:** the general order stands (architecture **Invariants** → overview → architecture → code-standards → this supplement → general rules). For this update, `billmgmt-update-overview.md` is the overview. **If the update overview and the plan differ, the update overview wins.** Fix the plan to match; never build from the plan's wording.
+**Precedence:** the general order stands (architecture **Invariants** → overview → architecture → code-standards → this supplement → general rules). For the Invoice Template Types rules, the overview is the Invoice Template Types section of `billmgmt-project-overview.md`. **If that section and the plan differ, that section wins.** Fix the plan to match; never build from the plan's wording.
 
 **Current state:** `billmgmt-progress-tracker.md` is the only status source. This file keeps no status snapshot. Check the tracker against `git log` on `dev1` before you start.
 
@@ -26,7 +26,7 @@ Read `context/ai-workflow-rules.md` first and obey it in full; this supplement a
 
 ## 0. Carried-Forward Module Rules (Delivered Work, Still Binding)
 
-These come from phases 1–4, Target Capacity Pricing, the Invoice Template update and Invoice Template Phase 3. They are **permanent**, and this update touches the code they protect. A unit that violates one is a review-blocking defect.
+These come from phases 1–4, Target Capacity Pricing, the Invoice Template update, Invoice Template Phase 3 and Invoice Template Types. They are **permanent**, and any later update that touches the code they protect keeps them. A unit that violates one is a review-blocking defect.
 
 1. **Compute lives in the flow; rendering lives in the app.**
    - All bill-data computation runs in `workflow-management/flows/bill-run-processor/` as `billrun_runtime` (Inv #17, #29), enforced by `billing-trial-bill-compute-boundary.test.ts`.
@@ -62,7 +62,7 @@ These come from phases 1–4, Target Capacity Pricing, the Invoice Template upda
    - no four-eyes on profile activation;
    - no `ONE_TIME` source;
    - partial-period capacity billing (**O-TC7**) is an open business decision; never build a method for it.
-8. **Invoice Template Phase 3 is settled (bm64–bm73, signed off 2026-10-17).** Read each line with the correction this update makes:
+8. **Invoice Template Phase 3 is settled (bm64–bm73, signed off 2026-10-17).** Read each line with the correction the Invoice Template Types update made:
    - **Capture and freeze:** a BAN's template is captured once at run start and frozen on `bill_run_account`. Drafts, posting and reprint read the stamps, and only a rerun re-captures, for the rerun BANs only (Inv #51, #52).
    - **One resolver:** never add a live-resolver call on a run path, not even behind a flag. Only `captureTemplateStamps` and the editor preview resolve "current ACTIVE" (Inv #53, guardrail 57).
    - **The bill run only reads the BAN's template reference (Inv #54, as amended).** _Corrected:_ the reference is now `billing_account.ref_bill_template_family_id`, and Customer Management is no longer read-only. Billing reads the column at capture, and writes it **only** in the retire bulk switch (Inv #66).
@@ -71,12 +71,23 @@ These come from phases 1–4, Target Capacity Pricing, the Invoice Template upda
    - **Layout v1 and its first generated version are pinned** (`tests/guardrails/invoice-template-v1-pin.test.ts`, Inv #57). Every later layout, structure or footnote change is a new version. _Corrected:_ new layout versions now arrive **by upload only** (Inv #59), never by editing seed files.
    - **A template problem at run start** never excludes a BAN or blocks the trigger: the draft 422s, approval is blocked, posting skips before the INV, and a rerun after activating a version recovers it (Inv #58).
    - **Admin template input:** the footnote (1–5 plain-text lines of at most 200 characters) is the only admin-authored text in the settings form, and Payment information is the only section toggle. _Corrected:_ an **uploaded layout package** is now the one sanctioned way admin input becomes layout code, and only through the upload gate (Inv #46 amended, #60).
+9. **Invoice Template Types is settled (bm74–bm84, signed off by bm85 on 2026-10-26).**
+   - **One layout writer:** only `installLayoutPackage` inserts or overwrites a layout DRAFT, its blobs and its settings DRAFT. No seed, migration, script or test helper writes a `kind = 'layout'` row; upload is the only intake (Inv #59, guardrail 68).
+   - **Validate first, write last:** the gate runs every check before the first write, and a rejection writes no row, blob or audit. Trust content, never origin; an app export is recognised only by a schema-valid `settings.json` (Inv #60, #68, guardrail 69).
+   - **A DRAFT never reaches a bill:** load one only through `loadLayoutDraft` (preview, gate, activation, export), never cache it, never relax `assertLoadable` (Inv #61, guardrail 70).
+   - **Activate promotes only what was last previewed:** every layout DRAFT write bumps the settings DRAFT's token; an overwrite carries the DRAFT it was warned about (`DRAFT_CHANGED_SINCE_WARNING`) (Inv #62, guardrail 71).
+   - **Every layout rule lives in `compliance.ts`;** compliance is the visible-text check. A change to `compliance.ts`, `generate.ts`, `compile.ts`, `helpers.ts` or the layout schemas notes "editor contract refresh needed" (Inv #63, guardrails 72, 73).
+   - **One hardened Chromium context** in `render-invoice.ts`: network blocked, script off; the gate fails on a fetch, draft and final renders log and never throw (Inv #64, guardrail 74).
+   - **Type identity is fixed** (no rename), Standard is the permanent default and is stored as NULL on a BAN, and two type locks are taken in ascending id order through `lockTemplateType` (Inv #65, #66, guardrails 75, 76).
+   - **Retire is one-way** and changes only the type row; its bulk switch is Billing's one write to `billing_account` (Inv #66, #67, guardrails 76, 77, the pinned exemption in 79).
+   - **Migrations stay additive:** `0053`'s single-row trigger disable was a one-time authority and is spent; `0053` and `0054` are now applied migrations (§6.3).
+   - **Still out of scope** until an update authorizes it: everything in §3.
 
 ---
 
 ## 1. Operating Approach — This Update
 
-1. **Name the authorizing source before you write anything:** a `bm`/`cm` spec for this update, an Invariant (#59–#68, or an amended #44–#47, #49, #54), a guardrail item (68–79), or a section of `billmgmt-update-overview.md`. Cite the Invariant first whenever one exists. Never cite the plan as the authority.
+1. **Name the authorizing source before you write anything:** a `bm`/`cm` spec for this update, an Invariant (#59–#68, or an amended #44–#47, #49, #54), a guardrail item (68–79), or the Invoice Template Types section of `billmgmt-project-overview.md`. Cite the Invariant first whenever one exists. Never cite the plan as the authority.
 2. **Do not write code before its spec exists.** No spec for this update is written yet. The plan's §12 build order is a **proposal from analysis**, not a unit authority. Write `bm00-build-plan.md` Part 6 (and the matching Customer Management build-plan entries) first. Then write each unit's spec. Then build. If a spec turns out wrong, or a codebase fact has moved, correct the spec in this planning repo first, then build.
 3. **Assume a populated database.** This update's migrations (`0053`, `0054`) are additive and run on environments holding real runs and bills. Never edit `0046` or any other applied migration. Never empty a database or a blob container to make a change work. If a change only works on an empty database, it is wrong; stop and ask.
 4. **Route every layout write through `installLayoutPackage` (Inv #59).** Never insert or update a `kind = 'layout'` row anywhere else: not in a seed, a migration, a script or a test helper. Tests create layouts by calling the service.
@@ -124,7 +135,7 @@ These come from phases 1–4, Target Capacity Pricing, the Invoice Template upda
 
 ## 3. Scoping — No Speculative Changes
 
-Apply the general §2. In addition, do not build any of the following. Each is out of scope in `billmgmt-update-overview.md`:
+Apply the general §2. In addition, do not build any of the following. Each is out of scope in the Invoice Template Types section of `billmgmt-project-overview.md`:
 
 1. **An in-app visual layout editor,** or any in-app editing of layout files.
 2. **Uploading single files or a partial package.** An upload is always a complete package.
@@ -191,7 +202,7 @@ Apply the general §4. Never guess on the upload gate, a lock, a grant, a permis
 - a change to a UI string beyond `template-type-messages.ts`;
 - a change to the compile settings or the helper set.
 
-**Record every resolution in the owning companion doc** (product behavior → `billmgmt-update-overview.md`; rule or invariant → `billmgmt-architecture.md`; convention → `billmgmt-code-standards.md`) in the same change. Add a plan note only as history (§7).
+**Record every resolution in the owning companion doc** (product behavior → the update overview while an update is in flight, else `billmgmt-project-overview.md`; rule or invariant → `billmgmt-architecture.md`; convention → `billmgmt-code-standards.md`) in the same change. Add a plan note only as history (§7).
 
 ---
 
@@ -238,7 +249,7 @@ The general §5 list applies in full. Stop, explain why, and get confirmation be
 Apply the general §6. In addition:
 
 1. **Keep these docs aligned on every unit of this update:**
-   - `billmgmt-update-overview.md`
+   - the update overview (now the Invoice Template Types section of `billmgmt-project-overview.md`)
    - `billmgmt-architecture.md`
    - `billmgmt-code-standards.md`
    - `billmgmt-progress-tracker.md`
@@ -249,7 +260,7 @@ Apply the general §6. In addition:
 5. **Keep the superseded tables current.** If a unit changes an earlier rule not yet listed in code-standards' _Rules superseded by this update_ or architecture's T1–T10, add a row in the same change.
 6. **Bind names exactly as code-standards writes them:** file paths, `installLayoutPackage`, `loadLayoutDraft`, `lockTemplateType`, `compliance.ts`, the error-code unions, `LAYOUT_PACKAGE_FILES`, the UI strings in `template-type-messages.ts`. If a spec needs a different name, update code-standards first.
 7. **Close tracked items in one change set.** When binding ships, close `TODOS.md`'s Customer Management "Phase 3: catalog + posting reads the BAN binding" entry. The binding UI and create/retire screens are what it was waiting for.
-8. **Fold at the ship gate only.** The ship gate folds the update into `billmgmt-project-overview.md` and **deletes** `billmgmt-update-overview.md` in the same change. The next update re-creates it. Do not fold early.
+8. **Fold at the ship gate only.** The ship gate folds the update into `billmgmt-project-overview.md` and **deletes** the update overview in the same change. The next update re-creates it. Do not fold early.
 
 ---
 
@@ -301,12 +312,18 @@ If any item fails, the unit is not done. Fix it before moving on. Never defer a 
 
 ---
 
-## What Changed in This Revision (2026-10-25, Invoice Template Types planned)
+## What Changed in This Revision (2026-10-26, bm85 ship gate)
 
 | Was | Now | Why |
 | --- | --- | --- |
-| "No update is in flight"; §1–§8 kept Phase 3's unit discipline as the record | §1–§8 rewritten for the in-flight **Invoice Template Types** update; Phase 3's binding rules stay condensed in §0 item 8 | A new update is planned (`billmgmt-update-overview.md` re-created) |
-| Companion: the Phase 3 plan (D1–D60) as "the design authority"; "the plan's later decision wins" | `billmgmt-update-overview.md` is the authoritative design; the types plan is background only, and if it differs from the overview, the overview wins | Owner instruction: the update overview is authoritative |
+| Scoped to the in-flight **Invoice Template Types** update; #59–#68 planned; the update overview the authoritative design | **No update in flight.** The Types update's still-binding rules condensed into §0 item 9; §1–§8 kept as the record and the default discipline for the next update; the design authority is the Invoice Template Types section of `billmgmt-project-overview.md`; the `0053` trigger-disable authority is spent | bm85 (with cm24) signed off the update (criteria 1–11, Inv #59–#68 audited, guardrails 68–79); the update overview is folded into `billmgmt-project-overview.md` and deleted. The manual editor-export pass (bm85 §3) is pending with the owner |
+
+## What Changed in the Previous Revision (2026-10-25, Invoice Template Types planned)
+
+| Was | Now | Why |
+| --- | --- | --- |
+| "No update is in flight"; §1–§8 kept Phase 3's unit discipline as the record | §1–§8 rewritten for the in-flight **Invoice Template Types** update; Phase 3's binding rules stay condensed in §0 item 8 | A new update is planned (the update overview re-created) |
+| Companion: the Phase 3 plan (D1–D60) as "the design authority"; "the plan's later decision wins" | The update overview is the authoritative design; the types plan is background only, and if it differs from the overview, the overview wins | Owner instruction: the update overview is authoritative |
 | 58 invariants; guardrail items to 67; next numbers #59 / item 68 | 68 invariants (#59–#68 planned); guardrail items to **79**; next numbers **#69 / item 80** | New architecture and code-standards sections |
 | §0.8 / §1.5 / §3.1 / §6.2: Customer Management read-only and off limits; no family column, no family-aware gate, no dropdown | Customer Management changed **only** for the bind gate, signature adoption, the BAN panel dropdown and the Accounts tab label, under `custmgmt-ai-workflow-rules.md`. Billing writes `billing_account` only in the retire switch | Binding is in scope; Inv #54 amended, #66 |
 | §3.2 / §6.8 / §8.9: no `INSERT`/`UPDATE` grant on `bill_template_family`; assert `app_runtime` SELECT-only | Grant INSERT, UPDATE and sequence USAGE; DELETE stays revoked; assert exactly that | Create type and retire write the table |
@@ -319,13 +336,13 @@ If any item fails, the unit is not done. Fix it before moving on. Never defer a 
 | Lockfiles untouched | `fflate` added as its own first commit | Inv #60 (in-memory zip) |
 | Editor repo not mentioned | E7, E8 and the E9 wording authorized in that repo only | The app owns the rules; the editor snapshots them |
 
-## What Changed in the Previous Revision (2026-10-17, bm73 ship gate)
+## What Changed in the Revision Before (2026-10-17, bm73 ship gate)
 
 | Was | Now | Why |
 | --- | --- | --- |
 | Scoped to the in-flight **Invoice Template Phase 3**; #51–#58 planned; the `0046` and v1 in-place edits authorized | **No update in flight.** Phase 3's still-binding rules condensed into §0 item 8; §1–§8 kept as the record and the default discipline for the next update; the in-place authority is spent (v1 pinned, `0046` protected again) | bm73 signed off Phase 3 (criteria 1–15, Inv #51–#58 audited, guardrails 57–67 green); the update is folded into `billmgmt-project-overview.md` |
 
-## What Changed in the Revision Before (2026-10-15)
+## What Changed in an Earlier Revision (2026-10-15)
 
 | Was | Now | Why |
 | --- | --- | --- |

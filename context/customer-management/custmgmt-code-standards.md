@@ -2,7 +2,7 @@
 
 > **PLANNED** — module-specific delta to `../code-standards.md` (the overarching standards). This file contains **only** Customer Management specifics; everything else (TypeScript, Next.js, styling, API, data, file organization, CI gates) is inherited unchanged and is not restated here. If a rule seems missing, it lives in the general file.
 
-**Companion docs:** `custmgmt-project-overview.md` (product spec), `custmgmt-update-overview.md` (the in-flight **Invoice Template Types** update, Customer Management part; rules in §10 below) and `custmgmt-architecture.md` (technical design, numbered **Module Invariants**, #19–#22 planned). Where this doc conflicts with the architecture _Invariants_, the **Invariants win** and the conflict is a bug to fix here.
+**Companion docs:** `custmgmt-project-overview.md` (product spec), which also holds the delivered **Invoice Template Types** update, Customer Management part (rules in §10 below), and `custmgmt-architecture.md` (technical design, numbered **Module Invariants**, #19–#22 built). Where this doc conflicts with the architecture _Invariants_, the **Invariants win** and the conflict is a bug to fix here.
 
 ---
 
@@ -80,7 +80,7 @@
    The Accounts tab (cm20) is read-only and built from `AccountsLockedCard`, `AccountsNotOnboardedCard`, `FinancialAccountSummaryCard`, `BillingAccountCard` (with `BanStateChip` and the template label), `CustomerDocumentsTable` and `AccountsTabSkeleton`, composed by the presentational `CustomerAccountsTab`; a failed summary read renders `AccountsUnavailableCard` inside the tab. Money uses the Accounts module's `AmountCell` and document state its `DocStateBadge`; the Accounts `documents-table.tsx` is never reused (it imports the reversal mutation path). The summary is fetched by an async loader in the page itself, not in `components/**` (components may not import `services/**`).
    On Manage Customer, `BillingAccountPanel` (cm21, client) lists each BAN with `BanStateChip` and the shared `TemplateLabel` (exported from `billing-account-card.tsx`) and a secondary **Reset to follow active template** button. The button is enabled only with `canEditAccounts` on an open, non-`NULL` BAN, and only one reset runs at a time. Otherwise it shows a caption ("Already following the active template" / "Billing account is closed") and/or the `EDIT_DISABLED_TITLE` tooltip, so in v1 it is always disabled. The panel reuses `AccountsNotOnboardedCard` for the not-onboarded copy and `AccountsUnavailableCard` when `listCustomerBillingAccounts` fails (`accounts: null`; the page's `loadBillingAccounts` catches the error, so the rest of Manage Customer stays usable). The onboarding wizard's **Invoice template** field (cm18) is a read-only "Follow active template" field after Currency, with help text; there is no template picker in v1.
 
-   > **Amended 2026-10-25 (Invoice Template Types; planned, §10).** The **Reset to follow active template** button is replaced by a per-BAN **`TemplateTypeSelect` + Save** (§10, Styling rules 1–3). `TemplateLabel` renders the new type label. The "Already following the active template" caption is removed; the "Billing account is closed" caption stays.
+   > **Amended 2026-10-25 (Invoice Template Types, §10; delivered cm23, 2026-10-26).** The **Reset to follow active template** button is replaced by a per-BAN **`TemplateTypeSelect` + Save** (§10, Styling rules 1–3). `TemplateLabel` renders the new type label. The "Already following the active template" caption is removed; the "Billing account is closed" caption stays.
 6. **The results table on both search pages reuses the platform table primitives** (general §4.2, product-module precedent) — one `CustomerResultsTable` component shared by View and Manage, not forked per page.
 
 ---
@@ -189,9 +189,9 @@ validation/customer/
   update-party-role-specification.schema.ts
   search-params.schema.ts       # search ?q=; CUSTOMER_DETAIL_TABS + detail ?tab= (cm19), ?page= / ?fa= (cm20)
 services/accounts/              # Accounts-side services owned here (onboarding field cm18, Accounts tab cm20, BAN panel cm21)
-  assert-bindable-template.ts       # assertBindableTemplate — the one validator (cm18); NULL-only until §10 makes it type-aware
+  assert-bindable-template.ts       # assertBindableTemplate — the one validator (cm18); type-aware since cm23 (§10)
   get-customer-accounts-summary.ts  # getCustomerAccountsSummary(partyRoleId, page, pageFinancialAccountId)
-  resolve-ban-template-label.ts     # "Follows active template (currently: … vN), as of now"
+  resolve-ban-template-label.ts     # resolveBanTemplateLabels — the type label (cm23, §10; was the cm20 version label)
   list-customer-billing-accounts.ts # listCustomerBillingAccounts(partyRoleId) — Manage panel read (cm21)
   set-billing-account-template.ts   # setBillingAccountTemplate — CAS reset on the BAN lock (cm21)
 actions/accounts/
@@ -248,15 +248,15 @@ The general test-suite gate includes this module's guardrail tests from _Success
 7. **Audit trail** — every create, update, status change, contact CRUD, and set-preferred call produces an `AUDIT_LOG` row with actor, timestamp, entity, and before/after values; `last_modified_by` reflects the true last editor.
 8. **Search correctness** — partial, case-insensitive matches on `organization.name` and `trading_name`; result count capped by `CUSTOMER_SEARCH_RESULT_LIMIT` (default 5) with the refine-search hint shown when the cap is hit.
 9. **Customer screens read accounts data read-only (Inv. #11; cm20, cm22)** — `tests/guardrails/customer-accounts-read-boundary.test.ts` and `tests/guardrails/customer-accounts-binding-boundaries.test.ts`: no file under `app/(app)/customers/**` or `components/customers/**` imports an Accounts mutation action (only onboarding, its `get-wizard-options` read, and the template reset are allowed), `post-document`, pgledger, the Accounts reversal UI or any billing service/action; the three new Accounts read services (`get-customer-accounts-summary`, `list-customer-billing-accounts`, `resolve-ban-template-label`) import no action, `post-document`, `pgledgerCreateTransfers` or posting-time resolver.
-10. **Posting never reads the BAN template reference (Inv. #18; cm22)** — `tests/guardrails/customer-accounts-binding-boundaries.test.ts`: no file under `services/billing/**`, `db/repositories/billing/**` or `workflow-management/**` pairs `billingAccount` with `refBillTemplateVersionId` or contains `billing_account.ref_bill_template_version_id` (`customer_bill`'s own stamp stays allowed); `assertBindableTemplate` is defined once and called only by onboarding and the reset service; the column is written only by onboarding's BAN insert and `billingAccountRepository.setTemplateRef`. The chained flow is proved end to end by `tests/e2e/customer-accounts-journey.integration.test.ts` (DB-gated).
+10. _**Replaced by §10 guardrail 11** (cm23; closed out by cm24, 2026-10-26). Kept as history._ **Posting never reads the BAN template reference (Inv. #18; cm22)** — `tests/guardrails/customer-accounts-binding-boundaries.test.ts`: no file under `services/billing/**`, `db/repositories/billing/**` or `workflow-management/**` pairs `billingAccount` with `refBillTemplateVersionId` or contains `billing_account.ref_bill_template_version_id` (`customer_bill`'s own stamp stays allowed); `assertBindableTemplate` is defined once and called only by onboarding and the reset service; the column is written only by onboarding's BAN insert and `billingAccountRepository.setTemplateRef`. The chained flow is proved end to end by `tests/e2e/customer-accounts-journey.integration.test.ts` (DB-gated).
 
-    > **Amended 2026-10-25 (Invoice Template Types; planned).** On ship, this guardrail is rewritten as **§10 guardrail 11**. `ref_bill_template_version_id` no longer exists, and Billing gains exactly two sanctioned references to the new `ref_bill_template_family_id`: the run-start capture read (`listBanFamilies`) and the retire bulk switch (`template-types.ts`). Until then it stands as written.
+    > **Amended 2026-10-25; replaced 2026-10-26 (Invoice Template Types, cm23–cm24).** This guardrail is rewritten as **§10 guardrail 11**. `ref_bill_template_version_id` no longer exists, and Billing has exactly two sanctioned references to the new `ref_bill_template_family_id`: the run-start capture read (`listBanFamilies`) and the retire bulk switch (`template-types.ts`).
 
 ---
 
-## 10. Invoice Template Types update — code-standards deltas (2026-10-25; planned, not built)
+## 10. Invoice Template Types update — code-standards deltas (2026-10-25; delivered cm23–cm24, 2026-10-26)
 
-_**Planned.** The Customer Management part is in `custmgmt-update-overview.md`; invariants **#19–#22** are in `custmgmt-architecture.md` §6 and §8. Billing's own rules for the shared pieces are in `billmgmt-code-standards.md` › Invoice Template Types. This section records only what changes in Customer Management. Where it conflicts with §1–§9, this section wins once the update ships._
+_**Delivered.** Built by cm23 (one merge with Billing bm82) and closed out by the cm24 ship gate, joint with Billing bm85, on 2026-10-26 (evidence in `custmgmt-progress-tracker.md` cm24). The Customer Management part is folded into `custmgmt-project-overview.md`; invariants **#19–#22** are in `custmgmt-architecture.md` §6 and §8. Billing's own rules for the shared pieces are in `billmgmt-code-standards.md` › Invoice Template Types. This section records only what changes in Customer Management. Where it conflicts with §1–§9, this section wins._
 
 ### General rules (adds to §1)
 
@@ -343,18 +343,18 @@ The authz matrix gains: a `customers : EDIT`-only user's bind is refused server-
 
 ### Guardrail tests (extends §9, items 11–13)
 
-11. **Template-column boundary (replaces item 10 on ship).**
+11. **Template-column boundary (replaces item 10).** _(Built (cm23/cm24): `tests/guardrails/customer-accounts-binding-boundaries.test.ts`, with bm83's retire-switch writer pinned; `tests/guardrails/customer-accounts-read-boundary.test.ts`.)_
     - No file anywhere references `ref_bill_template_version_id` on `billing_account`.
     - Under `services/billing/**`, `db/repositories/billing/**` and `workflow-management/**`, `ref_bill_template_family_id` on `billing_account` appears **only** in `listBanFamilies` (read) and `services/billing/invoice-template/template-types.ts` (the Bound BANs count and the retire switch).
     - `assertBindableTemplate` is defined once and called only by onboarding and `set-billing-account-template.ts`.
     - No customer-tree file imports `services/billing/**` or `actions/billing/**`.
-12. **Bind gate.**
+12. **Bind gate.** _(Built (cm23/cm24): `tests/services/assert-bindable-template.test.ts`, `tests/services/set-billing-account-template.test.ts`, `tests/actions/set-billing-account-template.action.test.ts`, `tests/accounts/set-billing-account-template.integration.test.ts`; the race in both orders in Billing bm83's `tests/db/retire-template-type.integration.test.ts`; `tests/e2e/invoice-template-journey.integration.test.ts` block "bm85 + cm24" steps 2 and 4.)_
     - `null` binds Standard.
     - A usable type binds: one update, one audit row with type names, the BAN's `last_modified` bumped, `party_role.last_modified_datetime` untouched.
     - Each of these returns `TEMPLATE_NOT_BINDABLE`, writes nothing and audits nothing: Standard's id, an unknown id, a retired type, a not-yet-usable type.
     - `CONFLICT`, `BAN_CLOSED`, `BAN_NOT_FOUND` and unchanged-value no-op behave as before.
     - The CM half of Billing's parallel test (billing guardrail 76): a bind racing a retire commits first and is switched, or fails.
-13. **Panel and labels.**
+13. **Panel and labels.** _(Built (cm23/cm24): `tests/components/billing-account-panel.test.tsx`, `tests/components/customer-accounts-tab.test.tsx`, `tests/services/resolve-ban-template-label.test.ts`, `tests/services/list-bindable-template-types.test.ts`, `tests/components/onboard-accounts-wizard.test.tsx`, `tests/accounts/onboard-customer-accounts-template.integration.test.ts`, `tests/accounts/v07-onboarding-atomicity.integration.test.ts`; the removed-string scan in `tests/guardrails/customer-accounts-binding-boundaries.test.ts`; `tests/e2e/customer-accounts-journey.integration.test.ts`.)_
     - The select lists Standard first, then usable types; retired and not-yet-usable types are absent. A BAN whose current type isn't usable shows the "Choose a type" placeholder with Save disabled until a choice is made.
     - Save is disabled when unchanged and for a `customers : EDIT`-only user.
     - The retired-mid-edit save shows the agreed message and reloads.
@@ -369,4 +369,4 @@ The authz matrix gains: a `customers : EDIT`-only user's bind is refused server-
 | §4 rule 5 (Manage Customer panel) | Reset to follow active template; enabled only for an open, non-`NULL` BAN. | `TemplateTypeSelect` + Save (Styling rules 1–3). |
 | §7 `assert-bindable-template.ts` | "v1 NULL-only". | `null` or a usable type under `FOR SHARE` (General rules 1–3). |
 | §8 note "Billing account template reset (cm21)" | Reset writes `NULL` only. | Bind writes `null` or a type id; same dual guard. |
-| §9 guardrail 10 | Posting never reads the column; no Billing file references it. | Item 11: Billing references the new column in exactly two places. |
+| §9 guardrail 10 (**replaced by 11**) | Posting never reads the column; no Billing file references it. | Item 11: Billing references the new column in exactly two places. |

@@ -26,11 +26,20 @@ export const BASIC_PACKAGE_DIR = path.join(
   "db/seeds/invoice-templates/INVTPL-BASIC-A4/v1",
 );
 
+// bm85 — Standard v1's committed files, the base of the journey's "editor
+// export" of `INVTPL-STD-A4` v2 (re-versioned and re-checksummed).
+export const STANDARD_PACKAGE_DIR = path.join(
+  process.cwd(),
+  "db/seeds/invoice-templates/INVTPL-STD-A4/v1",
+);
+
 export const INDEX_FILE = "checksums.json";
 
 export type PackageFiles = Map<string, Buffer>;
 
 export interface LayoutPackageOptions {
+  // bm85 — the package directory to start from (default: INVTPL-BASIC-A4 v1).
+  baseDir?: string;
   layoutCode?: string;
   layoutVersion?: number;
   // A manifest edit applied to the parsed JSON (before the index).
@@ -55,12 +64,11 @@ function walk(dir: string, base = dir, out: string[] = []): string[] {
 }
 
 // The reference package's files, keyed by package path (`partials/header.hbs`).
-export function readBasicPackageFiles(): PackageFiles {
+export function readBasicPackageFiles(
+  dir: string = BASIC_PACKAGE_DIR,
+): PackageFiles {
   return new Map(
-    walk(BASIC_PACKAGE_DIR).map((name) => [
-      name,
-      readFileSync(path.join(BASIC_PACKAGE_DIR, name)),
-    ]),
+    walk(dir).map((name) => [name, readFileSync(path.join(dir, name))]),
   );
 }
 
@@ -86,7 +94,7 @@ export function zipFiles(files: ReadonlyMap<string, Uint8Array>): Uint8Array {
 export function buildLayoutPackage(
   opts: LayoutPackageOptions = {},
 ): LayoutPackage {
-  const files = readBasicPackageFiles();
+  const files = readBasicPackageFiles(opts.baseDir);
   files.delete(INDEX_FILE);
 
   const manifest = JSON.parse(

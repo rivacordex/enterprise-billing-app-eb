@@ -4,22 +4,22 @@ This file **inherits `context/ui-context.md` unchanged** and only maps Bill Run 
 
 **Phase-3 delta (minimal):** one retirement — `PlaceholderBanner`/`PlaceholderBadge` and their warning mapping are **deleted** with `BILLRUN_PLACEHOLDER_MODE` (D31); one new mapping — `ChargeSource` onto the **existing** cyan/primary families (§6); one correction — `EXCLUDED` was missing from §2; plus `BLN` in the mono-ID list and the bill-line table's radius/tabular rules. **No new color, type, radius or shadow token is introduced, and the Deep Petrol CTA in §7 is unchanged.**
 
-**Target Capacity Pricing delta (minimal, 2026-10-04):** **no** new color, typography, radius, shadow, or accent token, and the module still ships **no AI** (`--ai-*`/`--gradient-ai` stay unused); the Deep Petrol CTA (§7) is unchanged. Two UI touches only: (1) the `discount_amount` column now **renders** once a capacity **motivation** line carries a non-zero discount (§6b); (2) the posted invoice PDF gains a **per-polygon usage appendix** grouped by state/district (§6d), using existing tokens. Sources: `_updatemodule-billing-billrun-target-capacity-plan.md`, `billmgmt-update-overview.md`, `billmgmt-architecture.md`.
+**Target Capacity Pricing delta (minimal, 2026-10-04):** **no** new color, typography, radius, shadow, or accent token, and the module still ships **no AI** (`--ai-*`/`--gradient-ai` stay unused); the Deep Petrol CTA (§7) is unchanged. Two UI touches only: (1) the `discount_amount` column now **renders** once a capacity **motivation** line carries a non-zero discount (§6b); (2) the posted invoice PDF gains a **per-polygon usage appendix** grouped by state/district (§6d), using existing tokens. Sources: `_updatemodule-billing-billrun-target-capacity-plan.md`, `billmgmt-project-overview.md` › Target Capacity Pricing update, `billmgmt-architecture.md`.
 
-**Invoice Template delta (minimal, 2026-10-07):** **no** new app color, type, radius or shadow token, and still **no AI**. Four UI touches: (1) two new Administration › Invoice Settings screens (Company profile, Invoice template) mapped onto existing families in **§10**, including the new `TemplateVersionStatusBadge`; (2) **Activate** on those screens takes the existing Deep Petrol featured accent (§7); (3) the invoice **document** gets its own print palette and typography, which sit **outside** the app token system and use shared hex values only as fixed layout CSS (§10c); (4) the PDF gains a "Page X of Y" footer, and the draft watermark stays `position:fixed` (§6c). Sources: `billmgmt-update-overview.md` Part 2, `billmgmt-architecture.md` › Invoice Template deltas, `billmgmt-code-standards.md` › Invoice Template deltas.
+**Invoice Template delta (minimal, 2026-10-07):** **no** new app color, type, radius or shadow token, and still **no AI**. Four UI touches: (1) two new Administration › Invoice Settings screens (Company profile, Invoice template) mapped onto existing families in **§10**, including the new `TemplateVersionStatusBadge`; (2) **Activate** on those screens takes the existing Deep Petrol featured accent (§7); (3) the invoice **document** gets its own print palette and typography, which sit **outside** the app token system and use shared hex values only as fixed layout CSS (§10c); (4) the PDF gains a "Page X of Y" footer, and the draft watermark stays `position:fixed` (§6c). Sources: `billmgmt-project-overview.md` › Invoice Template update (the update overview's Part 2), `billmgmt-architecture.md` › Invoice Template deltas, `billmgmt-code-standards.md` › Invoice Template deltas.
 
 **Invoice Template Phase 3 delta (minimal, 2026-10-15; delivered bm64–bm72, signed off by bm73 on 2026-10-17):** **no** new app color, type, radius, shadow or accent token, still **no AI**, and the Deep Petrol CTA (§7) is unchanged. Three UI touches:
 1. The Invoice template editor keeps one section toggle (**Payment information**) and gains **Footnote** lines; every other toggle is removed (D56, §10b).
 2. The rewritten layout v1 replaces the Usage annex with per-type, per-State-District detail pages and a Total Amount page. It reuses the §10c `--inv-*` print palette and adds **no** layout variable (§10d).
 3. New park/skip reasons surface on existing surfaces with existing families (§10d).
 
-**Invoice Template Types delta (minimal, 2026-10-25; planned, not built):** **no** new app color, type, radius, shadow or accent token, still **no AI**, and the Deep Petrol CTA (§7) stays on **Activate** only. Four UI touches, all on existing families:
+**Invoice Template Types delta (minimal, 2026-10-25; delivered bm74–bm84, signed off by bm85 on 2026-10-26):** **no** new app color, type, radius, shadow or accent token, still **no AI**, and the Deep Petrol CTA (§7) stays on **Activate** only. Four UI touches, all on existing families:
 1. Invoice Settings › Invoice template becomes a **type list** with a per-type detail page. Type statuses (Usable / Not yet usable / Retired) map onto the version families (§10a). The Standard-only heading is corrected (§10b).
 2. **Upload layout package**, **overwrite warning**, **retire** and **export** controls (§10e). Destructive confirms use the danger role **inside their dialog only** (§7).
 3. Upload rejections render as one Danger alert listing every problem, never a toast (§10e).
 4. Customer Management's BAN type select and labels are specified in `custmgmt-ui-context.md` §9.5, not here.
 
-Sources: `billmgmt-update-overview.md` (the in-flight design), `billmgmt-architecture.md` › Invoice Template Types deltas, `billmgmt-code-standards.md` › Invoice Template Types deltas (Styling rules 1–6). Earlier deltas: `billmgmt-project-overview.md` › Invoice Template Phase 3, and the matching architecture and code-standards sections.
+Sources: `billmgmt-project-overview.md` › Invoice Template Types (the delivered design, folded from the update overview at bm85), `billmgmt-architecture.md` › Invoice Template Types deltas, `billmgmt-code-standards.md` › Invoice Template Types deltas (Styling rules 1–6). Earlier deltas: `billmgmt-project-overview.md` › Invoice Template Phase 3, and the matching architecture and code-standards sections.
 
 **Rendering rule (shared §8):** every badge/pill renders the dark `-fg` text on the light `-bg` tint (never white-on-tint) and always pairs color with an icon **and** label, so meaning never depends on colour alone. Match the component names in `billmgmt-code-standards.md` §4.
 
@@ -249,7 +249,7 @@ One badge serves both template and company-profile versions (code-standards › 
 
 `RETIRED` is muted, never danger: retiring a version is the normal result of activating its successor.
 
-**Invoice Template Types (planned): type status on the type list and detail heading.** The same `TemplateVersionStatusBadge`, with three more states. Never a second badge component.
+**Invoice Template Types (delivered, bm77): type status on the type list and detail heading.** The same `TemplateVersionStatusBadge`, with three more states. Never a second badge component.
 
 | Type state (derived, never stored) | Family (reuses the row above) | Base / hex | Text (`-fg`) / hex | Tint (`-bg`) / hex |
 | --- | --- | --- | --- | --- |
@@ -460,7 +460,7 @@ No colour signals sign or status on the invoice. Unutilised is a normal amount, 
 
 **As built (bm66; review fix 2026-10-16):** the `TEMPLATE_VERSION_NOT_FOUND` copy above is shown only for its D55 reason (`detail.reason = FAMILY_HAS_NO_ACTIVE_VERSION`); any other cause (a missing blob, an uncaptured row) keeps the generic text. The route computes the message from the code and reason, and the modal shows the route's message. Posting progress lists an account posting skipped (zero total, or this reason at posting) with a neutral **Skipped** badge and its `error_detail`, counts it apart from "{n}/{N} posted", and its completion line names the skipped count. The approve page's blocking `template_versions_captured` check uses the existing failed-check row. The draft-preview copy lives in one map, `describeInvoiceRenderCode(code)` (`lib/invoice-render-messages.ts`), shared by the draft route's `422 { error: { code, message } }` body and `InvoicePreviewModal`. Any code without its own row keeps the generic "Could not render the draft invoice. Please try again." The modal keeps its existing error layout (Danger `-fg` text and Retry). bm70 and bm71 add the two `INVOICE_*` polygon/utilised rows to the map.
 
-### 10e. Invoice template types — list, detail, upload, retire, export (Invoice Template Types update, planned)
+### 10e. Invoice template types — list, detail, upload, retire, export (Invoice Template Types update, delivered bm77–bm83, signed off by bm85)
 
 Existing families only; strings are owned by `components/billing/invoice-settings/template-type-messages.ts` (code-standards › Invoice Template Types, Styling rule 6).
 

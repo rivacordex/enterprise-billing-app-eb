@@ -1,10 +1,10 @@
 # Billing Management (Bill Run) — Module Code Standards
 
-This document extends `context/code-standards.md` (the platform-wide standards every module inherits) and records **only** what the Billing Management module adds or does differently, including the three delivered updates (Part 1 Target Capacity Pricing; Part 2 Invoice Template; **Invoice Template Phase 3**, bill run uses the BAN's template, signed off by bm73), all folded into `billmgmt-project-overview.md`. Everything else in the general file (general rules, TypeScript, Next.js, styling, API, data, file organization, CI gates) still applies and is **not** repeated here. If a rule seems missing, look in the general file. Where this doc conflicts with the architecture **Module Invariants** (`billmgmt-architecture.md` §6), the Invariants win and the conflict is a bug to fix here.
+This document extends `context/code-standards.md` (the platform-wide standards every module inherits) and records **only** what the Billing Management module adds or does differently, including the four delivered updates (Part 1 Target Capacity Pricing; Part 2 Invoice Template; **Invoice Template Phase 3**, bill run uses the BAN's template, signed off by bm73; **Invoice Template Types**, editor upload, type catalog, BAN binding, signed off by bm85), all folded into `billmgmt-project-overview.md`. Everything else in the general file (general rules, TypeScript, Next.js, styling, API, data, file organization, CI gates) still applies and is **not** repeated here. If a rule seems missing, look in the general file. Where this doc conflicts with the architecture **Module Invariants** (`billmgmt-architecture.md` §6), the Invariants win and the conflict is a bug to fix here.
 
-**Companion docs (authoritative):** `billmgmt-project-overview.md` (product spec, flows, success criteria — the Phase-4 update overview is folded in) · `billmgmt-update-overview.md` (the in-flight **Invoice Template Types** update; Part 2 folded at bm63, Invoice Template Phase 3 at bm73) · `billmgmt-architecture.md` (technical design, **68** numbered **Module Invariants** §6, #51–#58 built and audited at bm73, #59–#68 planned; #15 retired) · `_updatemodule-billing-invoice-template-phase3-billrun-plan.md` (Invoice Template Phase 3 decisions D1–D60) · `_updatemodule-billing-invoice-template-merged-plan.md` (Part 2 decisions D1–D8, v1 review R1–R11; §15 wins over §§1–14) · `_updatemodule-billing-billrun-phase3-plan.md` (phase-3 decisions D1–D30) · `_newmodule-billing-billrun-plan.md` (phase-1 functional design & data model).
+**Companion docs (authoritative):** `billmgmt-project-overview.md` (product spec, flows, success criteria — every delivered update is folded in: Part 2 at bm63, Invoice Template Phase 3 at bm73, Invoice Template Types at bm85; no update is in flight) · `billmgmt-architecture.md` (technical design, **68** numbered **Module Invariants** §6, #51–#58 built and audited at bm73, #59–#68 built and audited at bm85; #15 retired) · `_updatemodule-billing-invoice-template-phase3-billrun-plan.md` (Invoice Template Phase 3 decisions D1–D60) · `_updatemodule-billing-invoice-template-merged-plan.md` (Part 2 decisions D1–D8, v1 review R1–R11; §15 wins over §§1–14) · `_updatemodule-billing-billrun-phase3-plan.md` (phase-3 decisions D1–D30) · `_newmodule-billing-billrun-plan.md` (phase-1 functional design & data model).
 
-**Where each update's rules live:** Part 1 → "Target Capacity Pricing update — code-standards deltas" · Part 2 → "Invoice Template update — code-standards deltas" · Invoice Template Phase 3 → "Invoice Template Phase 3 — … code-standards deltas" · Invoice Template Types (planned) → "Invoice Template Types — … code-standards deltas" (all at the end of this file). Part 2 replaces §6.15 below.
+**Where each update's rules live:** Part 1 → "Target Capacity Pricing update — code-standards deltas" · Part 2 → "Invoice Template update — code-standards deltas" · Invoice Template Phase 3 → "Invoice Template Phase 3 — … code-standards deltas" · Invoice Template Types (delivered) → "Invoice Template Types — … code-standards deltas" (all at the end of this file). Part 2 replaces §6.15 below.
 
 **Status:** Phase 3 planning, ENG CLEARED (2026-09-14). Component/route/permission names below are the **binding** convention for the build.
 
@@ -557,7 +557,7 @@ The general test-suite gate includes this module's guardrails; each ships with t
 
 ## Target Capacity Pricing update — code-standards deltas (2026-10-04)
 
-Per the header, this document is a delta to `../code-standards.md`; this section records **only** what the Target Capacity Pricing update adds or changes on top of §1–§9 above (`_updatemodule-billing-billrun-target-capacity-plan.md`, `billmgmt-update-overview.md`, `billmgmt-architecture.md` Inv #29–#38). Where a facet is unchanged it says so, so a future reader does not go looking. **Hard precondition:** `_change-rating-configuration-plan.md` (PER_UNIT rating, the `udr_subscriber_ref_id → udr_subscription_ref_id` rename, the real resolver), treated as shipped by this phase's `bm*`-spec delivery.
+Per the header, this document is a delta to `../code-standards.md`; this section records **only** what the Target Capacity Pricing update adds or changes on top of §1–§9 above (`_updatemodule-billing-billrun-target-capacity-plan.md`, the Target Capacity Pricing section of `billmgmt-project-overview.md`, `billmgmt-architecture.md` Inv #29–#38). Where a facet is unchanged it says so, so a future reader does not go looking. **Hard precondition:** `_change-rating-configuration-plan.md` (PER_UNIT rating, the `udr_subscriber_ref_id → udr_subscription_ref_id` rename, the real resolver), treated as shipped by this phase's `bm*`-spec delivery.
 
 ### General rules (adds to §1)
 
@@ -635,7 +635,7 @@ The `billrun_runtime`/`app_runtime` grant additions (above) must land or Custome
 
 ## Invoice Template update — code-standards deltas (2026-10-07; delivered bm47–bm63)
 
-This section records **only** what the Invoice Template update (Part 2 of `billmgmt-update-overview.md`; `_updatemodule-billing-invoice-template-merged-plan.md`, with §15 R1–R11 taking precedence) adds to or changes in `context/code-standards.md` and §1–§9 above. Where something is unchanged, this section says so. `billmgmt-architecture.md` now carries the Part 2 invariants **#39–#50**, and they take precedence over this section. Map of the plan IDs still cited below: R1/R10 → Inv #39; R8 and park-on-failure → #40; stamping at posting → #41; R10/R11 resolution and default → #42; D8 reprint/C1 → #43; append-only versions → #44; checksum on load → #45; D3/D4 and locked Handlebars → #46; no fetch/ratecard at render → #47; logo validation → #48; server-side structure/activation checks and audit → #49; R2/R6 "current charges only", bill-level tax → #50. Inline citations below use these Inv # (done at the bm63 ship gate, workflow rules §7.4); a plan ID remains only where no invariant exists (R3 no XML, R4 the blob store, R5 pagination, R9 the geo source, D1 tax invoice only). Names marked **binding** must be created exactly as written. A build spec that needs a different name updates this file first.
+This section records **only** what the Invoice Template update (Part 2 of the update overview, now the Invoice Template update section of `billmgmt-project-overview.md`; `_updatemodule-billing-invoice-template-merged-plan.md`, with §15 R1–R11 taking precedence) adds to or changes in `context/code-standards.md` and §1–§9 above. Where something is unchanged, this section says so. `billmgmt-architecture.md` now carries the Part 2 invariants **#39–#50**, and they take precedence over this section. Map of the plan IDs still cited below: R1/R10 → Inv #39; R8 and park-on-failure → #40; stamping at posting → #41; R10/R11 resolution and default → #42; D8 reprint/C1 → #43; append-only versions → #44; checksum on load → #45; D3/D4 and locked Handlebars → #46; no fetch/ratecard at render → #47; logo validation → #48; server-side structure/activation checks and audit → #49; R2/R6 "current charges only", bill-level tax → #50. Inline citations below use these Inv # (done at the bm63 ship gate, workflow rules §7.4); a plan ID remains only where no invariant exists (R3 no XML, R4 the blob store, R5 pagination, R9 the geo source, D1 tax invoice only). Names marked **binding** must be created exactly as written. A build spec that needs a different name updates this file first.
 
 ### Conflicts settled before the build (all closed at bm63)
 
@@ -1216,9 +1216,9 @@ Reviewed 2026-10-15 against `context/code-standards.md`. These predate Invoice T
 
 ---
 
-## Invoice Template Types — editor upload, type catalog, BAN binding — code-standards deltas (2026-10-25; planned, not built)
+## Invoice Template Types — editor upload, type catalog, BAN binding — code-standards deltas (2026-10-25; delivered bm74–bm84, signed off by bm85 on 2026-10-26)
 
-_**Planned.** The functional design is in `billmgmt-update-overview.md`; the architecture deltas and invariants **#59–#68** are in `billmgmt-architecture.md`. This section records only what this update adds to or changes in the rules above and in `context/code-standards.md`. Where a rule here conflicts with an earlier section, this section wins (see "Rules superseded by this update")._
+_**Delivered (bm74–bm84), signed off by bm85** (2026-10-26; with CM cm23–cm24). The functional design is the Invoice Template Types section of `billmgmt-project-overview.md` (folded from the update overview at bm85); the architecture deltas and invariants **#59–#68** are in `billmgmt-architecture.md`. This section records only what this update adds to or changes in the rules above and in `context/code-standards.md`. Where a rule here conflicts with an earlier section, this section wins (see "Rules superseded by this update")._
 
 ### General rules (adds to §1)
 
@@ -1385,55 +1385,55 @@ db/seeds/invoice-templates/INVTPL-BASIC-A4/v1/**   # NEW reference package (not 
 
 ### Guardrail tests (extends §9, items 68–79)
 
-68. **One layout writer (Inv #59).** A static test fails if any file other than `install-layout-package.ts` inserts or updates a `bill_template_version` row with `kind = 'layout'`, or calls the blob store for `invoice-templates/layouts/`.
-69. **Gate completeness (Inv #60).** One fixture per `LayoutProblemCode`, each refused with that code and leaving zero new rows, blobs and audit rows:
+68. **One layout writer (Inv #59).** Built (bm78; `overwriteLayoutDraft` added in bm80): `tests/guardrails/single-layout-writer.test.ts`. A static test fails if any file other than `install-layout-package.ts` inserts or updates a `bill_template_version` row with `kind = 'layout'`, or calls the blob store for `invoice-templates/layouts/`.
+69. **Gate completeness (Inv #60).** Built (bm78; restore cases bm81): `tests/services/billing/invoice-template/upload-layout-gate.test.ts` and the no-write cases in `tests/db/upload-layout-package.integration.test.ts`. One fixture per `LayoutProblemCode`, each refused with that code and leaving zero new rows, blobs and audit rows:
     - `ZIP_TOO_LARGE` checks the central directory before any inflate (a spy asserts no inflate call)
     - `ZIP_UNEXPECTED_FILE` covers `partials/extra.hbs`, `../x`, `x.editor.json` and `fonts/x.ttf`
-70. **Draft isolation (Inv #61), CRITICAL regression.**
+70. **Draft isolation (Inv #61), CRITICAL regression.** Built (bm78; preview after overwrite bm80): `tests/services/billing/invoice-template/load-layout-draft.test.ts`, the DRAFT-only case in `tests/db/run-template-capture.integration.test.ts`, `tests/db/preview-invoice-template.integration.test.ts`.
     - Capture, posting, final render and reprint throw `TEMPLATE_VERSION_NOT_FOUND` when handed a DRAFT.
     - `loadLayoutDraft` output never appears in `loadedTemplateMemo`.
     - A preview after an in-place overwrite renders the new files.
-71. **Stale preview (Inv #62).**
+71. **Stale preview (Inv #62).** Built (bm78 upload, bm79 activation, bm80 concurrency): `tests/db/upload-layout-package.integration.test.ts`, `tests/db/activate-template-pair.integration.test.ts`, `tests/db/overwrite-layout-draft.integration.test.ts`.
     - An upload changes the settings DRAFT's token.
     - An Activate with the pre-upload token promotes nothing.
     - Two concurrent uploads carrying `{ none: true }` produce one DRAFT, and one `DRAFT_CHANGED_SINCE_WARNING`.
-72. **Visible-text compliance (Inv #63).** For each required probe value, a layout fails `LAYOUT_MISSING_REQUIRED_BLOCKS` when the value is:
+72. **Visible-text compliance (Inv #63).** Built (bm76): `tests/guardrails/invoice-layout-compliance.test.ts` (static tier) and `tests/services/billing/invoice-template/compliance-visible.e2e.test.ts` (visible tier, `RUN_CHROMIUM_E2E=1`). For each required probe value, a layout fails `LAYOUT_MISSING_REQUIRED_BLOCKS` when the value is:
     - removed
     - placed in an HTML comment
     - placed under `display:none`, `visibility:hidden` or a `hidden` attribute inside its `.sec--<key>`
 
     CI runs `compliance.ts` over `INVTPL-STD-A4/v1` and `INVTPL-BASIC-A4/v1`, and both pass.
-73. **Rule ownership (Inv #63).**
+73. **Rule ownership (Inv #63).** Built (bm76): `tests/guardrails/invoice-layout-lint.test.ts`.
     - `invoice-layout-lint.test.ts` declares no regex of its own; it imports `compliance.ts`.
     - Each hardening rule is rejected by `compliance.ts`: entity-encoded URL, CSS-escaped URL, `image-set()`, `on…=`.
-74. **Network-blocked render (Inv #64).**
+74. **Network-blocked render (Inv #64).** Built (bm75 draft/final half, bm78 gate half): `tests/services/billing/render-invoice.service.test.ts`, `tests/services/billing/invoice-render-chromium.e2e.test.ts`, `tests/services/billing/invoice-template/upload-gate-chromium.e2e.test.ts`, `tests/guardrails/chromium-single-factory.test.ts`; the golden is `tests/services/billing/invoice-golden.test.ts`.
     - A gate render of a fetching layout returns `LAYOUT_EXTERNAL_FETCH`.
     - A final render of the same layout (inserted directly) produces a PDF, logs the URL, and a stub server records no hit.
     - An inline `<script>` doesn't run.
     - Standard v1's golden is unchanged.
     - No file other than the context factory in `render-invoice.ts` calls `chromium.launch` or `browser.newContext`.
-75. **Type identity and catalog DDL (Inv #65), on a populated DB.**
+75. **Type identity and catalog DDL (Inv #65), on a populated DB.** Built (bm74): `tests/db/invoice-template-types-catalog.integration.test.ts`.
     - `0053` keeps existing rows valid, backfills Standard's `layout_code` and type id, and leaves `bill_template_version_guard_trg` enabled.
     - The guard rejects any name, code or `layout_code` update.
     - The composite FKs reject a cross-type pair and a mismatched `layout_code`.
     - The name CHECKs reject doubled and surrounding spaces.
     - `btf_name_ci_uq` rejects a case or space variant of a retired name.
-76. **Bind and retire races (Inv #66).**
+76. **Bind and retire races (Inv #66).** Built (bm83; the bind gate cm23): `tests/db/retire-template-type.integration.test.ts`.
     - A bind racing a retire, both orders: it lands before and is switched, or fails `TEMPLATE_NOT_BINDABLE`.
     - Retire A→B racing retire B→A completes with no deadlock.
     - After a retire, zero BANs reference the type.
     - An explicit Standard id is rejected.
     - The switch to Standard writes NULL.
-77. **Retire scope (Inv #67).**
+77. **Retire scope (Inv #67).** Built (bm83; the upload refusal bm78, activate and discard bm79): `tests/db/retire-template-type.integration.test.ts`, `tests/db/save-template-draft.integration.test.ts`, `tests/actions/billing/invoice-settings/preview-invoice-template.action.test.ts`.
     - A retire leaves every version row of the type unchanged (row-by-row compare).
     - Save, upload, preview and activate on a retired type return `TEMPLATE_TYPE_RETIRED`.
     - Standard returns `DEFAULT_TYPE_NOT_RETIRABLE`.
-78. **Export and restore (Inv #68).**
+78. **Export and restore (Inv #68).** Built (bm81): `tests/db/export-restore-template.integration.test.ts`.
     - Exported layout files and `checksums.json` equal the stored blobs byte for byte, for an ACTIVE, a RETIRED and a DRAFT pair and for Standard v1.
     - A tampered blob fails the export.
     - Uploading the export into an empty same-named type restores bytes and settings, skips the version check, and records `restoredFrom`.
     - The same zip without `settings.json` and with a wrong version is refused.
-79. **Grants and boundaries.**
+79. **Grants and boundaries.** Built (bm77 grants; bm83 the pinned exemption; cm23 `0054`): `tests/guardrails/invoice-settings-grants.integration.test.ts`, `tests/db/template-types-create.integration.test.ts`, `tests/guardrails/phase3-boundaries.test.ts`, `tests/guardrails/customer-accounts-binding-boundaries.test.ts`, `tests/db/billing-account-template-type-migration.integration.test.ts`.
     - `app_runtime` can INSERT and UPDATE `bill_template_family` and use its sequence, and can't DELETE it.
     - `billrun_runtime` has no new grant.
     - Item 66's boundary test pins one new exemption: `services/billing/invoice-template/template-types.ts` may write `billing_account.ref_bill_template_family_id`, in the retire switch only.

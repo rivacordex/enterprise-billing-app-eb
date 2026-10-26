@@ -795,7 +795,7 @@ unresolved (capacity plan O-TC7), and no pro-ration method has been built or
 chosen.
 
 **Why deferred.** This is explicitly scoped as a **business** decision, not
-an engineering deferral (`billmgmt-update-overview.md` _Out of scope_;
+an engineering deferral (`billmgmt-project-overview.md` › Target Capacity Pricing update, _Out of scope_;
 `billmgmt-ai-workflow-rules.md` Target Capacity §"Missing or ambiguous" item
 1: "never build a pro-ration method without it"). No default was guessed.
 
@@ -1217,7 +1217,7 @@ Not defects: the code behaves correctly and the guardrails pass. These are maint
 
 **Recommendation:** move them over in one test-only change. Notably, the harness only deletes blobs after both store guards pass (Vitest runs `afterAll` even when `beforeAll` fails); the older copies still clean up whenever a blob client exists. Only the global `DESTRUCTIVE_DB_OK` + disposable-sentinel preflight protects them today. No production code changes.
 
-## 31. 🟡 OPEN (logged 2026-10-26): items outside bm81's scope, found during the bm80–bm81 reviews
+## 31. 🟡 OPEN (logged 2026-10-26): items outside bm81's scope, found during the bm80–bm81 reviews (31c RESOLVED by bm83)
 
 Recorded so they are fixed in their own units. None blocks bm81: export, restore and the fixes from the bm81 review are built and tested.
 
@@ -1235,9 +1235,11 @@ Recorded so they are fixed in their own units. None blocks bm81: export, restore
 
 **Recommendation:** log `error.message` (and the error's class name) for the non-typed case in both handlers, together.
 
-### 31c. bm83's spec needs a note that the retired-type preview check applies on the draft path too
+### 31c. 🟢 RESOLVED (bm83, 2026-10-26) — bm83's spec needs a note that the retired-type preview check applies on the draft path too
 
 **What:** since the bm79 review, `previewInvoiceTemplate` renders a working draft only with `draft: true` (for EDIT). bm83's retired-type check in preview should state that it also covers that draft path. Spec text only; to update when bm83 is picked up.
+
+**Resolved:** bm83 spec D7 states the preview check covers both values of the `draft` flag and both sources, and bm83 built it (`TemplateTypeRetiredError`; `tests/actions/billing/invoice-settings/preview-invoice-template.action.test.ts`, both sources × `draft`).
 
 ### 31d. The bm58 activation suite fails when it runs after suites that activate Standard (test-only, since bm79)
 
@@ -1246,3 +1248,13 @@ Recorded so they are fixed in their own units. None blocks bm81: export, restore
 **ELI5:** several tests leave their rubbish in a shared bin, and one test counts what's in the bin.
 
 **Recommendation:** fold into §30b. On the shared harness, every suite that activates Standard cleans `generated/INVOICE/STANDARD/` in `beforeAll` and `afterAll` (behind the blob-store guard), and bm58 also cleans it in `beforeAll`. Test-only, with no production change.
+
+**2026-10-26 (bm85 ship gate):** still open. In the gate's full integration batch the bm58 suite stays order-dependent (it passes run alone); the fix remains §30b's test-only harness move.
+
+## 32. 🟢 RESOLVED (bm85, 2026-10-26): the audit-repository export pin missed `insertAuditEvents`
+
+**What:** bm85 gate finding — `tests/db/audit-repository.integration.test.ts` pinned the audit repository's exports to `insertAuditEvent` only; bm83 added `insertAuditEvents` (insert-only). Fixed in bm85: the pin lists both, plus a multi-row/empty-list case.
+
+**ELI5:** a test kept a list of the only doors into the audit log; bm83 added a second, equally safe door, and the list hadn't been updated.
+
+**Recommendation:** none; test-only fix, no production change.

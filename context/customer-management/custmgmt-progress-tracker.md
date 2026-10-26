@@ -8,18 +8,18 @@ Archive of delivered work for the Customer Management module. Single tracker sin
 | ----- | --------- | ------------------------------- | ------------------------------------------ | ---------------------- |
 | 1     | cm01–cm16 | v1 full CRUD                    | cm16 (`8d80e6c`)                           | Completed (2026-07-17) |
 | 2     | cm17–cm22 | Invoice Template Binding update | cm22 (`e46ee32`, tightening `a3f2923`)     | Completed (2026-10-14) |
-| 3     | cm23–cm24 | Invoice Template Types update (bind a BAN to a template type) | cm24 (joint with Billing bm85) | In progress (cm23 started 2026-10-26) |
+| 3     | cm23–cm24 | Invoice Template Types update (bind a BAN to a template type) | cm24 (joint with Billing bm85) | Completed (2026-10-26) |
 
 ---
 
-# Phase 3 — Invoice Template Types update (cm23–cm24) — IN PROGRESS
+# Phase 3 — Invoice Template Types update (cm23–cm24) — COMPLETED 2026-10-26
 
-Bind a BAN to a template **type** (`billing.billing_account.ref_bill_template_family_id`, `NULL` = Standard). Scope: `custmgmt-update-overview.md`; rules: `custmgmt-ai-workflow-rules.md` §10, `custmgmt-code-standards.md` §10. Owning update: Billing (bm74–bm85).
+Bind a BAN to a template **type** (`billing.billing_account.ref_bill_template_family_id`, `NULL` = Standard). Scope: `custmgmt-project-overview.md` › "Invoice Template Types — Customer Management part" (folded from the update overview at cm24); rules: `custmgmt-ai-workflow-rules.md` §10 (carried forward), `custmgmt-code-standards.md` §10. Owning update: Billing (bm74–bm85).
 
 | Unit | Name                                                                                         | Boundary | Status          |
 | ---- | -------------------------------------------------------------------------------------------- | -------- | --------------- |
 | cm23 | Bind a BAN to a template type (`0054`, type-aware gate, panel select + Save, type labels, onboarding wording). **One merge with Billing bm82** | APP      | **Built** (2026-10-26), with Billing bm82 in the same merge |
-| cm24 | Ship gate pointer, joint with Billing bm85                                                   | TESTS    | Not started     |
+| cm24 | Ship gate pointer, joint with Billing bm85                                                   | TESTS    | **Built** (2026-10-26), with Billing bm85 in the same change |
 
 **cm23 notes (2026-10-26):**
 
@@ -56,7 +56,30 @@ Bind a BAN to a template **type** (`billing.billing_account.ref_bill_template_fa
   - **Billing side:** see the billmgmt tracker.
   - **Left as is (owner, 2026-10-26):** #3, the usable-type rule written four times. It disagrees only for an explicit Standard id written by SQL bypass, and the label then shows a warning. The "· not usable" label is kept: it is the edge-case (SQL bypass only) warning that the next run will block that BAN's approval. Retired types never appear in the select (`listUsable`).
   - **Tests:** panel/tab/page/guardrail unit 499/1 (the failure is the pre-existing `ratecard-demo-seed-boundary`); DB on the disposable DB 24/0 (bind, summary, journey, type list).
-- **Not edited (approval needed):** `ac04` (Accounts spec) still quotes the old wizard wording. acctmgmt docs need owner approval (workflow rules §10.6 item 5).
+- **Not edited (approval needed):** `ac04` (Accounts spec) still quotes the old wizard wording. acctmgmt docs need owner approval (workflow rules §10.6 item 5). _(cm24: the owner approved the wording edit; done.)_
+
+**cm24 notes (2026-10-26):** ship gate, tests and docs only; joint with Billing bm85 (`billmgmt-progress-tracker.md` bm85 has the full suite counts).
+
+- **Suites:** typecheck and ESLint clean; unit 5050 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); CM guardrails 11–13 and `customer-accounts-binding-boundaries.test.ts` green, with bm83's retire-switch writer pinned (test 5); integration on the disposable DB 146/148 files in the full batch (the two failures are Billing's: bm58 order-dependence, and the audit-repository pin fixed in bm85); no `ref_bill_template_version_id` remains on `billing_account` (guardrail 11, test 6).
+- **Journey additions (§3.2):** in the shared `tests/e2e/invoice-template-journey.integration.test.ts` block "bm85 + cm24", after step 4: both label reads (`listCustomerBillingAccounts`, `getCustomerAccountsSummary`) show BAN A on "Standard (default) · vN"; a bind with the pre-retire `lastModified` is `CONFLICT`; a bind to the retired type is `TEMPLATE_NOT_BINDABLE` with either `lastModified` (the gate refuses before the lock check, so the panel shows the retired-type message and reloads). Step 2 checks the bind writes once, audits once and leaves `party_role.last_modified_datetime` untouched. 9/0.
+- **Success criteria → evidence:**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| 1 | Migration | `tests/db/billing-account-template-type-migration.integration.test.ts`, `tests/db/billing-account-template-column.integration.test.ts` |
+| 2 | Bind writes once, audited, BAN lock only | `tests/accounts/set-billing-account-template.integration.test.ts`; Types journey step 2 |
+| 3 | Standard is NULL; non-bindable refused | the same suite; `tests/services/assert-bindable-template.test.ts` |
+| 4 | CONFLICT / BAN_CLOSED / BAN_NOT_FOUND / no-op | `tests/services/set-billing-account-template.test.ts` |
+| 5 | Dual gate, UI bypassed | `tests/actions/set-billing-account-template.action.test.ts`; the authz matrix |
+| 6 | Bind racing retire | `tests/db/retire-template-type.integration.test.ts` "bind first" and "retire first" (CM guardrail 12) |
+| 7 | Live labels; old strings gone | `tests/services/resolve-ban-template-label.test.ts`, `tests/components/customer-accounts-tab.test.tsx`; CM guardrail 13 string scan |
+| 8 | After a retire: new type shown; retired-mid-edit message | Types journey step 4 (cm24 checks); `tests/components/billing-account-panel.test.tsx` |
+| 9 | Onboarding NULL, new wording, V7 | `tests/accounts/onboard-customer-accounts-template.integration.test.ts`, `tests/components/onboard-accounts-wizard.test.tsx`, `tests/accounts/v07-onboarding-atomicity.integration.test.ts` |
+| 10 | Next run captures the type | Types journey step 3; bm82's Wholesale capture case (`run-template-capture` case 7) |
+| 11 | Build health; docs move with the code | the suites above; the docs below |
+
+- **Docs (§3.3):** architecture Inv. #19–#22 → built (cm23) with cites, #18 replaced by #19–#21, §8 delivered; code standards §10 delivered, guardrails 11–13 built with test files, guardrail 10 replaced by 11; UI context §10 delivered, §9.4 replaced by §10.1 and §9.5 by §10.2–§10.3 (the spec says §10.1–§10.2, but the onboarding field is §10.3); workflow rules §10 carried forward, like §9; `cm05` and `ac04` (owner-approved) carry the cm23 wording; the project overview gains "Invoice Template Types — Customer Management part (delivered, cm23–cm24)" and its current-state flow and features; `custmgmt-update-overview.md` deleted in the same change as Billing's, links repointed (`AGENTS.md` left as is, owner); `cm00-build-plan.md` Phase 3 delivered and compacted.
+- **Left for the owner:** `ac04` lines 34 and 44 still name the old field and column (`billTemplateVersionId`, `ref_bill_template_version_id`) — field names, not the wording quotes the approval covered; `cm00-build-plan.md` still cites the merged-away `custmgmt-completed-tracker.md` for cm01–cm16 (pre-existing).
 
 ## Carried forward (not blocking)
 
@@ -72,7 +95,7 @@ Bind a BAN to a template **type** (`billing.billing_account.ref_bill_template_fa
 
 # Phase 2 — Invoice Template Binding update (cm17–cm22) — COMPLETED 2026-10-14
 
-Plumbing only: a per-BAN invoice template reference (`billing.billing_account.ref_bill_template_version_id`, v1 always `NULL` = follow the active template), captured at onboarding, reset on Manage Customer, shown on a tabbed View Customer. Posting never reads it (D4, Inv. #18). Scope: `custmgmt-update-overview.md`; rules: `custmgmt-ai-workflow-rules.md` §9.
+Plumbing only: a per-BAN invoice template reference (`billing.billing_account.ref_bill_template_version_id`, v1 always `NULL` = follow the active template), captured at onboarding, reset on Manage Customer, shown on a tabbed View Customer. Posting never reads it (D4, Inv. #18). Scope: `custmgmt-project-overview.md` › "Invoice Template Binding update — delivered scope"; rules: `custmgmt-ai-workflow-rules.md` §9.
 
 | Unit | Name                                                        | Boundary | Commit    | Review / follow-up fixes                 |
 | ---- | ----------------------------------------------------------- | -------- | --------- | ---------------------------------------- |

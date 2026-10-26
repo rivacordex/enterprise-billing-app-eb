@@ -41,7 +41,7 @@ Fields, pre-filled from ac03's seeded config, rendered in the Customer VALIDATED
 - **FA credit limit** and **BAN credit limit** — numeric; pre-filled from `ACCOUNTS_DEFAULT_CREDIT_LIMIT` if set, else blank (the resolved-in-ac03 "manual per-customer, pre-filled from optional default" decision).
 - **Payment-terms override** (Q14) — optional integer net-days on the BAN (`payment_due_days_override`); blank = use cycle default. Captured beside credit limit per Q14; **resolved term = coalesce(override, cycle.payment_due_days)** is computed at read time by a shared `resolveTerm()` helper (defined here, reused by the overdue derivation in ac05) — the override is *stored*, the resolution is *derived* (Inv. #13).
 - **rating_type** — `postpaid` only (Q23); not offered as a choice.
-- **Invoice template** (custmgmt cm18, approved 2026-10-13) — read-only "Follow active template" after Currency, with help text "Invoices use the active template. Per-customer templates are not available yet." The wizard always submits `billTemplateVersionId: null`; there is no template picker in v1.
+- **Invoice template type** (custmgmt cm18, approved 2026-10-13; wording per custmgmt cm23) — read-only "Standard (default)" after Currency, with help text "New billing accounts use the Standard invoice template. Choose another type afterwards in Manage Customer › Billing account." The wizard always submits `billTemplateVersionId: null`; there is no template picker in v1.
 
 Confirmation shows the created ledger account names (plan §3 F1 — "making the underlay visible builds operator trust").
 
