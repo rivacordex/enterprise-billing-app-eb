@@ -70,6 +70,8 @@ Sources: `billmgmt-project-overview.md` › Invoice Template Types (the delivere
 | `FAILED`     | Danger          | `--color-danger-500` `#D92D2D`  | `--color-danger-50` `#FDEAEA`   |
 | `SKIPPED`    | Neutral (muted) | `--text-disabled` `#99A1B0`     | `--color-neutral-100` `#EEF0F4` |
 
+**Run-level flow stepper (`RunFlowProgressBar`, bm87, built 2026-10-28):** the Workflow tab's nine-stage summary is a horizontal dot stepper that reuses this table one-to-one — `FlowStepState` `done`/`current`/`failed`/`skipped`/`pending` take the `DONE`/`RUNNING`/`FAILED`/`SKIPPED`/`PENDING` families. Each dot is `rounded-full` with a 2 px ring in the base colour on the tint, a glyph (`Check` / filled Info inner dot / `X` / `Minus` / empty) and the stage label in `--text-body-sm` beneath it; the rail between dots is `--color-success-500` after a `done` step and `--border-default` otherwise. No new token. Spec: `specs/bm87-run-flow-dot-stepper.md`.
+
 ## 4. Error class → token family (`ErrorClass` → `ErrorClassBadge`, on the Errors tab)
 
 | Domain state                            | Family  | Base / hex                      | Text (`-fg`) / hex              | Tint (`-bg`) / hex             |
@@ -490,7 +492,7 @@ All on existing token families; no new token.
 | ----------------- | -------- |
 | `DistributionOutcomeBadge` | `DELIVERED` → Success (`CheckCircle2`, "Delivered"); `FAILED` → Danger (`XCircle`, "Failed") |
 | `RunDetailTabs` (`run-detail-tabs.tsx`) | Tabs: Workflow, Customers & Bills, Uncharged, Errors, Distribution, Audit |
-| `RunFlowProgress`, `PostingProgressView` | Run-flow and posting progress views. `RenderPendingRow` (inside `PostingProgressView`): "Invoice artifact render pending." in `--color-warning-700` plus an outline **Retry render** button (`RotateCcw`; "Retrying…" in flight) |
+| `RunFlowProgress`, `PostingProgressView` | Run-flow dot stepper (bm87) and posting progress views. `RenderPendingRow` (inside `PostingProgressView`): "Invoice artifact render pending." in `--color-warning-700` plus an outline **Retry render** button (`RotateCcw`; "Retrying…" in flight) |
 | `StartDistributionControl`, `RerunDistributionControl`, `ForceCompleteDistributionDialog` | Distribution controls; Force-complete is an inline confirm panel with a danger-500 border (§9) |
 | `RejectDialog`, `AuditTable` | Inline reject panel (§9); the Audit tab's data grid |
 | `BillRunsFilters`, `BillRunsPagination`, `BillRunsEmptyState` | Bill-runs list filters, pagination and empty state |

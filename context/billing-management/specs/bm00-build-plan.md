@@ -41,6 +41,7 @@ Decomposition of the Billing Management (Bill Run) module into build units. This
 > | bm47–bm63 | **Delivered.** The Invoice Template update; signed off 2026-10-11. |
 > | bm64–bm73 | **Delivered.** Invoice Template Phase 3; signed off by bm73, 2026-10-17. |
 > | bm74–bm85 | **Delivered.** Invoice Template Types (with CM cm23–cm24); signed off by bm85, 2026-10-26. The manual editor-export pass (bm85 §3) is pending with the owner. |
+> | bm87 | **Delivered** 2026-10-28. Standalone UI unit: the Workflow tab's run-level flow bar redrawn as a dot stepper (`specs/bm87-run-flow-dot-stepper.md`). |
 >
 > **Latest applied migration:** `0054` (cm23, `billing_account`), after `0053` (bm74, catalog). Both are additive and ran on a populated database; no applied migration was edited.
 

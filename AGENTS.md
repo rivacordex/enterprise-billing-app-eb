@@ -20,17 +20,17 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 -->
  
 
-## Rating Module Context
+## Billing Module Context
 
-Read the following files in order before implementing or making changes related to dropping the geo columns:
+Read the following files in order before implementing or making changes related to dropping the Bill Run visualization :
 
-1. `context/rating-management/ratemgmt-update-overview.md` — the module's definition, goals, core flow and scope;
-2. `context/rating-management/ratemgmt-architecture.md` — system structure, boundaries, storage model, and invariants
-3. `context/rating-management/ratemgmt-code-standards.md` — implementation rules and conventions
-4. `context/rating-management/ratemgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-5. `context/rating-management/ratemgmt-ui-context.md` — theme, colors, typography, and component conventions
+1. `context/billing-management/billmgmt-update-overview.md` — the module's definition, goals, core flow and scope;
+2. `context/billing-management/billmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
+3. `context/billing-management/billmgmt-code-standards.md` — implementation rules and conventions
+4. `context/billing-management/billmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+5. `context/billing-management/billmgmt-ui-context.md` — theme, colors, typography, and component conventions
 
-Update `context/rating-management/ratemgmt-progress-tracker.md` after each meaningful implementation change.
+Update `context/billing-management/billmgmt-progress-tracker.md` after each meaningful implementation change.
 
 Read also the general context document to support the changes as referenced by the context files above:
 1. `context/architecture.md` — system structure, boundaries, storage model, and invariants  

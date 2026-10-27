@@ -187,6 +187,7 @@ components/billing/
   error-class-badge.tsx        # ErrorClassBadge
   bill-category-badge.tsx      # BillCategoryBadge
   stage-timeline.tsx           # StageTimeline
+  run-flow-progress.tsx        # RunFlowProgressBar (run-level stepper above the grid; bm87)
   customer-bill-table.tsx      # CustomerBillTable
   uncharged-table.tsx          # UnchargedTable
   errors-table.tsx             # ErrorsTable

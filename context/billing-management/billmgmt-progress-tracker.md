@@ -415,6 +415,7 @@ a compliance-only probe.
 | bm83–84 code review fixes | xhigh review of bm83–bm84 (the inline Retire-dialog comment + 10 findings; owner decisions on #3, #4, #5, #9) | **Built** (2026-10-26) — tsc/ESLint/Prettier clean; unit 5050 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. Retire dialog 19/0, detail page 11/0, read service, rerun-warning action 9/0, authz matrix 36/0, status-literal sweep; integration on the disposable DB 8 suites 99/0 (retire, rerun-template-change, discard, export/restore, create, capture, save-draft, bm74 catalog) |
 | bm85 | Invoice Template Types ship gate (journey steps 1–8, suites, invariant audit, doc fold). Joint with CM cm24 | **Built** (2026-10-26), with cm24; **manual pass pending** (owner) — tsc/ESLint clean; unit 5050 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); integration 146/148 files in the full batch (1403 passed; bm58 order-dependent, passes alone; the audit-repository pin fixed, then 3/0); new Types journey 9/0; Chromium e2e 27/0; admin browser e2e 5/0 after a fresh `next build`; `invoice-editor` 147/0 (contract unchanged since its snapshot) |
 | bm86 | Company profile logo: shorter side at least 96 px (was 300; owner 2026-10-26) | **Built** (2026-10-26) — `LOGO_MIN_SIDE_PX = 96` (3 × the Standard header's 32 px logo height, sharp at 300 dpi); no migration (`0046` only requires width/height > 0; stored logos unaffected). tsc/ESLint/Prettier clean; logo service + field + guardrails 529 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. 95 px refused and exactly 96 px accepted for PNG/JPEG/SVG; admin browser e2e 5/0 after a fresh `next build`. Docs: Inv #48, code-standards data rule 9 and guardrail 52, project overview, UI context caption and example, bm60 "Later changes" |
+| bm87 | Workflow tab run-level flow bar redrawn as a dot stepper (`RunFlowProgressBar` markup only) | **Built** (2026-10-28); **manual browser pass pending** (owner) — `run-flow-progress.tsx` markup rewritten per the plan §3.3 (props, export and server-component nature unchanged; no raw hex, no new token). tsc/ESLint/Prettier clean; `run-flow-progress` 9/0 (5 existing + 4 new: one `aria-current`, failed step is the anchor, none on a finished run, rail fill) and `bill-run-detail-page` green (34/0 together); guardrails 41 files 391/0. Docs: ui-context §3 stepper note and §11 row, code-standards §7 file tree, bm00 status |
 
 **bm85 + cm24 ship gate (2026-10-26):** nothing new built; tests, docs and the tracker only, joint with CM cm24 (`custmgmt-progress-tracker.md`).
 
@@ -839,6 +840,10 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
   never stored; a real stage row always wins), `distribution` removed from the
   per-account grid, run-level `RunFlowProgressBar` added (run status floors the bar);
   mid-flight summary gated on run status. Post-review hardening fixed 6 edge cases.
+  - **Dot stepper redraw (bm87, 2026-10-28).** `RunFlowProgressBar` is drawn as one rail
+    of nine dots (glyph + label + sr-only state, rail filled through the last `done`
+    step, `aria-current="step"` on `currentStage`, scrolls instead of wrapping). Markup
+    only — no data, derivation, contract or caller change.
 
 ## Known residuals
 
