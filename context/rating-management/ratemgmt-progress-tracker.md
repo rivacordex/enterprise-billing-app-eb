@@ -12,8 +12,24 @@ Archive of delivered work for the Rating Management module. Compacted 2026-10-15
 | G     | rm14–rm23    | PER_UNIT RAN-usage update                         | rm22 (`8882008`)              | Completed (2026-10-05); rm23 delivered as billing bm48 (`b4d28e4`) |
 | H     | rm24–rm29    | Raw `udr_key` + `udr_resource` cell label         | rm29 (`1ab2bd1`, fixes `f1d6550`) | Completed, DB-verified (2026-10-15); image tag release PENDING OPS |
 | I     | rm30         | Card-driven `usage_rate` → product-rate fallback  | rm30 (single unit)            | Completed (2026-10-22)                   |
+| J     | rm31–rm33    | Drop `udr_rated.state` / `.district` (bm48 reversed) | rm33                       | rm31 completed (2026-10-27, docs); rm32 built (2026-10-27); rm33 not built |
 
 Trust `git log` / `git show` over this file if they disagree.
+
+---
+
+# Phase J — Drop `udr_rated.state` / `.district` (rm31–rm33) — IN PROGRESS
+
+Plan `_change-rating-drop-udr-rated-geo-columns-plan.md` (owner 2026-10-25, eng-reviewed 2026-10-27). The two bm48 columns duplicate segments 1–2 of `udr_resource` and have had no consumer since bm71; Phase J removes them. **This round only:** no production exists, every environment is set up as a fresh database, and `0045` is rewritten in place (plan D4/D5); later column removals are forward migrations. `udr_resource` and its contract are untouched.
+
+**rm31** — COMPLETED 2026-10-27 (docs only; spec `rm31-drop-geo-reversal-notes.md`, written as the as-built record). Codebase→planning sync of `ratemgmt-architecture.md` first. Dated reversal notes, originals kept: workflow rules §0.1 scope line, rule 10, rule 17 (one-time exception) and the **rm32 waiver** recorded under §4; code-standards §0.1 data rules 1–3; architecture header and Inv 26; project-overview storage bullet. Phase H update overview rolled into `ratemgmt-project-overview.md` (goals 20–25, flow, features, scope, criteria 32–36) and `ratemgmt-update-overview.md` replaced with the Phase J overview carrying the Earlier-updates number map. `rm00`: rm23 entry banner, Phase J section, summary rows, notes. Banners on rm26–rm29 ("Reversed … the `state`/`district` … only; nothing about `udr_resource` changes"). Verification: no "columns stay / bm48 is not reversed" statement without a dated note; every `udr_resource` line in the diff is an in-place append or the codebase sync.
+
+**rm32** — BUILT 2026-10-27 (spec `rm32-runtime-drop-geo-columns.md`), under the recorded rm32 waiver (RL → RP → PRP → tests). `rl.py`: `state`/`district` out of `COPY_COLUMNS` (now ends `rated_datetime, udr_resource`); `_GEO_OPTIONAL_COLUMNS`, its loop and `_geo_value` deleted; `_GEO_REQUIRED_UDR_TYPE` and `_resource_value` logic unchanged (docstring only). `rp.py`: `_GEO_COLUMNS = ("udr_resource",)`. `prp.py`: `ParsedRow.state`/`.district`, the enrichment stamps and the two `_chunk_frame` series removed; `RatecardCell`, `_RATECARD_SQL`, `extract_ratecard`, `build_udr_resource`, `invalid_label_cells`, `_geo_label` unchanged in code (docstrings reworded). Flow YAML PRP comment only. Tests: rm09 DB-free block retargeted (`COPY_TAIL = ["udr_resource"]`, geo cases deleted, new regression case — a frame still carrying `state`/`district` builds a full-width row with no geo value); rm07 bm48 cases → "Phase J" (chunk schema has no `state`/`district`, `udr_resource` per cell; blank labels → `||2026-01-01`; case 17 via `udr_resource`); rm27 asserts the rated Parquet has no `state`/`district`; rm08 fixture fields removed; rm13 geo assertions removed.
+- **Deviations:** the rp.py pass-through comment (~`:830`) and the `_geo_label` docstring were also reworded (both cited bm48, and the §5 grep gate requires no `bm48` in runtime modules). rm27 `:229-246` are `formatUdrResource` inputs, so they stay; the "no `state`/`district` column" check was added to rm27 tests 1 and 2 instead.
+- **Verified:** disposable `ebill-test` Postgres (pg_partman image) + host Python 3.12 venv (`RATING_PYTHON3`), not `rmtest-runner:local` (image not present): rm07 + rm13 + grants 78/78 with rm23, rm08 + rm09 + rm27 50/50; `tsc` (excluding `.next/` generated types), ESLint, Prettier clean; DB-free `tests/rating` + `tests/guardrails` 409/410 (the 1 failure is `ratecard-demo-seed-boundary` on `db/seeds/product.ts`, which this change does not touch); grep gate §5 passes.
+- **Open — rm23 red until rm33:** `rm23-udr-geo-frozen` "a re-versioned card does not move an already-rated row's geo" expects `udr_rated.state/district` = the card labels and now reads `NULL` (the intended rm32 behaviour). The spec's "rm23 still green" claim is wrong; the re-scope to `udr_resource` is rm33's (rm00 :178/:306).
+
+**rm33** — spec `rm33-schema-seeds-tests-drop-geo-columns.md`; not built.
 
 ---
 

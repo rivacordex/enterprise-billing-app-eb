@@ -5,6 +5,8 @@
 - **Authorizes from:** `_updatemodule-rating-udr-key-resource-plan.md` R4, R5, R7 and §3 (RL); `ratemgmt-architecture.md` Inv 2, 6, 27, 28; `ratemgmt-code-standards.md` §0.1 (Data and Storage 1–2, 6), §10 tests 17 (RL half) and 19 (RL part); `ratemgmt-ai-workflow-rules.md` §0.1 rules 12, 15, 19.
 - **Depends on:** rm27 (the rated Parquet carries `udr_resource`). **Land last of the three components:** RL raises on a `RAN_USAGE` chunk without the column, so landing it before PRP (rm26) and RP (rm27) leaves the tree red.
 
+> **Reversed 2026-10-27 (Phase J, rm32 — `_change-rating-drop-udr-rated-geo-columns-plan.md` D1) — the `state`/`district` COPY columns only.** They leave `COPY_COLUMNS`, so its tail is `udr_resource` alone; `_GEO_OPTIONAL_COLUMNS` and `_geo_value` are deleted and the rm09 geo cases with them. Nothing about `udr_resource` changes: its COPY, `_resource_value` (required for `RAN_USAGE`, `NULL` otherwise), the collision guard and the supersede logic stand. Delivered text below is unchanged.
+
 ## Goal
 
 Make RL copy `udr_resource` into `rating.udr_rated` at INSERT for every `RAN_USAGE` row, fail loud if a `RAN_USAGE` row arrives without it, and prove — with tests, not code changes — that the billed/in-flight guard, supersession and the live-row constraint all work on raw keys.
@@ -55,7 +57,7 @@ Every place that compares `udr_key` across batches, read from the code:
 
 ### 2. Tests
 **DB-free, in `rm09-rl-guarded-transactional-load.integration.test.ts`** — extend `BUILD_ROW_SCRIPT` (`:205-233`) so the hand-built frame can carry `udr_resource` (value, `None`, or absent) and the script prints it:
-1. The tail of `COPY_COLUMNS` is `["state", "district", "udr_resource"]`, and a present value (`"Selangor|DIST-1|2026-01-01"`) is copied as is.
+1. The tail of `COPY_COLUMNS` is `["state", "district", "udr_resource"]`, and a present value (`"STATE-1|DIST-1|2026-01-01"`) is copied as is.
 2. A `RAN_USAGE` chunk missing the column fails loud (`ok: false`).
 3. A `RAN_USAGE` chunk with the column present but `None`, and another with `""`, each fail loud.
 4. A usage type that reads no ratecard (`SMS_USAGE`) writes `NULL` with the column absent and with it present-but-null.

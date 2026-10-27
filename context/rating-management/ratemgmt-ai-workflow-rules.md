@@ -52,7 +52,7 @@ Supplements `context/ai-workflow-rules.md` and the module rules below; applies t
 
 ## 0.1 Raw `udr_key` and `udr_resource` Update — workflow rule deltas
 
-Supplements `context/ai-workflow-rules.md`, §0 and the module rules below; applies to the raw-key update (`_updatemodule-rating-udr-key-resource-plan.md`, `ratemgmt-update-overview.md`, `ratemgmt-architecture.md` Inv 27–28, `ratemgmt-code-standards.md` §0.1). Where this section and an older rule disagree about `udr_key` or `udr_resource`, obey this section. Obey these as rules, not guidelines.
+Supplements `context/ai-workflow-rules.md`, §0 and the module rules below; applies to the raw-key update (`_updatemodule-rating-udr-key-resource-plan.md`, `ratemgmt-update-overview.md`, `ratemgmt-architecture.md` Inv 27–28, `ratemgmt-code-standards.md` §0.1). Where this section and an older rule disagree about `udr_key` or `udr_resource`, obey this section. Obey these as rules, not guidelines. *(Extended 2026-10-27: also governs the geo-column removal, `_change-rating-drop-udr-rated-geo-columns-plan.md` D1–D9, Phase J rm31–rm33; cite its decisions as D-numbers. Where a rule below says the columns stay, its dated note wins.)*
 
 **Overall approach — spec-driven, incremental.**
 1. **Cite a decision before you edit.** Name the plan's decision number (R1–R9) that authorizes the change. No decision number, no mandate — stop and ask (§5).
@@ -66,7 +66,7 @@ Supplements `context/ai-workflow-rules.md`, §0 and the module rules below; appl
 7. **Do not normalise any key value anywhere** — PRP, RP, RL, seeds, tests, indexes. Do not reintroduce `canonical_udr_key` or `_normalise_value`, and do not add `lower()`, `btrim()`, a functional index or a `udr_key_hash`.
 8. **Do not add a cutover guard, a backfill, or a legacy-key branch.** This round runs on a fresh DB. If you find a non-fresh database in scope, stop and ask (rule 12).
 9. **Do not add a normalised uniqueness backstop.** Case-variant duplicates both loading is the accepted risk (plan R4); assert it with a test, do not "fix" it.
-10. **Do not change `udr_rated.state` / `.district`, their write path or their consumers.** bm48 is not reversed.
+10. **Do not change `udr_rated.state` / `.district`, their write path or their consumers.** bm48 is not reversed. *(Reversed 2026-10-27, drop-geo plan D1/D3: the two columns are removed in Phase J. PRP keeps the labels only as inputs to `udr_resource` and the `|` check; RP and RL stop carrying and writing them; rm33 removes them from the schema. They have had no consumer since bm71.)*
 11. **Do not reorder, add or remove `udr_resource` segments, and do not change the `|` delimiter or the ISO date format.** Billing reads the segments by position.
 
 **When to split.**
@@ -79,7 +79,7 @@ Supplements `context/ai-workflow-rules.md`, §0 and the module rules below; appl
 16. **If the database is not fresh, stop.** The cutover decision (plan §4, risk 3) is unresolved; do not proceed on the fresh-DB assumption.
 
 **Files you must not modify without explicit instruction (adds to §6).**
-17. **Do not edit applied migrations.** `0034_rating.sql` and `0045_rating_udr_rated_geo.sql` stay as they are, and no new migration is added.
+17. **Do not edit applied migrations.** `0034_rating.sql` and `0045_rating_udr_rated_geo.sql` stay as they are, and no new migration is added. *(One-time exception 2026-10-27, drop-geo plan D4/D5: `0045` is rewritten in place to `DROP COLUMN IF EXISTS state, district` for that round only, because no production exists and every environment is set up as a fresh database. The rule stands: an edited applied migration is skipped on any database that already ran it (`db/migrations/README.md` rule 4, APP-03), so every later column removal is a new forward migration.)*
 18. **Do not edit `db/bootstrap/rating-db-roles.sql`.** Step 7a already grants the ratecard reads; the diff must show no change there.
 19. **Do not edit RL's collision guard or its supersede logic** (`rl.py`). They must work unchanged on raw keys; prove it with tests only.
 20. **Do not rewrite the delivered specs** (rm01, rm07, rm08, rm09, rm21). Add a dated reversal note beneath `_newmodule-rating-engine-plan.md` §4.2, rm07 D2 and rm01 D10 (and the matching lines in the other documents the plan §7 lists); do not delete the original text.
@@ -155,6 +155,8 @@ Split whenever any holds. When in doubt, split.
 Sequence within a unit: **DDL → grants → seed → flow section → logging → tests.** Finish each before the next.
 
 **Recorded waiver — billing bm48 only (owner decision, 2026-10-08).** bm48 (`udr_rated.state`/`.district`, migration `0045` + PRP/RP/RL) lands as **one PR** rather than the split §4.1 and §4.3 require, to reduce PR count. The waiver keeps the rule's intent through **ordered commits** in this file's dependency order — migration + Drizzle → PRP → RP → RL → seeds + tests → docs — so each step stays separately reviewable and revertable. It is scoped to bm48 and is **not precedent**: any other unit that needs the same exception records its own, by name, here. The raw-key update has no waiver (§0.1 rule 12).
+
+**Recorded waiver — drop-geo rm32 only (owner decision, 2026-10-27).** rm32 (`_change-rating-drop-udr-rated-geo-columns-plan.md` D8) changes PRP, RP and RL in **one unit** rather than the three §4.3 requires. The change is subtractive — stop stamping, carrying and COPYing `udr_rated.state`/`.district` — and splitting it would leave a rated chunk in a shape no deployed image ever produces. Ordered commits within the unit: RL → RP → PRP → tests. Scoped to rm32 and **not precedent**.
 
 ---
 

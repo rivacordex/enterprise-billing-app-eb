@@ -1374,8 +1374,10 @@ export type LogoMimeType = (typeof LOGO_MIME_TYPES)[number];
 
 // 500 KB on the actual byte length (`byte_size BETWEEN 1 AND 512000`, 0046).
 export const LOGO_MAX_BYTES = 512_000;
-// The shorter side of the logo, in px.
-export const LOGO_MIN_SIDE_PX = 300;
+// The shorter side of the logo, in px. bm86 (owner 2026-10-26): 3 × the
+// Standard header's 32 px logo height, the smallest source that prints sharply
+// at 300 dpi (was 300).
+export const LOGO_MIN_SIDE_PX = 96;
 // The longer side of the logo, in px (owner decision 2026-10-11): a small
 // file can declare a huge image (a decompression bomb) that the invoice
 // renderer would have to draw in full.

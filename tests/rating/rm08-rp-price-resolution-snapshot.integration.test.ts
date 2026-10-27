@@ -38,7 +38,6 @@ import {
   insertRanSubscription,
   SAMPLE_5G_COMMERCIAL_UNIT,
   SAMPLE_5G_LKP_ROWS,
-  SAMPLE_5G_RATECARD_STATE,
   SAMPLE_5G_START_DATE,
   type RanLkpRow,
 } from "@/db/seeds/sample/sample-5g-fixture";
@@ -414,8 +413,6 @@ describe.skipIf(!databaseUrl || !pythonReady)(
           polygonId: cell.polygonId,
           polygonStartDate: SAMPLE_5G_START_DATE,
           polygonEndDate: null,
-          state: SAMPLE_5G_RATECARD_STATE,
-          district: cell.district,
           lkpSubscriberRefId: partyRoleId,
           serviceCode: cell.serviceCode,
           ratePerUnit: null,

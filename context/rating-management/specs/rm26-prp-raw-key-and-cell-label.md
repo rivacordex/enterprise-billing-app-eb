@@ -5,6 +5,8 @@
 - **Authorizes from:** `_updatemodule-rating-udr-key-resource-plan.md` R1–R3, R5, R9; `ratemgmt-architecture.md` Inv 27, 28; `ratemgmt-code-standards.md` §0.1 (general rules 1–6, Python names), §10 tests 17 (PRP half), 18, 20; `ratemgmt-ai-workflow-rules.md` §0.1 rules 7, 12.
 - **Depends on:** rm21 (the PRP checks this edits), rm23 (`state`/`district` already on the cell), rm25 (`RATECARD_LABEL_INVALID` row and `formatUdrResource`, which the tests use). **No flow YAML change.**
 
+> **Reversed 2026-10-27 (Phase J, rm32 — `_change-rating-drop-udr-rated-geo-columns-plan.md` D1/D3) — the `state`/`district` chunk columns only.** `ParsedRow` and `_chunk_frame` lose them, and the rm07 "bm48" cases assert `udr_resource` only. Nothing about `udr_resource` changes: `build_udr_key`, the exact cell match, `RatecardCell.state`/`.district` as the inputs to `udr_resource = state|district|polygon_start_date`, and the `|` check all stand. Delivered text below is unchanged.
+
 ## Goal
 
 Make PRP store each record's `udr_key` exactly as the feed sent it, match records to rate-card cells by exact comparison, and stamp every matched record with the cell's `udr_resource` (`state|district|polygon_start_date`), refusing the whole batch if a card label contains `|`.

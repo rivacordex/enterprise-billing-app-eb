@@ -32,7 +32,8 @@ import {
 import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 
 // rm27-spec — RP carries PRP's `udr_resource` column through to the rated
-// Parquet unchanged (Inv 28, R5/R6), the same pass-through as bm48's geo:
+// Parquet unchanged (Inv 28, R5/R6); since rm32 (Phase J) it is the only
+// ratecard-cell column, so neither chunk carries `state`/`district`:
 //   * the rated value equals the PRP chunk's, row for row (incl. `||<date>`);
 //   * a chunk without the column yields a rated chunk without it, so RL's
 //     missing-column guard (rm28) can still fire;
@@ -213,6 +214,11 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const prp = columnValues(carried.prpChunk, "udr_resource");
       const rated = columnValues(carried.ratedChunk, "udr_resource");
       expect(rated).toEqual(prp);
+      // rm32 — the geo travels only inside udr_resource.
+      const { columns } = readParquetColumn(carried.ratedChunk, "udr_resource");
+      expect(columns).toContain("udr_resource");
+      expect(columns).not.toContain("state");
+      expect(columns).not.toContain("district");
 
       // Per Sample-5G cell: `STATE-1|DIST-n|2026-01-01`, keyed by the raw
       // polygon on the rated udr_key.
@@ -250,6 +256,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const rated = columnValues(ratedChunk, "udr_resource");
       expect(rated).toEqual(columnValues(prpChunk, "udr_resource"));
       expect(rated).toEqual(SAMPLE_5G_LKP_ROWS.map(() => blank));
+      const { columns } = readParquetColumn(ratedChunk, "udr_resource");
+      expect(columns).not.toContain("state");
+      expect(columns).not.toContain("district");
     });
 
     it("3. a PRP chunk without udr_resource yields a rated chunk without it", () => {
