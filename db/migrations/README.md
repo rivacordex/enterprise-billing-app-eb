@@ -46,6 +46,10 @@ files (tracking applied ones by hash) only.
    (The Product Manage rebuild's one authorized round of editing `0006_product.sql`
    in place under its fresh-install assumption — decision D11 — is **closed as of
    pm45**; forward-only is the rule again for every migration from here.)
+   (Rating Phase J rewrote `0045_rating_udr_rated_geo.sql` in place on
+   2026-10-27 — `DROP COLUMN IF EXISTS` for `udr_rated.state`/`district` — for
+   that round's fresh-DB setup only (rm33, plan D4/D5); forward migrations remain
+   the rule.)
    (A rare, explicitly-granted exception: editing **seed metadata that nothing
    reads but admin help text** — e.g. a `system_config` row `description` — in
    place, paired with a one-off documented `UPDATE` for existing environments.)

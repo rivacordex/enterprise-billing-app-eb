@@ -309,8 +309,8 @@ export function createCapacityPricingFixtures(
     const udrResource =
       args.udrResource === undefined
         ? formatUdrResource({
-            state: "Selangor",
-            district: "Petaling",
+            state: "STATE-2",
+            district: "DIST-5",
             polygonStartDate: "2025-01-01",
           })
         : args.udrResource;

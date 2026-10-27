@@ -43,9 +43,17 @@ const SAMPLE_SEED = "db/seeds/sample/seed-billrun-sample.ts";
 const RATE_CARD_ARTIFACT =
   /ratecard(?!LookUp)|RATECARD_RAN_USAGE_LKP|ran_usage_lkp|seedRateCardDemo|upload-version|activate-version|rollback-version/i;
 
+// The ADMIN grant seed legitimately names the `ratecard` RBAC permission: it
+// seeds the grants migration 0043 defers to "the seed" (G-RC3,
+// ADMIN/MANAGER EDIT, USER READ), so the bare `ratecard` token is expected
+// there. What must never appear is the card itself — its tables, the demo card
+// seed, or the upload/activate/rollback services.
+const RATE_CARD_DATA_ARTIFACT =
+  /RATECARD_RAN_USAGE_LKP|ran_usage_lkp|ratecard_version|ratecardRanUsageLkp|ratecardVersion|seedRateCardDemo|(?:upload|activate|rollback)RatecardVersion|upload-version|activate-version|rollback-version/i;
+
 describe("pm67 demo rate-card seed — boundaries (D7, I2, I3.9)", () => {
-  it("db/seeds/product.ts (the ADMIN grant seed) carries no rate-card artifact (D7 — confirmed untouched)", () => {
-    expect(read(ADMIN_GRANT_SEED)).not.toMatch(RATE_CARD_ARTIFACT);
+  it("db/seeds/product.ts (the ADMIN grant seed) carries no rate-card data artifact — only the `ratecard` permission grants (D7, G-RC3)", () => {
+    expect(read(ADMIN_GRANT_SEED)).not.toMatch(RATE_CARD_DATA_ARTIFACT);
   });
 
   it("db/seeds/sample/seed-billrun-sample.ts carries no rate-card artifact (D7 — confirmed untouched)", () => {
@@ -72,7 +80,9 @@ describe("pm67 demo rate-card seed — boundaries (D7, I2, I3.9)", () => {
     const productDemo = read(PRODUCT_DEMO);
     // product-demo exports the seed and the single tracked card name (D-A5).
     expect(productDemo).toMatch(/export\s+async\s+function\s+seedRateCardDemo/);
-    expect(productDemo).toMatch(/RAN_USAGE_CARD_NAME\s*=\s*"RATECARD_RAN_USAGE_LKP"/);
+    expect(productDemo).toMatch(
+      /RAN_USAGE_CARD_NAME\s*=\s*"RATECARD_RAN_USAGE_LKP"/,
+    );
     // It calls the REAL services (D2), not a hand-set status write.
     expect(productDemo).toContain("uploadRatecardVersion");
     expect(productDemo).toContain("activateRatecardVersion");

@@ -1,10 +1,8 @@
--- bm48 (Invoice Template, R9): persist ratecard geo onto rated usage at INSERT.
--- Rating-owned migration. Forward-only; no backfill. No grant change:
--- rating_runtime's table-level INSERT covers the columns; no role may UPDATE them.
-ALTER TABLE "rating"."udr_rated" ADD COLUMN IF NOT EXISTS "state" text;
---> statement-breakpoint
-ALTER TABLE "rating"."udr_rated" ADD COLUMN IF NOT EXISTS "district" text;
---> statement-breakpoint
-COMMENT ON COLUMN "rating"."udr_rated"."state" IS 'Ratecard state label of the matched RAN cell, frozen at rating (bm48). NULL = rated before bm48 or card label blank.';
---> statement-breakpoint
-COMMENT ON COLUMN "rating"."udr_rated"."district" IS 'Ratecard district label of the matched RAN cell, frozen at rating (bm48).';
+-- bm48 (udr_rated.state / .district) REVERSED 2026-10-27 — rating Phase J (rm33,
+-- _change-rating-drop-udr-rated-geo-columns-plan.md D4/D5). The matched ratecard
+-- cell's geo lives only in udr_resource (Inv 28). Rewritten in place for the
+-- Phase J fresh-DB round only (no production exists; every environment is set
+-- up from an empty database on this release): on a fresh database the columns
+-- never existed, so this is a no-op. Any later column removal is a forward
+-- migration (db/migrations/README.md rule 4). Rating-owned; no grant change.
+ALTER TABLE "rating"."udr_rated" DROP COLUMN IF EXISTS "state", DROP COLUMN IF EXISTS "district";

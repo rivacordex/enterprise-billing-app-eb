@@ -125,7 +125,7 @@ export const PROBE_RENDER_INPUT: InvoiceRenderInput = deepFreeze({
       total: "2.00",
       regions: [
         {
-          label: "Selangor - Petaling",
+          label: "STATE-2 - DIST-5",
           rows: [
             {
               polygonStartDate: "2025-06-01",

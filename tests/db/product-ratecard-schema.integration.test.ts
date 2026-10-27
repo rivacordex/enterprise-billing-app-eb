@@ -222,7 +222,7 @@ describe.skipIf(!databaseUrl)(
           (ratecard_version_id, mno_public_key, commercial_unit_public_key, polygon_id,
            polygon_start_date, polygon_end_date, state, district, lkp_subscriber_ref_id)
         VALUES (${versionId}, 'MNO_D', 'CU_D', 'POLY_D2',
-                '2026-12-31', '2026-01-01', 'Selangor', 'Petaling', 'PRDINV00000124')
+                '2026-12-31', '2026-01-01', 'STATE-2', 'DIST-5', 'PRDINV00000124')
       `;
       const rows = await sql<{ count: string }[]>`
         SELECT count(*)::text AS count FROM product.ratecard_ran_usage_lkp
@@ -239,7 +239,7 @@ describe.skipIf(!databaseUrl)(
             (ratecard_version_id, mno_public_key, commercial_unit_public_key, polygon_id,
              polygon_start_date, polygon_end_date, state, district, lkp_subscriber_ref_id)
           VALUES (${versionId}, 'MNO_D', 'CU_D', 'POLY_D',
-                  '2026-01-01', '2099-01-01', 'Johor', 'Kluang', 'PRDINV00000125')
+                  '2026-01-01', '2099-01-01', 'STATE-1', 'DIST-3', 'PRDINV00000125')
         `,
       ).rejects.toThrow(/ratecard_ran_usage_lkp_row_key_unique/);
     });

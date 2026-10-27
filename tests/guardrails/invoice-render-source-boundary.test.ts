@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // bm49-spec §Implementation §5 / Inv #47 — the render path reads the usage
-// annex geo off `rating.udr_rated.state/district` (delegated to
+// annex geo off `rating.udr_rated` — `udr_resource` since bm71; the bm49
+// `state/district` columns were dropped in rating Phase J (rm33) — (delegated to
 // `rated-lines.repository.ts`), and NEVER from the bm45 `additional_info`
 // snapshot or a ratecard query. This guardrail freezes that boundary:
 //

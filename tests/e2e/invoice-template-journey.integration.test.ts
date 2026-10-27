@@ -449,8 +449,9 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
     }
 
     // A posted fixture bill whose single line is a (non-capacity) USAGE line rated at
-    // `rows` × 1.00, plus `rows` billed `udr_rated` rows (state → district,
-    // every 7th row with no geo) claimed for the run/account/attempt 1.
+    // `rows` × 1.00, plus `rows` billed `udr_rated` rows (no `udr_resource`;
+    // the non-capacity line prints no geo detail) claimed for the
+    // run/account/attempt 1.
     async function usageBill(runId: string, label: string, rows: number) {
       const { banId, customerBillId } = await fx.postableBill({
         label,
@@ -478,7 +479,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
            udr_rate_type, udr_rated_price, udr_rated_price_raw, udr_rounding_mode,
            udr_currency, udr_ref_batch_id, udr_source_file, rating_engine_version,
            rating_flow_revision, billrun_ref_id, billrun_ban_id, billrun_attempt,
-           billrun_checksum, upsert_datetime, state, district)
+           billrun_checksum, upsert_datetime)
         SELECT
           rating.period_of('2026-06-10T00:00:00Z'::timestamptz), 'RAN_USAGE',
           '2026-06-10T00:00:00Z'::timestamptz, '2026-06-10T00:00:00Z'::timestamptz,
@@ -486,9 +487,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
           'commercial_unit=cu-bm63|mno_public_id=mno-bm63|polygon_id=' || ${label.toLowerCase()} || '-' || g.i,
           '1.000000', 'EA', 'PER_UNIT', '1.00', '1.00', 'HALF_UP', 'MYR',
           '_BM63_BATCH', '_BM63', '_BM63', 0, ${runId}, ${banId}, 1, 'bm63',
-          now(),
-          CASE WHEN g.i % 7 = 0 THEN NULL ELSE 'State-' || (g.i % 3) END,
-          CASE WHEN g.i % 7 = 0 THEN NULL ELSE 'District-' || (g.i % 5) END
+          now()
         FROM generate_series(1, ${rows}) AS g(i)`;
       return { banId, customerBillId };
     }
@@ -1572,7 +1571,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         "Kappa Capacity": [
           {
             polygonId: null,
-            udrResource: polygonResource("Selangor", "Petaling"),
+            udrResource: polygonResource("STATE-2", "DIST-5"),
             ea: 1,
           },
         ],
@@ -1604,7 +1603,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
           '2026-06-10T00:00:00Z'::timestamptz, '2026-06-10T00:00:00Z'::timestamptz,
           'BILL_DRAFT', ${piId},
           'commercial_unit=CU-BM73-OVER|mno_public_id=MNO-BM73|polygon_id=PCU-' || g.i,
-          'Selangor|Petaling|2025-03-01', '1.000000', 'EA', 'PER_UNIT',
+          'STATE-2|DIST-5|2025-03-01', '1.000000', 'EA', 'PER_UNIT',
           '100.000000', ${usageRatePriceId}, '100.00', '100.00', 'HALF_UP',
           'MYR', '_BM73_BATCH', '_BM73', '_BM73', 0, ${runId}, ${ban}, 1,
           'bm73-claim', now()

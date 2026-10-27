@@ -168,7 +168,7 @@ describe.skipIf(!databaseUrl)(
     }, 60_000);
 
     it("1 — one row per polygon per type, and the same polygon under two types appears under both", async () => {
-      const r = resource("Selangor", "Petaling");
+      const r = resource("STATE-2", "DIST-5");
       const { runId, ban } = await capacityBill("ROWS", {
         "Alpha Capacity": [
           { polygonId: "PCU-001", udrResource: r, ea: 10 },
@@ -183,12 +183,12 @@ describe.skipIf(!databaseUrl)(
         "Beta Capacity",
       ]);
       expect(flat(bound, 0)).toEqual([
-        ["Selangor - Petaling", "PCU-001"],
-        ["Selangor - Petaling", "PCU-002"],
+        ["STATE-2 - DIST-5", "PCU-001"],
+        ["STATE-2 - DIST-5", "PCU-002"],
       ]);
-      expect(flat(bound, 1)).toEqual([["Selangor - Petaling", "PCU-001"]]);
+      expect(flat(bound, 1)).toEqual([["STATE-2 - DIST-5", "PCU-001"]]);
       expect(bound.serviceTypes[0]!.regions[0]).toEqual({
-        label: "Selangor - Petaling",
+        label: "STATE-2 - DIST-5",
         subTotal: "3000.00",
         rows: [
           {
@@ -215,7 +215,7 @@ describe.skipIf(!databaseUrl)(
     // discount) is 150000.00 while the detail Sub Totals (raw Mbps × base
     // rate) sum to 200000.00. The difference is asserted, not reconciled.
     it("1 — the 2,000 Mbps anchor: Total Amount 150000.00, detail Sub Totals 200000.00", async () => {
-      const r = resource("Selangor", "Petaling");
+      const r = resource("STATE-2", "DIST-5");
       const { runId, ban } = await capacityBill("TOTAL2000", {
         "Anchor Capacity": [
           { polygonId: "PCU-A01", udrResource: r, ea: 1200 },
@@ -241,43 +241,47 @@ describe.skipIf(!databaseUrl)(
           { polygonId: "PCU-Z9", udrResource: resource(null, null), ea: 1 },
           {
             polygonId: "PCU-B2",
-            udrResource: resource("Wilayah", "Putrajaya"),
+            udrResource: resource("STATE-3", "DIST-6"),
             ea: 1,
           },
           {
             polygonId: "PCU-B1",
-            udrResource: resource("Wilayah", "Putrajaya"),
+            udrResource: resource("STATE-3", "DIST-6"),
             ea: 1,
           },
           {
             polygonId: "PCU-C1",
-            udrResource: resource(null, "Petaling"),
+            udrResource: resource(null, "DIST-5"),
             ea: 1,
           },
-          { polygonId: "PCU-A1", udrResource: resource("Johor", null), ea: 1 },
+          {
+            polygonId: "PCU-A1",
+            udrResource: resource("STATE-1", null),
+            ea: 1,
+          },
         ],
       });
       const bound = bindDraft(await read(runId, ban));
 
       expect(flat(bound, 0)).toEqual([
-        ["Johor", "PCU-A1"],
-        ["Petaling", "PCU-C1"],
-        ["Wilayah - Putrajaya", "PCU-B1"],
-        ["Wilayah - Putrajaya", "PCU-B2"],
+        ["DIST-5", "PCU-C1"],
+        ["STATE-1", "PCU-A1"],
+        ["STATE-3 - DIST-6", "PCU-B1"],
+        ["STATE-3 - DIST-6", "PCU-B2"],
         ["Unassigned region", "PCU-Z9"],
       ]);
       expect(
         bound.serviceTypes[0]!.regions.map((r) => [r.label, r.subTotal]),
       ).toEqual([
-        ["Johor", "100.00"],
-        ["Petaling", "100.00"],
-        ["Wilayah - Putrajaya", "200.00"],
+        ["DIST-5", "100.00"],
+        ["STATE-1", "100.00"],
+        ["STATE-3 - DIST-6", "200.00"],
         ["Unassigned region", "100.00"],
       ]);
     }, 120_000);
 
     it("3 — BILL_NOTUSED rows are excluded, and a rerun attempt reads only its own rows", async () => {
-      const r = resource("Selangor", "Petaling");
+      const r = resource("STATE-2", "DIST-5");
       const { runId, ban } = await capacityBill(
         "SCOPE",
         {
@@ -298,7 +302,7 @@ describe.skipIf(!databaseUrl)(
       const raw = await read(runId, ban);
       const bound = bindDraft(raw);
 
-      expect(flat(bound, 0)).toEqual([["Selangor - Petaling", "PCU-LIVE"]]);
+      expect(flat(bound, 0)).toEqual([["STATE-2 - DIST-5", "PCU-LIVE"]]);
       // The detail reconciles to the attempt-2 capacity line (D37).
       expect(raw.serviceTypes[0]!.ratedTotal).toBe("1000.00");
       expect(bound.serviceTypes[0]!.regions[0]!.subTotal).toBe("1000.00");
@@ -335,7 +339,7 @@ describe.skipIf(!databaseUrl)(
           ${IN_WINDOW}::timestamptz, ${IN_WINDOW}::timestamptz, 'BILL_DRAFT',
           ${piId},
           'commercial_unit=CU-BM71-OVER|mno_public_id=MNO-BM71|polygon_id=PCU-' || g.i,
-          'Selangor|Petaling|2025-03-01', '1.000000', 'EA', 'PER_UNIT',
+          'STATE-2|DIST-5|2025-03-01', '1.000000', 'EA', 'PER_UNIT',
           '100.000000', ${usageRatePriceId}, '100.00', '100.00', 'HALF_UP',
           'MYR', '_BM71_BATCH', '_BM71', '_BM71', 0, ${runId}, ${ban}, 1,
           'bm71-claim', now()
@@ -370,7 +374,7 @@ describe.skipIf(!databaseUrl)(
     }, 300_000);
 
     it("5 — a tampered udr_rated_price fails INVOICE_RECONCILIATION_FAILED (DETAIL_DOES_NOT_MATCH_RATED_AMOUNT)", async () => {
-      const r = resource("Selangor", "Petaling");
+      const r = resource("STATE-2", "DIST-5");
       const { runId, ban, offerings } = await capacityBill("TAMPER", {
         "Eta Capacity": [
           { polygonId: "PCU-T1", udrResource: r, ea: 10 },
@@ -398,7 +402,7 @@ describe.skipIf(!databaseUrl)(
     it.each([
       [
         "a key with no polygon_id= segment",
-        { polygonId: null, udrResource: resource("Selangor", "Petaling") },
+        { polygonId: null, udrResource: resource("STATE-2", "DIST-5") },
         "polygon_id",
       ],
       [
@@ -408,7 +412,7 @@ describe.skipIf(!databaseUrl)(
       ],
       [
         "a malformed udr_resource",
-        { polygonId: "PCU-M3", udrResource: "Selangor|Petaling" },
+        { polygonId: "PCU-M3", udrResource: "STATE-2|DIST-5" },
         "udr_resource",
       ],
     ] as const)(
@@ -424,7 +428,7 @@ describe.skipIf(!databaseUrl)(
           "Theta Capacity": [
             {
               polygonId: "PCU-OK",
-              udrResource: resource("Selangor", "Petaling"),
+              udrResource: resource("STATE-2", "DIST-5"),
               ea: 1,
             },
             { ...bad, ea: 1 },
@@ -453,7 +457,7 @@ describe.skipIf(!databaseUrl)(
         "Iota Capacity": [
           {
             polygonId: "PCU-K1",
-            udrResource: resource("Selangor", "Petaling"),
+            udrResource: resource("STATE-2", "DIST-5"),
             ea: 1,
           },
         ],
@@ -464,7 +468,7 @@ describe.skipIf(!databaseUrl)(
         UPDATE rating.udr_rated SET udr_key = 'cell_polygon_id=DECOY|' || udr_key
         WHERE billrun_ref_id = ${runId} AND billrun_ban_id = ${ban}`;
       const bound = bindDraft(await read(runId, ban));
-      expect(flat(bound, 0)).toEqual([["Selangor - Petaling", "PCU-K1"]]);
+      expect(flat(bound, 0)).toEqual([["STATE-2 - DIST-5", "PCU-K1"]]);
     }, 120_000);
   },
 );
