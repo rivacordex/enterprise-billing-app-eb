@@ -471,6 +471,9 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
     of nine dots (glyph + label + sr-only state, rail filled through the last `done`
     step, `aria-current="step"` on `currentStage`, scrolls instead of wrapping). Markup
     only — no data, derivation, contract or caller change.
+  - **Stepper keyboard access (2026-10-29).** The horizontal scroll container is a
+    named region with a tab stop and the shared focus ring, so keyboard users can
+    reach stages outside the viewport.
 
 ## Known residuals
 
