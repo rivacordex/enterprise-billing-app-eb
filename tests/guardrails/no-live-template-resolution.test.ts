@@ -34,12 +34,11 @@ function code(relative: string): string {
   return stripComments(fs.readFileSync(path.join(REPO_ROOT, relative), "utf8"));
 }
 
-// The run paths: posting, the binder entry point, the CSV output and the
-// draft PRO-FORMA route.
+// The run paths: posting, the binder entry point and the draft PRO-FORMA
+// route (bm88 retired the CSV output).
 const RUN_PATH_FILES = [
   "services/billing/post-run.ts",
   "services/billing/render-invoice-template.ts",
-  "services/billing/invoice-template/invoice-csv.ts",
   "app/(app)/billing/bill-runs/[runId]/draft-invoice/[banId]/route.ts",
 ];
 

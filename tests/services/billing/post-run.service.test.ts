@@ -142,10 +142,9 @@ const mockFindActiveProfile = vi.mocked(
   invoiceProfileRepository.findActiveVersion,
 );
 
-// bm50 seed ids: BTV00000002 = default generated v1, BTV00000003 = default CSV v1.
+// bm50 seed id: BTV00000002 = default generated v1 (bm88 retired the CSV row).
 const DEFAULT_TEMPLATE_IDS = {
   generated: "BTV00000002",
-  csv: "BTV00000003",
 } as Record<string, string>;
 
 function run(overrides: Record<string, unknown> = {}) {
@@ -185,7 +184,6 @@ const RUN_STAMPS = {
   refBillTemplateFamilyId: "BTF00000001",
   refBillTemplateVersionId: "BTV00000007",
   refInvoiceProfileVersion: 2,
-  refCsvTemplateVersionId: "BTV00000003",
   templateCapturedAt: new Date("2026-08-01T00:00:00Z"),
 };
 
@@ -371,7 +369,6 @@ describe("postRun (bm11-spec §Design/§Implementation)", () => {
         refBillTemplateFamilyId: "BTF00000001",
         refBillTemplateVersionId: "BTV00000007",
         refInvoiceProfileVersion: 2,
-        refCsvTemplateVersionId: "BTV00000003",
       },
     );
     expect(mockUpdateStatus).toHaveBeenCalledWith(
@@ -769,7 +766,6 @@ describe("postAccount — posting copies the run stamps (bm67-spec §Design, D23
         refBillTemplateFamilyId: "BTF00000001",
         refBillTemplateVersionId: "BTV00000007",
         refInvoiceProfileVersion: 2,
-        refCsvTemplateVersionId: "BTV00000003",
       }),
     );
     // Inv #53 / guardrail 57 — no "current" lookup on the posting path.
@@ -866,7 +862,6 @@ describe("postAccount — posting copies the run stamps (bm67-spec §Design, D23
           refBillTemplateFamilyId: null,
           refBillTemplateVersionId: null,
           refInvoiceProfileVersion: null,
-          refCsvTemplateVersionId: null,
           templateCapturedAt: null,
         },
       }),

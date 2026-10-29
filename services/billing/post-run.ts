@@ -419,8 +419,7 @@ export async function postAccount(
       if (
         runStamps.templateCapturedAt === null ||
         runStamps.refBillTemplateFamilyId === null ||
-        runStamps.refBillTemplateVersionId === null ||
-        runStamps.refCsvTemplateVersionId === null
+        runStamps.refBillTemplateVersionId === null
       ) {
         throw new Error(
           `postAccount: account ${billingAccountId} in run ${run.billRunId} has no captured template stamps`,
@@ -428,7 +427,6 @@ export async function postAccount(
       }
       const capturedFamilyId = runStamps.refBillTemplateFamilyId;
       const capturedVersionId = runStamps.refBillTemplateVersionId;
-      const capturedCsvVersionId = runStamps.refCsvTemplateVersionId;
 
       const doc = await documentRepository.insert(tx, "INV", {
         state: "draft",
@@ -518,7 +516,6 @@ export async function postAccount(
           refBillTemplateFamilyId: capturedFamilyId,
           refBillTemplateVersionId: capturedVersionId,
           refInvoiceProfileVersion: runStamps.refInvoiceProfileVersion,
-          refCsvTemplateVersionId: capturedCsvVersionId,
         },
       );
       if (!stamped) {

@@ -59,3 +59,20 @@ Decomposition of the Billing Management (Bill Run) module into build units. This
 | 47–63 | `bm47`–`bm63` | invoice binder · rating geo · usage annex · template catalog · blob store · prod containers · resolution + seed upload · posting stamps · settings shell + template read/preview · profile read · template save draft · template activate · profile save draft · logo upload · profile activate · CSV output · Invoice Template ship gate |
 | 64–73 | `bm64`–`bm73` | Standard template family · run-start template capture · drafts from captured template · posting from captured template · flow stops writing appendix · DD/MM/YYYY and Mbps formats · page 1 capacity summary · detail pages per service type and State-District · Total Amount page + footnote editor + v1 pin · Invoice Template Phase 3 ship gate |
 | 74–85 | `bm74`–`bm85` | type-scoped catalog (`0053`) · network-blocked, script-free rendering · `compliance.ts` + `INVTPL-BASIC-A4` reference package · type list, create type, type detail · upload a layout package as a draft (`fflate`) · activate an uploaded pair + discard · overwrite an open draft with the warning · export + restore · capture reads the BAN's type (one merge with cm23, `0054`) · retire with bulk switch · rerun type-changed warning · Invoice Template Types ship gate (joint with cm24) |
+
+---
+
+# Part 7 — Standalone units
+
+### 88 — Retire the bm62 invoice CSV and its CSV template machinery (`bm88`) — built 2026-10-29
+
+- **Boundary:** INVOICE-TEMPLATE, BILL-RUN, UI, DB (`0055`), TESTS.
+- **Builds:** the complete removal of bm62's line-level CSV. That covers:
+  - the **Download CSV** control, the route and the generator
+  - the CSV stamp at run-start capture, posting and template resolution
+  - the `customer_bill` and `bill_run_account` stamp columns
+  - the `csv` template kind, seed row `BTV00000003` and its repo files
+
+  The PDF path is unchanged. Decided 2026-10-29: the intended invoice CSV is the reporting extract `R<MNO><YYYYMMDD>.csv` (`_newmodule-reporting-plan.md` Part D).
+- **Visible result:** a posted invoice shows the same PDF with no CSV button. A bill run posts with no CSV stamp, and the PDF-unchanged regression test is green.
+- **Depends on:** bm74–bm87 delivered. The latest applied migration must be `0054` when this is built.

@@ -13,7 +13,7 @@
 // mockup's "Preview PRO-FORMA →".
 
 import { useEffect, useRef, useState } from "react";
-import { Download, FileCheck, FileSpreadsheet, FileText } from "lucide-react";
+import { Download, FileCheck, FileText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +24,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { triggerBlobDownload } from "@/lib/download";
 import { describeInvoiceRenderCode } from "@/lib/invoice-render-messages";
 import type { InvoiceErrorCode } from "@/types/billing";
 
@@ -331,8 +330,6 @@ export function StoredInvoiceModal({
   const [blobRef, setBlobRef] = useState<string | null>(null);
   const [checksum, setChecksum] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [csvDownloading, setCsvDownloading] = useState(false);
-  const [csvError, setCsvError] = useState<string | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   // Mirrors InvoicePreviewModal: the in-flight fetch's controller is the
   // single source of truth for "which fetch is current" — close, unmount, and
@@ -412,31 +409,6 @@ export function StoredInvoiceModal({
     void runFetch();
   }
 
-  // bm62-spec §Design D5 — fetched (not a bare link) so the route's refusal
-  // reaches the user: a 409, 429 or 500 would otherwise cancel the download
-  // silently (the journal-export pattern, lib/download.ts).
-  async function downloadInvoiceCsv(): Promise<void> {
-    setCsvDownloading(true);
-    setCsvError(null);
-    try {
-      const response = await fetch(
-        `/billing/bill-runs/${billRunId}/stored-invoice/${billingAccountId}/csv`,
-      );
-      if (!response.ok) {
-        setCsvError(describeInvoiceCsvError(response.status));
-        return;
-      }
-      triggerBlobDownload(
-        await response.blob(),
-        `${invoiceNumber ?? billingAccountId}.csv`,
-      );
-    } catch {
-      setCsvError("Could not download the CSV. Please try again.");
-    } finally {
-      setCsvDownloading(false);
-    }
-  }
-
   useEffect(() => {
     if (open) {
       // See the same react-hooks/set-state-in-effect note on
@@ -458,7 +430,6 @@ export function StoredInvoiceModal({
       setBlobRef(null);
       setChecksum(null);
       setErrorMessage(null);
-      setCsvError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -548,44 +519,11 @@ export function StoredInvoiceModal({
                 Download
               </a>
             </Button>
-            {/* bm62-spec §Design D5 — posted bills only, so it sits with the
-                stored invoice and never on the draft preview. */}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={csvDownloading}
-              onClick={() => void downloadInvoiceCsv()}
-            >
-              <FileSpreadsheet aria-hidden="true" />
-              {csvDownloading ? "Preparing CSV…" : "Download CSV"}
-            </Button>
           </div>
-        )}
-        {csvError && (
-          <p role="alert" className="text-body-sm text-destructive">
-            {csvError}
-          </p>
         )}
       </DialogContent>
     </Dialog>
   );
-}
-
-function describeInvoiceCsvError(status: number): string {
-  switch (status) {
-    case 401:
-      return "Your session has expired. Please refresh the page and sign in again.";
-    case 403:
-      return "You do not have permission to download this invoice.";
-    case 404:
-      return "No posted invoice found for this account.";
-    case 409:
-      return "The bill's line amounts do not reconcile, so no CSV was produced.";
-    case 429:
-      return "Too many CSV downloads right now — please wait a minute and try again.";
-    default:
-      return "Could not download the CSV. Please try again.";
-  }
 }
 
 function describeStoredInvoiceError(status: number): string {

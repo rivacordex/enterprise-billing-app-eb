@@ -12,7 +12,6 @@ import {
 } from "@/tests/e2e/helpers/fresh-database";
 import { DEFAULT_BILL_CYCLE_NAME } from "@/db/seeds/accounts/seed-bill-cycles";
 import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
-import { parseInvoiceCsv } from "@/tests/helpers/parse-csv";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import { decodablePng } from "@/tests/helpers/logo-fixtures";
 import {
@@ -31,7 +30,6 @@ import type * as StageCompleteRoute from "@/app/api/billrun/[runId]/stage/[stage
 import type * as StoredInvoiceRoute from "@/app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/route";
 import type * as CustomerBillLineRepo from "@/db/repositories/billing/customer-bill-line.repository";
 import type * as ApproveRun from "@/services/billing/approve-run";
-import type * as InvoiceCsv from "@/services/billing/invoice-template/invoice-csv";
 import type * as Load from "@/services/billing/invoice-template/load";
 import type * as MaterializeRuns from "@/services/billing/materialize-runs";
 import type * as PostRun from "@/services/billing/post-run";
@@ -84,7 +82,7 @@ import { insertTemplateTypeFixture } from "@/tests/db/helpers/template-type-fixt
 //      preview uses v3 + profile v2;
 //   5. tamper: one byte of v3's `invoice.hbs`, then of the v2 logo — the
 //      affected renders park with the typed code, other versions still render;
-//   6. CSV of a step-3 bill sums to its subtotal;
+//   6. (retired by bm88-spec §9: the bm62 invoice CSV no longer exists);
 //   7. multi-page mechanics: the page footer, repeated header and fixed
 //      watermark (bm71 retired the usage-annex half of this step: the
 //      per-polygon detail pages, their 10,000-row bound and the
@@ -129,7 +127,6 @@ type Services = Pick<typeof MaterializeRuns, "materializeDueRuns"> &
   Pick<typeof PostingProgress, "getPostingProgress"> &
   Pick<typeof RenderInvoiceTemplate, "buildInvoiceHtml"> &
   Pick<typeof RenderInvoice, "renderDraftInvoice"> &
-  Pick<typeof InvoiceCsv, "getPostedInvoiceCsv"> &
   Pick<typeof Load, "clearLoadedTemplateMemo"> &
   Pick<typeof SaveTemplateDraftAction, "saveTemplateDraftAction"> &
   Pick<typeof ActivateTemplateAction, "activateTemplateAction"> &
@@ -261,13 +258,12 @@ async function runStampsOf(sql: postgresjs.Sql, runId: string) {
       ref_bill_template_family_id: string | null;
       ref_bill_template_version_id: string | null;
       ref_invoice_profile_version: number | null;
-      ref_csv_template_version_id: string | null;
       template_captured_at: string | null;
     }[]
   >`
     SELECT ref_billing_account_id, status, ref_bill_template_family_id,
            ref_bill_template_version_id, ref_invoice_profile_version,
-           ref_csv_template_version_id, template_captured_at::text
+           template_captured_at::text
     FROM billing.bill_run_account
     WHERE ref_bill_run_id = ${runId} ORDER BY ref_billing_account_id`;
   return new Map(rows.map((r) => [r.ref_billing_account_id, r]));
@@ -387,7 +383,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
           ref_bill_format_id: string | null;
           ref_bill_template_version_id: string | null;
           ref_invoice_profile_version: number | null;
-          ref_csv_template_version_id: string | null;
           charge_checksum: string | null;
           customer_bill_id: string;
           period_partition: string;
@@ -395,7 +390,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         }[]
       >`
         SELECT ref_bill_format_id, ref_bill_template_version_id,
-               ref_invoice_profile_version, ref_csv_template_version_id,
+               ref_invoice_profile_version,
                charge_checksum, customer_bill_id, period_partition::text,
                subtotal::text
         FROM billing.customer_bill
@@ -514,7 +509,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         ...(await import("@/services/billing/read/get-posting-progress")),
         ...(await import("@/services/billing/render-invoice-template")),
         ...(await import("@/services/billing/render-invoice")),
-        ...(await import("@/services/billing/invoice-template/invoice-csv")),
         ...(await import("@/services/billing/invoice-template/load")),
         computeChargeChecksum: (
           await import("@/db/repositories/billing/customer-bill-line.repository")
@@ -565,12 +559,8 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       >`
         SELECT bill_template_version_id, kind, status
         FROM billing.bill_template_version WHERE is_default ORDER BY kind`;
+      // bm88 — 0055 deleted the csv default (BTV00000003).
       expect(defaults).toEqual([
-        {
-          bill_template_version_id: "BTV00000003",
-          kind: "csv",
-          status: "ACTIVE",
-        },
         {
           bill_template_version_id: "BTV00000002",
           kind: "generated",
@@ -582,7 +572,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
           status: "ACTIVE",
         },
       ]);
-      const { loadGenerated, loadCsvMap, loadLayout } =
+      const { loadGenerated, loadLayout } =
         await import("@/services/billing/invoice-template/load");
       const rows = await sql<{ bill_template_version_id: string }[]>`
         SELECT bill_template_version_id FROM billing.bill_template_version
@@ -593,7 +583,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       for (const { bill_template_version_id: id } of rows) {
         const row = (await billTemplateVersionRepository.findById(db, id))!;
         if (row.kind === "generated") await loadGenerated(row);
-        if (row.kind === "csv") await loadCsvMap(row);
         if (row.kind === "layout") await loadLayout(row);
       }
     });
@@ -660,7 +649,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
           ref_bill_format_id: "INVOICE",
           ref_bill_template_version_id: "BTV00000002",
           ref_invoice_profile_version: null,
-          ref_csv_template_version_id: "BTV00000003",
         });
         // Σ net_amount = subtotal, compared as SQL text (criterion 1).
         const [sum] = await sql<{ net: string; n: number }[]>`
@@ -709,7 +697,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         expect(await stamps(RUN_V2, ban)).toMatchObject({
           ref_bill_template_version_id: v2Id,
           ref_invoice_profile_version: 1,
-          ref_csv_template_version_id: "BTV00000003",
         });
         expect(await storedRow(RUN_V2, ban)).toBeDefined();
       }
@@ -839,24 +826,7 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
       expect((await svc.retryRenderInvoice(RUN_V3, banC)).ok).toBe(true);
     }, 300_000);
 
-    it("step 6 — the CSV of a step-3 bill has one row per line and sums to its subtotal (criterion 9)", async () => {
-      const s = await stamps(RUN_V2, banA);
-      const { csv } = await svc.getPostedInvoiceCsv({
-        runId: RUN_V2,
-        banId: banA,
-      });
-      // RFC 4180 (quoted commas in names/descriptions), never a raw split.
-      const [header, ...rows] = parseInvoiceCsv(csv);
-      const [lines] = await sql<{ n: number }[]>`
-        SELECT count(*)::int AS n FROM billing.customer_bill_line
-        WHERE ref_customer_bill_id = ${s.customer_bill_id}`;
-      expect(rows).toHaveLength(lines!.n);
-      const col = header!.indexOf("net_amount");
-      const [sum] = await sql<{ total: string }[]>`
-        SELECT SUM(v::numeric)::text AS total
-        FROM unnest(${rows.map((r) => r[col]!)}::text[]) AS v`;
-      expect(sum!.total).toBe(s.subtotal);
-    });
+    // Step 6 (the bm62 CSV of a step-3 bill) was retired by bm88-spec §9.
 
     it("step 7 — the page footer, repeated header and fixed watermark on a posted and a draft bill (criterion 7)", async () => {
       // bm71 — a non-capacity usage line prints no detail page; the
@@ -1104,7 +1074,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         ...(await import("@/services/billing/read/get-posting-progress")),
         ...(await import("@/services/billing/render-invoice-template")),
         ...(await import("@/services/billing/render-invoice")),
-        ...(await import("@/services/billing/invoice-template/invoice-csv")),
         ...(await import("@/services/billing/invoice-template/load")),
         computeChargeChecksum: (
           await import("@/db/repositories/billing/customer-bill-line.repository")
@@ -1217,7 +1186,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         expect(s).toMatchObject({
           ref_bill_template_family_id: "BTF00000001",
           ref_bill_template_version_id: "BTV00000002",
-          ref_csv_template_version_id: "BTV00000003",
         });
         expect(s.template_captured_at).not.toBeNull();
       }
@@ -1433,11 +1401,10 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
             ref_bill_template_family_id: string | null;
             ref_bill_template_version_id: string | null;
             ref_invoice_profile_version: number | null;
-            ref_csv_template_version_id: string | null;
           }[]
         >`
           SELECT ref_bill_template_family_id, ref_bill_template_version_id,
-                 ref_invoice_profile_version, ref_csv_template_version_id
+                 ref_invoice_profile_version
           FROM billing.customer_bill
           WHERE ref_bill_run_id = ${run.bill_run_id}
             AND ref_billing_account_id = ${ban}`;
@@ -1446,7 +1413,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
           ref_bill_template_family_id: s.ref_bill_template_family_id,
           ref_bill_template_version_id: s.ref_bill_template_version_id,
           ref_invoice_profile_version: s.ref_invoice_profile_version,
-          ref_csv_template_version_id: s.ref_csv_template_version_id,
         });
         expect(bill!.ref_bill_template_version_id).not.toBe(v3Id);
 
@@ -1960,7 +1926,6 @@ describe.skipIf(!databaseUrl || !blobConnection || !bootstrapUrl)(
         ...(await import("@/services/billing/read/get-posting-progress")),
         ...(await import("@/services/billing/render-invoice-template")),
         ...(await import("@/services/billing/render-invoice")),
-        ...(await import("@/services/billing/invoice-template/invoice-csv")),
         ...(await import("@/services/billing/invoice-template/load")),
         computeChargeChecksum: (
           await import("@/db/repositories/billing/customer-bill-line.repository")

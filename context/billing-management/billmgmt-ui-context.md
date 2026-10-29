@@ -415,7 +415,7 @@ The invoice is print CSS in the layout's `shell.hbs` (code-standards › Invoice
 | INV no., BAN, offering ID, SSM / TIN / SST   | 8.5pt / 12pt       | 400    | IBM Plex Mono                                 |
 | Page footer ("Page X of Y")                  | 7.5pt / 10pt       | 400    | `--inv-muted`                                 |
 
-Weights stay at 400 and 600 only (shared §5). The CSV output has no styling.
+Weights stay at 400 and 600 only (shared §5). The CSV output has no styling. _(bm88, built: the invoice CSV output is removed.)_
 
 ### 10d. Invoice document — Standard layout v1 rewrite (Invoice Template Phase 3, delivered bm70–bm72)
 
@@ -499,6 +499,6 @@ All on existing token families; no new token.
 | `ExportRunsButton`, `ExportUnchargedButton` | Export buttons for the runs list and the Uncharged tab |
 | `InvoiceSettingsTabs`, `GeneratedHbsViewer`, `ColourSwatch` | Section tabs (Company profile / Invoice template); read-only `.hbs` viewer (mono, `--radius-sm` on `--surface-sunken`); the 20×20 colour swatch |
 | "Preview with" select (`invoice-structure-form.tsx`) | Preview source: **Sample bill** or one of the recent posted bills |
-| `InvoicePreviewModal` stored-invoice **Download CSV** | Outline button (`FileSpreadsheet`, "Preparing CSV…" in flight), posted bills only; fetch + blob download |
-| Bill-run routes | `bill-runs/[runId]/approve`, `bill-runs/[runId]/draft-invoice/[banId]`, `bill-runs/[runId]/stored-invoice/[banId]`, `bill-runs/[runId]/stored-invoice/[banId]/csv` |
+| `InvoicePreviewModal` stored-invoice **Download CSV** | Outline button (`FileSpreadsheet`, "Preparing CSV…" in flight), posted bills only; fetch + blob download. **Removed by bm88 (built, 2026-10-29).** The modal's PDF controls are unchanged, and the space closes up. |
+| Bill-run routes | `bill-runs/[runId]/approve`, `bill-runs/[runId]/draft-invoice/[banId]`, `bill-runs/[runId]/stored-invoice/[banId]` (_bm88 deleted `/stored-invoice/[banId]/csv`_) |
 | Invoice Settings routes | `company-profile/logo/[assetVersionId]`, `invoice-template/versions/[versionId]/files/[file]`; `?tab=` selects the tab (template: `edit`/`generated`/`history`; company profile: `edit`/`history`; default `edit`) |

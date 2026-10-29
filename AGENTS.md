@@ -22,7 +22,7 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 
 ## Billing Module Context
 
-Read the following files in order before implementing or making changes related to dropping the Bill Run visualization :
+Read the following files in order before implementing or making changes related to bm88, retiring the bm62 invoice CSV output and its CSV template machinery (spec: `context/billing-management/specs/bm88-retire-invoice-csv-output.md`):
 
 1. `context/billing-management/billmgmt-update-overview.md` — the module's definition, goals, core flow and scope;
 2. `context/billing-management/billmgmt-architecture.md` — system structure, boundaries, storage model, and invariants

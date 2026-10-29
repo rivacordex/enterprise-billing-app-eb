@@ -358,6 +358,15 @@ Materialise, Trigger, Distribute and Complete are unchanged.
 
 ## Invoice Template update — company profile, structure-configurable template, binder & CSV (delivered, bm47–bm63)
 
+> **Amended 2026-10-29 (bm88; built). The CSV part of this update is retired.** The owner confirmed that bm62's line-level CSV is not the intended invoice CSV. The intended one is the reporting extract `R<MNO><YYYYMMDD>.csv`, built in the Kestra `reporting` namespace (`_newmodule-reporting-plan.md` Part D) and later shown in the CSP.
+>
+> bm88 removes:
+> - the **Download CSV** button and its route (`…/stored-invoice/[banId]/csv`)
+> - the CSV version stamped at run start (`bill_run_account`) and at posting (`customer_bill`), with both columns dropped by `0055`
+> - the `csv` template kind and seed `BTV00000003`
+>
+> The PDF, HTML, preview and stored-invoice paths are unchanged. In this section, read every mention of the CSV, the CSV version or `kind = csv` as **retired by bm88**. That covers freeze rule 5, posting step 6, the data-model bullets, the CSV output bullet, success criterion 9 and G12. Spec: `specs/bm88-retire-invoice-csv-output.md`.
+
 _Folded from the update overview's Part 2 (2026-10-11) per the bm63 ship gate. Users: Revenue Operations billing admins (in-app, the `invoice_settings` permission) and developers (layout authoring in the repo). Source plan: `_updatemodule-billing-invoice-template-merged-plan.md` (its §15 v1 review, R1–R11, is authoritative). Invariants: `billmgmt-architecture.md` Inv #39–#50. Per-unit detail: `specs/bm47`–`bm63`; history and commits: `billmgmt-progress-tracker.md`._
 
 **Delivered (bm47–bm63).** The invoice is bound to `customer_bill_line` and reconciled before it renders (bm47); rating persists `state`/`district` onto `udr_rated` (bm48) and the usage annex lists every billed row state → district (bm49); the template catalog, the default layout and the default generated/CSV versions are seeded (bm50); the blob store is generalized and the two app containers are declared in bicep (bm51–bm52); renders resolve pinned → ACTIVE → default from checksum-verified blobs (bm53) and posting stamps the four versions (bm54); the Invoice template editor (bm55, bm57, bm58) and the Company profile screen (bm56, bm59–bm61) ship; the CSV export lands (bm62); and the ship gate (bm63) proves criteria 1–12 on a fresh database (the journey) and in the browser (the admin e2e). **Decided at the gate (2026-10-11):** G5 no `ONE_TIME` in v1; G8 IBM Plex embedded (layout v1 carries placeholder font sources, layout v2 ships the real fonts); G9 customer SST/PO/contract fragments hidden, no columns; G16 the app's Managed Identity for blob (a cutover ops step). G14 (no four-eyes on profile activation) was decided the same day. **Residuals:** `billmgmt-known-issues.md` §18–§20 and §23.
@@ -492,7 +501,7 @@ The Billing Management module runs the monthly bill run for Revenue Operations: 
 6. Changing one byte of a stored template or logo blob makes its render fail the checksum check: that account is parked and appears in the run's exception surface, other accounts post, and no invoice is rendered with the legacy template. _Evidence: journey step 5; `tests/guardrails/invoice-checksum-tamper.integration.test.ts` (47); `invoice-no-legacy-render.test.ts` (44)._
 7. A fixture forcing 3+ pages shows "Page X of Y" on every page, repeats the table header, keeps each line group on one page, and the draft watermark is not clipped by the footer margin. _Evidence: journey step 7 (10,000 rows render ≥ 3 pages with the footer, `thead` and line-group rules and the fixed watermark; 10,001 park)._
 8. The detailed usage section lists every billed `udr_rated` row under its state and district with correct per-district and per-state subtotals, reading geo from `udr_rated` with no ratecard query at render. _Evidence: journey step 2 ("Unassigned region"); `tests/db/invoice-usage-annex.integration.test.ts`._
-9. The CSV has one row per line item and its line amounts sum exactly to the bill. _Evidence: journey step 6; `tests/db/invoice-csv.integration.test.ts` (55)._
+9. The CSV has one row per line item and its line amounts sum exactly to the bill. _Evidence: journey step 6; `tests/db/invoice-csv.integration.test.ts` (55)._ _**Retired by bm88:** the CSV, its test and guardrail 55 are removed._
 10. Reprint returns the stored PDF bytes unchanged, and recomputing `charge_checksum` from the bill's lines matches the stored value. _Evidence: journey step 4 (reprint route bytes, `charge_checksum` recompute); guardrail 46._
 11. A user without `invoice_settings` READ cannot open either screen; a READ-only user cannot save or activate; every save and activation writes an `AUDIT_LOG` entry; a customer name containing `<script>` renders escaped. _Evidence: admin e2e (no-access, read-only, escaping with no dialog); journey step 8 (audit rows); `invoice-settings-authz-matrix.test.ts` + `invoice-settings-grants.integration.test.ts` (56)._
 12. Golden-render snapshots of each layout version pass in CI; existing bm18/bm19 tests are updated to the new binder and pass; `npm run typecheck`, `npm run lint`, the vitest suite and the browser e2e (the installed `playwright` library, `npm run test:e2e:invoice-settings`) pass; `billmgmt-architecture.md`, `billmgmt-code-standards.md` and `billmgmt-progress-tracker.md` are synced. _Evidence: `tests/services/billing/invoice-golden.test.ts`; `render-invoice-template.test.ts`/`build-invoice-html.test.ts`; `tests/guardrails/invoice-layout-lint.test.ts`; full suites green at bm63._
@@ -528,7 +537,7 @@ Before this update, the draft and posting each looked up the live invoice templa
 ### Goals
 
 1. **Use the BAN's referenced template:** NULL → Standard → its ACTIVE version; non-NULL → that version's family → its ACTIVE version.
-2. **Freeze the template at run start:** family, generated version, profile version, CSV version and the capture time on `bill_run_account`; drafts, posting and reprint read the stamps.
+2. **Freeze the template at run start:** family, generated version, profile version, CSV version and the capture time on `bill_run_account`; drafts, posting and reprint read the stamps. _(bm88, built: no CSV version.)_
 3. **Let a fix reach the current cycle through rerun:** a rerun re-captures exactly the rerun BANs.
 4. **One template resolver:** `resolve-template.ts` with `run`, `final`, `preview-posted` and `preview-family` modes; the live posting resolver is deleted, and a guardrail fails if a run path resolves live.
 5. **Ship the business layout as v1**, rewritten once and then pinned by a checksum test.

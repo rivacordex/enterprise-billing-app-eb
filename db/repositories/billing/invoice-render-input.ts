@@ -462,8 +462,8 @@ export const invoiceRenderInputRepository = {
   // bm53-spec §Design D5 step 1 — the bill's three version stamps (all `null`
   // until bm54 stamps them at posting), read in the binder's own repeatable-
   // read transaction BEFORE `read()`: resolution needs them. `null` when
-  // no bill exists for the run/account. bm62 D1 — `refInvDocumentId` tells the
-  // CSV download whether the bill is posted (unposted → 404).
+  // no bill exists for the run/account. bm62 D1 — `refInvDocumentId` tells a
+  // caller whether the bill is posted (its CSV caller was retired by bm88).
   async readBillStamps(
     tx: Database,
     { runId, banId }: { runId: string; banId: string },
@@ -473,7 +473,6 @@ export const invoiceRenderInputRepository = {
         refBillTemplateFamilyId: customerBill.refBillTemplateFamilyId,
         refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
         refInvoiceProfileVersion: customerBill.refInvoiceProfileVersion,
-        refCsvTemplateVersionId: customerBill.refCsvTemplateVersionId,
         refInvDocumentId: customerBill.refInvDocumentId,
       })
       .from(customerBill)

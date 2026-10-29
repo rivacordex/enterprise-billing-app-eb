@@ -33,10 +33,9 @@ describe("billing.customer_bill", () => {
         "payment_due_date",
         "ref_bill_format_id",
         "ref_bill_template_version_id",
-        // bm50 — the invoice-profile and CSV template-version posting stamps,
+        // bm50 — the invoice-profile posting stamp (bm88 dropped the CSV stamp),
         // stamped at posting by the app (bm54).
         "ref_invoice_profile_version",
-        "ref_csv_template_version_id",
         // bm67 (migration 0052) — the template family posting stamp.
         "ref_bill_template_family_id",
         "ref_inv_document_id",
@@ -82,10 +81,18 @@ describe("billing.customer_bill", () => {
     expect(columns.refBillFormatId.notNull).toBe(false);
     expect(columns.refBillTemplateVersionId.notNull).toBe(false);
     expect(columns.refInvoiceProfileVersion.notNull).toBe(false);
-    expect(columns.refCsvTemplateVersionId.notNull).toBe(false);
     expect(columns.refInvDocumentId.notNull).toBe(false);
     expect(columns.postedAttempt.notNull).toBe(false);
     expect(columns.chargeChecksum.notNull).toBe(false);
+  });
+
+  it("bm88 (0055) — the CSV stamp column and its index are gone", () => {
+    expect(getTableColumns(customerBill)).not.toHaveProperty(
+      "refCsvTemplateVersionId",
+    );
+    expect(
+      getTableConfig(customerBill).indexes.map((i) => i.config.name),
+    ).not.toContain("customer_bill_ref_csv_template_version_id_idx");
   });
 
   it("has no FK reference on ref_bill_format_id/ref_bill_template_version_id (reserved, catalog deferred)", () => {

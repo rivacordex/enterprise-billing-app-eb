@@ -1,6 +1,6 @@
 # bm62 — Invoice CSV output
 
-**Unit:** bm62 (Invoice Template update, Part 4) · **Status:** Delivered 2026-10-11, commit `75fd10d`, review `dd2c5d7` · **Boundary:** `services/billing/invoice-template/invoice-csv.ts`, the session-guarded `GET /billing/bill-runs/[runId]/stored-invoice/[banId]/csv` (`billrun_view : READ`), and **Download CSV** in `invoice-preview-modal.tsx`. No migration, no grant change, no blob write; the CSV is generated on request and not stored.
+**Unit:** bm62 (Invoice Template update, Part 4) · **Status:** **Retired by bm88 (2026-10-29)**; delivered 2026-10-11, commit `75fd10d`, review `dd2c5d7`. The intended invoice CSV is the reporting extract `R<MNO><YYYYMMDD>.csv` (`_newmodule-reporting-plan.md` Part D) · **Boundary:** `services/billing/invoice-template/invoice-csv.ts`, the session-guarded `GET /billing/bill-runs/[runId]/stored-invoice/[banId]/csv` (`billrun_view : READ`), and **Download CSV** in `invoice-preview-modal.tsx`. No migration, no grant change, no blob write; the CSV is generated on request and not stored.
 _Compacted 2026-10-15. Full pre-compaction text: `git show a63eebb:context/billing-management/specs/bm62-invoice-csv-output.md` in this repo; the codebase copy keeps the full text._
 
 ## Goal

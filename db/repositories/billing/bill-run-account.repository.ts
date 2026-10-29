@@ -68,8 +68,8 @@ export const billRunAccountRepository = {
 
   // bm65-spec §4 (Inv #51/#52) — write the run-start template stamps for the
   // given BANs in one set-based UPDATE per chunk (parallel `unnest` arrays, no
-  // per-BAN statement). The profile and CSV versions are global, so they are
-  // shared by every row. EXCLUDED rows are never stamped.
+  // per-BAN statement). The profile version is global, so it is shared by
+  // every row. EXCLUDED rows are never stamped.
   async captureTemplateStamps(
     tx: Database,
     billRunId: string,
@@ -82,7 +82,7 @@ export const billRunAccountRepository = {
       familyId: string | null;
       versionId: string | null;
     }[],
-    shared: { profileVersion: number | null; csvVersionId: string },
+    shared: { profileVersion: number | null },
   ): Promise<void> {
     for (let i = 0; i < rows.length; i += CAPTURE_CHUNK_SIZE) {
       const chunk = rows.slice(i, i + CAPTURE_CHUNK_SIZE);
@@ -91,7 +91,6 @@ export const billRunAccountRepository = {
         SET ref_bill_template_family_id = u.family_id,
             ref_bill_template_version_id = u.version_id,
             ref_invoice_profile_version = ${shared.profileVersion}::integer,
-            ref_csv_template_version_id = ${shared.csvVersionId},
             -- statement time, not transaction start: the capture is stamped
             -- when the catalog was read, never before an activation it saw
             -- (review fix §24f).
@@ -152,7 +151,6 @@ export const billRunAccountRepository = {
         refBillTemplateFamilyId: billRunAccount.refBillTemplateFamilyId,
         refBillTemplateVersionId: billRunAccount.refBillTemplateVersionId,
         refInvoiceProfileVersion: billRunAccount.refInvoiceProfileVersion,
-        refCsvTemplateVersionId: billRunAccount.refCsvTemplateVersionId,
       })
       .from(billRunAccount)
       .where(

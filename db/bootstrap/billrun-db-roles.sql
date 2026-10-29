@@ -114,8 +114,8 @@ GRANT USAGE ON SEQUENCE "billing"."customer_bill_line_seq"     TO billrun_runtim
 -- Step 5 — customer_bill: the trial columns only. INSERT and UPDATE are
 -- column-scoped to EXCLUDE the posting stamps (ref_inv_document_id,
 -- posted_attempt, charge_checksum, and — bm50, Inv #41 — ref_bill_format_id,
--- ref_bill_template_version_id, ref_invoice_profile_version,
--- ref_csv_template_version_id, and — bm67 — ref_bill_template_family_id) —
+-- ref_bill_template_version_id, ref_invoice_profile_version, and — bm67 —
+-- ref_bill_template_family_id) —
 -- app-only, set at posting (bm19/bm54/bm67). SELECT
 -- only at the table level; DELETE is deliberately NOT a table grant (T10) — a
 -- Postgres DELETE grant cannot be predicate-scoped, so a table-level DELETE
@@ -137,7 +137,7 @@ GRANT UPDATE (
 --> statement-breakpoint
 -- bm50 (Inv #41) — revoke the two reserved stamp columns from already-bootstrapped
 -- databases (idempotent; the GRANT lists above no longer include them). The
--- template/profile/csv stamps are app-only posting stamps now.
+-- template/profile stamps are app-only posting stamps now.
 REVOKE INSERT ("ref_bill_format_id","ref_bill_template_version_id"),
        UPDATE ("ref_bill_format_id","ref_bill_template_version_id")
   ON TABLE "billing"."customer_bill" FROM billrun_runtime;

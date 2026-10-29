@@ -99,7 +99,6 @@ interface Stamps {
   ref_bill_template_family_id: string | null;
   ref_bill_template_version_id: string | null;
   ref_invoice_profile_version: number | null;
-  ref_csv_template_version_id: string | null;
   charge_checksum: string | null;
   customer_bill_id: string;
   period_partition: string;
@@ -209,7 +208,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     async function readStamps(banId: string): Promise<Stamps> {
       const [row] = await sql<Stamps[]>`
         SELECT ref_bill_format_id, ref_bill_template_family_id, ref_bill_template_version_id,
-               ref_invoice_profile_version, ref_csv_template_version_id,
+               ref_invoice_profile_version,
                charge_checksum, customer_bill_id, period_partition::text
         FROM billing.customer_bill
         WHERE ref_bill_run_id = ${RUN} AND ref_billing_account_id = ${banId}`;
@@ -317,33 +316,35 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       }
     }, 60_000);
 
-    it("[CRITICAL] A is stamped with the CAPTURED versions (generated v2, profile v1, the default CSV, Standard) — not the ones activated mid-run — equal to its run stamps", async () => {
+    it("[CRITICAL] A is stamped with the CAPTURED versions (generated v2, profile v1, Standard) — not the ones activated mid-run — equal to its run stamps", async () => {
       const stamps = await readStamps(banA);
       expect(stamps).toMatchObject({
         ref_bill_format_id: "INVOICE",
         ref_bill_template_family_id: "BTF00000001",
         ref_bill_template_version_id: v2Id,
         ref_invoice_profile_version: 1,
-        ref_csv_template_version_id: "BTV00000003",
       });
+      // bm88-spec §9 — the CSV stamp is retired: the posted bill has no such column.
+      const [bill] = await sql<{ r: Record<string, unknown> }[]>`
+        SELECT to_jsonb(b) AS r FROM billing.customer_bill b
+        WHERE customer_bill_id = ${stamps.customer_bill_id}`;
+      expect(bill!.r).not.toHaveProperty("ref_csv_template_version_id");
       expect(stamps.ref_bill_template_version_id).not.toBe(v3Id);
       const [run] = await sql<
         {
           ref_bill_template_family_id: string | null;
           ref_bill_template_version_id: string | null;
           ref_invoice_profile_version: number | null;
-          ref_csv_template_version_id: string | null;
         }[]
       >`
         SELECT ref_bill_template_family_id, ref_bill_template_version_id,
-               ref_invoice_profile_version, ref_csv_template_version_id
+               ref_invoice_profile_version
         FROM billing.bill_run_account
         WHERE ref_bill_run_id = ${RUN} AND ref_billing_account_id = ${banA}`;
       expect(run).toEqual({
         ref_bill_template_family_id: stamps.ref_bill_template_family_id,
         ref_bill_template_version_id: stamps.ref_bill_template_version_id,
         ref_invoice_profile_version: stamps.ref_invoice_profile_version,
-        ref_csv_template_version_id: stamps.ref_csv_template_version_id,
       });
     });
 

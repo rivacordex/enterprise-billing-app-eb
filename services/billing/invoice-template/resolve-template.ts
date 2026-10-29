@@ -50,19 +50,6 @@ function notFound(
   return new InvoiceRenderError("TEMPLATE_VERSION_NOT_FOUND", message, detail);
 }
 
-async function currentVersion(
-  db: Database,
-  kind: TemplateKind,
-): Promise<BillTemplateVersion> {
-  const row =
-    (await billTemplateVersionRepository.findActive(db, { kind })) ??
-    (await billTemplateVersionRepository.findDefault(db, { kind }));
-  if (!row) {
-    throw notFound(`no ACTIVE or default ${kind} template version`, { kind });
-  }
-  return row;
-}
-
 async function defaultVersion(
   db: Database,
   kind: TemplateKind,
@@ -131,18 +118,14 @@ export async function resolveGeneratedForFamily(
   );
 }
 
-// The global current versions every family shares: the CSV (non-default
-// ACTIVE ?? default) and the ACTIVE profile ?? null (G15 A). Capture reads them
-// once per run, not once per family (review fix, §24i).
+// The global current version every family shares: the ACTIVE profile ?? null
+// (G15 A). Capture reads it once per run, not once per family (review fix,
+// §24i). bm88 retired the shared CSV version.
 export async function resolveSharedCurrentVersions(db: Database): Promise<{
-  csv: BillTemplateVersion;
   profileVersion: number | null;
 }> {
-  const [csv, profileVersion] = await Promise.all([
-    currentVersion(db, "csv"),
-    invoiceProfileRepository.findActiveVersion(db),
-  ]);
-  return { csv, profileVersion };
+  const profileVersion = await invoiceProfileRepository.findActiveVersion(db);
+  return { profileVersion };
 }
 
 // Both of the above for one family — the `preview-family` mode.
@@ -151,7 +134,6 @@ export async function resolveCurrentVersionsForFamily(
   familyId: string,
 ): Promise<{
   generated: BillTemplateVersion | null;
-  csv: BillTemplateVersion;
   profileVersion: number | null;
 }> {
   const [generated, shared] = await Promise.all([
@@ -179,7 +161,6 @@ export async function resolveTemplate(
   mode: RenderMode,
 ): Promise<ResolvedTemplate> {
   let generated: BillTemplateVersion;
-  let csv: BillTemplateVersion;
   let profileVersion: number | null;
 
   switch (mode.kind) {
@@ -188,15 +169,11 @@ export async function resolveTemplate(
       if (stamps.refBillTemplateVersionId === null) {
         throw familyNotActive(stamps.refBillTemplateFamilyId, mode.banId);
       }
-      if (stamps.refCsvTemplateVersionId === null) {
-        throw notFound("the run stamp has no CSV template version", {
-          familyId: stamps.refBillTemplateFamilyId,
-        });
-      }
-      [generated, csv] = await Promise.all([
-        versionById(db, stamps.refBillTemplateVersionId, "generated"),
-        versionById(db, stamps.refCsvTemplateVersionId, "csv"),
-      ]);
+      generated = await versionById(
+        db,
+        stamps.refBillTemplateVersionId,
+        "generated",
+      );
       // G15 A — a `null` stamp stays `null` (never the current ACTIVE).
       profileVersion = stamps.refInvoiceProfileVersion;
       break;
@@ -218,21 +195,16 @@ export async function resolveTemplate(
         throw familyNotActive(mode.familyId, null);
       }
       generated = shown;
-      csv = current.csv;
       profileVersion = current.profileVersion;
       break;
     }
     case "final":
     case "preview-posted": {
       const { bill } = mode;
-      [generated, csv] = await Promise.all([
+      generated =
         bill.refBillTemplateVersionId === null
-          ? defaultVersion(db, "generated")
-          : versionById(db, bill.refBillTemplateVersionId, "generated"),
-        bill.refCsvTemplateVersionId === null
-          ? defaultVersion(db, "csv")
-          : versionById(db, bill.refCsvTemplateVersionId, "csv"),
-      ]);
+          ? await defaultVersion(db, "generated")
+          : await versionById(db, bill.refBillTemplateVersionId, "generated");
       // G15 A — a `null` stamp stays `null` (never the current ACTIVE).
       profileVersion = bill.refInvoiceProfileVersion;
       break;
@@ -256,5 +228,5 @@ export async function resolveTemplate(
       ? await draftPreviewLayout(db, generated.refLayoutVersionId)
       : await versionById(db, generated.refLayoutVersionId, "layout");
 
-  return { generated, layout, profileVersion, csv };
+  return { generated, layout, profileVersion };
 }

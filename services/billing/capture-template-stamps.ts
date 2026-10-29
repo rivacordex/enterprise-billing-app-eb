@@ -13,7 +13,7 @@ import type { CapturedTemplateStamp } from "@/types/billing";
 // failure rolls the stamps back with everything else.
 //
 // Set-based: one read of every BAN's type (`billing_account.ref_bill_template_family_id`;
-// NULL = Standard), via `listBanFamilies`, the shared CSV/profile once, one
+// NULL = Standard), via `listBanFamilies`, the shared profile once, one
 // generated-version resolution per DISTINCT family, one UPDATE (chunked, pruned
 // to the run's partition) — no per-BAN statement. Capture never fails the
 // trigger (General rule 3): a family with no usable version (none ACTIVE, or
@@ -44,7 +44,7 @@ export async function captureTemplateStamps(
   ];
 
   // Sequential on purpose: one transaction connection serves every query.
-  const { csv, profileVersion } = await resolveSharedCurrentVersions(tx);
+  const { profileVersion } = await resolveSharedCurrentVersions(tx);
   const versionByFamily = new Map<string, string | null>();
   for (const familyId of familyIds) {
     const generated = await resolveGeneratedForFamily(tx, familyId);
@@ -62,7 +62,7 @@ export async function captureTemplateStamps(
     billRunId,
     periodPartition,
     stamps,
-    { profileVersion, csvVersionId: csv.billTemplateVersionId },
+    { profileVersion },
   );
   return stamps;
 }

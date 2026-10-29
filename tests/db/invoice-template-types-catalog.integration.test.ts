@@ -22,6 +22,10 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 // the backfill, the enabled guards, the precondition abort and every row of
 // the spec's refusal matrix. Fixtures go through raw SQL, same convention as
 // invoice-template-catalog.integration.test.ts.
+//
+// bm88-spec §9 — "the real folder" now ends with `0055`, which retires the
+// csv kind: the CSV-only indexes and CHECKs 0053 added are gone at head, a
+// typeless row fails `btv_has_family` and a csv row fails `btv_kind_check`.
 const databaseUrl = process.env.DATABASE_URL;
 
 const MIGRATIONS_FOLDER = "./db/migrations";
@@ -314,7 +318,7 @@ describe.skipIf(!databaseUrl)(
         expect(col?.is_nullable).toBe("YES");
       });
 
-      it("keeps the four reused index names and adds btv_version_csv_uq", async () => {
+      it("keeps the reused index names; 0055 (bm88) drops the CSV-only btv_version_csv_uq and btv_one_active_uq", async () => {
         const rows = await sql<{ indexname: string }[]>`
           SELECT indexname FROM pg_indexes
           WHERE schemaname = 'billing' AND tablename = 'bill_template_version'
@@ -323,9 +327,7 @@ describe.skipIf(!databaseUrl)(
           ORDER BY indexname`;
         expect(rows.map((r) => r.indexname)).toEqual([
           "btv_one_active_family_uq",
-          "btv_one_active_uq",
           "btv_one_draft_uq",
-          "btv_version_csv_uq",
           "btv_version_uq",
         ]);
       });
@@ -421,23 +423,24 @@ describe.skipIf(!databaseUrl)(
             status: "ACTIVE",
           }),
         ).rejects.toMatchObject({
-          constraint_name: "btv_type_scoped_has_family",
+          constraint_name: "btv_has_family",
         });
       });
 
-      it("refuses a CSV row with a type and a CSV DRAFT", async () => {
+      it("bm88 — refuses a csv row of any status (btv_kind_check)", async () => {
         await expect(sql`
           INSERT INTO billing.bill_template_version
             (bill_template_version_id, ref_bill_format_id, kind, version_no, status,
              ref_bill_template_family_id, blob_ref, checksum, checksum_algorithm, change_note, activated_datetime)
           VALUES ('BTV00000301', 'INVOICE', 'csv', 2, 'ACTIVE', ${STANDARD},
              'invoice-templates/system/csv/v2/', ${"c".repeat(64)}, 'sha256', 'test row', now())
-        `).rejects.toMatchObject({ constraint_name: "btv_csv_has_no_family" });
+        `).rejects.toMatchObject({ constraint_name: "btv_kind_check" });
         await expect(sql`
           INSERT INTO billing.bill_template_version
-            (bill_template_version_id, ref_bill_format_id, kind, version_no, status)
-          VALUES ('BTV00000302', 'INVOICE', 'csv', 3, 'DRAFT')
-        `).rejects.toMatchObject({ constraint_name: "btv_draft_not_csv" });
+            (bill_template_version_id, ref_bill_format_id, kind, version_no, status,
+             ref_bill_template_family_id)
+          VALUES ('BTV00000302', 'INVOICE', 'csv', 3, 'DRAFT', ${STANDARD})
+        `).rejects.toMatchObject({ constraint_name: "btv_kind_check" });
       });
 
       it("refuses a settings row of one type pointing at another type's layout", async () => {

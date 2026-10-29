@@ -88,7 +88,6 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         expect(result.resolved.layout.billTemplateVersionId).toBe(
           "BTV00000001",
         );
-        expect(result.resolved.csv.billTemplateVersionId).toBe("BTV00000003");
         expect(result.resolved.profileVersion).toBeNull();
         expect(result.html).toContain(
           `<title>Tax invoice ${invoiceNo}</title>`,

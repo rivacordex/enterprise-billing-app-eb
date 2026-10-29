@@ -34,7 +34,6 @@ interface StampRow {
   ref_bill_template_family_id: string | null;
   ref_bill_template_version_id: string | null;
   ref_invoice_profile_version: number | null;
-  ref_csv_template_version_id: string | null;
   ref_inv_document_id: string | null;
 }
 
@@ -48,8 +47,7 @@ describe.skipIf(!databaseUrl)(
       const [row] = await sql<StampRow[]>`
         SELECT ref_bill_format_id, ref_bill_template_family_id,
                ref_bill_template_version_id,
-               ref_invoice_profile_version, ref_csv_template_version_id,
-               ref_inv_document_id
+               ref_invoice_profile_version, ref_inv_document_id
         FROM billing.customer_bill WHERE customer_bill_id = ${customerBillId}`;
       return row!;
     }
@@ -69,8 +67,7 @@ describe.skipIf(!databaseUrl)(
           new_bill_format_id text,
           new_bill_template_family_id text,
           new_bill_template_version_id text,
-          new_invoice_profile_version integer,
-          new_csv_template_version_id text
+          new_invoice_profile_version integer
         )`);
       await sql.unsafe(`
         CREATE FUNCTION billing.bm54_update_audit_fn() RETURNS trigger
@@ -80,7 +77,7 @@ describe.skipIf(!databaseUrl)(
             NEW.customer_bill_id, OLD.ref_inv_document_id, NEW.ref_inv_document_id,
             NEW.ref_bill_format_id, NEW.ref_bill_template_family_id,
             NEW.ref_bill_template_version_id,
-            NEW.ref_invoice_profile_version, NEW.ref_csv_template_version_id);
+            NEW.ref_invoice_profile_version);
           RETURN NEW;
         END $$`);
       // "a_" sorts before "customer_bill_finalization_guard" — row triggers
@@ -99,7 +96,7 @@ describe.skipIf(!databaseUrl)(
       }
     }, 60_000);
 
-    it("posting with no ACTIVE profile stamps INVOICE + the default generated/CSV ids + a NULL profile version, in the same UPDATE as ref_inv_document_id", async () => {
+    it("posting with no ACTIVE profile stamps INVOICE + the default generated id + a NULL profile version, in the same UPDATE as ref_inv_document_id", async () => {
       const { banId, customerBillId } = await fx.postableBill({
         label: "NOPROF",
         runId: RUN,
@@ -114,7 +111,6 @@ describe.skipIf(!databaseUrl)(
         ref_bill_template_family_id: "BTF00000001",
         ref_bill_template_version_id: "BTV00000002",
         ref_invoice_profile_version: null, // G15 A
-        ref_csv_template_version_id: "BTV00000003",
         ref_inv_document_id: result.invoiceId,
       });
 
@@ -122,7 +118,7 @@ describe.skipIf(!databaseUrl)(
         SELECT * FROM billing.bm54_update_audit
         WHERE customer_bill_id = ${customerBillId}`;
       // Exactly one UPDATE touched the bill during posting, and it took the
-      // latch from NULL to set AND carried all four stamps.
+      // latch from NULL to set AND carried every stamp.
       expect(audit).toHaveLength(1);
       expect(audit[0]).toMatchObject({
         old_inv_document_id: null,
@@ -131,7 +127,6 @@ describe.skipIf(!databaseUrl)(
         new_bill_template_family_id: "BTF00000001",
         new_bill_template_version_id: "BTV00000002",
         new_invoice_profile_version: null,
-        new_csv_template_version_id: "BTV00000003",
       });
     }, 120_000);
 
@@ -165,7 +160,6 @@ describe.skipIf(!databaseUrl)(
       for (const statement of [
         sql`UPDATE billing.customer_bill SET ref_bill_template_version_id = 'BTV00000099' WHERE customer_bill_id = ${id}`,
         sql`UPDATE billing.customer_bill SET ref_invoice_profile_version = 7 WHERE customer_bill_id = ${id}`,
-        sql`UPDATE billing.customer_bill SET ref_csv_template_version_id = NULL WHERE customer_bill_id = ${id}`,
         // bm67 — the family stamp is frozen like the others.
         sql`UPDATE billing.customer_bill SET ref_bill_template_family_id = 'BTF00000099' WHERE customer_bill_id = ${id}`,
       ]) {

@@ -4,7 +4,7 @@ This file holds the in-flight update to the Billing Management module. It is fol
 
 | Update | Status |
 |---|---|
-| Invoice Template Types: upload editor packages, type catalog, BAN binding, retire, export | In progress; specs bm74–bm85 written (with CM cm23–cm24); build status in `billmgmt-progress-tracker.md` |
+| Invoice Template Types: upload editor packages, type catalog, BAN binding, retire, export | Planned; specs bm74–bm85 written (with CM cm23–cm24); not built |
 
 _Date: 2026-10-25 · **Users:**_
 - _The RevOps team manager (MANAGER) and ADMIN own template types: `invoice_settings` EDIT._
@@ -36,7 +36,7 @@ The same upload creates a **new version of an existing type** (Standard included
    - keep Standard as the permanent default
 4. **Bind any BAN to a usable type.** NULL stays Standard, and a binding takes effect at the next run start or rerun.
 5. **Retire a type safely:** one transaction that moves all its BANs to one usable target and then retires the type, one-way, with nothing deleted.
-6. **Export any version** (ACTIVE, RETIRED or DRAFT) byte-identical with its settings, and **restore** it by uploading it in another environment. A clean install holds only Standard v1. _(Owner, 2026-10-26: a DRAFT or discarded pair exports for `invoice_settings` EDIT only, the rule for seeing a draft at all.)_
+6. **Export any version** (ACTIVE, RETIRED or DRAFT) byte-identical with its settings, and **restore** it by uploading it in another environment. A clean install holds only Standard v1.
 7. **Keep every invoice a valid tax invoice.** No layout can go live unless the supplier block, buyer, invoice number, line items, tax breakdown, totals and amount due print as **visible text**.
 8. **Never let an unreviewed or draft layout reach a bill:**
    - capture, posting and reprint refuse DRAFT versions
@@ -60,7 +60,7 @@ The same upload creates a **new version of an existing type** (Standard included
    1. **zip directory checks, before unpacking:**
       - at most 2 MiB uncompressed and 64 entries
       - only allow-listed names: `manifest.json`, `shell.hbs`, `footer.hbs`, `sample-data.json`, `checksums.json`, the eight `partials/<key>.hbs`, `fonts/*.woff2`, `fonts/OFL.txt`, and an optional `settings.json` from an app export
-   2. `checksums.json` verifies every other file in the package. An app export's `settings.json` is the one file it never lists
+   2. `checksums.json` verifies every file
    3. the manifest passes `layoutManifestSchema`, `layoutCode` equals the type's layout code, and `layoutVersion` equals the version to be written
    4. the layout lint and the hardening rules: no external URLs (including ones hidden behind entities or CSS escapes), no `image-set()`, no `on…=` handlers, no `<script>`, no `{{{`, no typed-in supplier data
    5. `generate` → strict compile → execute against the probe input and the package's sample data, with Payment on and off
@@ -140,7 +140,7 @@ The same upload creates a **new version of an existing type** (Standard included
 ### Settings, preview and activation
 - **Settings** = the Payment section toggle plus the footnote: 1–5 lines, each up to 200 characters. The form stays as today.
 - **Preview** renders the pair against a sample BAN as sandboxed HTML (`<iframe sandbox="">`).
-- **Activate** needs a change note. It re-runs the compliance check, promotes both pair members, retires the type's previous **non-default** ACTIVE members they replace, and writes one `INVOICE_TEMPLATE_ACTIVATED` row. Standard's default v1 rows are never retired, so they stay the fallback.
+- **Activate** needs a change note. It re-runs the compliance check, promotes both pair members, retires the previously ACTIVE members they replace, and writes one `INVOICE_TEMPLATE_ACTIVATED` row.
 
 ### Compliance and layout rules
 - **`services/billing/invoice-template/compliance.ts`** holds every layout rule: `COMPLIANCE_SECTION_KEYS`, the visible-text content check, the typed-supplier rule, and the hardening rules ported from the editor.
@@ -155,7 +155,7 @@ The same upload creates a **new version of an existing type** (Standard included
 - No output changes: fonts are inline `data:` URIs, and the logo is converted to a `data:` URI.
 
 ### Export and restore
-- Export works on any version pair, Standard v1 included, with `invoice_settings` READ. A DRAFT or discarded pair needs EDIT, as viewing one does (owner, 2026-10-26).
+- Export works on any version pair, Standard v1 included, with `invoice_settings` READ.
 - It reads the files through the checksum-verifying loader, so a tampered blob fails the export and names the file.
 - `settings.json` = `{ exportFormat: 1, source: { typeCode, typeName, layoutVersion, settingsVersion, status, layoutChecksum, exportedAt, exportedBy }, structure }`.
 - **Restore by upload:** the settings replace the draft settings, the version-number check is skipped, the code check still applies, and the audit records `restoredFrom`.
@@ -200,7 +200,7 @@ The same upload creates a **new version of an existing type** (Standard included
 
 | Action | Permission | Roles |
 |---|---|---|
-| View types, versions and retired types; export a version (a DRAFT or discarded pair: EDIT) | `invoice_settings` READ | all |
+| View types, versions and retired types; export a version | `invoice_settings` READ | all |
 | Create type; upload; edit settings; preview; activate; discard; retire with bulk switch | `invoice_settings` EDIT | ADMIN, MANAGER |
 | Bind or reset one BAN | `customers` EDIT + `accounts_transactions` EDIT (cm21) | as today |
 | See the rerun warning; rerun | `billrun_operate` | as today |
@@ -243,7 +243,7 @@ One EDIT holder may both upload and activate. Every server action re-checks its 
 - **Package signing or provenance checks**.
 - **Running the upload gate in a worker with a timeout.** Accepted risk; see TODOS.md.
 - **Bulk export of all types, or automatic sync between environments**.
-- **CSV templates per type, an invoice profile per type, non-`INVOICE` bill formats.**
+- **CSV templates per type, an invoice profile per type, non-`INVOICE` bill formats.** _(bm88, built: the CSV template kind is removed altogether.)_
 - **E-invoicing (LHDN MyInvois).** No e-invoice UIN/QR section and no validation.
 - **How layout authors get and run the editor.** The editor's own plan owns this; see TODOS.md.
 

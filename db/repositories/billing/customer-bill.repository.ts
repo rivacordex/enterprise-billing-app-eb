@@ -368,7 +368,6 @@ export const customerBillRepository = {
           refBillTemplateFamilyId: billRunAccount.refBillTemplateFamilyId,
           refBillTemplateVersionId: billRunAccount.refBillTemplateVersionId,
           refInvoiceProfileVersion: billRunAccount.refInvoiceProfileVersion,
-          refCsvTemplateVersionId: billRunAccount.refCsvTemplateVersionId,
           templateCapturedAt: billRunAccount.templateCapturedAt,
         },
       })
@@ -452,7 +451,6 @@ export const customerBillRepository = {
         refBillTemplateFamilyId: data.refBillTemplateFamilyId,
         refBillTemplateVersionId: data.refBillTemplateVersionId,
         refInvoiceProfileVersion: data.refInvoiceProfileVersion,
-        refCsvTemplateVersionId: data.refCsvTemplateVersionId,
       })
       .where(
         and(
@@ -517,7 +515,6 @@ export const customerBillRepository = {
         refBillTemplateFamilyId: customerBill.refBillTemplateFamilyId,
         refBillTemplateVersionId: customerBill.refBillTemplateVersionId,
         refInvoiceProfileVersion: customerBill.refInvoiceProfileVersion,
-        refCsvTemplateVersionId: customerBill.refCsvTemplateVersionId,
       })
       .from(customerBill)
       .innerJoin(

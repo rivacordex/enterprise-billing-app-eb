@@ -31,7 +31,6 @@ describe("billing.bill_run_account", () => {
         "ref_bill_template_family_id",
         "ref_bill_template_version_id",
         "ref_invoice_profile_version",
-        "ref_csv_template_version_id",
         "template_captured_at",
       ].sort(),
     );
@@ -39,13 +38,12 @@ describe("billing.bill_run_account", () => {
 
   // bm65-spec §1 (migration 0051) — the run-start template stamps: nullable
   // plain keys with no FK (the 0029/0046 posting-stamp rule).
-  it("bm65 — the five template stamp columns are nullable and carry no FK", () => {
+  it("bm65 — the four template stamp columns are nullable and carry no FK (bm88 dropped the CSV stamp)", () => {
     const columns = getTableColumns(billRunAccount);
     for (const key of [
       "refBillTemplateFamilyId",
       "refBillTemplateVersionId",
       "refInvoiceProfileVersion",
-      "refCsvTemplateVersionId",
       "templateCapturedAt",
     ] as const) {
       expect(columns[key].notNull, key).toBe(false);
@@ -54,13 +52,18 @@ describe("billing.bill_run_account", () => {
       "ref_bill_template_family_id",
       "ref_bill_template_version_id",
       "ref_invoice_profile_version",
-      "ref_csv_template_version_id",
       "template_captured_at",
     ]);
     const fkColumns = getTableConfig(billRunAccount).foreignKeys.flatMap((fk) =>
       fk.reference().columns.map((c) => c.name),
     );
     expect(fkColumns.filter((c) => stampColumns.has(c))).toEqual([]);
+  });
+
+  it("bm88 (0055) — the CSV stamp column is gone", () => {
+    expect(getTableColumns(billRunAccount)).not.toHaveProperty(
+      "refCsvTemplateVersionId",
+    );
   });
 
   it("has a composite primary key (bill_run_account_id, period_partition) — partition key", () => {
