@@ -386,6 +386,19 @@ Part 6 (the `74–85` numbering-record row); criteria 1–11 + evidence in
   database + fixtures, CSV stamps, real-folder migrate, teardown) moved to
   `tests/db/helpers/csv-retire-fixtures.ts`; assertions unchanged.
 
+### Review corrections (2026-10-29)
+
+- **bm87:** keep the scroll region's focus outline visible in forced-colors mode
+  (`focus:outline-hidden`), alongside the existing focus ring.
+- **bm88:** complete the removal of the remaining stored-invoice CSV route, generator and
+  their three feature suites; the retirement guardrail now also checks that the route and
+  generator are absent. The stored-invoice PDF controls and unrelated bill-run routes are unchanged.
+- Restore the update overview's delivered status, draft/discarded export EDIT gate,
+  `settings.json` checksum exclusion/rejection and never-retired default-version rule.
+- Validation: 405 unit/guardrail tests, 36 rm07 cases and 13 bm88 integration cases passed
+  (454 distinct tests); lint, formatting and compiled focus CSS passed. Typecheck retains
+  23 pre-existing legacy usage-annex errors; SAST retains one unchanged `.npmrc` finding.
+
 ## Outstanding / Next
 
 - **Release gate before any production template activation (known-issues §20).** Seed

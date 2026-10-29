@@ -109,7 +109,7 @@ export function RunFlowProgressBar({
         role="region"
         aria-label="Run pipeline stages"
         tabIndex={0}
-        className="overflow-x-auto rounded-sm focus:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+        className="overflow-x-auto rounded-sm focus:outline-hidden focus-visible:[box-shadow:var(--focus-ring)]"
       >
         <ol
           aria-label="Run pipeline progress"

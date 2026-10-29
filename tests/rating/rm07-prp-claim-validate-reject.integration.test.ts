@@ -21,7 +21,11 @@ import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
-import { readParquetColumn as readParquetFrame } from "@/tests/helpers/rating-ran-harness";
+import {
+  pythonRuntimeReady,
+  ratingPython3,
+  readParquetColumn as readParquetFrame,
+} from "@/tests/helpers/rating-ran-harness";
 import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 // The rateable Sample-5G fixture builders are SHARED with the production seed
 // (db/seeds/sample/sample-5g-rating.ts) — one source of truth for the fixture's
@@ -58,7 +62,7 @@ import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 // `python3 -m runtime.prp` exactly as the flow's prp task invokes it, against a
 // seeded Sample-5G graph (offering + specs + scalar usage_rate price, a customer
 // carrying the MNO key, its RAN_USAGE subscription, an ACTIVE ratecard). Requires
-// `python3` on PATH with the worker deps (psycopg + polars); skipped loudly when
+// `ratingPython3()` with the worker deps (psycopg + polars); skipped loudly when
 // unavailable — same posture as the rest of the rating suite (not run on a host
 // without a live test Postgres + the worker deps; see ratemgmt-progress-tracker).
 const databaseUrl = process.env.DATABASE_URL;
@@ -69,17 +73,6 @@ const workerDir = join(
   "workflow-engine",
 );
 
-function pythonRuntimeReady(): boolean {
-  try {
-    execFileSync("python3", ["-c", "import runtime, polars, psycopg"], {
-      cwd: workerDir,
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
 const pythonReady = pythonRuntimeReady();
 
 const ROLE_PW = "rm07-test-only-pw";
@@ -510,7 +503,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const execId =
         opts.execId ?? `exec-${Math.random().toString(36).slice(2)}`;
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         [
           "-m",
           "runtime.prp",
@@ -572,7 +565,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // which Node then misresolves against the cwd drive.
       const path = fileURLToPath(parquetUri);
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         [
           "-c",
           "import polars,sys;print('\\n'.join(str(v) for v in polars.read_parquet(sys.argv[1])[sys.argv[2]].to_list()))",

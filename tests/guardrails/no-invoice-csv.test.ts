@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -38,6 +38,13 @@ const FORBIDDEN: { label: string; pattern: RegExp }[] = [
 
 describe("bm88 — no invoice CSV template machinery", () => {
   const files = SOURCE_DIRS.flatMap(listSourceFiles);
+
+  it.each([
+    "app/(app)/billing/bill-runs/[runId]/stored-invoice/[banId]/csv/route.ts",
+    "services/billing/invoice-template/invoice-csv.ts",
+  ])("the retired file %s is absent", (file) => {
+    expect(existsSync(file)).toBe(false);
+  });
 
   it("scans a non-empty source tree", () => {
     expect(files.length).toBeGreaterThan(0);
