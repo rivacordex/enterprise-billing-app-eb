@@ -100,7 +100,12 @@ export function RunFlowProgressBar({
 
   return (
     <div className={cn("space-y-3", className)}>
-      <div className="overflow-x-auto">
+      <div
+        role="region"
+        aria-label="Run pipeline stages"
+        tabIndex={0}
+        className="overflow-x-auto focus:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+      >
         <ol
           aria-label="Run pipeline progress"
           className="flex min-w-max items-start"
