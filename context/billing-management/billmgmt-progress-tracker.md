@@ -382,6 +382,9 @@ Part 6 (the `74–85` numbering-record row); criteria 1–11 + evidence in
   Tests: unit 5017 passed / 8 failed under parallel load (all 10 s repo-scan timeouts; pass when
   re-run alone); integration 16 bm88-relevant files, 160/0 (full integration suite not run);
   tsc, ESLint, Prettier clean.
+  SonarQube duplication fix: the two `0055` suites' shared setup (pre-0055 journal copy, 0054
+  database + fixtures, CSV stamps, real-folder migrate, teardown) moved to
+  `tests/db/helpers/csv-retire-fixtures.ts`; assertions unchanged.
 
 ## Outstanding / Next
 
@@ -471,9 +474,6 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
     of nine dots (glyph + label + sr-only state, rail filled through the last `done`
     step, `aria-current="step"` on `currentStage`, scrolls instead of wrapping). Markup
     only — no data, derivation, contract or caller change.
-  - **Stepper keyboard access (2026-10-29).** The horizontal scroll container is a
-    named region with a tab stop and the shared focus ring, so keyboard users can
-    reach stages outside the viewport.
 
 ## Known residuals
 

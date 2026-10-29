@@ -1,36 +1,22 @@
 import { createHash } from "node:crypto";
-import {
-  cpSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 import { BlobServiceClient } from "@azure/storage-blob";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
 import type postgresjs from "postgres";
 
-import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
 import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
 import { previewInvoiceTemplate } from "@/services/billing/invoice-template/preview";
 import { getStoredInvoice } from "@/services/billing/read/get-stored-invoice";
 import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
 import {
-  setupInvoiceRenderFixtures,
-  type InvoiceRenderFixtures,
-} from "@/tests/db/helpers/invoice-render-fixtures";
-import {
-  dropAllSchemas,
-  purgeInvoiceBlobs,
-} from "@/tests/e2e/helpers/fresh-database";
-import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
-import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+  applyRealMigrations,
+  setupPre0055Database,
+  STANDARD,
+  stampCsvOnBill,
+  stampCsvOnRunAccount,
+  teardownCsvRetireDatabase,
+} from "@/tests/db/helpers/csv-retire-fixtures";
+import type { InvoiceRenderFixtures } from "@/tests/db/helpers/invoice-render-fixtures";
 import type { InvoiceTemplateStructure } from "@/types/billing";
 import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-template-structure.schema";
 
@@ -48,31 +34,8 @@ import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-tem
 const databaseUrl = process.env.DATABASE_URL;
 const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
 
-const MIGRATIONS_FOLDER = "./db/migrations";
-const BM88_MIGRATION_TAG = "0055_retire_invoice_csv_template";
-
 const RUN_POSTED = "BRN08800011";
 const RUN_OPEN = "BRN08800012";
-const CSV_ROW = "BTV00000003";
-const STANDARD = "BTF00000001";
-
-// A temp copy of db/migrations whose journal stops before 0055 (filtered on
-// `when`, the cm17/bm74 precedent).
-function migrationsBefore0055(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "bm88-pdf-pre-0055-"));
-  cpSync(MIGRATIONS_FOLDER, dir, { recursive: true });
-  const journalPath = path.join(dir, "meta", "_journal.json");
-  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
-    entries: { tag: string; when: number }[];
-  };
-  const bm88 = journal.entries.find((e) => e.tag === BM88_MIGRATION_TAG);
-  if (!bm88) {
-    throw new Error(`${BM88_MIGRATION_TAG} is missing from the journal.`);
-  }
-  journal.entries = journal.entries.filter((e) => e.when < bm88.when);
-  writeFileSync(journalPath, JSON.stringify(journal));
-  return dir;
-}
 
 interface Renders {
   final: string;
@@ -152,29 +115,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }
 
     beforeAll(async () => {
-      assertTestDatabaseUrl(databaseUrl as string);
-      // The cleanup deletes invoice and template blobs: throwaway Azurite only.
-      assertTestBlobConnection(blobConnection as string);
-      guarded = true;
-      // `dropAll` resets `document_inv_seq`, so this suite re-posts INV00000001;
-      // `putInvoice` is write-once and would adopt an earlier suite's PDF.
-      await purgeInvoiceBlobs(service!);
-      sql = postgres(databaseUrl as string, { max: 5, onnotice: () => {} });
-
       // A database at 0054 with the seeded templates in blob.
-      await dropAllSchemas(sql);
-      const pre = migrationsBefore0055();
-      try {
-        await migrate(drizzle(sql), {
-          migrationsFolder: pre,
-          migrationsSchema: "drizzle",
-        });
-      } finally {
-        rmSync(pre, { recursive: true, force: true });
-      }
-      fx = await setupInvoiceRenderFixtures(sql, "BM88P", { reset: false });
-      await fx.seedPostingGl();
-      await seedInvoiceTemplates(fx.db);
+      ({ sql, fx } = await setupPre0055Database({
+        databaseUrl: databaseUrl as string,
+        blobConnection: blobConnection as string,
+        service: service!,
+        prefix: "BM88P",
+      }));
+      guarded = true;
 
       // (a) A posted bill carrying the CSV stamp on its run row and its bill
       //     (stamped before the 0033 latch, as pre-bm88 posting left it). The
@@ -185,12 +133,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         runId: RUN_POSTED,
       });
       postedBan = posted.banId;
-      await sql`
-        UPDATE billing.bill_run_account SET ref_csv_template_version_id = ${CSV_ROW}
-        WHERE ref_bill_run_id = ${RUN_POSTED} AND ref_billing_account_id = ${postedBan}`;
-      await sql`
-        UPDATE billing.customer_bill SET ref_csv_template_version_id = ${CSV_ROW}
-        WHERE customer_bill_id = ${posted.customerBillId}`;
+      await stampCsvOnRunAccount(sql, RUN_POSTED, postedBan);
+      await stampCsvOnBill(sql, posted.customerBillId);
       const result = await fx.post(RUN_POSTED, postedBan);
       if (result.status !== "invoiced") {
         throw new Error(`posting failed: ${JSON.stringify(result)}`);
@@ -203,9 +147,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         label: "OPEN",
         runId: RUN_OPEN,
       }));
-      await sql`
-        UPDATE billing.bill_run_account SET ref_csv_template_version_id = ${CSV_ROW}
-        WHERE ref_bill_run_id = ${RUN_OPEN} AND ref_billing_account_id = ${openBan}`;
+      await stampCsvOnRunAccount(sql, RUN_OPEN, openBan);
 
       // (c) Standard's current structure, as the settings page would submit it.
       const [row] = await sql<{ structure: unknown }[]>`
@@ -216,10 +158,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       before = await renderAll();
       storedBefore = await readStoredPdf();
 
-      await migrate(drizzle(sql), {
-        migrationsFolder: MIGRATIONS_FOLDER,
-        migrationsSchema: "drizzle",
-      });
+      await applyRealMigrations(sql);
       const [col] = await sql<{ n: number }[]>`
         SELECT count(*)::int AS n FROM information_schema.columns
         WHERE table_schema = 'billing' AND column_name = 'ref_csv_template_version_id'`;
@@ -230,12 +169,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }, 300_000);
 
     afterAll(async () => {
-      clearLoadedTemplateMemo();
-      if (guarded && service) await purgeInvoiceBlobs(service);
-      if (sql) {
-        await dropAllSchemas(sql);
-        await sql.end();
-      }
+      await teardownCsvRetireDatabase(sql, service, guarded);
     }, 60_000);
 
     it("(a) a posted bill's final render is identical HTML before and after 0055", () => {

@@ -1,33 +1,18 @@
-import {
-  cpSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-
 import { BlobServiceClient } from "@azure/storage-blob";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
 import type postgresjs from "postgres";
 
-import { seedInvoiceTemplates } from "@/db/seeds/invoice-templates";
-import { clearLoadedTemplateMemo } from "@/services/billing/invoice-template/load";
 import { buildInvoiceHtml } from "@/services/billing/render-invoice-template";
 import {
-  setupInvoiceRenderFixtures,
-  type InvoiceRenderFixtures,
-} from "@/tests/db/helpers/invoice-render-fixtures";
-import {
-  dropAllSchemas,
-  purgeInvoiceBlobs,
-} from "@/tests/e2e/helpers/fresh-database";
-import { assertTestBlobConnection } from "@/tests/helpers/assert-test-blob-store";
-import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+  applyRealMigrations,
+  CSV_ROW,
+  setupPre0055Database,
+  STANDARD,
+  stampCsvOnBill,
+  stampCsvOnRunAccount,
+  teardownCsvRetireDatabase,
+} from "@/tests/db/helpers/csv-retire-fixtures";
+import type { InvoiceRenderFixtures } from "@/tests/db/helpers/invoice-render-fixtures";
 
 // bm88-spec §9 "New" (D2, D3) — `0055` retires the bm62 invoice CSV on a
 // POPULATED database. The suite migrates to 0054, seeds a posted bill and an
@@ -38,37 +23,15 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 // guard is re-enabled (VERSION_DELETE_FORBIDDEN); and the open run's account
 // still drafts and posts. The draft render loads the seeded templates from
 // blob, so the suite needs the throwaway Azurite as well as the database.
-// Fixtures go through the bm53/bm54 render fixtures (`reset: false`) and raw
-// SQL, the invoice-template-types-catalog precedent.
+// Fixtures go through the shared bm88 csv-retire fixtures (the bm53/bm54
+// render fixtures, `reset: false`) and raw SQL, the
+// invoice-template-types-catalog precedent.
 const databaseUrl = process.env.DATABASE_URL;
 const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
-
-const MIGRATIONS_FOLDER = "./db/migrations";
-const BM88_MIGRATION_TAG = "0055_retire_invoice_csv_template";
 
 // Well-formed ids: BRN + 8 digits.
 const RUN_POSTED = "BRN08800001";
 const RUN_OPEN = "BRN08800002";
-const CSV_ROW = "BTV00000003";
-const STANDARD = "BTF00000001";
-
-// A temp copy of db/migrations whose journal stops before 0055 (filtered on
-// `when`, the cm17/bm74 precedent).
-function migrationsBefore0055(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "bm88-pre-0055-"));
-  cpSync(MIGRATIONS_FOLDER, dir, { recursive: true });
-  const journalPath = path.join(dir, "meta", "_journal.json");
-  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
-    entries: { tag: string; when: number }[];
-  };
-  const bm88 = journal.entries.find((e) => e.tag === BM88_MIGRATION_TAG);
-  if (!bm88) {
-    throw new Error(`${BM88_MIGRATION_TAG} is missing from the journal.`);
-  }
-  journal.entries = journal.entries.filter((e) => e.when < bm88.when);
-  writeFileSync(journalPath, JSON.stringify(journal));
-  return dir;
-}
 
 describe.skipIf(!databaseUrl || !blobConnection)(
   "bm88 0055 retires the invoice CSV on a populated database (requires DATABASE_URL + Azurite)",
@@ -120,30 +83,14 @@ describe.skipIf(!databaseUrl || !blobConnection)(
     }
 
     beforeAll(async () => {
-      assertTestDatabaseUrl(databaseUrl as string);
-      // The cleanup deletes invoice and template blobs: throwaway Azurite only.
-      assertTestBlobConnection(blobConnection as string);
-      guarded = true;
-      // `dropAll` resets `document_inv_seq`, so this suite re-posts INV00000001;
-      // `putInvoice` is write-once and would adopt an earlier suite's PDF.
-      await purgeInvoiceBlobs(service!);
-      sql = postgres(databaseUrl as string, { max: 5, onnotice: () => {} });
-
       // 1. A database at 0054.
-      await dropAllSchemas(sql);
-      const pre = migrationsBefore0055();
-      try {
-        await migrate(drizzle(sql), {
-          migrationsFolder: pre,
-          migrationsSchema: "drizzle",
-        });
-      } finally {
-        rmSync(pre, { recursive: true, force: true });
-      }
-      fx = await setupInvoiceRenderFixtures(sql, "BM88R", { reset: false });
-      await fx.seedPostingGl();
-      await seedInvoiceTemplates(fx.db);
-      clearLoadedTemplateMemo();
+      ({ sql, fx } = await setupPre0055Database({
+        databaseUrl: databaseUrl as string,
+        blobConnection: blobConnection as string,
+        service: service!,
+        prefix: "BM88R",
+      }));
+      guarded = true;
 
       // 2. A posted bill whose run row and bill carry the CSV stamp. The bill
       //    is stamped while still a trial bill (before the 0033 latch), as
@@ -151,12 +98,8 @@ describe.skipIf(!databaseUrl || !blobConnection)(
       await fx.newRun(RUN_POSTED);
       ({ banId: postedBan, customerBillId: postedBillId } =
         await fx.postableBill({ label: "POSTED", runId: RUN_POSTED }));
-      await sql`
-        UPDATE billing.bill_run_account SET ref_csv_template_version_id = ${CSV_ROW}
-        WHERE ref_bill_run_id = ${RUN_POSTED} AND ref_billing_account_id = ${postedBan}`;
-      await sql`
-        UPDATE billing.customer_bill SET ref_csv_template_version_id = ${CSV_ROW}
-        WHERE customer_bill_id = ${postedBillId}`;
+      await stampCsvOnRunAccount(sql, RUN_POSTED, postedBan);
+      await stampCsvOnBill(sql, postedBillId);
       expect((await fx.post(RUN_POSTED, postedBan)).status).toBe("invoiced");
 
       // 3. An open run: one account captured (with the CSV stamp) but not posted.
@@ -165,9 +108,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         label: "OPEN",
         runId: RUN_OPEN,
       }));
-      await sql`
-        UPDATE billing.bill_run_account SET ref_csv_template_version_id = ${CSV_ROW}
-        WHERE ref_bill_run_id = ${RUN_OPEN} AND ref_billing_account_id = ${openBan}`;
+      await stampCsvOnRunAccount(sql, RUN_OPEN, openBan);
 
       const stamped = await sql<{ n: number }[]>`
         SELECT count(*)::int AS n FROM billing.bill_run_account
@@ -186,20 +127,11 @@ describe.skipIf(!databaseUrl || !blobConnection)(
 
       // 4. Apply the real folder: 0055 only.
       appliedBefore = await appliedCount();
-      await migrate(drizzle(sql), {
-        migrationsFolder: MIGRATIONS_FOLDER,
-        migrationsSchema: "drizzle",
-      });
-      clearLoadedTemplateMemo();
+      await applyRealMigrations(sql);
     }, 300_000);
 
     afterAll(async () => {
-      clearLoadedTemplateMemo();
-      if (guarded && service) await purgeInvoiceBlobs(service);
-      if (sql) {
-        await dropAllSchemas(sql);
-        await sql.end();
-      }
+      await teardownCsvRetireDatabase(sql, service, guarded);
     }, 60_000);
 
     it("applies exactly one migration (0055)", async () => {
