@@ -1457,12 +1457,20 @@ async function seedSampleCharges(
 
 // The geo rating would have frozen onto a RAN row — its `udrResource`
 // (Inv 28; the only geo carrier since Phase J, rm33), cycling through the
-// Sample-5G card's labels. Exactly ONE row (the first seeded) keeps NULL, so
-// the invoice's "Unassigned region" path has a fixture.
-const SAMPLE_NULL_GEO_SEQUENCE = 1;
-function sampleRanGeo(sequence: number): { udrResource: string | null } {
-  if (sequence === SAMPLE_NULL_GEO_SEQUENCE) {
-    return { udrResource: null };
+// Sample-5G card's labels. Exactly ONE row (the first seeded) carries blank
+// labels (`||<date>`), so the invoice's "Unassigned region" path has a
+// fixture. Never NULL: rating always writes a value for a RAN_USAGE row, and
+// NULL means the polygon data is missing (INVOICE_POLYGON_DATA_MISSING).
+const SAMPLE_BLANK_GEO_SEQUENCE = 1;
+function sampleRanGeo(sequence: number): { udrResource: string } {
+  if (sequence === SAMPLE_BLANK_GEO_SEQUENCE) {
+    return {
+      udrResource: formatUdrResource({
+        state: null,
+        district: null,
+        polygonStartDate: SAMPLE_5G_START_DATE,
+      }),
+    };
   }
   const label = SAMPLE_RAN_GEO_LABELS[sequence % SAMPLE_RAN_GEO_LABELS.length]!;
   return {

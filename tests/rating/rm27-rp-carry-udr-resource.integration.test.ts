@@ -19,6 +19,7 @@ import {
   pythonRuntimeReady,
   ratingPython3,
   readManifest,
+  readParquetColumn,
   runSqlFile,
   seedSample5gRatingGraph,
   type RatingPipeline,
@@ -60,33 +61,6 @@ const BLANK_MNO = "MNO-RM27-BLANK";
 const BLANK_PRODUCT_NAME = "Sample 5G Services rm27 blank";
 const BLANK_CARD_NAME = "RATECARD_RM27_BLANK";
 const VOLUMES = [100, 200, 300] as const;
-
-interface ParquetColumn {
-  columns: string[];
-  // null when the column is absent; a null cell stays null.
-  values: (string | null)[] | null;
-}
-
-// One column of a Parquet file plus the file's column list, as JSON so values
-// (and nulls) come back byte for byte.
-function readParquetColumn(parquetUri: string, column: string): ParquetColumn {
-  const out = execFileSync(
-    ratingPython3(),
-    [
-      "-c",
-      [
-        "import json,polars,sys",
-        "f=polars.read_parquet(sys.argv[1]);c=sys.argv[2]",
-        "v=[None if x is None else str(x) for x in f[c].to_list()] if c in f.columns else None",
-        "print(json.dumps({'columns':f.columns,'values':v}))",
-      ].join("\n"),
-      fileURLToPath(parquetUri),
-      column,
-    ],
-    { cwd: RATING_WORKER_DIR, encoding: "utf8" },
-  );
-  return JSON.parse(out) as ParquetColumn;
-}
 
 function columnValues(parquetUri: string, column: string): (string | null)[] {
   const { values } = readParquetColumn(parquetUri, column);

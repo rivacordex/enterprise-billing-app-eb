@@ -47,9 +47,10 @@ const RATE_CARD_ARTIFACT =
 // seeds the grants migration 0043 defers to "the seed" (G-RC3,
 // ADMIN/MANAGER EDIT, USER READ), so the bare `ratecard` token is expected
 // there. What must never appear is the card itself — its tables, the demo card
-// seed, or the upload/activate/rollback services.
+// seed, or the upload/activate/rollback services — nor an import of any
+// rate-card module (repository, services, actions, schema).
 const RATE_CARD_DATA_ARTIFACT =
-  /RATECARD_RAN_USAGE_LKP|ran_usage_lkp|ratecard_version|ratecardRanUsageLkp|ratecardVersion|seedRateCardDemo|(?:upload|activate|rollback)RatecardVersion|upload-version|activate-version|rollback-version/i;
+  /RATECARD_RAN_USAGE_LKP|ran_usage_lkp|ratecard_version|ratecardRanUsageLkp|ratecardVersion|seedRateCardDemo|(?:upload|activate|rollback)RatecardVersion|upload-version|activate-version|rollback-version|from\s*["'][^"']*rate-?card/i;
 
 describe("pm67 demo rate-card seed — boundaries (D7, I2, I3.9)", () => {
   it("db/seeds/product.ts (the ADMIN grant seed) carries no rate-card data artifact — only the `ratecard` permission grants (D7, G-RC3)", () => {

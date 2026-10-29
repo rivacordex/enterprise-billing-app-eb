@@ -21,6 +21,7 @@ import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+import { readParquetColumn as readParquetFrame } from "@/tests/helpers/rating-ran-harness";
 import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 // The rateable Sample-5G fixture builders are SHARED with the production seed
 // (db/seeds/sample/sample-5g-rating.ts) — one source of truth for the fixture's
@@ -992,28 +993,13 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       return new Map(polygons.map((p, i) => [p, values[i]!]));
     }
 
-    function readParquetColumnNames(parquetUri: string): string[] {
-      const out = execFileSync(
-        "python3",
-        [
-          "-c",
-          "import polars,sys;print('\\n'.join(polars.read_parquet(sys.argv[1]).columns))",
-          fileURLToPath(parquetUri),
-        ],
-        { cwd: workerDir, encoding: "utf8" },
-      );
-      return out
-        .trim()
-        .split(/\r?\n/)
-        .filter((l) => l.length > 0);
-    }
-
     it("Phase J. the PRP chunk carries udr_resource and no state/district column", async () => {
       const s = await seedBaseScenario("geo", "MNO-GEO");
       const path = writeUdr(udrName(), cleanRows("MNO-GEO"));
       const { manifestUri } = runPrp(path, { productName: s.productName });
-      const columns = readParquetColumnNames(
+      const { columns } = readParquetFrame(
         readManifest(manifestUri).chunk_uris[0] as string,
+        "udr_resource",
       );
       expect(columns).toContain("udr_resource");
       expect(columns).not.toContain("state");

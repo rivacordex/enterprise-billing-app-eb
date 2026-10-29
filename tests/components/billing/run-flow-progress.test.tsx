@@ -114,6 +114,19 @@ describe("RunFlowProgressBar", () => {
       .filter((li) => li.getAttribute("aria-current") === "step");
   }
 
+  it("makes the scrolling row a keyboard-reachable named region", () => {
+    render(
+      <RunFlowProgressBar
+        runId="BRN00000001"
+        flow={{ steps: steps(), currentStage: "scoping" }}
+      />,
+    );
+
+    const region = screen.getByRole("region", { name: "Run pipeline stages" });
+    expect(region.getAttribute("tabindex")).toBe("0");
+    expect(region.querySelector("ol")).toBeTruthy();
+  });
+
   it("marks exactly one current step", () => {
     render(
       <RunFlowProgressBar
@@ -201,5 +214,45 @@ describe("RunFlowProgressBar", () => {
     const [aggregationBefore, aggregationAfter] = rails("aggregation");
     expect(aggregationBefore.classList.contains(EMPTY)).toBe(true);
     expect(aggregationAfter.classList.contains(EMPTY)).toBe(true);
+  });
+
+  // A failed or skipped step in the middle must not break the rail before
+  // later done steps (one account failed validation, the others carried on).
+  it("keeps the rail filled across a failed step before later done steps", () => {
+    const { container } = render(
+      <RunFlowProgressBar
+        runId="BRN00000001"
+        flow={{
+          steps: steps({
+            scoping: "done",
+            validation: "failed",
+            collection: "done",
+            aggregation: "done",
+          }),
+          currentStage: "validation",
+        }}
+      />,
+    );
+
+    const FILLED = "bg-[color:var(--color-success-500)]";
+    const EMPTY = "bg-[color:var(--border-default)]";
+    function rails(stage: string): [Element, Element] {
+      const row = container.querySelector(
+        `li[data-stage="${stage}"] > div`,
+      ) as HTMLElement;
+      return [row.firstElementChild!, row.lastElementChild!];
+    }
+
+    for (const stage of ["validation", "collection", "aggregation"]) {
+      expect(rails(stage)[0].classList.contains(FILLED)).toBe(true);
+    }
+    const [validationBefore, validationAfter] = rails("validation");
+    expect(validationBefore.classList.contains(FILLED)).toBe(true);
+    expect(validationAfter.classList.contains(FILLED)).toBe(true);
+    // The connector after the last done step reaches the next dot; nothing
+    // past it is filled.
+    expect(rails("taxation")[0].classList.contains(FILLED)).toBe(true);
+    expect(rails("taxation")[1].classList.contains(EMPTY)).toBe(true);
+    expect(rails("verification")[0].classList.contains(EMPTY)).toBe(true);
   });
 });

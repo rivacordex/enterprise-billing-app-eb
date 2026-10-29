@@ -5,9 +5,10 @@
 // colour (ui-context "Rendering rule") so the stepper is not colour-only.
 //
 // The rail is drawn per step as two half-segments so it can be partially
-// filled without measuring: the half after a step is filled when THAT step is
-// `done`; the half before a step is filled when the PREVIOUS step is `done`.
-// The first/last steps hide their outer half (`invisible`, not removed, so the
+// filled without measuring. The rail is filled from the first step up to and
+// including the connector after the LAST `done` step — so a failed or skipped
+// step in the middle (other accounts carried on) does not break the line
+// before later `done` steps. The first/last steps hide their outer half (`invisible`, not removed, so the
 // dot stays centred over its label).
 //
 // `distribution` is the one step with no per-account column (see
@@ -97,16 +98,24 @@ export function RunFlowProgressBar({
   // tab stays reachable via the tab nav.
   const distributionStep = flow.steps.find((s) => s.stage === "distribution");
   const atDistribution = distributionStep?.state === "current";
+  // -1 when nothing is done: the whole rail stays empty.
+  const lastDoneIndex = flow.steps.findLastIndex((s) => s.state === "done");
 
   return (
     <div className={cn("space-y-3", className)}>
-      <div className="overflow-x-auto">
+      {/* Focusable so keyboard users can scroll to stages hidden on a narrow
+          viewport (the row scrolls, never wraps). */}
+      <div
+        role="region"
+        aria-label="Run pipeline stages"
+        tabIndex={0}
+        className="overflow-x-auto rounded-sm focus:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+      >
         <ol
           aria-label="Run pipeline progress"
           className="flex min-w-max items-start"
         >
           {flow.steps.map((step, i) => {
-            const prev = flow.steps[i - 1];
             const isFirst = i === 0;
             const isLast = i === flow.steps.length - 1;
             return (
@@ -126,7 +135,7 @@ export function RunFlowProgressBar({
                       "h-0.5 flex-1",
                       isFirst
                         ? "invisible"
-                        : prev?.state === "done"
+                        : i - 1 <= lastDoneIndex
                           ? RAIL_FILLED
                           : RAIL_EMPTY,
                     )}
@@ -145,7 +154,7 @@ export function RunFlowProgressBar({
                       "h-0.5 flex-1",
                       isLast
                         ? "invisible"
-                        : step.state === "done"
+                        : i <= lastDoneIndex
                           ? RAIL_FILLED
                           : RAIL_EMPTY,
                     )}

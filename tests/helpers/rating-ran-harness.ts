@@ -333,8 +333,7 @@ export function createRatingPipeline(
           // One minute apart from 10:00; calendar arithmetic rolls past
           // midnight into the next date, so any cell count stays valid.
           datetime:
-            datetime ??
-            new Date(start + i * 60_000).toISOString().slice(0, 19),
+            datetime ?? new Date(start + i * 60_000).toISOString().slice(0, 19),
           volume: volumes[i]!,
         })),
       );
@@ -410,4 +409,35 @@ export function createRatingPipeline(
 
 export function readManifest(uri: string): Record<string, unknown> {
   return JSON.parse(readFileSync(fileURLToPath(uri.trim()), "utf8"));
+}
+
+export interface ParquetColumn {
+  columns: string[];
+  // null when the column is absent; a null cell stays null.
+  values: (string | null)[] | null;
+}
+
+// One column of a Parquet file plus the file's column list, as JSON so values
+// (and nulls) come back byte for byte. Shared by the rating suites (rm07, rm27)
+// so every Parquet read uses `ratingPython3()`.
+export function readParquetColumn(
+  parquetUri: string,
+  column: string,
+): ParquetColumn {
+  const out = execFileSync(
+    ratingPython3(),
+    [
+      "-c",
+      [
+        "import json,polars,sys",
+        "f=polars.read_parquet(sys.argv[1]);c=sys.argv[2]",
+        "v=[None if x is None else str(x) for x in f[c].to_list()] if c in f.columns else None",
+        "print(json.dumps({'columns':f.columns,'values':v}))",
+      ].join("\n"),
+      fileURLToPath(parquetUri),
+      column,
+    ],
+    { cwd: RATING_WORKER_DIR, encoding: "utf8" },
+  );
+  return JSON.parse(out) as ParquetColumn;
 }
