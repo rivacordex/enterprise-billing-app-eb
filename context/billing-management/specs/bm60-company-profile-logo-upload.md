@@ -85,6 +85,7 @@ Sources: Inv #44, #45, #48; architecture platform delta (the first user-uploaded
 
 ## Later changes and residuals
 - 2026-10-11 (owner): the 2,000 px upper bound was added (D2/D3).
+- 2026-10-26 (owner, bm86): the shorter-side minimum is **96 px** (was 300): 3 × the Standard header's 32 px logo height, the smallest source that prints sharply at 300 dpi. The 300 px figures above are this unit's original design.
 - Docs synced at delivery: the `bm00` stack row (no `sharp`); code-standards data rules 7 (asset path) and 9, TS rule 7.
 - **Observation, 2026-10-12, not fixed:** `public/brand/logo.svg` and `invoice-logo-default.svg` both start with `<!DOCTYPE …>` and declare `pt` sizes. A D8 import of either is expected to be rejected (`dimensions`, and then `svg_content`). Not verified by a run.
 - Invoice Template Phase 3 (planned) does not change this unit.

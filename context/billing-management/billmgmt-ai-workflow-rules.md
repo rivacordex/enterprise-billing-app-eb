@@ -151,7 +151,7 @@ Apply the general §2. In addition, do not build any of the following. Each is o
 8. **Per-BAN targets on retire,** a bulk rebind outside retire, or choosing a type at onboarding (onboarding keeps writing NULL).
 9. **A second approver,** an "uploader ≠ activator" check, package signing or provenance checks.
 10. **A worker or timeout for the upload gate** (an accepted risk), a bulk export of all types, or automatic sync between environments.
-11. **CSV templates per type,** an invoice profile per type, non-`INVOICE` bill formats, or e-invoicing (LHDN MyInvois).
+11. **CSV templates per type,** an invoice profile per type, non-`INVOICE` bill formats, or e-invoicing (LHDN MyInvois). _(bm88, built 2026-10-29: there are no CSV templates at all. The invoice CSV is a reporting extract in Kestra, so do not reintroduce a `csv` template kind.)_
 12. **A new permission or level.** Use `invoice_settings` READ/EDIT, the cm21 gate and `billrun_operate` as mapped in code-standards.
 13. **An index on `billing_account.ref_bill_template_family_id`.**
 14. **Raising `next.config` `serverActions.bodySizeLimit`.** A package is about 200 KB.

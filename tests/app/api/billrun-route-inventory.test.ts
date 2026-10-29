@@ -40,9 +40,9 @@ function collectRouteFiles(dir: string): string[] {
 }
 
 describe("app/api/billrun/** route inventory (bm13 ship gate, revised bm20)", () => {
-  // bm62 — the invoice CSV download is a session-guarded GET under the
-  // authenticated `app/(app)` segment (Next.js rule 7), not an M2M handler.
-  it("keeps the bm62 invoice CSV route under app/(app), never app/api", () => {
+  // bm88 — bm62's invoice CSV download route is retired (the URL 404s): it
+  // exists neither under app/(app) nor as an M2M handler.
+  it("the retired bm62 invoice CSV route is gone, never moved to app/api", () => {
     const csvRoute = path.join(
       REPO_ROOT,
       "app",
@@ -55,10 +55,8 @@ describe("app/api/billrun/** route inventory (bm13 ship gate, revised bm20)", ()
       "csv",
       "route.ts",
     );
-    expect(fs.existsSync(csvRoute)).toBe(true);
-    expect(fs.readFileSync(csvRoute, "utf8")).toMatch(
-      /export async function GET\(/,
-    );
+    expect(fs.existsSync(csvRoute)).toBe(false);
+    expect(fs.existsSync(path.dirname(csvRoute))).toBe(false);
     expect(
       collectRouteFiles(BILLRUN_API_DIR).some((f) => f.includes("csv")),
     ).toBe(false);

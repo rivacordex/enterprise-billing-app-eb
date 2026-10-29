@@ -45,6 +45,7 @@ import {
   usageCardCellKey,
   type SampleUsageCardCell,
 } from "@/db/seeds/sample/capacity-usage-card";
+import { SAMPLE_5G_START_DATE } from "@/db/seeds/sample/sample-5g-fixture";
 import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 import {
@@ -99,8 +100,8 @@ const SAMPLE_CAPACITY_UDR_TYPE = "RAN_USAGE";
 // raw cell key (D2; raw values since rm29, Inv 27), so even the four anchors
 // below get a synthetic, per-row-unique polygon identity. Since rm29 those
 // anchor cells are seeded onto the usage card with placeholder labels, so
-// each anchor row carries the state/district/udr_resource real rating would
-// have stamped (Inv 28); they exist for the aggregation/guard suites, not the
+// each anchor row carries the udr_resource real rating would have stamped
+// (Inv 28); they exist for the aggregation/guard suites, not the
 // appendix. The appendix fixture's own cells share ONE
 // subscriber identity (one subscription, one commercial unit) across >= 4
 // real polygons.
@@ -133,32 +134,32 @@ const SAMPLE_CAPACITY_APPENDIX_CELLS: readonly CapacityAppendixCell[] = [
     polygonId: "POLY-APX-001",
     usageQuantityEa: 300,
     mapped: true,
-    state: "Selangor",
-    district: "Petaling",
+    state: "STATE-2",
+    district: "DIST-5",
     serviceCode: "SVC-100",
   },
   {
     polygonId: "POLY-APX-002",
     usageQuantityEa: 250,
     mapped: true,
-    state: "Selangor",
-    district: "Klang",
+    state: "STATE-2",
+    district: "DIST-2",
     serviceCode: "SVC-101",
   },
   {
     polygonId: "POLY-APX-003",
     usageQuantityEa: 200,
     mapped: true,
-    state: "Johor",
-    district: "Johor Bahru",
+    state: "STATE-1",
+    district: "DIST-1",
     serviceCode: "SVC-102",
   },
   {
     polygonId: "POLY-APX-004",
     usageQuantityEa: 150,
     mapped: true,
-    state: "Johor",
-    district: "Muar",
+    state: "STATE-1",
+    district: "DIST-4",
     serviceCode: "SVC-103",
   },
   // D3 — usage, no matching lookup-card row: never seeded into the usage card.
@@ -1454,19 +1455,31 @@ async function seedSampleCharges(
   return rows.length;
 }
 
-// bm48-spec §Implementation §5 — the geo rating would have frozen onto a RAN
-// row, cycling through the Sample-5G card's labels. Exactly ONE row (the first
-// seeded) keeps NULL geo, so bm49's "Unassigned region" path has a fixture.
-const SAMPLE_NULL_GEO_SEQUENCE = 1;
-function sampleRanGeo(sequence: number): {
-  state: string | null;
-  district: string | null;
-} {
-  if (sequence === SAMPLE_NULL_GEO_SEQUENCE) {
-    return { state: null, district: null };
+// The geo rating would have frozen onto a RAN row — its `udrResource`
+// (Inv 28; the only geo carrier since Phase J, rm33), cycling through the
+// Sample-5G card's labels. Exactly ONE row (the first seeded) carries blank
+// labels (`||<date>`), so the invoice's "Unassigned region" path has a
+// fixture. Never NULL: rating always writes a value for a RAN_USAGE row, and
+// NULL means the polygon data is missing (INVOICE_POLYGON_DATA_MISSING).
+const SAMPLE_BLANK_GEO_SEQUENCE = 1;
+function sampleRanGeo(sequence: number): { udrResource: string } {
+  if (sequence === SAMPLE_BLANK_GEO_SEQUENCE) {
+    return {
+      udrResource: formatUdrResource({
+        state: null,
+        district: null,
+        polygonStartDate: SAMPLE_5G_START_DATE,
+      }),
+    };
   }
   const label = SAMPLE_RAN_GEO_LABELS[sequence % SAMPLE_RAN_GEO_LABELS.length]!;
-  return { state: label.state, district: label.district };
+  return {
+    udrResource: formatUdrResource({
+      state: label.state,
+      district: label.district,
+      polygonStartDate: SAMPLE_5G_START_DATE,
+    }),
+  };
 }
 
 // bm42-spec §Implementation §7 — the capacity profile's charges: PER_UNIT
@@ -1480,9 +1493,8 @@ function sampleRanGeo(sequence: number): {
 // real rating could produce, so every anchor polygon and every mapped
 // appendix polygon is seeded onto the usage card first (anchors with the
 // placeholder labels below), and each row mirrors the card cell AS STORED
-// (state, district, `udr_resource` = `state|district|date`). The only row
-// whose cell is not on the card is the appendix's card-missing polygon, which
-// keeps all three NULL (billing D29's fail-loud fixture). Σ udr_usage_quantity = EA and
+// (`udr_resource` = `state|district|date`). The only row whose cell is not on
+// the card is the appendix's card-missing polygon, which keeps it NULL (billing D29's fail-loud fixture). Σ udr_usage_quantity = EA and
 // Σ udr_rated_price = EA × base rate either way, so bm42's capacity
 // aggregation reproduces every anchor exactly. Zero EA (the TC15 anchor)
 // seeds no rows: the capacity line is generated from the subscription, never
@@ -1507,9 +1519,9 @@ function anchorPolygonCell(
 }
 
 // rm29 (Inv 28) — the polygon cell plus what real rating would freeze from
-// it: the card cell's own state/district and `udr_resource`, read from the
-// card as stored. A cell that is not on the card (the appendix's card-missing
-// polygon) gets NULL for all three, as no rated row could otherwise exist.
+// it: the card cell's `udr_resource`, built from the card as stored. A cell
+// that is not on the card (the appendix's card-missing polygon) gets NULL, as
+// no rated row could otherwise exist.
 function cardMatch(
   cells: ReadonlyMap<string, SampleUsageCardCell>,
   polygonCell: {
@@ -1521,8 +1533,6 @@ function cardMatch(
   const cell = cells.get(usageCardCellKey(polygonCell));
   return {
     polygonCell,
-    state: cell?.state ?? null,
-    district: cell?.district ?? null,
     udrResource: cell ? formatUdrResource(cell) : null,
   };
 }

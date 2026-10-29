@@ -70,6 +70,8 @@ Sources: `billmgmt-project-overview.md` › Invoice Template Types (the delivere
 | `FAILED`     | Danger          | `--color-danger-500` `#D92D2D`  | `--color-danger-50` `#FDEAEA`   |
 | `SKIPPED`    | Neutral (muted) | `--text-disabled` `#99A1B0`     | `--color-neutral-100` `#EEF0F4` |
 
+**Run-level flow stepper (`RunFlowProgressBar`, bm87, built 2026-10-28):** the Workflow tab's nine-stage summary is a horizontal dot stepper that reuses this table one-to-one — `FlowStepState` `done`/`current`/`failed`/`skipped`/`pending` take the `DONE`/`RUNNING`/`FAILED`/`SKIPPED`/`PENDING` families. Each dot is `rounded-full` with a 2 px ring in the base colour on the tint, a glyph (`Check` / filled Info inner dot / `X` / `Minus` / empty) and the stage label in `--text-body-sm` beneath it; the rail between dots is `--color-success-500` after a `done` step and `--border-default` otherwise. No new token. Spec: `specs/bm87-run-flow-dot-stepper.md`.
+
 ## 4. Error class → token family (`ErrorClass` → `ErrorClassBadge`, on the Errors tab)
 
 | Domain state                            | Family  | Base / hex                      | Text (`-fg`) / hex              | Tint (`-bg`) / hex             |
@@ -342,14 +344,14 @@ draft v{n}" link.
 **Logo upload (bm60).** `LogoUploadField` sits in the Branding group as
 built: the dropzone (`--surface-sunken`, dashed `--border-strong`, the focus
 ring on `focus-within`) shows the stored logo through the GET route (never a
-`blob:` URL), a caption "PNG, JPEG or SVG, up to 500 KB, at least 300 px on
+`blob:` URL), a caption "PNG, JPEG or SVG, up to 500 KB, at least 96 px on
 the shorter side and at most 2,000 px on either side", and an outline **Choose file** button (the file input is
 visually hidden and the button is the keyboard path). It is disabled with
 "Save the draft first." when no draft exists, and with "Save your changes
 first." while the form has unsaved edits (an upload re-renders the form on the
 draft's new token). A rejection shows inline in Danger (`--color-danger-700`)
-with its reason ("The image is 200×900 px; the shorter side must be at least
-300 px.", "The image is 2400×900 px; each side must be at most 2,000 px.", "The SVG contains <script>, which is not allowed."). Success is a
+with its reason ("The image is 80×900 px; the shorter side must be at least
+96 px.", "The image is 2400×900 px; each side must be at most 2,000 px.", "The SVG contains <script>, which is not allowed."). Success is a
 toast "Logo v{n} added to draft v{m}"; `DRAFT_CONFLICT` is the Warning toast
 with **Reload**. A ghost **Use the current app logo** button appears only
 while no logo asset exists (D8).
@@ -413,7 +415,7 @@ The invoice is print CSS in the layout's `shell.hbs` (code-standards › Invoice
 | INV no., BAN, offering ID, SSM / TIN / SST   | 8.5pt / 12pt       | 400    | IBM Plex Mono                                 |
 | Page footer ("Page X of Y")                  | 7.5pt / 10pt       | 400    | `--inv-muted`                                 |
 
-Weights stay at 400 and 600 only (shared §5). The CSV output has no styling.
+Weights stay at 400 and 600 only (shared §5). The CSV output has no styling. _(bm88, built: the invoice CSV output is removed.)_
 
 ### 10d. Invoice document — Standard layout v1 rewrite (Invoice Template Phase 3, delivered bm70–bm72)
 
@@ -490,13 +492,13 @@ All on existing token families; no new token.
 | ----------------- | -------- |
 | `DistributionOutcomeBadge` | `DELIVERED` → Success (`CheckCircle2`, "Delivered"); `FAILED` → Danger (`XCircle`, "Failed") |
 | `RunDetailTabs` (`run-detail-tabs.tsx`) | Tabs: Workflow, Customers & Bills, Uncharged, Errors, Distribution, Audit |
-| `RunFlowProgress`, `PostingProgressView` | Run-flow and posting progress views. `RenderPendingRow` (inside `PostingProgressView`): "Invoice artifact render pending." in `--color-warning-700` plus an outline **Retry render** button (`RotateCcw`; "Retrying…" in flight) |
+| `RunFlowProgress`, `PostingProgressView` | Run-flow dot stepper (bm87) and posting progress views. `RenderPendingRow` (inside `PostingProgressView`): "Invoice artifact render pending." in `--color-warning-700` plus an outline **Retry render** button (`RotateCcw`; "Retrying…" in flight) |
 | `StartDistributionControl`, `RerunDistributionControl`, `ForceCompleteDistributionDialog` | Distribution controls; Force-complete is an inline confirm panel with a danger-500 border (§9) |
 | `RejectDialog`, `AuditTable` | Inline reject panel (§9); the Audit tab's data grid |
 | `BillRunsFilters`, `BillRunsPagination`, `BillRunsEmptyState` | Bill-runs list filters, pagination and empty state |
 | `ExportRunsButton`, `ExportUnchargedButton` | Export buttons for the runs list and the Uncharged tab |
 | `InvoiceSettingsTabs`, `GeneratedHbsViewer`, `ColourSwatch` | Section tabs (Company profile / Invoice template); read-only `.hbs` viewer (mono, `--radius-sm` on `--surface-sunken`); the 20×20 colour swatch |
 | "Preview with" select (`invoice-structure-form.tsx`) | Preview source: **Sample bill** or one of the recent posted bills |
-| `InvoicePreviewModal` stored-invoice **Download CSV** | Outline button (`FileSpreadsheet`, "Preparing CSV…" in flight), posted bills only; fetch + blob download |
-| Bill-run routes | `bill-runs/[runId]/approve`, `bill-runs/[runId]/draft-invoice/[banId]`, `bill-runs/[runId]/stored-invoice/[banId]`, `bill-runs/[runId]/stored-invoice/[banId]/csv` |
+| `InvoicePreviewModal` stored-invoice **Download CSV** | Outline button (`FileSpreadsheet`, "Preparing CSV…" in flight), posted bills only; fetch + blob download. **Removed by bm88 (built, 2026-10-29).** The modal's PDF controls are unchanged, and the space closes up. |
+| Bill-run routes | `bill-runs/[runId]/approve`, `bill-runs/[runId]/draft-invoice/[banId]`, `bill-runs/[runId]/stored-invoice/[banId]` (_bm88 deleted `/stored-invoice/[banId]/csv`_) |
 | Invoice Settings routes | `company-profile/logo/[assetVersionId]`, `invoice-template/versions/[versionId]/files/[file]`; `?tab=` selects the tab (template: `edit`/`generated`/`history`; company profile: `edit`/`history`; default `edit`) |

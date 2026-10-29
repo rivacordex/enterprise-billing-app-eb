@@ -21,6 +21,11 @@ import * as schema from "@/db/schema";
 import type { Database } from "@/db/client";
 import { seedEventCatalog } from "@/db/seeds/rating-event-catalog.data";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
+import {
+  pythonRuntimeReady,
+  ratingPython3,
+  readParquetColumn as readParquetFrame,
+} from "@/tests/helpers/rating-ran-harness";
 import { getOrCreateAppUser } from "@/db/seeds/lib/get-or-create-appuser";
 // The rateable Sample-5G fixture builders are SHARED with the production seed
 // (db/seeds/sample/sample-5g-rating.ts) — one source of truth for the fixture's
@@ -57,7 +62,7 @@ import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 // `python3 -m runtime.prp` exactly as the flow's prp task invokes it, against a
 // seeded Sample-5G graph (offering + specs + scalar usage_rate price, a customer
 // carrying the MNO key, its RAN_USAGE subscription, an ACTIVE ratecard). Requires
-// `python3` on PATH with the worker deps (psycopg + polars); skipped loudly when
+// `ratingPython3()` with the worker deps (psycopg + polars); skipped loudly when
 // unavailable — same posture as the rest of the rating suite (not run on a host
 // without a live test Postgres + the worker deps; see ratemgmt-progress-tracker).
 const databaseUrl = process.env.DATABASE_URL;
@@ -68,17 +73,6 @@ const workerDir = join(
   "workflow-engine",
 );
 
-function pythonRuntimeReady(): boolean {
-  try {
-    execFileSync("python3", ["-c", "import runtime, polars, psycopg"], {
-      cwd: workerDir,
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
 const pythonReady = pythonRuntimeReady();
 
 const ROLE_PW = "rm07-test-only-pw";
@@ -509,7 +503,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const execId =
         opts.execId ?? `exec-${Math.random().toString(36).slice(2)}`;
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         [
           "-m",
           "runtime.prp",
@@ -571,7 +565,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       // which Node then misresolves against the cwd drive.
       const path = fileURLToPath(parquetUri);
       const out = execFileSync(
-        "python3",
+        ratingPython3(),
         [
           "-c",
           "import polars,sys;print('\\n'.join(str(v) for v in polars.read_parquet(sys.argv[1])[sys.argv[2]].to_list()))",
@@ -977,7 +971,8 @@ describe.skipIf(!databaseUrl || !pythonReady)(
     });
 
     // -----------------------------------------------------------------
-    // bm48-spec D2 — PRP stamps the matched ratecard cell's state/district.
+    // rm32 (Phase J) — PRP stamps the matched ratecard cell's geo once, in
+    // udr_resource; the chunk carries no state/district column.
     // -----------------------------------------------------------------
     // polygon -> one chunk column, keyed by the raw key__polygon_id segment.
     // polars prints a null as the string "None".
@@ -991,28 +986,30 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       return new Map(polygons.map((p, i) => [p, values[i]!]));
     }
 
-    function polygonToGeo(manifestUri: string): Map<string, [string, string]> {
-      const states = polygonToColumn(manifestUri, "state");
-      const districts = polygonToColumn(manifestUri, "district");
-      return new Map(
-        [...states].map(([p, state]) => [p, [state, districts.get(p)!]]),
-      );
-    }
-
-    it("bm48. the PRP chunk carries each record's matched ratecard cell state/district", async () => {
+    it("Phase J. the PRP chunk carries udr_resource and no state/district column", async () => {
       const s = await seedBaseScenario("geo", "MNO-GEO");
       const path = writeUdr(udrName(), cleanRows("MNO-GEO"));
       const { manifestUri } = runPrp(path, { productName: s.productName });
-      const geo = polygonToGeo(manifestUri);
+      const { columns } = readParquetFrame(
+        readManifest(manifestUri).chunk_uris[0] as string,
+        "udr_resource",
+      );
+      expect(columns).toContain("udr_resource");
+      expect(columns).not.toContain("state");
+      expect(columns).not.toContain("district");
+      const resources = polygonToColumn(manifestUri, "udr_resource");
       for (const lkp of SAMPLE_5G_LKP_ROWS) {
-        expect(geo.get(lkp.polygonId)).toEqual([
-          SAMPLE_5G_RATECARD_STATE,
-          lkp.district,
-        ]);
+        expect(resources.get(lkp.polygonId)).toBe(
+          formatUdrResource({
+            state: SAMPLE_5G_RATECARD_STATE,
+            district: lkp.district,
+            polygonStartDate: SAMPLE_5G_START_DATE,
+          }),
+        );
       }
     });
 
-    it("bm48. a ratecard cell with blank state/district labels yields NULL geo, not '' (rm26: udr_resource has empty segments)", async () => {
+    it("Phase J. a ratecard cell with blank state/district labels yields udr_resource with empty segments", async () => {
       const mno = "MNO-GEOBLANK";
       const s = await seedBaseScenario("geoblank", mno, {
         rows: SAMPLE_5G_LKP_ROWS.map((r) => ({ ...r, district: "   " })),
@@ -1020,10 +1017,6 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       });
       const path = writeUdr(udrName(), cleanRows(mno));
       const { manifestUri } = runPrp(path, { productName: s.productName });
-      for (const [, [state, district]] of polygonToGeo(manifestUri)) {
-        expect(state).toBe("None");
-        expect(district).toBe("None");
-      }
       // rm26 / Inv 28 — both blank labels are empty segments: "||2026-01-01".
       const blank = formatUdrResource({
         state: null,
@@ -1175,7 +1168,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         await expectWholeBatchRefused(path, execId, "INPUT_UNMAPPED");
       });
 
-      it("17. case-variant card cells are distinct cells, each stamped with its own district (R4 accepted risk)", async () => {
+      it("17. case-variant card cells are distinct cells, each stamped with its own udr_resource (R4 accepted risk)", async () => {
         const mno = "MNO-CASEVAR";
         const first = SAMPLE_5G_LKP_ROWS[0]!;
         const variant = first.polygonId.toLowerCase();
@@ -1195,9 +1188,22 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         expect(manifest.rejected_count).toBe(0); // no DUPLICATE_IN_FILE
         const keys = readParquetColumn(manifest.chunk_uris[0], "udr_key");
         expect(new Set(keys).size).toBe(4);
-        const districts = polygonToColumn(manifestUri, "district");
-        expect(districts.get(first.polygonId)).toBe(first.district);
-        expect(districts.get(variant)).toBe("OTHER");
+        // Distinct cells: the OTHER district shows in the variant's segment 2.
+        const resources = polygonToColumn(manifestUri, "udr_resource");
+        expect(resources.get(first.polygonId)).toBe(
+          formatUdrResource({
+            state: SAMPLE_5G_RATECARD_STATE,
+            district: first.district,
+            polygonStartDate: SAMPLE_5G_START_DATE,
+          }),
+        );
+        expect(resources.get(variant)).toBe(
+          formatUdrResource({
+            state: SAMPLE_5G_RATECARD_STATE,
+            district: "OTHER",
+            polygonStartDate: SAMPLE_5G_START_DATE,
+          }),
+        );
       });
 
       it("the chunk carries udr_resource = state|district|polygon_start_date for every Sample-5G cell", async () => {

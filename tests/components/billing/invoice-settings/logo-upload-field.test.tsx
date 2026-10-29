@@ -121,8 +121,8 @@ describe("LogoUploadField", () => {
     ],
     [
       "dimensions",
-      { width: 200, height: 900 },
-      /200×900 px; the shorter side must be at least 300 px/,
+      { width: 80, height: 900 },
+      /80×900 px; the shorter side must be at least 96 px/,
     ],
     [
       "dimensions",

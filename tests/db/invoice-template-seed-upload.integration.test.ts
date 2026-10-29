@@ -36,9 +36,10 @@ const databaseUrl = process.env.DATABASE_URL;
 const blobConnection = process.env.BILLRUN_BLOB_CONNECTION_STRING;
 const RUN = `it-${Date.now().toString(36)}`;
 
-// The three seeded version directories (repo-relative) and their file counts
-// incl. `checksums.json`, derived from the committed indexes.
-const SEED_DIRS = ["INVTPL-STD-A4/v1", "generated/INVOICE/v1", "system/csv/v1"];
+// The two seeded version directories (repo-relative) and their file counts
+// incl. `checksums.json`, derived from the committed indexes. bm88-spec D4 —
+// the CSV row (BTV00000003, `system/csv/v1`) is retired: two rows upload.
+const SEED_DIRS = ["INVTPL-STD-A4/v1", "generated/INVOICE/v1"];
 const EXPECTED_FILE_COUNT = SEED_DIRS.reduce((n, dir) => {
   const index = JSON.parse(
     readFileSync(

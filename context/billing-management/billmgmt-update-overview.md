@@ -4,7 +4,7 @@ This file holds the in-flight update to the Billing Management module. It is fol
 
 | Update | Status |
 |---|---|
-| Invoice Template Types: upload editor packages, type catalog, BAN binding, retire, export | In progress; specs bm74–bm85 written (with CM cm23–cm24); build status in `billmgmt-progress-tracker.md` |
+| Invoice Template Types: upload editor packages, type catalog, BAN binding, retire, export | **Built (bm74–bm84), signed off by bm85** (with CM cm23–cm24); build status in `billmgmt-progress-tracker.md` |
 
 _Date: 2026-10-25 · **Users:**_
 - _The RevOps team manager (MANAGER) and ADMIN own template types: `invoice_settings` EDIT._
@@ -60,7 +60,7 @@ The same upload creates a **new version of an existing type** (Standard included
    1. **zip directory checks, before unpacking:**
       - at most 2 MiB uncompressed and 64 entries
       - only allow-listed names: `manifest.json`, `shell.hbs`, `footer.hbs`, `sample-data.json`, `checksums.json`, the eight `partials/<key>.hbs`, `fonts/*.woff2`, `fonts/OFL.txt`, and an optional `settings.json` from an app export
-   2. `checksums.json` verifies every other file in the package. An app export's `settings.json` is the one file it never lists
+   2. `checksums.json` verifies every other file in the package. An app export's `settings.json` is the one file it never lists; listing it yields `CHECKSUM_MISMATCH`
    3. the manifest passes `layoutManifestSchema`, `layoutCode` equals the type's layout code, and `layoutVersion` equals the version to be written
    4. the layout lint and the hardening rules: no external URLs (including ones hidden behind entities or CSS escapes), no `image-set()`, no `on…=` handlers, no `<script>`, no `{{{`, no typed-in supplier data
    5. `generate` → strict compile → execute against the probe input and the package's sample data, with Payment on and off
@@ -243,7 +243,7 @@ One EDIT holder may both upload and activate. Every server action re-checks its 
 - **Package signing or provenance checks**.
 - **Running the upload gate in a worker with a timeout.** Accepted risk; see TODOS.md.
 - **Bulk export of all types, or automatic sync between environments**.
-- **CSV templates per type, an invoice profile per type, non-`INVOICE` bill formats.**
+- **CSV templates per type, an invoice profile per type, non-`INVOICE` bill formats.** _(bm88, built: the CSV template kind is removed altogether.)_
 - **E-invoicing (LHDN MyInvois).** No e-invoice UIN/QR section and no validation.
 - **How layout authors get and run the editor.** The editor's own plan owns this; see TODOS.md.
 

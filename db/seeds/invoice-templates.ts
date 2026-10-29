@@ -16,17 +16,18 @@ import { blobStore } from "@/services/billing/blob-store";
 
 // bm53-spec §Design D6 — `npm run db:seed-invoice-templates` (in `db:setup`
 // after `db:seed-billing`; in prod, after `db:migrate` and after bm52's
-// containers exist — environment-operations.md). Uploads the three seeded
-// template versions' repo files to the `invoice-templates` container so a run
+// containers exist — environment-operations.md). Uploads the two seeded
+// template versions' repo files (BTV00000001–2; the CSV row was retired by
+// bm88) to the `invoice-templates` container so a run
 // with no admin activity renders the default FROM BLOB (guardrail 45).
 //
 // Real configuration, not sample data: no `_SAMPLE_` marker, no prod guard.
 //
-// For each seeded row (BTV00000001–3):
+// For each seeded row (BTV00000001–2):
 //   1. Recompute every file digest + the `checksums.json` digest from the repo;
 //      it MUST equal the DB row's `checksum` (and the committed index must be
 //      byte-identical to the recomputed one), else `SEED_CHECKSUM_DRIFT` — the
-//      repo and the migration disagree, so nothing is uploaded (all three rows
+//      repo and the migration disagree, so nothing is uploaded (both rows
 //      are checked before the first put).
 //   2. `putObject` every file (incl. `checksums.json`) write-once with
 //      `onExists: 'returnExisting'`. A pre-existing blob whose digest differs
@@ -36,7 +37,6 @@ import { blobStore } from "@/services/billing/blob-store";
 export const SEEDED_TEMPLATE_VERSION_IDS = [
   "BTV00000001",
   "BTV00000002",
-  "BTV00000003",
 ] as const;
 
 const CONTAINER = "invoice-templates";

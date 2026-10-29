@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // bm65-spec §5 — `captureTemplateStamps`' orchestration over mocked reads: one
-// family read for every BAN, the shared CSV/profile ONCE, one generated
+// family read for every BAN, the shared profile ONCE, one generated
 // resolution per DISTINCT family, one write pruned to the run's partition, a
 // NULL version for a family with nothing usable (D55), a NULL family and
 // version for a BAN whose family cannot be resolved (review fix §24e), and no
@@ -37,7 +37,6 @@ const resolveShared = vi.mocked(resolveSharedCurrentVersions);
 beforeEach(() => {
   vi.clearAllMocks();
   resolveShared.mockResolvedValue({
-    csv: { billTemplateVersionId: "BTV00000003" } as never,
     profileVersion: 2,
   });
 });
@@ -53,7 +52,7 @@ describe("captureTemplateStamps (bm65-spec §5)", () => {
     expect(writeStamps).not.toHaveBeenCalled();
   });
 
-  it("reads CSV/profile once, resolves once per distinct family, and writes every BAN in one partition-pruned call", async () => {
+  it("reads the profile once, resolves once per distinct family, and writes every BAN in one partition-pruned call", async () => {
     listBanFamilies.mockResolvedValue([
       { banId: "BAN00000001", familyId: "BTF00000001" },
       { banId: "BAN00000002", familyId: "BTF00000001" },
@@ -98,7 +97,7 @@ describe("captureTemplateStamps (bm65-spec §5)", () => {
       "BRN00000001",
       PARTITION,
       stamps,
-      { profileVersion: 2, csvVersionId: "BTV00000003" },
+      { profileVersion: 2 },
     );
   });
 });

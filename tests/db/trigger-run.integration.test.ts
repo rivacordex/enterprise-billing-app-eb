@@ -27,7 +27,7 @@ import type * as ScopeAccountsModule from "@/services/billing/scope-accounts";
 // injected deterministically.
 //
 // bm65-spec §8 — the run-start template capture: every non-EXCLUDED row is
-// stamped with Standard and its current version, the profile/CSV versions and
+// stamped with Standard and its current version, the profile version and
 // a capture time; EXCLUDED rows stay NULL; the trigger audit lists the stamps;
 // a cancelled-then-re-triggered run carries no stale stamps.
 const databaseUrl = process.env.DATABASE_URL;
@@ -284,13 +284,12 @@ describe.skipIf(!databaseUrl)(
           ref_bill_template_family_id: string | null;
           ref_bill_template_version_id: string | null;
           ref_invoice_profile_version: number | null;
-          ref_csv_template_version_id: string | null;
           template_captured_at: string | null;
         }[]
       >`
         SELECT ref_billing_account_id, status, ref_bill_template_family_id,
                ref_bill_template_version_id, ref_invoice_profile_version,
-               ref_csv_template_version_id, template_captured_at
+               template_captured_at
         FROM billing.bill_run_account WHERE ref_bill_run_id = ${runId}
         ORDER BY ref_billing_account_id`;
     }
@@ -335,7 +334,6 @@ describe.skipIf(!databaseUrl)(
         ref_bill_template_version_id: "BTV00000002",
         // Migrations seed no ACTIVE invoice.profile version (G15 A).
         ref_invoice_profile_version: null,
-        ref_csv_template_version_id: "BTV00000003",
       });
       expect(byBan.get(billed)?.template_captured_at).not.toBeNull();
       expect(byBan.get(excluded)).toMatchObject({
@@ -343,7 +341,6 @@ describe.skipIf(!databaseUrl)(
         ref_bill_template_family_id: null,
         ref_bill_template_version_id: null,
         ref_invoice_profile_version: null,
-        ref_csv_template_version_id: null,
         template_captured_at: null,
       });
 

@@ -175,7 +175,7 @@ describe.skipIf(!databaseUrl || !blobConnection)(
         UPDATE billing.bill_run_account
         SET status = 'EXCLUDED', error_code = 'PARTIAL_PERIOD',
             ref_bill_template_family_id = NULL, ref_bill_template_version_id = NULL,
-            ref_invoice_profile_version = NULL, ref_csv_template_version_id = NULL,
+            ref_invoice_profile_version = NULL,
             template_captured_at = NULL
         WHERE ref_bill_run_id = ${RUN} AND ref_billing_account_id = ${banId}`;
 

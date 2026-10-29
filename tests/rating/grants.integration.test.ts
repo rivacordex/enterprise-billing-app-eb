@@ -336,11 +336,11 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
-      // bm48-spec D1 + rm29 (Inv 28) — the ratecard geo columns and
-      // udr_resource are write-once at INSERT: no runtime role holds UPDATE on
-      // them, rating_runtime's table-level INSERT already covers them (no grant
-      // change shipped with 0045 or Phase H).
-      it("10a. no runtime role can UPDATE udr_rated.state / .district / .udr_resource; rating_runtime can INSERT them (bm48, rm29)", async () => {
+      // rm29 (Inv 28) — udr_resource is write-once at INSERT: no runtime role
+      // holds UPDATE on it, rating_runtime's table-level INSERT already covers it
+      // (no grant change shipped with Phase H). rm33 (Phase J) — the state /
+      // district columns are dropped, not merely ungranted.
+      it("10a. no runtime role can UPDATE udr_rated.udr_resource; rating_runtime can INSERT it; state/district are gone (rm29, Phase J)", async () => {
         const roles = await sql<{ rolname: string }[]>`
           SELECT rolname FROM pg_roles
           WHERE rolname IN ('app_runtime', 'rating_runtime', 'billrun_runtime')
@@ -351,7 +351,7 @@ describe.skipIf(!databaseUrl)(
           "rating_runtime",
         ]);
         for (const { rolname } of roles) {
-          for (const col of ["state", "district", "udr_resource"]) {
+          for (const col of ["udr_resource"]) {
             const [row] = await sql<{ p: boolean }[]>`
               SELECT has_column_privilege(${rolname}, 'rating.udr_rated', ${col}, 'UPDATE') AS p
             `;
@@ -361,7 +361,7 @@ describe.skipIf(!databaseUrl)(
         const columnGrants = await sql<{ grantee: string }[]>`
           SELECT grantee FROM information_schema.column_privileges
           WHERE table_schema = 'rating' AND table_name = 'udr_rated'
-            AND column_name IN ('state', 'district', 'udr_resource')
+            AND column_name IN ('udr_resource')
             AND privilege_type = 'UPDATE'
             AND grantee IN ('app_runtime', 'rating_runtime', 'billrun_runtime')
         `;
@@ -370,11 +370,17 @@ describe.skipIf(!databaseUrl)(
         await expect(
           ratingRuntime`INSERT INTO rating.udr_rated ${ratingRuntime({
             ...ratedRow(),
-            state: "STATE-1",
-            district: "DIST-1",
             udr_resource: "STATE-1|DIST-1|2026-01-01",
           })}`,
         ).resolves.toBeDefined();
+
+        const geoAttrs = await sql<{ attname: string }[]>`
+          SELECT attname FROM pg_attribute
+          WHERE attrelid = 'rating.udr_rated'::regclass
+            AND attname IN ('state', 'district')
+            AND attisdropped = false
+        `;
+        expect(geoAttrs).toEqual([]);
       });
 
       it("11. rating_runtime holds no DELETE and no TRUNCATE on any rating table", async () => {

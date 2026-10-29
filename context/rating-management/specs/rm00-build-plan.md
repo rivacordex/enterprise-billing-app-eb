@@ -175,6 +175,8 @@ Supersedes the "`FLAT` only" scope of rm08. Implements `PER_UNIT`, the real subs
 - **Visible result:** a newly rated `RAN_USAGE` row carries the matched cell's `state`/`district`; re-versioning the card does not change it. Some tests are authored but python-gated and unrun per the billing tracker (2026-10-12).
 - **Depends on:** rm15, rm21. Phase H builds on it: rm26 reuses PRP's cell match, and `state`/`district` stay unchanged.
 
+> **Reversed 2026-10-27 (Phase J, `_change-rating-drop-udr-rated-geo-columns-plan.md` D1–D5).** The `state`/`district` columns are removed: rm32 stops PRP stamping, RP carrying and RL COPYing them; rm33 rewrites `0045` in place to `DROP COLUMN IF EXISTS` under that round's fresh-DB setup and removes them from the Drizzle schema, seeds and tests. `udr_resource` (Inv 28) is the only geo carrier. The `rm23-udr-geo-frozen` suite keeps its name and is re-scoped to `udr_resource`. This entry stays as delivery history.
+
 ---
 
 ## Phase H — Raw `udr_key` and `udr_resource` update (rm24–rm29)
@@ -237,6 +239,27 @@ Owner decision 2026-10-22: a card-driven `usage_rate` whose card supplies no rat
 
 ---
 
+## Phase J — Drop `udr_rated.state` / `.district` (rm31–rm33)
+
+Owner decision 2026-10-25, eng-reviewed 2026-10-27: the two bm48 columns duplicate the first two segments of `udr_resource` and have had no consumer since bm71, so they are removed. Plan: `_change-rating-drop-udr-rated-geo-columns-plan.md` (D1–D9). **This round only:** no production exists, every environment is set up as a fresh database, and `0045` is rewritten in place (plan D4/D5); any later column removal is a forward migration. Reverses rm23 (above), workflow rules §0.1 rules 10 and 17, code-standards §0.1 data rules 1 and 3, update-overview goal 6 and Inv 26 — each carries a dated note. Specs: `rm31-drop-geo-reversal-notes.md` (docs only, delivered 2026-10-27 — as-built record); `rm32-runtime-drop-geo-columns.md`; `rm33-schema-seeds-tests-drop-geo-columns.md`. Overview: `ratemgmt-update-overview.md` (Phase J).
+
+### rm31 — Reversal notes (docs only)
+- **Repo:** app (`context/rating-management/**` context files, this build plan, forward notes on rm26–rm29). **Boundary:** documents only; no code.
+- **Builds:** dated reversal notes under every rule and statement that says the columns stay; the rm32 §4.3 waiver recorded by name in `ratemgmt-ai-workflow-rules.md` §4; this Phase J section. Originals kept.
+- **Visible result:** no rating context document asserts the columns stay without a dated note pointing here. **Depends on:** nothing.
+
+### rm32 — PRP, RP and RL stop writing the columns (one unit, waived)
+- **Repo:** wfm. **Boundary:** `runtime/prp.py`, `runtime/rp.py`, `runtime/rl.py`, the `rating-engine-ran-usage.yaml` comment at `:135`, and the retargeted `rm07`, `rm08`, `rm09`, `rm13`, `rm27` suites. One unit under the recorded rm32 waiver (§4.3); ordered commits RL → RP → PRP → tests.
+- **Builds:** `ParsedRow` and `_chunk_frame` lose `state`/`district` (PRP keeps `RatecardCell.state`/`.district` as inputs to `udr_resource` and the `|` check); `_GEO_COLUMNS = ("udr_resource",)`; `COPY_COLUMNS` ends with `udr_resource`, `_GEO_OPTIONAL_COLUMNS`/`_geo_value` deleted.
+- **Visible result:** a rated chunk and the COPY carry `udr_resource` and no geo columns; every retargeted suite is green against the unchanged `0045` schema (the columns are nullable until rm33). **Depends on:** rm31.
+
+### rm33 — Schema, seeds and tests
+- **Repo:** app. **Boundary:** `db/migrations/0045_rating_udr_rated_geo.sql` (rewritten in place), `db/schema/rating/udr-rated.ts`, `db/seeds/sample/udr-rated-sample.ts`, `seed-billrun-sample.ts` (`sampleRanGeo` → `udrResource`), `tests/e2e/invoice-template-journey.integration.test.ts` (raw INSERT), `rm01` 15b, `grants` 10a, `rm23` re-scope, the `db/migrations/README.md` rule-4 one-time note, the three stale comment lines (plan §3).
+- **Builds:** `0045` → `DROP COLUMN IF EXISTS state, district`; Drizzle fields removed; seeded RAN rows carry `udr_resource` built with `formatUdrResource` (the `SAMPLE_NULL_GEO_SEQUENCE` row stays `NULL`).
+- **Visible result:** `db:setup` on an empty DB yields `udr_rated` without the columns; rm01/grants/rm23 and the billing e2e + `invoice-capacity-detail` suites are green. **Depends on:** rm32 deployed (release with `buildRatingEngine=true`).
+
+---
+
 ## Build-order summary
 
 | Unit | Name | Repo | Boundary | Key just-in-time dependency introduced |
@@ -264,7 +287,7 @@ Owner decision 2026-10-22: a card-driven `usage_rate` whose card supplies no rat
 | rm20 | RP carried subscription | wfm | `rp.py` | Feed-unit join removed |
 | rm21 | PRP checks + identity locks + config | wfm | `prp.py`, flow YAML | Three-factor lock; completeness (R2, R3) |
 | rm22 | E2E + regressions + RL verification | both | tests / CI | `PER_UNIT` ship gate |
-| rm23 | Ratecard geo on `udr_rated` (delivered as bm48) | app + wfm | migration `0045`, PRP/RP/RL | `state`/`district` frozen at rating |
+| rm23 | Ratecard geo on `udr_rated` (delivered as bm48; **reversed by Phase J**) | app + wfm | migration `0045`, PRP/RP/RL | `state`/`district` frozen at rating |
 | rm24 | Reversal amendments (docs) | app | `context/**` | Raw-key rules documented; "canonical" retired |
 | rm25 | `udr_resource` contract + event code | app | `validation/`, `db/seeds/` | `udrResourceSchema`; `RATECARD_LABEL_INVALID` |
 | rm26 | PRP raw key + exact match + label | wfm | `prp.py` | `build_udr_key`; per-cell label |
@@ -272,12 +295,15 @@ Owner decision 2026-10-22: a card-driven `usage_rate` whose card supplies no rat
 | rm28 | RL writes `udr_resource` | wfm | `rl.py` | `COPY` column; OI-R3 trace |
 | rm29 | Seeds, write-once, E2E, ship gate | both | seeds / tests / CI | Tests 17–20; image bump |
 | rm30 | RP card-driven product-rate fallback | wfm | `rp.py` | Per-batch card-rate presence check |
+| rm31 | Drop-geo reversal notes (docs) | app | `context/**` | rm23/bm48 rules reversed; rm32 waiver recorded |
+| rm32 | PRP/RP/RL stop writing `state`/`district` | wfm | `prp.py`, `rp.py`, `rl.py` | `udr_resource` the only geo carrier |
+| rm33 | `0045` rewrite, Drizzle, seeds, tests | app | migration `0045`, `udr-rated.ts`, seeds | Columns gone on a fresh DB |
 
 ---
 
 ## Notes
 
-- **rm23 is a reserved, delivered unit** (billing bm48); its number matches the `rm23-udr-geo-frozen` test name already in use.
+- **rm23 is a reserved, delivered unit** (billing bm48); its number matches the `rm23-udr-geo-frozen` test name already in use. *(Reversed by Phase J, 2026-10-27; the test name is kept and re-scoped to `udr_resource`.)*
 - **No app-side read-repository unit exists.** `db/repositories/rating/**` would have no consumer; the grant assertions are raw SQL. Billing's own repository reads `udr_rated`.
 - **Repo order:** app units land before the wfm units that depend on them (rm01–rm03a → Phase B+; rm15–rm18 → rm19–rm21; rm24–rm25 → rm26–rm28). rm03 before rm03a is load-bearing (`PUBLIC` `CONNECT`).
 - **Configuration is introduced just in time,** one key per unit that needs it. Phase H introduces none.

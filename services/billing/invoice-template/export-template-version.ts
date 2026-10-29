@@ -20,7 +20,7 @@ import {
 // `settings.json` that checksums.json does not list. The audit row is written
 // before the bytes are returned, and only after they verified.
 // Review fix (#11) — the settings row, its layout row and the type are read in
-// ONE read-only REPEATABLE READ snapshot (the invoice-csv.ts pattern), so a
+// ONE read-only REPEATABLE READ snapshot (a read-only snapshot), so a
 // restore-overwrite committing between the reads can't pair one version's
 // settings with another's files. The files then load by that layout row's
 // content-addressed `blob_ref`, which is write-once.

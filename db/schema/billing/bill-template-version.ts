@@ -39,8 +39,8 @@ export const billTemplateVersion = billing.table("bill_template_version", {
   isDefault: boolean("is_default").notNull().default(false),
   layoutCode: text("layout_code"),
   refLayoutVersionId: text("ref_layout_version_id"),
-  // bm64/bm74 — the type of a `layout` or `generated` version
-  // (`btv_type_scoped_has_family`); NULL only for CSV (`btv_csv_has_no_family`).
+  // bm64/bm74 — the type of a `layout` or `generated` version; never NULL
+  // since bm88 retired the `csv` kind (`btv_has_family`, 0055).
   // Plain text like `ref_layout_version_id` (the FK lives in the migration). An
   // identity column: the guard trigger refuses a change.
   refBillTemplateFamilyId: text("ref_bill_template_family_id"),

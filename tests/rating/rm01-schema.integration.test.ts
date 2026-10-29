@@ -384,10 +384,11 @@ describe.skipIf(!databaseUrl)(
         expect(indexesOnRated).toHaveLength(0);
       });
 
-      // bm48-spec D1 (0045) + rm29 (Inv 28) — the ratecard geo columns and
-      // udr_resource (rm01's column, populated since Phase H): nullable text on
-      // the partitioned parent and on every partition.
-      it("15b. udr_rated carries nullable text state / district / udr_resource on the parent and on a partition (bm48, rm29)", async () => {
+      // rm29 (Inv 28) + rm33 (Phase J) — udr_resource (rm01's column, populated
+      // since Phase H) is nullable text on the partitioned parent and on every
+      // partition, and the dropped state/district columns are absent (0045 was
+      // rewritten to DROP them), so an accidental re-add fails here.
+      it("15b. udr_rated carries nullable text udr_resource and no state/district on the parent and on a partition (Phase J)", async () => {
         const parentCols = await sql<
           { column_name: string; data_type: string; is_nullable: string }[]
         >`
@@ -397,8 +398,6 @@ describe.skipIf(!databaseUrl)(
           ORDER BY column_name
         `;
         expect(parentCols).toEqual([
-          { column_name: "district", data_type: "text", is_nullable: "YES" },
-          { column_name: "state", data_type: "text", is_nullable: "YES" },
           {
             column_name: "udr_resource",
             data_type: "text",

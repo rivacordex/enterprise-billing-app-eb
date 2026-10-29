@@ -100,8 +100,8 @@ export const billTemplateVersionRepository = {
   },
 
   // Version history, newest first, with `usedByCount` = the number of
-  // `customer_bill` rows stamped with this version id (as either the template
-  // or the CSV stamp). Counted in SQL (no JS reduce).
+  // `customer_bill` rows stamped with this version id (the template stamp).
+  // Counted in SQL (no JS reduce).
   async listForKind(
     db: Database,
     {
@@ -119,7 +119,6 @@ export const billTemplateVersionRepository = {
           ? sql<number>`(
           SELECT count(*)::int FROM ${customerBill} cb
           WHERE cb.ref_bill_template_version_id = ${billTemplateVersion.billTemplateVersionId}
-             OR cb.ref_csv_template_version_id = ${billTemplateVersion.billTemplateVersionId}
         )`
           : sql<number>`0`,
       })
@@ -152,12 +151,12 @@ export const billTemplateVersionRepository = {
 
   // `max(version_no) + 1` under the kind lock. bm77: layout and generated
   // numbers are per TYPE (`familyId` required), matching bm74's
-  // `btv_version_uq` per (type, kind); CSV keeps the per-format max
-  // (`btv_version_csv_uq`). The unique index is the backstop against a lost
-  // race; the global per-kind lock is coarser than needed, and safe.
+  // `btv_version_uq` per (type, kind). The unique index is the backstop
+  // against a lost race; the global per-kind lock is coarser than needed, and
+  // safe.
   async nextVersionNo(
     tx: Database,
-    scope: { kind: "csv" } | { kind: "layout" | "generated"; familyId: string },
+    scope: { kind: TemplateKind; familyId: string },
   ): Promise<number> {
     await this.lockKind(tx, { kind: scope.kind });
     const [row] = await tx
@@ -169,7 +168,7 @@ export const billTemplateVersionRepository = {
         and(
           eq(billTemplateVersion.refBillFormatId, INVOICE),
           eq(billTemplateVersion.kind, scope.kind),
-          scope.kind === "csv" ? undefined : familyScope(scope.familyId),
+          familyScope(scope.familyId),
         ),
       );
     return (row?.maxNo ?? 0) + 1;

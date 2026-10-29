@@ -28,13 +28,13 @@ import {
 import { udrRated } from "@/db/schema/rating/udr-rated";
 import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 
-// bm48-spec §Implementation §6 — geo on udr_rated is FROZEN at rating time:
+// Geo on udr_rated is FROZEN at rating time, in udr_resource (Inv 28; the only
+// geo carrier since Phase J, rm33 — re-scoped from the bm48 state/district):
 //   * re-versioning the ratecard after rating leaves an already-rated row's
-//     state/district/udr_resource unchanged, while a re-rate after the
-//     re-version reads the new ACTIVE labels and the same start date (closes
-//     bm45's D4 version-drift residual for post-bm48 rows; rm29, Inv 28);
+//     udr_resource unchanged, while a re-rate after the re-version carries the
+//     new ACTIVE labels in segments 1–2 and the same start date (rm29);
 //   * no runtime role (rating_runtime, app_runtime, billrun_runtime) may UPDATE
-//     the columns (incl. udr_resource) — a real statement per role, refused with `permission denied`.
+//     udr_resource — a real statement per role, refused with `permission denied`.
 //
 // Requires DATABASE_URL (a superuser on a disposable database) + python3 with the
 // worker runtime; shells the real PRP/RP/RL modules exactly as the flow's tasks
@@ -69,7 +69,7 @@ function roleUrl(base: string, user: string): string {
 }
 
 describe.skipIf(!databaseUrl || !pythonReady)(
-  "rm23 — udr_rated geo is frozen at rating (bm48-spec §6, requires DATABASE_URL and python3+runtime)",
+  "rm23 — udr_rated geo is frozen at rating in udr_resource (rm33-spec, requires DATABASE_URL and python3+runtime)",
   () => {
     let sql: postgresjs.Sql;
     let db: Database;
@@ -139,30 +139,25 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       return readManifest(prpUri).batch_id as string;
     }
 
-    // polygon -> [state, district, udr_resource] for one batch's rows. udr_key carries the
-    // raw cell, its last segment `polygon_id=<v>` exactly as sent (Inv 27, rm26).
+    // polygon -> udr_resource for one batch's rows. udr_key carries the raw
+    // cell, its last segment `polygon_id=<v>` exactly as sent (Inv 27, rm26).
     async function geoByPolygon(
       batchId: string,
-    ): Promise<Map<string, [string | null, string | null, string | null]>> {
+    ): Promise<Map<string, string | null>> {
       const rows = await db
         .select({
           udrKey: udrRated.udrKey,
-          state: udrRated.state,
-          district: udrRated.district,
           udrResource: udrRated.udrResource,
         })
         .from(udrRated)
         .where(eq(udrRated.udrRefBatchId, batchId));
-      const out = new Map<
-        string,
-        [string | null, string | null, string | null]
-      >();
+      const out = new Map<string, string | null>();
       for (const cell of SAMPLE_5G_LKP_ROWS) {
         const row = rows.find((r) =>
           r.udrKey.endsWith(`|polygon_id=${cell.polygonId}`),
         );
         expect(row, `a rated row for ${cell.polygonId}`).toBeDefined();
-        out.set(cell.polygonId, [row!.state, row!.district, row!.udrResource]);
+        out.set(cell.polygonId, row!.udrResource);
       }
       return out;
     }
@@ -207,15 +202,13 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       );
       const before = await geoByPolygon(firstBatchId);
       for (const cell of SAMPLE_5G_LKP_ROWS) {
-        expect(before.get(cell.polygonId)).toEqual([
-          SAMPLE_5G_RATECARD_STATE,
-          cell.district,
+        expect(before.get(cell.polygonId)).toBe(
           formatUdrResource({
             state: SAMPLE_5G_RATECARD_STATE,
             district: cell.district,
             polygonStartDate: SAMPLE_5G_START_DATE,
           }),
-        ]);
+        );
       }
 
       await reversionCard();
@@ -233,20 +226,18 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       );
       const after = await geoByPolygon(secondBatchId);
       SAMPLE_5G_LKP_ROWS.forEach((cell, i) => {
-        expect(after.get(cell.polygonId)).toEqual([
-          REVISED_STATE,
-          revisedDistrict(i),
+        expect(after.get(cell.polygonId)).toBe(
           formatUdrResource({
             state: REVISED_STATE,
             district: revisedDistrict(i),
             polygonStartDate: SAMPLE_5G_START_DATE,
           }),
-        ]);
+        );
       });
       expect(await geoByPolygon(firstBatchId)).toEqual(before);
     }, 120_000);
 
-    it("UPDATE of state/district/udr_resource is refused for rating_runtime, app_runtime and billrun_runtime", async () => {
+    it("UPDATE of udr_resource is refused for rating_runtime, app_runtime and billrun_runtime", async () => {
       const [row] = await db
         .select({
           partitionPeriod: udrRated.partitionPeriod,
@@ -257,7 +248,7 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         .limit(1);
       expect(row).toBeDefined();
       for (const [role, client] of Object.entries(roleClients)) {
-        for (const column of ["state", "district", "udr_resource"]) {
+        for (const column of ["udr_resource"]) {
           await expect(
             client.unsafe(
               `UPDATE rating.udr_rated SET ${column} = 'TAMPERED' WHERE partition_period = $1 AND udr_id = $2`,

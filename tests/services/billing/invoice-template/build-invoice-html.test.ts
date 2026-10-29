@@ -76,7 +76,6 @@ const NULL_STAMPS = {
   refBillTemplateFamilyId: null,
   refBillTemplateVersionId: null,
   refInvoiceProfileVersion: null,
-  refCsvTemplateVersionId: null,
   refInvDocumentId: null,
 };
 
@@ -86,7 +85,6 @@ const RUN_STAMPS = {
   refBillTemplateFamilyId: "BTF00000001",
   refBillTemplateVersionId: "BTV00000002",
   refInvoiceProfileVersion: null,
-  refCsvTemplateVersionId: "BTV00000003",
   templateCapturedAt: new Date("2026-07-01T00:00:00Z"),
 };
 
@@ -111,7 +109,6 @@ function resolved(overrides: Partial<ResolvedTemplate> = {}): ResolvedTemplate {
     generated: SEEDED_GENERATED_ROW,
     layout: LAYOUT,
     profileVersion: null,
-    csv: { ...SEEDED_GENERATED_ROW, kind: "csv" },
     ...overrides,
   };
 }
@@ -176,7 +173,6 @@ describe("buildInvoiceHtml — not found", () => {
       status: "EXCLUDED",
       refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
-      refCsvTemplateVersionId: null,
       templateCapturedAt: null,
     });
     await expect(
@@ -285,7 +281,6 @@ describe("buildInvoiceHtml — resolution mode (D1)", () => {
       ...RUN_STAMPS,
       refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
-      refCsvTemplateVersionId: null,
       templateCapturedAt: null,
     });
     await expect(
@@ -330,7 +325,6 @@ describe("buildInvoiceHtml — resolution mode (D1)", () => {
       refBillTemplateFamilyId: "BTF00000001",
       refBillTemplateVersionId: "BTV00000009",
       refInvoiceProfileVersion: 2,
-      refCsvTemplateVersionId: "BTV00000003",
       refInvDocumentId: "INV00000001",
     };
     mockStamps.mockResolvedValue(stamps);

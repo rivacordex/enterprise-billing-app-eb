@@ -98,10 +98,10 @@ describe("guardrail 52 — logo rejections, each with its reason, nothing writte
   });
 
   it.each([
-    ["PNG", png(299, 800), "image/png"],
-    ["JPEG", jpeg(1000, 120), "image/jpeg"],
-    ["SVG", svg('viewBox="0 0 1000 200"'), "image/svg+xml"],
-  ])("< 300 px %s → dimensions (with w×h)", async (_label, bytes, mime) => {
+    ["PNG", png(95, 800), "image/png"],
+    ["JPEG", jpeg(1000, 95), "image/jpeg"],
+    ["SVG", svg('viewBox="0 0 1000 95"'), "image/svg+xml"],
+  ])("< 96 px %s → dimensions (with w×h)", async (_label, bytes, mime) => {
     const r = await rejects(bytes, mime);
     expect(r.reason).toBe("dimensions");
     expect(r.detail).toHaveProperty("width");
@@ -135,6 +135,18 @@ describe("guardrail 52 — logo rejections, each with its reason, nothing writte
         reason: "dimensions",
         detail: { maxSidePx: 2000 },
       });
+    },
+  );
+
+  // bm86 — the floor is 96 px (was 300).
+  it.each([
+    ["PNG", png(96, 800), "image/png"],
+    ["JPEG", jpeg(1000, 96), "image/jpeg"],
+    ["SVG", svg('viewBox="0 0 1000 96"'), "image/svg+xml"],
+  ])(
+    "a %s whose shorter side is exactly 96 px is accepted",
+    (_label, bytes, mime) => {
+      expect(checkLogo(bytes, mime)).toMatchObject({ ok: true });
     },
   );
 

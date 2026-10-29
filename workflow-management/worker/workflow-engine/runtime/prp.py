@@ -423,9 +423,10 @@ def resolve_pin(conn: psycopg.Connection, subscription_product_name: str) -> Pin
 class RatecardCell:
     """One ACTIVE ratecard ``mno|cu|polygon`` cell (rm21 §1) — the factor-2 and
     service_code references the per-record checks compare against, plus the
-    cell's ``state``/``district`` labels (bm48) and its ``udr_resource`` label
-    (Inv 28, built once per cell), stamped onto every record that matches it so
-    geo is frozen at rating time."""
+    cell's ``udr_resource`` label (Inv 28, built once per cell), stamped onto every
+    record that matches it so geo is frozen at rating time. The ``state``/``district``
+    labels are inputs to ``udr_resource`` (and the R9 delimiter check), not stamped
+    onto the record themselves (Phase J)."""
 
     lkp_subscriber_ref_id: str
     service_code: str | None
@@ -519,9 +520,10 @@ def invalid_label_cells(ratecard: dict[str, RatecardCell]) -> list[dict[str, str
 
 
 def _geo_label(value: Any) -> str | None:
-    """A ratecard ``state``/``district`` label as stored on the card (bm48 D2 — no
-    trim or case change; the card owns the label and the invoice groups on it).
-    A blank label carries no geo, so it becomes ``None`` rather than ``''``."""
+    """A ratecard ``state``/``district`` label as stored on the card (no trim or
+    case change; the card owns the label), as it enters ``udr_resource``. A blank
+    label carries no geo, so it becomes ``None`` rather than ``''`` (an empty
+    ``udr_resource`` segment)."""
     if value is None:
         return None
     text = str(value)
@@ -710,9 +712,6 @@ class ParsedRow:
     product_inventory_id: str | None = None
     party_role_id: str | None = None
     family_id: str | None = None
-    # bm48 — the matched ratecard cell's geo labels, carried to udr_rated.
-    state: str | None = None
-    district: str | None = None
     # rm26 — the matched cell's `state|district|polygon_start_date` label (Inv 28).
     udr_resource: str | None = None
 
@@ -876,10 +875,6 @@ def _chunk_frame(profile: FeedProfile, udr_type: str, chunk: list[ParsedRow]) ->
         ),
         "party_role_id": pl.Series([r.party_role_id for r in chunk], dtype=pl.Utf8),
         "family_id": pl.Series([r.family_id for r in chunk], dtype=pl.Utf8),
-        # bm48 — the matched ratecard cell's geo (nullable), passed through RP to
-        # RL's COPY onto udr_rated.state/district.
-        "state": pl.Series([r.state for r in chunk], dtype=pl.Utf8),
-        "district": pl.Series([r.district for r in chunk], dtype=pl.Utf8),
         # rm26 — the matched cell's label (Inv 28), passed through RP to RL's COPY
         # onto udr_rated.udr_resource.
         "udr_resource": pl.Series([r.udr_resource for r in chunk], dtype=pl.Utf8),
@@ -1167,9 +1162,7 @@ def process_file(
             row.product_inventory_id = resolution.product_inventory_id
             row.party_role_id = resolution.party_role_id
             row.family_id = resolution.family_id
-            # bm48 — freeze the matched cell's geo onto the record.
-            row.state = ratecard_cell.state
-            row.district = ratecard_cell.district
+            # rm26 — freeze the matched cell's label onto the record (Inv 28).
             row.udr_resource = ratecard_cell.udr_resource
             chunk_buffer.append(row)
             if len(chunk_buffer) >= chunk_size:

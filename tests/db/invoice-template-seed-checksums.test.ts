@@ -21,7 +21,6 @@ const DIRS: { label: string; dir: string }[] = [
     label: "generated",
     dir: "db/seeds/invoice-templates/generated/INVOICE/v1",
   },
-  { label: "csv", dir: "db/seeds/invoice-templates/system/csv/v1" },
 ];
 
 describe("bm50 seed checksums match the repo files", () => {
@@ -43,10 +42,10 @@ describe("bm50 seed checksums match the repo files", () => {
     });
   }
 
-  it("all three digests are distinct (each directory is hashed independently)", () => {
+  it("both digests are distinct (each directory is hashed independently)", () => {
     const digests = DIRS.map(
       ({ dir }) => buildIndex(path.join(process.cwd(), dir)).digest,
     );
-    expect(new Set(digests).size).toBe(3);
+    expect(new Set(digests).size).toBe(2);
   });
 });

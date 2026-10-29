@@ -1,4 +1,4 @@
-import { z } from "zod";
+import type { z } from "zod";
 
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import { blobStore } from "@/services/billing/blob-store";
@@ -294,70 +294,4 @@ export async function loadLayoutForExport(
   }
   assertLoadable(row, "layout");
   return verifyVersionFiles(row, undefined, { includeIndex: true });
-}
-
-// For bm62 (CSV export): the verified, parsed column map. Not memoized.
-const CSV_MAP_FILE = "invoice.csv.columns.json";
-
-// bm62-spec §Design D2 — a column `path` is a dotted lookup into
-// `{ ...InvoiceRenderInput, line }`. Its root must be one of these keys, and
-// each segment a plain identifier (no `__proto__`, no index or expression
-// syntax), so a map naming an unknown root fails at load, not as a silently
-// empty column.
-export const CSV_PATH_ROOTS = [
-  "template",
-  "company",
-  "payment",
-  "invoice",
-  "customer",
-  "totals",
-  "taxes",
-  "isDraft",
-  "locale",
-  "timezone",
-  "line",
-] as const satisfies readonly (keyof InvoiceRenderInput | "line")[];
-
-const CSV_PATH_RE = /^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)*$/;
-
-const csvPathSchema = z
-  .string()
-  .regex(CSV_PATH_RE)
-  .refine((path) =>
-    (CSV_PATH_ROOTS as readonly string[]).includes(path.split(".")[0]!),
-  );
-
-export const csvColumnMapSchema = z
-  .object({
-    templateId: z.string().min(1),
-    version: z.number().int().positive(),
-    rowSource: z.literal("lines"),
-    encoding: z.literal("utf-8-bom"),
-    lineEnding: z.literal("CRLF"),
-    columns: z
-      .array(
-        z.object({ header: z.string().min(1), path: csvPathSchema }).strict(),
-      )
-      .min(1),
-  })
-  .strict();
-
-export type CsvColumnMap = z.infer<typeof csvColumnMapSchema>;
-
-export async function loadCsvMap(
-  row: BillTemplateVersion,
-): Promise<CsvColumnMap> {
-  assertLoadable(row, "csv");
-  const files = await verifyVersionFiles(row, [CSV_MAP_FILE]);
-  try {
-    return csvColumnMapSchema.parse(
-      JSON.parse(files.get(CSV_MAP_FILE)!.toString("utf-8")),
-    );
-  } catch {
-    throw new InvoiceRenderError(
-      "TEMPLATE_COMPILE_FAILED",
-      `csv version ${row.billTemplateVersionId}: ${CSV_MAP_FILE} is not a valid column map`,
-      { versionId: row.billTemplateVersionId, file: CSV_MAP_FILE },
-    );
-  }
 }

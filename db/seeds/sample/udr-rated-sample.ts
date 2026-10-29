@@ -54,20 +54,16 @@ export interface SampleChargeSpec {
     commercialUnitPublicKey: string;
     polygonId: string;
   };
-  // bm48-spec §Implementation §5 — the geo labels rating freezes onto a RAN row
-  // from its matched card cell. Default NULL: a row rated before bm48, or one
-  // whose cell is not on any card.
-  state?: string | null;
-  district?: string | null;
-  // rm29-spec §1 (Inv 28) — `state|district|polygon_start_date` of the card
-  // cell the row mirrors (`formatUdrResource`). Default NULL: a row whose cell
-  // is not on any card.
+  // rm29-spec §1 (Inv 28) — the row's geo: `state|district|polygon_start_date`
+  // of the card cell the row mirrors (`formatUdrResource`), the only place
+  // rating freezes it (Phase J, rm33). Default NULL: a row whose cell is not on
+  // any card.
   udrResource?: string | null;
 }
 
-// bm48-spec §Implementation §5 — the Sample-5G card's own labels (state + the
-// three cell districts), so seeded RAN rows carry the same geo real rating
-// would have stamped from that card. Lives here, not in seed-billrun-sample.ts,
+// The Sample-5G card's own labels (state + the three cell districts), the
+// inputs to a seeded RAN row's `udrResource`, so it carries the same geo real
+// rating would have stamped from that card. Lives here, not in seed-billrun-sample.ts,
 // because the pm67 seed-boundary guardrail forbids that file from naming the
 // card module.
 export const SAMPLE_RAN_GEO_LABELS: readonly {
@@ -186,8 +182,6 @@ export function buildSampleUdrRatedRow(
     udrSourceFile: SAMPLE_UDR_SOURCE_FILE,
     ratingEngineVersion: SAMPLE_PROVENANCE_SENTINEL,
     ratingFlowRevision: 0,
-    state: spec.state ?? null,
-    district: spec.district ?? null,
     udrResource: spec.udrResource ?? null,
   };
 }

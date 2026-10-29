@@ -679,29 +679,6 @@ export interface InvoicePayment {
   remittanceEmail: string;
 }
 
-// bm62 D2 — one CSV row (one `customer_bill_line`), the `line.*` scope of the
-// CSV column map. `periodStart`/`periodEnd` come from the bill header (lines
-// carry no own period); `unitPrice` is the RECURRING price snapshot (NULL for
-// USAGE). bm71 retired the PDF line table that first used this shape; the CSV
-// builds it straight from the bill's lines.
-export interface InvoiceLine {
-  lineNo: number;
-  source: ChargeSource;
-  description: string;
-  productOfferingId: string;
-  udrType: string | null;
-  udrCount: number | null;
-  periodStart: string;
-  periodEnd: string;
-  quantity: string | null;
-  unit: string | null;
-  unitPrice: string | null;
-  grossAmount: string;
-  discountAmount: string;
-  netAmount: string;
-  discountNote: string | null;
-}
-
 // bm49-spec §Design D3 — the billed-usage-row bound, a named constant equal to
 // bm45's former appendix bound (the load-tested bound; that flow guard was
 // removed by bm68, so this is now the only per-account row bound). bm71 (D37)
@@ -846,8 +823,8 @@ export interface InvoiceRenderInput {
 export const BILL_FORMAT_CODES = ["INVOICE"] as const;
 export type BillFormatCode = (typeof BILL_FORMAT_CODES)[number];
 
-// No `xml` kind in v1 (R3).
-export const TEMPLATE_KINDS = ["layout", "generated", "csv"] as const;
+// No `xml` kind in v1 (R3); bm88 retired the `csv` kind (0055).
+export const TEMPLATE_KINDS = ["layout", "generated"] as const;
 export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
 
 // DRAFT → ACTIVE → RETIRED — the same three values as `core.system_config.status`
@@ -945,7 +922,6 @@ export interface PostedBillStamps {
   refBillTemplateFamilyId: string | null;
   refBillTemplateVersionId: string | null;
   refInvoiceProfileVersion: number | null;
-  refCsvTemplateVersionId: string | null;
 }
 
 // bm65-spec §2 (Inv #51/#52) — the run-start template stamps on one
@@ -957,22 +933,20 @@ export type RunTemplateStamps = Pick<
   | "refBillTemplateFamilyId"
   | "refBillTemplateVersionId"
   | "refInvoiceProfileVersion"
-  | "refCsvTemplateVersionId"
 >;
 
 // bm67-spec §2 — the template stamps `stampPosted` writes, derived from the
 // run stamps (code-standards Phase 3 TS rule 2: one stamp shape, never
 // hand-written). Posting skips a NULL captured version first (D58), so the
-// family, generated and CSV ids are non-null here; the profile may be null
+// family and generated ids are non-null here; the profile may be null
 // (G15 A).
 export type PostingTemplateStamps = {
   refBillFormatId: "INVOICE";
   refInvoiceProfileVersion: RunTemplateStamps["refInvoiceProfileVersion"];
 } & {
-  [K in
-    | "refBillTemplateFamilyId"
-    | "refBillTemplateVersionId"
-    | "refCsvTemplateVersionId"]: NonNullable<RunTemplateStamps[K]>;
+  [K in "refBillTemplateFamilyId" | "refBillTemplateVersionId"]: NonNullable<
+    RunTemplateStamps[K]
+  >;
 };
 
 // bm65-spec §Design — one captured BAN, as listed in the BILL_RUN_TRIGGERED /
@@ -1010,7 +984,6 @@ export interface ResolvedTemplate {
   // generated.ref_layout_version_id (page_setup); a DRAFT only in that preview
   layout: BillTemplateVersion;
   profileVersion: number | null; // G15 A: null when none ACTIVE / none stamped
-  csv: BillTemplateVersion; // kind = 'csv'
 }
 
 // D3 — the parsed `invoice.profile` version (`invoiceProfileSchema`). The
@@ -1374,8 +1347,10 @@ export type LogoMimeType = (typeof LOGO_MIME_TYPES)[number];
 
 // 500 KB on the actual byte length (`byte_size BETWEEN 1 AND 512000`, 0046).
 export const LOGO_MAX_BYTES = 512_000;
-// The shorter side of the logo, in px.
-export const LOGO_MIN_SIDE_PX = 300;
+// The shorter side of the logo, in px. bm86 (owner 2026-10-26): 3 × the
+// Standard header's 32 px logo height, the smallest source that prints sharply
+// at 300 dpi (was 300).
+export const LOGO_MIN_SIDE_PX = 96;
 // The longer side of the logo, in px (owner decision 2026-10-11): a small
 // file can declare a huge image (a decompression bomb) that the invoice
 // renderer would have to draw in full.

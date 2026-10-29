@@ -142,22 +142,16 @@ COPY_COLUMNS: tuple[str, ...] = (
     "rating_engine_version",
     "rating_flow_revision",
     "rated_datetime",
-    # bm48 — appended last so the existing column order is untouched; rm28 appends
-    # udr_resource after them on the same rule.
-    "state",
-    "district",
+    # rm28 — udr_resource appended last so the existing column order is untouched;
+    # the geo pair that preceded it was removed in Phase J (rm32).
     "udr_resource",
 )
 
-# bm48 D4 — the geo COPY columns a rated chunk may omit, and only for a usage type
-# that reads no ratecard (they are then written NULL). A named allowlist, not a
-# general default: a RAN_USAGE chunk without them still fails loud, which is the
-# guard that PRP stamped and RP carried the matched cell's geo. state/district may
-# themselves be NULL (a blank card label). udr_resource (rm28, Inv 28) is stricter
-# and is NOT in this list: for RAN_USAGE it is required and non-empty (the card's
-# start date is NOT NULL, so the value is at least ``||<date>``) — see
-# _resource_value.
-_GEO_OPTIONAL_COLUMNS: tuple[str, ...] = ("state", "district")
+# rm28 / Inv 28 — the usage type whose rated chunk must carry ``udr_resource``, the
+# matched ratecard cell's label that PRP stamped and RP carried. For RAN_USAGE it is
+# required and non-empty (the card's start date is NOT NULL, so the value is at
+# least ``||<date>``); every other usage type reads no ratecard and writes NULL,
+# and a value carried on one raises — see _resource_value.
 _GEO_REQUIRED_UDR_TYPE = "RAN_USAGE"
 
 # The bounded sample of colliding keys carried in a batch-level refusal's
@@ -288,30 +282,14 @@ def build_chunk_rows(frame: pl.DataFrame) -> list[tuple[Any, ...]]:
             "rating_flow_revision": int(cols["rating_flow_revision"][i]),
             "rated_datetime": rated_dts[i],
         }
-        for name in _GEO_OPTIONAL_COLUMNS:
-            row[name] = _geo_value(cols, name, i, udr_type)
         row["udr_resource"] = _resource_value(cols, i, udr_type)
         rows.append(tuple(row[name] for name in COPY_COLUMNS))
     return rows
 
 
-def _geo_value(cols: dict[str, list[Any]], name: str, i: int, udr_type: str) -> str | None:
-    """A ``state``/``district`` value for one row (bm48 D4). Present in the chunk →
-    copied as-is (NULL stays NULL). Absent → NULL only for a non-RAN usage type; a
-    RAN_USAGE chunk without it raises, like any other missing COPY column."""
-    if name in cols:
-        return _opt_str(cols[name][i])
-    if udr_type == _GEO_REQUIRED_UDR_TYPE:
-        raise KeyError(
-            f"rated chunk for {udr_type} has no {name!r} column — PRP stamps the "
-            "matched ratecard cell's geo and RP carries it; the handoff is broken."
-        )
-    return None
-
-
 def _resource_value(cols: dict[str, list[Any]], i: int, udr_type: str) -> str | None:
     """``udr_resource`` for one row (Inv 28). RAN_USAGE: required and non-empty
-    (absent column → KeyError, like the geo columns; NULL/empty → ValueError).
+    (absent column → KeyError, like any other missing COPY column; NULL/empty → ValueError).
     Other usage types read no ratecard, so they write NULL — and a value carried
     on one is a broken handoff (PRP only stamps it on a matched RAN cell), so it
     raises rather than being dropped silently (user decision 2026-10-15)."""

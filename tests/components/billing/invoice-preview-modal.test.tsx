@@ -290,11 +290,11 @@ describe("StoredInvoiceModal", () => {
     expect(download.getAttribute("href")).toBe("blob:mock-url");
   });
 
-  // bm62-spec §Design D5 — a secondary Download CSV control next to the PDF
-  // actions, only once a stored invoice exists. It fetches the CSV route so a
-  // refusal reaches the user (a bare link would cancel silently).
+  // bm88-spec §6/§9 — the bm62 Download CSV control is retired: a stored
+  // invoice shows the PDF and its Download link exactly as before, and nothing
+  // asks for the old CSV route.
   async function openStoredReady(): Promise<void> {
-    vi.mocked(fetch).mockResolvedValueOnce(
+    vi.mocked(fetch).mockResolvedValue(
       storedResponse({
         "X-Invoice-Number": "INV00000001",
         "X-Blob-Ref": "invoices/2026-07/INV00000001.pdf",
@@ -303,54 +303,28 @@ describe("StoredInvoiceModal", () => {
     );
     renderStoredModal();
     fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
-    await screen.findByRole("button", { name: /download csv/i });
+    await screen.findByTitle("Invoice INV00000001");
   }
 
-  it("downloads the CSV from the CSV route once the stored invoice is retrieved", async () => {
+  it("bm88 — a stored invoice renders the PDF and offers no Download CSV control", async () => {
     await openStoredReady();
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      blob: () => Promise.resolve(new Blob(["csv"], { type: "text/csv" })),
-    } as never);
 
-    fireEvent.click(screen.getByRole("button", { name: /download csv/i }));
-
-    await vi.waitFor(() =>
-      expect(fetch).toHaveBeenLastCalledWith(
-        "/billing/bill-runs/BRN00000001/stored-invoice/BAN00000001/csv",
-      ),
-    );
-    await vi.waitFor(() =>
-      expect(URL.createObjectURL).toHaveBeenCalledTimes(2),
-    );
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: /^download$/i }).getAttribute("href"),
+    ).toBe("blob:mock-url");
+    expect(screen.queryByRole("button", { name: /download csv/i })).toBeNull();
+    expect(screen.queryByText(/csv/i)).toBeNull();
   });
 
-  it.each([
-    [429, /too many csv downloads/i],
-    [409, /do not reconcile/i],
-    [500, /could not download the csv/i],
-  ])(
-    "shows the reason when the CSV route answers %i",
-    async (status, message) => {
-      await openStoredReady();
-      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status } as never);
+  it("bm88 — no request goes to a /csv URL", async () => {
+    await openStoredReady();
+    fireEvent.click(screen.getByRole("link", { name: /^download$/i }));
 
-      fireEvent.click(screen.getByRole("button", { name: /download csv/i }));
-
-      expect((await screen.findByRole("alert")).textContent).toMatch(message);
-    },
-  );
-
-  it("offers no Download CSV control before a stored invoice is retrieved", async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 404 } as never);
-    renderStoredModal();
-
-    fireEvent.click(screen.getByRole("button", { name: /stored invoice/i }));
-
-    await screen.findByText(/no stored invoice found/i);
-    expect(screen.queryByRole("button", { name: /download csv/i })).toBeNull();
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(urls).toEqual([
+      "/billing/bill-runs/BRN00000001/stored-invoice/BAN00000001",
+    ]);
+    expect(urls.some((url) => url.endsWith("/csv"))).toBe(false);
   });
 
   it("shows a not-found reason for a 404 (no stored invoice yet)", async () => {

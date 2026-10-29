@@ -22,6 +22,10 @@ import { invoiceTemplateStructureSchema } from "@/validation/billing/invoice-tem
 // layout rows need a type and CSV rows must not have one, and CSV (not layout)
 // is barred from DRAFT. The full 0053 matrix is in
 // invoice-template-types-catalog.integration.test.ts (guardrail 75).
+// bm88-spec §9 (`0055`) — the csv kind is retired: migrated to head, 0046's
+// seeded CSV row (BTV00000003) is gone, a csv row fails `btv_kind_check` and
+// every row needs a type (`btv_has_family`). The populated-database apply is
+// in retire-invoice-csv.integration.test.ts.
 const STANDARD = "BTF00000001";
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -100,7 +104,7 @@ describe.skipIf(!databaseUrl)(
       }
     }, 60_000);
 
-    it("seeds exactly one bill_format (INVOICE) and three ACTIVE default versions", async () => {
+    it("seeds exactly one bill_format (INVOICE) and two ACTIVE default versions (bm88: no CSV row)", async () => {
       const formats = await sql<{ bill_format_id: string }[]>`
         SELECT bill_format_id FROM billing.bill_format`;
       expect(formats.map((f) => f.bill_format_id)).toEqual(["INVOICE"]);
@@ -124,12 +128,6 @@ describe.skipIf(!databaseUrl)(
         {
           bill_template_version_id: "BTV00000002",
           kind: "generated",
-          status: "ACTIVE",
-          is_default: true,
-        },
-        {
-          bill_template_version_id: "BTV00000003",
-          kind: "csv",
           status: "ACTIVE",
           is_default: true,
         },
@@ -175,10 +173,6 @@ describe.skipIf(!databaseUrl)(
         {
           bill_template_version_id: "BTV00000002",
           ref_bill_template_family_id: STANDARD,
-        },
-        {
-          bill_template_version_id: "BTV00000003",
-          ref_bill_template_family_id: null,
         },
       ]);
     });
@@ -227,12 +221,12 @@ describe.skipIf(!databaseUrl)(
       });
     });
 
-    it("bm64/bm74 — refuses a generated version without a family (btv_type_scoped_has_family)", async () => {
+    it("bm64/bm74 — refuses a generated version without a family (bm88: btv_has_family)", async () => {
       await expect(
         insertGenerated("BTV00000009", 9, "ACTIVE", false, null),
       ).rejects.toMatchObject({
         code: "23514",
-        constraint_name: "btv_type_scoped_has_family",
+        constraint_name: "btv_has_family",
       });
     });
 
@@ -265,7 +259,7 @@ describe.skipIf(!databaseUrl)(
       `).rejects.toThrow(/VERSION_IMMUTABLE/);
     });
 
-    it("bm74 — a layout version requires a type; a CSV version must not have one", async () => {
+    it("bm74/bm88 — a layout version requires a type; the csv kind is refused outright", async () => {
       await expect(sql`
         INSERT INTO billing.bill_template_version
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status,
@@ -274,7 +268,7 @@ describe.skipIf(!databaseUrl)(
            'INVTPL-STD-A4','{}'::jsonb,'invoice-templates/layouts/INVTPL-STD-A4/v3/',${"d".repeat(64)},'sha256','test row',now())
       `).rejects.toMatchObject({
         code: "23514",
-        constraint_name: "btv_type_scoped_has_family",
+        constraint_name: "btv_has_family",
       });
       await expect(sql`
         INSERT INTO billing.bill_template_version
@@ -284,7 +278,7 @@ describe.skipIf(!databaseUrl)(
            'invoice-templates/system/csv/v3/',${"e".repeat(64)},'sha256','test row',now())
       `).rejects.toMatchObject({
         code: "23514",
-        constraint_name: "btv_csv_has_no_family",
+        constraint_name: "btv_kind_check",
       });
       await sql`
         INSERT INTO billing.bill_template_version
@@ -293,20 +287,12 @@ describe.skipIf(!databaseUrl)(
         VALUES ('BTV00000050','INVOICE','layout',2,'ACTIVE',${STANDARD},
            'INVTPL-STD-A4','{}'::jsonb,'invoice-templates/layouts/INVTPL-STD-A4/v2/',${"d".repeat(64)},'sha256','test row',now())
       `;
-      await sql`
-        INSERT INTO billing.bill_template_version
-          (bill_template_version_id, ref_bill_format_id, kind, version_no, status,
-           blob_ref, checksum, checksum_algorithm, change_note, activated_datetime)
-        VALUES ('BTV00000051','INVOICE','csv',2,'ACTIVE',
-           'invoice-templates/system/csv/v2/',${"e".repeat(64)},'sha256','test row',now())
-      `;
       const rows = await sql<
         { kind: string; ref_bill_template_family_id: string | null }[]
       >`
         SELECT kind, ref_bill_template_family_id FROM billing.bill_template_version
-        WHERE bill_template_version_id IN ('BTV00000050','BTV00000051') ORDER BY 1`;
+        WHERE bill_template_version_id = 'BTV00000050'`;
       expect(rows).toEqual([
-        { kind: "csv", ref_bill_template_family_id: null },
         { kind: "layout", ref_bill_template_family_id: STANDARD },
       ]);
     });
@@ -355,7 +341,7 @@ describe.skipIf(!databaseUrl)(
       ).rejects.toThrow(/btv_one_default_uq/);
     });
 
-    it("CHECKs: DRAFT with files, ACTIVE without note, generated without layout, CSV DRAFT", async () => {
+    it("CHECKs: DRAFT with files, ACTIVE without note, generated without layout", async () => {
       // DRAFT with files
       await expect(sql`
         INSERT INTO billing.bill_template_version
@@ -374,12 +360,8 @@ describe.skipIf(!databaseUrl)(
           (bill_template_version_id, ref_bill_format_id, kind, version_no, status, ref_bill_template_family_id, blob_ref, checksum, checksum_algorithm, change_note, activated_datetime)
         VALUES ('BTV00000042','INVOICE','generated',42,'ACTIVE',${STANDARD},'x/',${"c".repeat(64)},'sha256','n',now())
       `).rejects.toThrow(/btv_generated_has_layout/);
-      // bm74 — CSV as DRAFT (CSV is never a DRAFT; layout DRAFTs now exist)
-      await expect(sql`
-        INSERT INTO billing.bill_template_version
-          (bill_template_version_id, ref_bill_format_id, kind, version_no, status)
-        VALUES ('BTV00000043','INVOICE','csv',43,'DRAFT')
-      `).rejects.toThrow(/btv_draft_not_csv/);
+      // bm88 — the CSV-DRAFT check (btv_draft_not_csv) went with the csv kind;
+      // a csv row of any status now fails btv_kind_check (case above).
     });
 
     it("bm74 — a layout DRAFT with files is accepted", async () => {

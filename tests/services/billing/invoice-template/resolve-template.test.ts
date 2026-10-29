@@ -53,12 +53,10 @@ function row(
 
 const LAYOUT = row("BTV00000001", "layout", { layoutCode: "INVTPL-STD-A4" });
 const DEFAULT_GENERATED = row("BTV00000002", "generated");
-const DEFAULT_CSV = row("BTV00000003", "csv");
 const ACTIVE_GENERATED = row("BTV00000010", "generated", {
   isDefault: false,
   versionNo: 3,
 });
-const ACTIVE_CSV = row("BTV00000011", "csv", { isDefault: false });
 const PINNED_GENERATED = row("BTV00000007", "generated", {
   isDefault: false,
   status: "RETIRED",
@@ -66,20 +64,15 @@ const PINNED_GENERATED = row("BTV00000007", "generated", {
 });
 
 const ROWS = new Map(
-  [
-    LAYOUT,
-    DEFAULT_GENERATED,
-    DEFAULT_CSV,
-    ACTIVE_GENERATED,
-    ACTIVE_CSV,
-    PINNED_GENERATED,
-  ].map((r) => [r.billTemplateVersionId, r]),
+  [LAYOUT, DEFAULT_GENERATED, ACTIVE_GENERATED, PINNED_GENERATED].map((r) => [
+    r.billTemplateVersionId,
+    r,
+  ]),
 );
 
 const DEFAULTS: Record<TemplateKind, BillTemplateVersion> = {
   layout: LAYOUT,
   generated: DEFAULT_GENERATED,
-  csv: DEFAULT_CSV,
 };
 
 beforeEach(() => {
@@ -115,14 +108,12 @@ function runStamps(
     refBillTemplateFamilyId: string | null;
     refBillTemplateVersionId: string | null;
     refInvoiceProfileVersion: number | null;
-    refCsvTemplateVersionId: string | null;
   }> = {},
 ) {
   return {
     refBillTemplateFamilyId: STANDARD,
     refBillTemplateVersionId: "BTV00000007",
     refInvoiceProfileVersion: 2,
-    refCsvTemplateVersionId: "BTV00000003",
     ...overrides,
   };
 }
@@ -139,7 +130,7 @@ async function codeOf(p: Promise<unknown>): Promise<string | undefined> {
 describe("resolveTemplate — run (the BAN's captured stamps)", () => {
   it("resolves exactly the stamped ids, even when a newer ACTIVE exists — never live", async () => {
     repo.findActive.mockImplementation(async (_db, { kind }) =>
-      kind === "generated" ? ACTIVE_GENERATED : ACTIVE_CSV,
+      kind === "generated" ? ACTIVE_GENERATED : null,
     );
     profileRepo.findActiveVersion.mockResolvedValue(9);
 
@@ -149,7 +140,7 @@ describe("resolveTemplate — run (the BAN's captured stamps)", () => {
       banId: BAN,
     });
     expect(r.generated.billTemplateVersionId).toBe("BTV00000007");
-    expect(r.csv.billTemplateVersionId).toBe("BTV00000003");
+    expect(r).not.toHaveProperty("csv");
     expect(r.layout.billTemplateVersionId).toBe("BTV00000001");
     expect(r.profileVersion).toBe(2);
     // `run` is not a live mode: no "current" lookup of any kind.
@@ -196,7 +187,8 @@ describe("resolveTemplate — run (the BAN's captured stamps)", () => {
       "BTV00000021",
       row("BTV00000021", "generated", { status: "DRAFT" }),
     );
-    for (const id of ["BTV00099999", "BTV00000021", "BTV00000003"]) {
+    // BTV00000001 is the layout: the wrong kind for a generated stamp.
+    for (const id of ["BTV00099999", "BTV00000021", "BTV00000001"]) {
       expect(
         await codeOf(
           resolveTemplate(DB, {
@@ -273,7 +265,6 @@ describe("resolveTemplate — preview-family (the family's live versions)", () =
       familyId: STANDARD,
     });
     expect(r.generated.billTemplateVersionId).toBe("BTV00000002");
-    expect(r.csv.billTemplateVersionId).toBe("BTV00000003");
     expect(r.layout.billTemplateVersionId).toBe("BTV00000001");
     expect(repo.findActive).toHaveBeenCalledWith(DB, {
       kind: "generated",
@@ -281,13 +272,9 @@ describe("resolveTemplate — preview-family (the family's live versions)", () =
     });
   });
 
-  it("resolves the family's non-default ACTIVE, the current CSV and the ACTIVE profile", async () => {
+  it("resolves the family's non-default ACTIVE and the ACTIVE profile", async () => {
     repo.findActive.mockImplementation(async (_db, { kind, familyId }) =>
-      kind === "csv"
-        ? ACTIVE_CSV
-        : kind === "generated" && familyId === STANDARD
-          ? ACTIVE_GENERATED
-          : null,
+      kind === "generated" && familyId === STANDARD ? ACTIVE_GENERATED : null,
     );
     profileRepo.findActiveVersion.mockResolvedValue(4);
     const r = await resolveTemplate(DB, {
@@ -295,7 +282,6 @@ describe("resolveTemplate — preview-family (the family's live versions)", () =
       familyId: STANDARD,
     });
     expect(r.generated.billTemplateVersionId).toBe("BTV00000010");
-    expect(r.csv.billTemplateVersionId).toBe("BTV00000011");
     expect(r.profileVersion).toBe(4);
   });
 
@@ -340,7 +326,7 @@ describe("resolveTemplate — preview-family (the family's live versions)", () =
     });
   });
 
-  it("a missing CSV default (corrupted DB) → TEMPLATE_VERSION_NOT_FOUND, never a fallback", async () => {
+  it("a missing generated default (corrupted DB) → TEMPLATE_VERSION_NOT_FOUND, never a fallback", async () => {
     repo.findDefault.mockResolvedValue(null);
     expect(
       await codeOf(
@@ -355,7 +341,7 @@ describe.each(["final", "preview-posted"] as const)(
   (kind) => {
     it("stamps present → the stamped ids + version, even when a newer ACTIVE exists", async () => {
       repo.findActive.mockImplementation(async (_db, { kind: k }) =>
-        k === "generated" ? ACTIVE_GENERATED : ACTIVE_CSV,
+        k === "generated" ? ACTIVE_GENERATED : null,
       );
       profileRepo.findActiveVersion.mockResolvedValue(9);
       const r = await resolveTemplate(DB, {
@@ -364,11 +350,10 @@ describe.each(["final", "preview-posted"] as const)(
           refBillTemplateFamilyId: "BTF00000001",
           refBillTemplateVersionId: "BTV00000007",
           refInvoiceProfileVersion: 2,
-          refCsvTemplateVersionId: "BTV00000003",
         },
       });
       expect(r.generated.billTemplateVersionId).toBe("BTV00000007");
-      expect(r.csv.billTemplateVersionId).toBe("BTV00000003");
+      expect(r.layout.billTemplateVersionId).toBe("BTV00000001");
       expect(r.profileVersion).toBe(2);
       // Inv #42 — a posted bill never consults the current ACTIVE.
       expect(repo.findActive).not.toHaveBeenCalled();
@@ -377,7 +362,7 @@ describe.each(["final", "preview-posted"] as const)(
 
     it("NULL stamps (posted before bm54) → the default + a null profile, never the current ACTIVE", async () => {
       repo.findActive.mockImplementation(async (_db, { kind: k }) =>
-        k === "generated" ? ACTIVE_GENERATED : ACTIVE_CSV,
+        k === "generated" ? ACTIVE_GENERATED : null,
       );
       profileRepo.findActiveVersion.mockResolvedValue(9);
       const r = await resolveTemplate(DB, {
@@ -386,11 +371,10 @@ describe.each(["final", "preview-posted"] as const)(
           refBillTemplateFamilyId: null,
           refBillTemplateVersionId: null,
           refInvoiceProfileVersion: null,
-          refCsvTemplateVersionId: null,
         },
       });
       expect(r.generated.billTemplateVersionId).toBe("BTV00000002");
-      expect(r.csv.billTemplateVersionId).toBe("BTV00000003");
+      expect(r.layout.billTemplateVersionId).toBe("BTV00000001");
       expect(r.profileVersion).toBeNull();
       expect(repo.findActive).not.toHaveBeenCalled();
       expect(profileRepo.findActiveVersion).not.toHaveBeenCalled();
@@ -405,7 +389,6 @@ describe.each(["final", "preview-posted"] as const)(
               refBillTemplateFamilyId: "BTF00000001",
               refBillTemplateVersionId: "BTV00099999",
               refInvoiceProfileVersion: 1,
-              refCsvTemplateVersionId: null,
             },
           }),
         ),
@@ -417,7 +400,7 @@ describe.each(["final", "preview-posted"] as const)(
         "BTV00000020",
         row("BTV00000020", "generated", { status: "DRAFT" }),
       );
-      for (const id of ["BTV00000020", "BTV00000003"]) {
+      for (const id of ["BTV00000020", "BTV00000001"]) {
         expect(
           await codeOf(
             resolveTemplate(DB, {
@@ -426,7 +409,6 @@ describe.each(["final", "preview-posted"] as const)(
                 refBillTemplateFamilyId: "BTF00000001",
                 refBillTemplateVersionId: id,
                 refInvoiceProfileVersion: null,
-                refCsvTemplateVersionId: null,
               },
             }),
           ),
@@ -453,8 +435,9 @@ describe("resolveTemplate — layout", () => {
   it("is re-queried on every call (never cached, workflow rules §3.9)", async () => {
     await resolveTemplate(DB, { kind: "preview-family", familyId: STANDARD });
     await resolveTemplate(DB, { kind: "preview-family", familyId: STANDARD });
-    // Twice per call: the family's generated default and the CSV default.
-    expect(repo.findDefault).toHaveBeenCalledTimes(4);
+    // Once per call: the family's generated default (bm88 removed the CSV
+    // default's read).
+    expect(repo.findDefault).toHaveBeenCalledTimes(2);
     expect(repo.findById).toHaveBeenCalledTimes(2);
   });
 });

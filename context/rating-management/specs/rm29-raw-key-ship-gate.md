@@ -5,6 +5,8 @@
 - **Authorizes from:** `_updatemodule-rating-udr-key-resource-plan.md` R1–R9 and §5, §10; `ratemgmt-architecture.md` Inv 2, 27, 28; `ratemgmt-code-standards.md` §0.1, §10 tests 1–20; `ratemgmt-ai-workflow-rules.md` §0.1 rules 6, 7, 9, 31–34.
 - **Depends on:** rm24–rm28.
 
+> **Reversed 2026-10-27 (Phase J, rm33 — `_change-rating-drop-udr-rated-geo-columns-plan.md` D1/D4) — the `state`/`district` seed fields and assertions only.** Seeds no longer write the two columns; `sampleRanGeo` emits `udrResource` instead (the `POLY-APX-UNMAPPED` and `SAMPLE_NULL_GEO_SEQUENCE` rows stay `NULL`). `rm01` 15b asserts the columns are absent, `grants` 10a covers `udr_resource` only, and `rm23-udr-geo-frozen` is re-scoped to `udr_resource`. Nothing about `udr_resource` changes: raw-key seeds, `formatUdrResource`, the write-once proof and tests 17–20 stand. Delivered text below is unchanged.
+
 ## Goal
 
 Make the sample data and the end-to-end tests speak the raw-key / `udr_resource` contract, prove `udr_resource` is write-once for every runtime role, and close the update with a green guardrail suite (tests 1–20), so billing slice 2 can read polygon, State, District and start date from `udr_rated` alone.

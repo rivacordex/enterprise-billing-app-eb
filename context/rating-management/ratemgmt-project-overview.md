@@ -6,6 +6,8 @@ The Rating Management Module is the subsystem of the Enterprise Billing App (Tel
 
 **PER_UNIT RAN-usage update (Phase G).** Reference: `_change-rating-configuration-plan.md`. Scope: Workstream A (rating engine), B (customer MNO key) and D (seeds); Workstream C (product-management UI) is deferred to a follow-up phase. Operated by BSS IT Operations. The module ingests raw RAN (Radio Access Network) usage records for mobile network operators, resolves each record to the right subscriber, prices it against that subscriber's product, and loads immutable rated usage into `rating.udr_rated` for the downstream bill run. This update defines the **actual PER_UNIT business logic** for the `rating-engine-ran-usage` flow (`PRP → RP → RL`), replacing the placeholder `FLAT`-only scaffolding the engine shipped with: it builds the real subscriber resolver (input MNO → customer → subscription), computes `rate × usage_volume` in exact decimal, and enforces data integrity (subscriber identity, completeness, duplicates, field agreement) with hard-stops **before any money is written**. Product and customer configuration is seeded/manual for this phase.
 
+**Raw `udr_key` and `udr_resource` cell label (Phase H).** Reference: `_updatemodule-rating-udr-key-resource-plan.md` (companion: `_updatemodule-billing-invoice-template-phase3-billrun-plan.md`); units rm24–rm29; rolled into this overview 2026-10-27 (sections marked "Phase H"). Scope: the RAN-usage runtime — PRP, RP, RL — plus sample seeds, rating tests and the rule amendments in the plan §7; no schema change, no migration, no grant change, no billing code. Rollout: fresh database that round (decided 2026-10-14). The update changed what rating writes for each `RAN_USAGE` record so the invoice can print each polygon's original ID, its start date and its State-District label without adding a column to `rating.udr_rated` and without ever reading the rate card: `udr_key` keeps the polygon, MNO and commercial-unit values exactly as the feed sends them (the case-folding and trimming rule was removed), PRP matches each record to its rate-card cell by exact comparison, and PRP builds the label `state|district|polygon_start_date` once per matched card cell so RL writes it, at INSERT, into the existing `udr_resource` column. Billing reads the polygon from the `polygon_id=` segment of `udr_key`, and State, District and the start date from the three segments of `udr_resource`.
+
 **Relationship to the bill run.** `_newmodule-billrun-rating-workflow-plan.md` was written before this module was designed and described rating as continuous, external and undefined. **Eight** of its statements are superseded by this design — continuous-vs-batch rating, the engine's execution history not being an audit trail, the `period_partition` convention, the existence of `rating.udr_exception`, and the app's grant being a single claim-marker column when the bill run in fact writes six, among them. `ratemgmt-architecture.md` §7 carries the authoritative list and their reconciliation status; **not all are yet corrected in that boundary document.** The claim-marker point matters twice over: rating logic *does* live in the workflow definition, which is why `rating_flow_revision` is stored on every rated row.
 
 ## Goals
@@ -32,6 +34,15 @@ The Rating Management Module is the subsystem of the Enterprise Billing App (Tel
 17. Make the input filename/landing contract and the completeness enforcement mode **configurable flow variables**.
 18. Align month/partition boundaries and datetime parsing to the **system timezone** (`Asia/Kuala_Lumpur`).
 19. Correct the data-model names so they say what they hold: `udr_rated.udr_subscription_ref_id` = the subscription instance; `ratecard_ran_usage_lkp.lkp_subscriber_ref_id` = the customer.
+
+**Raw `udr_key` / `udr_resource` update (Phase H):**
+
+20. Store the polygon ID in `udr_key` exactly as the feed sends it (original case and spacing, e.g. `ABCD_25 DISTRICT2`); remove the `strip().casefold()` normalisation but keep the key shape — sorted key names, `name=value`, joined by `|`.
+21. Match each feed record to its rate-card cell by exact, case- and whitespace-sensitive comparison; no exact match stays a whole-batch `INPUT_UNMAPPED` hard stop.
+22. Write `udr_resource = state|district|polygon_start_date` (ISO `YYYY-MM-DD`; a blank label is an empty segment) for every `RAN_USAGE` row, once, at INSERT, from the matched rate-card cell; non-RAN usage types write `NULL`.
+23. Add no column to `rating.udr_rated`, no migration file and no grant change; `udr_resource` already existed as nullable `text`. Leave the bm48 `state`/`district` columns as they were. *(The second half is reversed 2026-10-27: Phase J removes those columns — `_change-rating-drop-udr-rated-geo-columns-plan.md`.)*
+24. Fail the batch before rating if a rate-card `state` or `district` label contains `|` (`RATECARD_LABEL_INVALID`), so the label can always be split into three segments.
+25. Record the reversal of the protected rules ("fixed" canonical key; "`udr_resource` is reserved") in every rating document that states them, and state the accepted trade-off — records that differ only in case or whitespace are different keys — with a test.
 
 ## Core user flow
 
@@ -63,6 +74,16 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 6. **Rating (RP).** RP resolves the subscriber (`party_role_id` + `product_inventory_id`) and the rate (scalar `usage_rate` as-of `start_datetime`), computes `PER_UNIT` (`ratePerUnit × usage_volume`), sets `udr_usage_unit` from the product's `unit_of_measure`, snapshots the price/version fields, and emits rated chunks.
 7. **Loading (RL).** RL inserts the rated rows into `rating.udr_rated` at status `RATED` in one transaction, supersedes any prior live rows for the same `file_key`, reconciles `parsed = rated + rejected + discarded`, then archives the file `landing/ → archive/`.
 8. **Consume + operate.** Rated usage is available for bill-run. The operator monitors the run; on a hard-stop, they fix the source/config and **re-drop the same filename** to reprocess (supersedes the prior attempt).
+
+**Raw-key / `udr_resource` flow (Phase H), what changed in the steps above.** Worked example: rate-card row `mno_public_key = MNO-001`, `commercial_unit_public_key = CU-5G`, `polygon_id = ABCD_25 DISTRICT2`, `state = STATE-1`, `district = DISTRICT-1`, `polygon_start_date = 2026-01-01`.
+
+1. **Provision the rate card.** If any row's `state` or `district` contains `|`, PRP stops the batch when it loads the card (`RATECARD_LABEL_INVALID`).
+2. **PRP builds the key from raw values:** `commercial_unit=CU-5G|mno_public_id=MNO-001|polygon_id=ABCD_25 DISTRICT2`. A blank key field is still `MISSING_KEY_FIELD`.
+3. **PRP matches by exact lookup** in an in-memory index of the ACTIVE card, keyed by the same raw serialisation. Had the feed sent `abcd_25 district2` there would be no match: `INPUT_UNMAPPED`, whole batch refused.
+4. **PRP stamps the matched cell's `udr_resource = STATE-1|DISTRICT-1|2026-01-01`** (built once per cell when the card is loaded; a blank district gives `STATE-1||2026-01-01`) and, until Phase J, the cell's `state`/`district` as well. *(From rm32 PRP stamps only `udr_resource`.)*
+5. **RP passes `udr_resource` through** unchanged and prices the record `PER_UNIT`. *(Until Phase J it also passed `state`/`district`.)*
+6. **RL loads the batch** including `udr_resource`; the live-row constraint and the billed/in-flight collision guard compare raw keys.
+7. **Billing prints** the polygon `ABCD_25 DISTRICT2` from the `polygon_id=` segment, the group label `STATE-1 - DISTRICT-1` and the start date from `udr_resource`, and never reads the rate card.
 
 ## Features
 
@@ -118,7 +139,7 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 - `rating.udr_rated` and `rating.process_log` partitioned monthly by `pg_partman` on a `date` control column, registered on the existing daily maintenance job, **detached, never dropped** — `udr_rated` at 7 years, `process_log` at 24 months — matching the billing tables' archival contract rather than `audit_log`'s drop-on-expiry.
 - Partition granularity chosen when an environment is first built, not changeable at runtime: changing it on a live table is a physical re-partition with downtime.
 - `rating.udr_batch` unpartitioned — files are low-volume.
-- `rating.udr_rated.state` / `.district` (bm48, migration `0045`, nullable `text`): the matched RAN ratecard cell's labels, captured by PRP and written once by RL at INSERT; no role may UPDATE them. `NULL` = rated before bm48, a card label left blank, or a usage type that reads no ratecard. Consumed by the billing invoice's usage section (billing bm49); no index (the bill run reads by `billrun_*`). `udr_resource` carries `state|district|polygon_start_date` of the matched cell (Inv 28); once billing slice 2 ships, the invoice reads State, District and the start date from it instead of these columns.
+- `rating.udr_rated.state` / `.district` (bm48, migration `0045`, nullable `text`): the matched RAN ratecard cell's labels, captured by PRP and written once by RL at INSERT; no role may UPDATE them. `NULL` = rated before bm48, a card label left blank, or a usage type that reads no ratecard. Consumed by the billing invoice's usage section (billing bm49); no index (the bill run reads by `billrun_*`). `udr_resource` carries `state|district|polygon_start_date` of the matched cell (Inv 28); once billing slice 2 ships, the invoice reads State, District and the start date from it instead of these columns. *(Reversed 2026-10-27, `_change-rating-drop-udr-rated-geo-columns-plan.md` D1/D4: the two columns are removed in Phase J (rm31–rm33); `0045` is rewritten in place to drop them under that round's fresh-DB setup; `udr_resource` is the only geo carrier.)*
 - Four mounted locations: landing, archive, error, logs. Raw archive retained 7 years; reject and log files 24 months.
 
 ### Access, isolation and deployment
@@ -172,6 +193,21 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 **Reload and reprocessing**
 - Re-drop the same filename → same `file_key`, incremented `batch_run_num`, prior live rows superseded. The tightened live-row constraint backstops accidental overlap.
 
+### Raw `udr_key` and `udr_resource` cell label (Phase H)
+
+**Key construction and matching (PRP)**
+- `build_udr_key(profile, row)` replaced `canonical_udr_key`: key names sorted once per profile, each value exactly as parsed, joined `name=value` with `|`; `_normalise_value` removed; the 512-character cap and the `MISSING_KEY_FIELD` check unchanged.
+- The card index is keyed by the same raw serialisation of `mno_public_key`, `commercial_unit_public_key`, `polygon_id`. Case/whitespace variants are distinct cells (`ratecard_ran_usage_lkp_row_key_unique` already rejects exact duplicates); the fail-closed guard in `extract_ratecard` fires only on a serialisation collision. `INPUT_UNMAPPED` and `RATECARD_COVERAGE_GAP` unchanged.
+
+**Cell label (PRP → RP → RL)**
+- `_RATECARD_SQL` selects `polygon_start_date`; `RatecardCell` carries `state`, `district`, `polygon_start_date` and a precomputed `udr_resource` string; a `|` in a label refuses the batch (`RATECARD_LABEL_INVALID`, `PRP`, `MAJOR`, not self-clearing — rm25 seed row and `RATING_EVENT_CODES`).
+- `ParsedRow` and the chunk carry `udr_resource`; RP passes it through; RL COPYs it — required and non-empty for `RAN_USAGE` (a chunk missing it raises), `NULL` for other usage types (a value carried on one raises too).
+- Written once at INSERT under `rating_runtime`'s table-level INSERT; no role holds UPDATE on it, so a later card re-version never changes a rated row.
+
+**Loading and guards (RL)** — no code change: the live-row constraint, the billed/in-flight collision guard and supersession by `file_key` compare raw keys. Two `RATED` rows whose keys differ only in case both load (accepted, tested).
+
+**Seeds and tests** — sample seeds and `rating-ran-harness.ts` emit raw keys and a populated `udr_resource` (`formatUdrResource`), with one RAN row left `NULL` for billing's fail-loud path; `rm01`, `rm07`, `rm09`, `rm13`, `rm23`, `rm27` and `grants` extended (code-standards §10 tests 17–20). `rating_flow_revision` / `rating_engine_version` bumped so raw-key rows are distinguishable.
+
 ## In scope
 
 - The `rating` schema: `udr_rated`, `udr_batch`, `process_log`, `event_catalog` — real tables, real constraints, real partitioning, real grants.
@@ -196,6 +232,14 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 - The three `udr_rated` DDL touches: the `udr_subscription_ref_id` rename, the `period_of()` timezone constant, and the live-row constraint tighten.
 - Scope-doc reconciliation: update `ratemgmt-ai-workflow-rules.md` (§2.5/§3), this overview, `code-standards` (§2.3) to bring PER_UNIT + the real resolver in scope; banner the affected rm specs (`rm01/06/07/08/09/10/12`); banner/update pm57a (ratecard `lkp_subscriber_ref_id` semantics).
 - Test coverage for all new paths + the three regressions (FLAT→PER_UNIT refresh; dedup widening; input→ratecard behavior change).
+
+**Raw `udr_key` / `udr_resource` update (Phase H):**
+
+- `build_udr_key` and the removal of `_normalise_value` / the normalising `canonical_udr_key`, with every docstring and comment that described canonical behaviour updated.
+- The exact-match card index and the reworded serialisation-collision guard in `extract_ratecard`.
+- `polygon_start_date` in the card query; `RatecardCell.udr_resource` built once per cell; the `|`-in-label fail-closed check and its event code.
+- `udr_resource` carried through `ParsedRow`, the chunk Parquet, RP and RL `COPY_COLUMNS` (RAN required, other types `NULL`).
+- The version bump; seeds, harness and the tests in the plan §5, including the case-variant test; the rule and document amendments in the plan §7 (rm24).
 
 ## Out of scope
 
@@ -223,6 +267,14 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 - **Normalized `customer_mno_key` table + DB uniqueness** — jsonb + PRP runtime guard for now.
 - **A `party_role_specification` index** — deferred (tiny table at pilot).
 - **Any data migration** — the two constraint/function DDLs and the rename are edit-in-place on an empty `udr_rated` (fresh-install regime).
+
+**Raw `udr_key` / `udr_resource` update (Phase H):**
+
+- Any new column on `rating.udr_rated`, any migration, any grant change.
+- Reversing bm48: the `state` and `district` columns stay, and their consumers are untouched. *(Reversed 2026-10-27: Phase J removes them — `_change-rating-drop-udr-rated-geo-columns-plan.md`.)*
+- Rewriting or backfilling existing `udr_rated` rows (none on the fresh database); a cutover guard; a normalised uniqueness backstop (e.g. a `lower(trim(udr_key))` index).
+- Changing the 512-character cap, the live-row constraint, supersession by `file_key`, the rate-card schema or upload screen, or the feed format; normalising values at the feed.
+- `udr_resource` for non-RAN usage types (they write `NULL`); new rate types, discounts, or PER_UNIT pricing changes; billing code, the invoice layout and the usage query (companion billing plan).
 
 ## Success criteria
 
@@ -271,3 +323,11 @@ The primary flow — a `RAN_USAGE` file for 14 August arrives, rates, partially 
 29. The bill-run read path resolves usage through `udr_subscription_ref_id` with no broken reference after the rename.
 30. The rating test suite is green: all new-path tests pass, and the three regressions (R1 FLAT→PER_UNIT, R2 dedup widening, R3 input→ratecard hard-stop) are covered.
 31. The scope/rules docs and rm-spec banners are updated so the suite tracks PER_UNIT scope rather than the retired FLAT-only scope.
+
+**Raw `udr_key` / `udr_resource` (Phase H)**
+
+32. A `RAN_USAGE` row for polygon `ABCD_25 DISTRICT2` loads with `udr_key` containing exactly `polygon_id=ABCD_25 DISTRICT2`; two records differing only in polygon case produce two keys and both load (RL's half injects the pair directly, rm28); a feed polygon differing from the card only by case or a trailing space is refused `INPUT_UNMAPPED` and the batch stops under `HARD_STOP`.
+33. The matched cell's row has `udr_resource = STATE-1|DISTRICT-1|2026-01-01`; a blank district gives `STATE-1||2026-01-01`; the date is always `YYYY-MM-DD`; a card with `|` in a label fails the batch before any record is rated.
+34. No new column and no migration file; `udr_resource` is in no role's column UPDATE privilege and an UPDATE by `rating_runtime`, `app_runtime` or `billrun_runtime` is refused; activating a new card version afterwards leaves the rated row's `udr_resource` unchanged.
+35. A `RAN_USAGE` chunk missing `udr_resource` makes RL raise; a non-RAN chunk writes `NULL`; a batch whose raw keys collide with a live `BILL_APPROVED` row is still refused whole (`LOAD_BLOCKED_BILLED`).
+36. The `rm13` journey passes with the raw key and expected `udr_resource`; `rm07`, `rm09`, `rm13`, `rm23`, `rm27`, `rm01` and `grants` pass with the extended cases; no rating document still calls `udr_key` canonical or `udr_resource` reserved, and billing slice 2 reads polygon, State-District and start date from `udr_rated` alone.

@@ -44,7 +44,6 @@ import type * as CompileModule from "@/services/billing/invoice-template/compile
 import { blobStore } from "@/services/billing/blob-store";
 import {
   clearLoadedTemplateMemo,
-  loadCsvMap,
   loadGenerated,
   loadedTemplateMemo,
   loadLayout,
@@ -271,7 +270,7 @@ describe("loadGenerated — verify, then compile, then memo", () => {
   it("a DRAFT / wrong-kind row is refused without blob I/O", async () => {
     for (const overrides of [
       { status: "DRAFT", blobRef: null, checksum: null },
-      { kind: "csv" },
+      { kind: "layout" },
     ] as Partial<BillTemplateVersion>[]) {
       const result = await codeAndFile(
         loadGenerated(generatedRow(freshDir(), "a".repeat(64), overrides)),
@@ -309,7 +308,7 @@ describe("the memo — the one sanctioned cache (data rule 8)", () => {
   });
 });
 
-describe("loadLayout / loadCsvMap", () => {
+describe("loadLayout", () => {
   it("loadLayout returns every verified file of the layout", async () => {
     const dir = "layouts/INVTPL-TEST/v1/";
     const checksum = storeVersion(dir, {
@@ -341,53 +340,6 @@ describe("loadLayout / loadCsvMap", () => {
     expect(result).toEqual({
       code: "TEMPLATE_CHECKSUM_MISMATCH",
       file: "shell.hbs",
-    });
-  });
-
-  it("loadCsvMap verifies and parses the seeded CSV v1 column map", async () => {
-    const { readFileSync } = await import("node:fs");
-    const path = await import("node:path");
-    const dir = "system/csv/v1/";
-    for (const name of ["checksums.json", "invoice.csv.columns.json"]) {
-      blobs.set(
-        `invoice-templates/${dir}${name}`,
-        readFileSync(
-          path.join(process.cwd(), "db/seeds/invoice-templates", dir, name),
-        ),
-      );
-    }
-    const map = await loadCsvMap(
-      generatedRow(
-        dir,
-        "ef31c2f1b96d6f6278fe2a0e4f657755c8c75bf17eab105bd3da7d0c8e579c05",
-        { kind: "csv", structure: null },
-      ),
-    );
-    expect(map.rowSource).toBe("lines");
-    expect(map.columns.length).toBeGreaterThan(0);
-  });
-
-  it("loadCsvMap rejects a verified map whose path names an unknown root (bm62 D2)", async () => {
-    const dir = "system/csv/v9/";
-    const checksum = storeVersion(dir, {
-      "invoice.csv.columns.json": JSON.stringify({
-        templateId: "INVTPL-CSV-TEST",
-        version: 9,
-        rowSource: "lines",
-        encoding: "utf-8-bom",
-        lineEnding: "CRLF",
-        columns: [
-          { header: "net_amount", path: "line.netAmount" },
-          { header: "secret", path: "process.env" },
-        ],
-      }),
-    });
-    const result = await codeAndFile(
-      loadCsvMap(generatedRow(dir, checksum, { kind: "csv", structure: null })),
-    );
-    expect(result).toEqual({
-      code: "TEMPLATE_COMPILE_FAILED",
-      file: "invoice.csv.columns.json",
     });
   });
 });

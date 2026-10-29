@@ -19,6 +19,7 @@ import {
   pythonRuntimeReady,
   ratingPython3,
   readManifest,
+  readParquetColumn,
   runSqlFile,
   seedSample5gRatingGraph,
   type RatingPipeline,
@@ -32,7 +33,8 @@ import {
 import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 
 // rm27-spec — RP carries PRP's `udr_resource` column through to the rated
-// Parquet unchanged (Inv 28, R5/R6), the same pass-through as bm48's geo:
+// Parquet unchanged (Inv 28, R5/R6); since rm32 (Phase J) it is the only
+// ratecard-cell column, so neither chunk carries `state`/`district`:
 //   * the rated value equals the PRP chunk's, row for row (incl. `||<date>`);
 //   * a chunk without the column yields a rated chunk without it, so RL's
 //     missing-column guard (rm28) can still fire;
@@ -59,33 +61,6 @@ const BLANK_MNO = "MNO-RM27-BLANK";
 const BLANK_PRODUCT_NAME = "Sample 5G Services rm27 blank";
 const BLANK_CARD_NAME = "RATECARD_RM27_BLANK";
 const VOLUMES = [100, 200, 300] as const;
-
-interface ParquetColumn {
-  columns: string[];
-  // null when the column is absent; a null cell stays null.
-  values: (string | null)[] | null;
-}
-
-// One column of a Parquet file plus the file's column list, as JSON so values
-// (and nulls) come back byte for byte.
-function readParquetColumn(parquetUri: string, column: string): ParquetColumn {
-  const out = execFileSync(
-    ratingPython3(),
-    [
-      "-c",
-      [
-        "import json,polars,sys",
-        "f=polars.read_parquet(sys.argv[1]);c=sys.argv[2]",
-        "v=[None if x is None else str(x) for x in f[c].to_list()] if c in f.columns else None",
-        "print(json.dumps({'columns':f.columns,'values':v}))",
-      ].join("\n"),
-      fileURLToPath(parquetUri),
-      column,
-    ],
-    { cwd: RATING_WORKER_DIR, encoding: "utf8" },
-  );
-  return JSON.parse(out) as ParquetColumn;
-}
 
 function columnValues(parquetUri: string, column: string): (string | null)[] {
   const { values } = readParquetColumn(parquetUri, column);
@@ -213,6 +188,11 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const prp = columnValues(carried.prpChunk, "udr_resource");
       const rated = columnValues(carried.ratedChunk, "udr_resource");
       expect(rated).toEqual(prp);
+      // rm32 — the geo travels only inside udr_resource.
+      const { columns } = readParquetColumn(carried.ratedChunk, "udr_resource");
+      expect(columns).toContain("udr_resource");
+      expect(columns).not.toContain("state");
+      expect(columns).not.toContain("district");
 
       // Per Sample-5G cell: `STATE-1|DIST-n|2026-01-01`, keyed by the raw
       // polygon on the rated udr_key.
@@ -250,6 +230,9 @@ describe.skipIf(!databaseUrl || !pythonReady)(
       const rated = columnValues(ratedChunk, "udr_resource");
       expect(rated).toEqual(columnValues(prpChunk, "udr_resource"));
       expect(rated).toEqual(SAMPLE_5G_LKP_ROWS.map(() => blank));
+      const { columns } = readParquetColumn(ratedChunk, "udr_resource");
+      expect(columns).not.toContain("state");
+      expect(columns).not.toContain("district");
     });
 
     it("3. a PRP chunk without udr_resource yields a rated chunk without it", () => {

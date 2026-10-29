@@ -31,7 +31,6 @@ const STAMP_COLUMNS = [
   "ref_bill_format_id",
   "ref_bill_template_version_id",
   "ref_invoice_profile_version",
-  "ref_csv_template_version_id",
   // bm67 (0052) — the template family posting stamp is app-only as well.
   "ref_bill_template_family_id",
 ];

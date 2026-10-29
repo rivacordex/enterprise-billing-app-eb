@@ -5,6 +5,8 @@
 - **Authorizes from:** `_updatemodule-rating-udr-key-resource-plan.md` R5, R6 and §3 (RP); `ratemgmt-architecture.md` Inv 28; `ratemgmt-code-standards.md` §0.1; `ratemgmt-ai-workflow-rules.md` §0.1 rule 12 (RP is its own unit).
 - **Depends on:** rm26 (PRP emits `udr_resource` in the chunk). No other dependency.
 
+> **Reversed 2026-10-27 (Phase J, rm32 — `_change-rating-drop-udr-rated-geo-columns-plan.md` D1) — the `state`/`district` pass-through only.** `_GEO_COLUMNS` becomes `("udr_resource",)`, and the rm27 suite asserts the rated Parquet has `udr_resource` and no geo columns. Nothing about `udr_resource` changes: the pass-through mechanism and the `state|district|polygon_start_date` value this spec describes stand. Delivered text below is unchanged.
+
 ## Goal
 
 Make RP pass the chunk's `udr_resource` column through to its rated Parquet unchanged, so RL (rm28) can write it, without touching any pricing or resolution logic.

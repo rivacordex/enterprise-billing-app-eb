@@ -809,11 +809,16 @@ if ($LASTEXITCODE -ne 0) { throw "Invoice template seed failed" }
 Remove-Item Env:\BILLRUN_BLOB_CONNECTION_STRING
 ```
 
-The seed checks every file against the SHA-256 in migration `0046` before it
+It uploads two template versions (`BTV00000001`–`2`; bm88 retired the CSV
+row). The seed checks every file against the SHA-256 in migration `0046` before it
 uploads anything. Uploads are write-once and it is safe to re-run. It exits
 non-zero in two cases. `SEED_CHECKSUM_DRIFT` means the deployed repo files do
 not match the migration. `SEED_BLOB_CONFLICT` means a stored blob differs from
 the repo; the seed never overwrites it, so investigate before going further.
+
+Optional (bm88): the `invoice-templates/system/csv/v1/` blobs are orphaned once
+migration `0055` has run, and nothing references them. They are harmless;
+deleting them is an ops choice, not a required step.
 
 **Fresh rebuild — Invoice Template Phase 3 (bm64, D3/D26).** Phase 3 edits
 migration `0046` in place, and later Phase 3 units rewrite the seeded v1 files

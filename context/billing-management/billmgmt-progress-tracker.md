@@ -2,509 +2,31 @@
 
 Update this file after every meaningful implementation change.
 
-_Compacted 2026-10-25 (earlier passes 2026-10-12, 2026-10-07, 2026-10-04, 2026-09-16) — the
-Invoice Template Phase 3 per-unit narrative (bm64–bm73, incl. review-fix logs, test runs and the
-invariant audit) trimmed to durable facts + decisions. Full history:
-`git log -- context/billing-management/billmgmt-progress-tracker.md` (pre-compaction text at
-`5b5f746`); per-unit detail: `context/billing-management/specs/bm*.md`; defect detail:
-`billmgmt-known-issues.md`._
+_Compacted 2026-10-29 (earlier passes 2026-10-25, 2026-10-12, 2026-10-07, 2026-10-04, 2026-09-16)
+— the Invoice Template Types per-unit narrative (bm74–bm85, incl. review-fix logs, test runs, the
+criteria → evidence table and the Inv #59–#68 code ↔ test audit) and bm86–bm87 trimmed to durable
+facts + decisions. Full history: `git log -- context/billing-management/billmgmt-progress-tracker.md`
+(pre-compaction text at `8ac1d545`; Phase 3 narrative at `5b5f746`); per-unit detail:
+`context/billing-management/specs/bm*.md`; defect detail: `billmgmt-known-issues.md`._
 
-## Current state (2026-10-26)
+## Current state (2026-10-29)
 
-- **Invoice Template Phase 3 (bm64–bm73) COMPLETED — signed off at the bm73 ship gate (2026-10-18).**
-  Criteria 1–15 with evidence in `billmgmt-project-overview.md`; the manual run on the owner's data
-  (`BRN00000001`, `COMPLETED`) is signed off with a recorded gap (steps 3–5 rely on the automated
-  journey). The four defects found during that run and three review rounds are fixed and committed
-  (through `b20256f`, 2026-10-19). The draft preview timeout on large invoices is open
-  (known-issues §26). **Before Azure dev's first real bill run:** apply the `billrun_runtime`
-  column grant (`rated_amount`, `additional_info`) and redeploy `bill_run_processing` (new
-  `business_timezone` input).
-- **Invoice Template update (bm47–bm63) COMPLETED — signed off at the bm63 ship gate
-  (2026-10-11).** Overview success criteria 1–12 proven on a fresh database (journey 8/8) and
-  in the browser (admin e2e 5/5); unit suite 4378/0, integration 1219/0, `tsc`/ESLint/Prettier
-  clean. Every G-item is decided (G5, G8, G9, G14, G16). Part 2 is folded into
-  `billmgmt-project-overview.md`. **Before production:** the layout v2 unit (annex CSS + real
-  IBM Plex fonts) and the `appBlobAuth` flip at the cloud cutover.
-- **Target Capacity Pricing update (bm40–bm46) + bm42a delivered.** bm46's open items (2)
-  DB-gated capacity suites and (3) the 5 vitest failures are closed by later green runs (bm42a /
-  pm46a: integration 1165/0, unit 4077/0; bm63: integration 1219/0, unit 4378/0). **Still
-  open:** the live-Kestra capacity journey (TC54) has no harness.
-- **Phases 1–4 (bm01–bm39) delivered.** First full `SCHEDULED → COMPLETED` proven on real
-  infra (2026-09-17, `BRN00000001`, `ci` seed, Postgres + Kestra 1.3.35 + Azurite).
+- **bm88 COMPLETED (2026-10-29):** the bm62 invoice CSV is retired completely (see Standalone
+  units below). The PDF path is unchanged. The intended invoice CSV is the reporting extract
+  (`_newmodule-reporting-plan.md` Part D). Context docs' "bm88 (planned)" notes are flipped to built.
+- **Invoice Template Types update (bm74–bm85, with CM cm23–cm24) COMPLETED — ship gate bm85
+  (2026-10-26).** Full set green (integration 148/148 files, 1416/0). Folded into
+  `billmgmt-project-overview.md`. Summary under Delivered units below.
+- **bm86** (logo min side 96 px) and **bm87** (Workflow tab dot stepper) built 2026-10-26 /
+  2026-10-28.
+- **Earlier updates COMPLETED:** Invoice Template Phase 3 (bm64–bm73, 2026-10-19), Invoice Template
+  update (bm47–bm63, 2026-10-11), Target Capacity Pricing (bm40–bm46 + bm42a), Phases 1–4
+  (bm01–bm39; first real `SCHEDULED → COMPLETED` 2026-09-17).
 - **Taxation stays a no-op** (`tax_total = 0.00`), ratified as interim.
 - **Cloud cutover is a gated ops step, not code** (bm38 wiring, deploy flags off by default);
   order of ops: `infra/docs/db-role-verification.md` "Production cutover".
 - **wfm01** (`0b31f50`): `rating-engine/` → `workflow-management/`; flow paths are
   function-first (`flows/bill-run-processor/…`, `flows/bill-run-distributor/…`).
-- **Invoice Template Types update — delivered 2026-10-26** (bm74–bm85, with CM cm23–cm24;
-  `_updatemodule-billing-invoice-template-types-plan.md`; folded into `billmgmt-project-overview.md` by bm85), specs
-  written 2026-10-25; **bm74 built** (`d1fbb92`); **bm75 built** (`a2a74d3`); **bm76 built** (`d7bbca4`; code review fixes `1abf17c`, `2aaec90`); **bm77 built** (`e251953`; review fixes `fd1eb4e`); **bm78 built** (`6366487` fflate, `1f1c895`); **bm79 built**; **bm80 built**; **bm81 built**; **bm82 built** with **cm23** (one merge; `custmgmt-progress-tracker.md`): capture reads `billing_account.ref_bill_template_family_id`; **bm83 built**; **bm84 built**; **bm85 delivered** (the ship gate, with CM cm24; the manual pass is pending with the owner). No update is in flight. Parts 1 and 2 and Phase 3 are folded into
-  `billmgmt-project-overview.md`.
-
-## Invoice Template Types — DELIVERED 2026-10-26 (bm74–bm85; manual pass pending)
-
-Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00-build-plan.md` (Part 6, now the `74–85` numbering-record row).
-
-**bm77–bm79 Sonar duplication follow-up (2026-10-25):** test-side shared helpers —
-`tests/db/helpers/template-type-db-harness.ts` (fresh migrated + seeded DB lifecycle, blob cleanup,
-upload / settings-draft / type-with-layout / audit-row helpers; used by the upload, pair-activation and
-discard suites), `tests/helpers/list-source-files.ts` (guardrails 68 and 74), `fetch-stub-server.ts` and
-`externalFetchPackage` (both Chromium e2e suites), `in-memory-blob-store.ts` (load-layout-draft and the
-activation e2e), `cleanReport`/`cleanRender` in `layout-package.ts` (gate test), `action-guard.ts`
-(discard action test); the authz matrix's READ-refusal cases are one table. Production: the upload
-action uses the inline guard of its sibling actions instead of a copy of upload-logo's `guardEdit`. No
-behaviour change; the outside-diff `readZip` slicing comment was already fixed. Unit 4848/1 (pre-existing
-`ratecard-demo-seed-boundary`), template integration 95/0, Chromium e2e 27/0.
-  **Review fixes (xhigh review of the follow-up, 13 findings):** the harness's `afterAll` deleted the
-  suite's blobs even when `beforeAll`'s store guard had refused the target (Vitest runs `afterAll` after a
-  failed `beforeAll`) — the blob client is now built, and blobs deleted, only after both guards pass; the
-  harness returns one handle (`h.db`, `h.sql`, `h.upload`, `h.settingsDraft`, `h.createTypeWithLayout`
-  deriving the layout code, `h.auditRows`) and fills the suite's `@/db/client` holder itself; it reuses
-  `tests/e2e/helpers/fresh-database.ts`'s `dropAllSchemas`; no non-null assertion; explicit return types
-  (incl. `principal()`, no longer `never`). New `upload-layout-package.action.test.ts` 9/0 for the
-  refactored guard. The in-memory blob store throws an untyped error for a missing blob unless
-  `missingAs404` (so `load-layout-draft` cannot pass on a wrong path); the guardrail walker also reads
-  `.jsx`/`.mts`/`.cts`; readable `it.each` titles (discard, upload, authz matrix). Unit 4857/1 (pre-existing),
-  template integration 78/0, Chromium e2e 27/0.
-
-**bm77–bm79 code review fixes (2026-10-25):** xhigh review of bm77 → bm79 + the uncommitted bm78
-fix (15 findings); owner decisions on the draft preview and the upload message.
-
-- **Zip bomb (critical):** pass 2 pushed the whole zip to fflate in one call, which inflates a chunk in
-  full before `ondata` (and the sync decoder ignores `terminate()`): a 200 MiB lying entry inflated in
-  one 200 MiB chunk. Now pushed in 1 KiB steps, stopping at the cap (64 MiB bomb: ≤ cap + 2 MiB
-  inflated; mutation-checked). Pass 2 also refuses a local-header name the central directory did not
-  list.
-- **Deadlock:** save-draft took the kind advisory lock, then its INSERT's FK check waited on the type
-  row an upload held while that upload waited for the kind lock (40P01, reproduced). Save-draft now
-  locks the type row first, like every other DRAFT writer (Inv #66 order); deterministic two-connection
-  regression test.
-- **Draft preview (owner: form-driven + EDIT):** the form sends `draft: true` only for the working copy
-  of a draft; the preview action honours it only for `invoice_settings` EDIT; `resolveTemplate`'s
-  `preview-family` gains `draft` (the settings DRAFT and its layout, possibly an uploaded layout
-  DRAFT), so the sample AND the bill-source preview render the draft through one path;
-  `previewDraftLayoutSample` (the duplicated render-input builder and its two extra queries per
-  request) is deleted. READ users and versions opened from history preview the version in use.
-- **Upload message (owner: also toast):** "drafts changed" / "type retired" also raise a Warning toast
-  (survives the empty-state → heading remount; ui-context §10e amended); the dialog closes and drops its
-  file when a re-fetch reveals an open draft, so it never re-opens by itself; a new open starts clean.
-- **Discarded drafts** (RETIRED, never activated) count as drafts: EDIT-only to open, no View link for
-  READ, no file download (404, not a verification failure), and the Generated tab says so.
-- Install validates the settings structure it writes (Data rule 9) — a catalog with no valid footnote
-  is SERVER_ERROR, logged, nothing written. Discard refusals close the dialog and toast (Warning for
-  DRAFT_CONFLICT; the row may vanish on refresh). A refused activation's problems alert clears on a
-  newer server draft. The pre-gate version read no longer takes an autocommit advisory lock. The
-  discard token uses `DRAFT_TOKEN_RE` (spec said `min(1)`).
-- **Skipped:** reusing `resolveGeneratedForFamily` in install/activate — guardrail 57 allows only
-  capture and preview to import a live resolver.
-- Results: unit 4848 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); integration 166/0
-  (16 template suites + journey); Chromium e2e 27/0; admin browser e2e 5/0 after `next build`.
-
-**bm81 code review fixes (2026-10-26):** max review of the bm81 build (15 findings, 5 cleanups). The owner
-decided the design items; the rest were unambiguous.
-
-- **#1 (owner: plain conflict):** restored settings are written with `clock_timestamp()` (`repointDraftLayout`'s
-  `restore`, `insertDraft`'s `distinctToken`), so their token differs from the layout row's and a stale
-  editor gets `DRAFT_CONFLICT`, not bm80's `DRAFT_LAYOUT_REPLACED`. Plain uploads are unchanged.
-- **#2 (owner: carry the settings token):** the page passes the settings DRAFT token to the upload dialog,
-  which sends `expectedSettingsToken`. Install checks it under the lock when a restore would replace the
-  settings, and the re-point UPDATE is token-guarded; a mismatch is `DRAFT_CHANGED_SINCE_WARNING`, with nothing
-  written. Plain uploads ignore it.
-- **#3 (plan D127):** over an open DRAFT, a detected restore swaps the warning's "are kept" sentence for the
-  restore note (`OVERWRITE_WARNING(…, settingsReplaced)`), and the Info note then carries only
-  "Restored from v{n}".
-- **#4 (owner: extend the upload audit):** `INVOICE_TEMPLATE_LAYOUT_UPLOADED` gains `settingsBefore` /
-  `settingsAfter` on a restore. The edit-tab banner's "saved by" now reads the settings DRAFT's
-  `last_modified_by` (`findDraftWithModifier`; NULL → "an unknown user"); `findLatestDraftSaver` is removed
-  (its integration tests were replaced). This changes bm57's banner, per the owner's choice.
-- **#5/#9 (owner: own 64 KiB budget):** `LAYOUT_PACKAGE_SETTINGS_MAX_BYTES = 64 KiB` sits outside the
-  layout's entry and byte caps (stage 1, both passes), and `LAYOUT_PACKAGE_MAX_BYTES` gains the same
-  headroom. The schema bounds `exportedAt` (`datetime({ precision: 3 })`) and `exportedBy` (`max(255)`, the
-  user-name bound; 120 would refuse real names).
-- **#6 (owner: GET + guards):** the export route refuses `HEAD` (405) and a browser request whose
-  `Sec-Fetch-Site` is not same-origin or none (403), before any read or audit. This is recorded as a module
-  exception to platform rule §5.9 in code-standards › Invoice Template Types, Next.js rule 2.
-- **#14 (owner: EDIT only, update the overview):** the overview (goal 6, Export and restore, the permission
-  table) and plan D126 now say a DRAFT or discarded pair exports for EDIT.
-- **Unambiguous:**
-  - #7: a ref guards the restore-note read against superseded picks.
-  - #8: files over the upload limit are never read.
-  - #10: a BOM is kept (`TextDecoder` `ignoreBOM`), so the note matches the server.
-  - #11: the export reads settings, layout and type in one read-only REPEATABLE READ snapshot.
-  - #12: `SETTINGS_INVALID` no longer hides the manifest's own problems.
-  - #13: the history table decides `draftLike` once per row, with the defaulted `canViewDrafts`.
-  - #15: `LAYOUT_PACKAGE_FILES.settings` is the one name source, and the gate splits `settings.json` off
-    before stages 4–7.
-  - Cleanups: woff2 is stored at level 0; there are no redundant payload copies; a restore skips install's
-    base reads; the tests use the message constants.
-- **Out of scope, logged:** known-issues §31 covers the "Next layout version" display (pre-existing), the
-  opaque `INTERNAL` route logging, bm83's spec note, and the order-dependent bm58 suite (four older
-  suites leave `generated/INVOICE/STANDARD/` blobs; test-only, since bm79).
-- **Test results:** in the 20-suite template batch, everything except the bm58 activation suite passes
-  (175/0). The bm58 suite passes 15/0 on its own (twice) but fails 11 cases when it runs after those
-  suites (known-issues §31d).
-
-**bm81 notes (2026-10-25):**
-
-- Export: `exportTemplateVersion` (settings version → its layout + type) zips `loadLayoutForExport`'s verified
-  bytes (every file + `checksums.json`; DRAFT rows via `loadLayoutDraft`, `verifyVersionFiles`'
-  `includeIndex`) plus `settings.json` written through `templateExportSettingsSchema`, then audits
-  `INVOICE_TEMPLATE_EXPORTED` ("Additive") before returning. Route Handler on the `files/[file]` shape
-  (401/403/422/404/500 with no bytes). Version history gains an Export link per viewable row.
-- Restore: the gate allows the optional `settings.json` (`LAYOUT_PACKAGE_OPTIONAL_FILES`), skips it in
-  stage 2 (and refuses it when listed in `checksums.json`), and in stage 3 accepts it only when it parses
-  and its `layoutChecksum` is this package's index digest (`SETTINGS_INVALID` otherwise); a valid one
-  skips only the version comparison. Install never stores it as a blob, applies its `structure` on create
-  or in the re-point UPDATE (`repointDraftLayout` gains an optional `structure`), and audits
-  `restoredFrom`. The upload dialog reads the note client-side (only `settings.json`, ≤ 64 KiB).
-- **Review findings applied (owner, during the build):** (1) a discarded pair (RETIRED, never activated)
-  exports for EDIT only — what `isShowable` already does since the bm79 review; spec §Design and the
-  checklist amended. (2) The restore round trip previews with `draft: true` (bm79's preview path); spec
-  amended. (3) The suite uses the shared `template-type-db-harness.ts`; spec wording amended. Not done
-  here: the bm83 spec's note that the retired-type preview check also applies on the draft path (outside
-  bm81's boundary).
-- **Deviation 1 — `isShowable` / `isDraftLike` moved to `services/billing/invoice-template/version-visibility.ts`**
-  (behaviour unchanged), imported by the read service and the export service.
-- **Deviation 2 — guardrail-driven equivalents:** the route's `canEdit` uses `hasLevel(…, EDIT)` rather than
-  `meetsLevel` (guardrail 56 requires EDIT on a READ surface to be a `hasLevel` show/hide gate; same
-  result); the schema's `status` is `z.enum(CONFIG_STATUSES)` (the `TemplateVersionStatus` source, same
-  three values) instead of an inline enum that the status-literal sweep refused.
-- **Deviation 3 — small additions:** `LAYOUT_PACKAGE_FILES` is an object grouping the required, optional and
-  font rules; the audit's `fileCount` counts layout files only (not `settings.json`); bm78's gate and
-  upload tests that used `settings.json` as the "unexpected file" now use `notes.txt` (it is allowed now).
-
-**bm80 notes (2026-10-25):**
-
-- Upload over an open layout DRAFT: the FormData carries `expectedDraftVersionId` + `expectedDraftToken`
-  (both or neither); `matchExpectedDraft` (create / overwrite / stale) runs in the service without a lock and
-  again in install under the type lock on a `findDraftForUpdate` row; stage 3 expects the DRAFT's own
-  `version_no`. `overwriteLayoutDraft` changes only the files, checksum, page setup and `last_modified_*`,
-  guarded by kind, status and token; files land in a new `v<N>-<digest12>/` folder and the old ones stay.
-  The settings DRAFT is re-pointed as in bm78 (token bumped, structure kept). One
-  `INVOICE_TEMPLATE_LAYOUT_UPLOADED` with `replaced: true`, `beforeData` = previous `blobRef`/`checksum`/
-  `pageSetup`, `afterData.previousBlobRef`/`previousChecksum`.
-- Save draft: a stale token whose settings DRAFT token equals the layout DRAFT's is `DRAFT_LAYOUT_REPLACED`
-  with the current token; the form adopts it with no `reset`/`refresh`, shows the Warning alert and bumps
-  the preview. UI: `UploadLayoutDialog` is an `AlertDialog` with the exact warning (server data via
-  `findDraftWithModifier`, formatted with the app locale/timezone) and a danger "Overwrite draft"; bm78's
-  disabled trigger, its caption and `uploadDraftOpen` are gone.
-- **Deviation 1 — `matchExpectedDraft` is defined in `install-layout-package.ts`** and re-exported from
-  `upload-layout-package.ts`: defining it in the upload module made install import it back — the import
-  cycle bm79 Deviation 1 removed. Callers and tests import it from the upload module as specified.
-- **Deviation 2 — dialog behaviour on new server data:** when a refusal's re-fetch changes the open DRAFT
-  (appears, replaced, gone), the dialog stays open on the new data (warning or plain create form), keeps the
-  refusal message and drops the selected file — replacing bm78's review fix that closed it beside a
-  disabled trigger (that trigger no longer exists). bm78's two tests for it were rewritten accordingly.
-  The create path also toasts "Draft v{n} created" (bm78 had no success toast to reuse).
-- **Deviation 3 — small additions:** the form also clears the layout-replaced alert when it adopts a newer
-  server state (a Reload), not only on the next successful save; `ActivateTemplateErrorCode` excludes
-  `DRAFT_LAYOUT_REPLACED` (activation never returns it; the Activate message map is exhaustive); the
-  save-draft suite (DB-only, no Azurite) stands in for an upload by writing the layout DRAFT and the
-  re-point in one transaction through the repositories — the real upload's equal tokens are asserted in
-  the overwrite suite; the preview-after-overwrite case passes `draft: true` (bm79 review fix).
-- **Finding (resolved, owner decision) — a NULL author reads "an unknown user", as specified:**
-  `last_modified_by` is `ON DELETE SET NULL`, so a deleted uploader leaves NULL (layout DRAFTs are only
-  created by upload, which always records the writer) and the spec'd join-miss → "a deleted user" branch
-  can't occur. The owner kept "an unknown user" (`TEMPLATE_TYPE_MESSAGES.overwriteNoAuthor`) — accurate
-  in every NULL case, unlike "a deleted user" or "default seed"; the repository still returns `null`.
-
-**bm79 notes (2026-10-25):**
-
-- Activate promotes the PAIR: when the settings DRAFT points at a layout DRAFT, step 3 loads it through
-  `loadLayoutDraft` and re-runs `checkLayoutFiles` (both compliance tiers + the fetch check; a failure is
-  `LAYOUT_REJECTED` with its problems, nothing written). Step 8 locks the type, then the kind (the
-  install order), re-checks the token and the layout DRAFT's checksum, then retires the old layout →
-  promotes the layout (`promoteLayoutDraft`, files frozen) → retires the old settings → promotes the
-  settings; one `INVOICE_TEMPLATE_ACTIVATED` (`afterData.familyId` + `layout`, `beforeData.activeLayoutVersionId`).
-  A retired type is `TEMPLATE_TYPE_RETIRED` (early and under the lock). Generated blobs now go under
-  `generated/INVOICE/<type code>/v<n>-<digest12>/`; older rows keep their `blob_ref`.
-- Discard (`discard-template-draft.ts` + action): one transaction, type then kind lock, token check,
-  settings then layout DRAFT → RETIRED (`discardDraft`), one `INVOICE_TEMPLATE_DRAFT_DISCARDED`
-  ("Removal"; filter options 91). UI: `DiscardDraftDialog` (ghost trigger, danger confirm inside the
-  `AlertDialog`), `LayoutProblemsAlert` extracted from the upload dialog, the Activate summary's layout
-  line / "First version of this type.", page data `layoutChange`.
-- **Deviation 1 — `testRender` moved to `services/billing/invoice-template/test-render.ts`** (re-exported
-  by `activate-template.ts`): activation now imports the upload gate, which imported `testRender` from
-  activation — an import cycle. No behaviour change.
-- **Deviation 2 — the Chromium e2e is DB-free** (the bm78 gate e2e precedent): the layout DRAFT the gate
-  never saw comes from repository stand-ins and an in-memory blob store, not an SQL insert; the URL is
-  split by an empty `{{#if}}` block so stage 7, not the lint, refuses it. It also asserts no blob write
-  and no transaction.
-- **Deviation 3 — small UI/test additions:** a discarded (never-activated) row hides "Download .hbs" (it
-  has no files); the Discard dialog re-fetches on every `ok: false` (Next.js rule 4); the bm58 suite's
-  `render` stub throws if called (proves settings-only activation never re-runs compliance); bm78's
-  `cleanRender` moved to `tests/helpers/layout-package.ts` for reuse.
-- **Forced edits:** `activate-template.test.ts` mocks the gate module (its import chain needs the real
-  repositories); the status-literal allow-list gains `[typeId]/page.tsx` — its bm78 `"RETIRED"` gate was
-  already un-listed at HEAD — and Discard reuses that `canUpload` gate; the detail-page fixture gains
-  `layoutChange`.
-
-**bm78 notes (2026-10-25):**
-
-- **Review fix (2026-10-25):** `UploadLayoutDialog` now calls `router.refresh()` on every `ok: false`
-  (Next.js rule 4), keeping each code's message / problem list; when the re-fetch reveals an open layout
-  DRAFT (the Dialog unmounts), the disabled-trigger branch still shows the message (e.g.
-  `uploadDraftChanged`). New `upload-layout-dialog.test.tsx` 6/0. Sonar S5852 (bm77
-  `template-types.ts`): the `_` trims (`/^_+|_+$/g`, `/_+$/` ×2) replaced by linear loops, same output
-  (20,000 random strings; a 50,000-`_` run: ~706 ms → 0.1 ms).
-
-- Gate (`upload-layout-package.ts`): stage 1 reads the zip in memory in two passes (central directory
-  via `unzipSync` filter → nothing inflated; then a streamed `Unzip` + `UnzipInflate` with a running
-  2 MiB cap and a per-entry allow-list re-check); stages 2–3 blocking, 4–7 collecting. Install
-  (`install-layout-package.ts`) writes blobs write-once under `layouts/<code>/v<n>-<digest12>/`, then
-  one transaction (`lockTemplateType` + the generated kind lock, re-checks, layout DRAFT, settings
-  DRAFT re-pointed or created, `INVOICE_TEMPLATE_LAYOUT_UPLOADED`). `loadLayoutDraft` is the only
-  DRAFT loader. `checksum-index.ts` holds the moved helpers (no behaviour change).
-- **Deviation 1 — stage 7 reads both probe renders** (Payment on and off; the bm75–76 review fix),
-  so a clean gate run is two Chromium launches, blocked URLs merged — not the spec's one.
-- **Deviation 2 — `LAYOUT_PACKAGE_REQUIRED_FILES`** is built from `["header", ...INVOICE_SECTION_KEYS]`
-  in `types/billing.ts` (importing `LAYOUT_PART_KEYS` would be a runtime cycle); a gate test pins it
-  to `LAYOUT_PART_KEYS`.
-- **Deviation 3 — a READ user with only a settings DRAFT** (uploaded, not activated) still sees the
-  empty state (drafts stay hidden from READ); EDIT users get the tabs on the draft. Page data gains
-  an explicit `empty` discriminator and `openLayoutDraft`.
-- **Deviation 4 — lockfile:** `npm install` also normalised unrelated lock entries (`@emnapi/*`,
-  `peer` flags); the lock was restored and only the fflate entries added, so the dependency diff is
-  8 lines.
-- Forced edits: the authz matrix's Generated-tab source check (`current ?? data.shown`), the preview
-  action test's repository mock (`findDraft`), bm77's page/read test fixtures.
-- **Finding (open, bm76 lint):** `url(http{{#if company}}{{/if}}://…)` passes the raw-text lint and
-  renders as an external URL. Stage 7 refuses it (`LAYOUT_EXTERNAL_FETCH`, no request leaves —
-  e2e-proven), so it is not exploitable, but the lint is weaker than it reads.
-
-**bm77 notes (2026-10-25):**
-
-- The type comes from the URL everywhere: `getInvoiceTemplatePageData(typeId, versionId, { canEdit })`
-  (`findById`; unknown → `null` → `notFound()`; a type with no settings → `current: null`, the
-  empty state, never a throw), `saveTemplateDraft` / `activateTemplate` take `familyId` (an unknown
-  type, or a draft of another type, is `DRAFT_CONFLICT`). No family `findDefault` call remains in
-  production code. `nextVersionNo` requires `familyId` for layout/generated (per-type `max + 1`);
-  CSV keeps the per-format max. Every settings-DRAFT write sets `last_modified_by` (D128).
-- Create type: `services/billing/invoice-template/template-types.ts` (normalize → validate →
-  case/space-insensitive taken check, retired included → derived code with `_2`… suffix, up to 5
-  attempts on a lost race → row + `INVOICE_TEMPLATE_TYPE_CREATED` in one transaction; no version rows).
-  `listUsable` ships for cm23/bm83. Grant: `app_runtime` SELECT/INSERT/UPDATE + sequence USAGE,
-  DELETE revoked.
-- **Deviation 1 — the page tests are new, not moved.** The spec says today's page tests move to the
-  `[typeId]` test; there were none (only source checks in the authz matrix, which now read the
-  detail page). `invoice-template-types-page.test.tsx` and `invoice-template-type-detail-page.test.tsx`
-  are written from scratch (6 + 6 cases).
-- **Deviation 2 — forced edits outside the spec's list:** the grants guardrail (it pinned SELECT
-  only); the save/activate action unit tests and the structure-form test (exact call shapes, plus
-  new missing/malformed `familyId` cases); the route manifest (`[typeId]`); the status-literal
-  allow-list (guardrail 30: the type status's `RETIRED`); the template journey's action calls (the
-  actions take `unknown`, so `tsc` cannot see a missing `familyId`); the opt-in admin browser e2e
-  (its editor steps go to Standard's detail page; heading text). And one bm76 follow-up: the
-  `grep-gates` money gate bans `parseFloat(` anywhere outside `money.ts`, and the visible-tier
-  reader used it on CSS values — now `Number(…)`.
-- **Deviation 3 — UI details:** there is no shadcn `Table` in this repo, so `TemplateTypeList` reuses
-  `VersionHistoryTable`'s Administration table markup; it takes `locale`/`timezone` props for
-  `formatDatetime`. "Danger `-fg`" is `--color-danger-700` (the ui-context foreground column).
-- **Review fix (2026-10-25):** `CreateTemplateTypeDialog` calls `router.refresh()` on every
-  `ok: false` (Next.js rule 4), keeping the dialog and its error up; new
-  `create-template-type-dialog.test.tsx` 5/0.
-- **Follow-up (SonarQube duplication):** `[typeId]/error.tsx` re-exports the list
-  route's `error.tsx`; both `loading.tsx` files render the shared
-  `InvoiceTemplateLoadingSkeleton` with their own caption; the authz matrix reads the detail page
-  through one `TYPE_DETAIL_PAGE` constant; the three bm77 status-literal allow-list entries are built
-  by one `templateTypeStatus` helper. `next build` green; admin browser e2e 5/0.
-- Not done here (by design): the Upload button (bm78), the "Bound BANs" column (bm82 with cm23),
-  per-type generated blob paths (bm79).
-
-**bm75–76 code review fixes (2026-10-25):** owner decisions: re-port the editor's CURRENT hardening;
-a compliance-only probe.
-
-- **Visible tier:** the section is `section.sec.sec--<key>` and must appear exactly once (both tiers);
-  a value is legible only if one text node holding it is rendered (client rects + `checkVisibility`),
-  its effective opacity (product to the root) is ≥ 0.1 and its own computed font size ≥ 6px; matching
-  is case-insensitive (`text-transform`); both probe renders (Payment on and off) are read
-  (`staticComplianceProblems(...).renders`; `visibleComplianceProblems` takes one or both). The page
-  code is a plain string in one `page.evaluate` (no tsx `__name`). `VisibleSectionReport` gains
-  `count`. A value split across text nodes is reported illegible (conservative); off-screen
-  positioning, same colour and clipping stay undetected (accepted).
-- **Static tier:** renders `COMPLIANCE_PROBE` (PROBE_RENDER_INPUT with every money total distinct from
-  the amount due 3.04; PROBE_RENDER_INPUT, the load probe and the golden unchanged); the footer is
-  compiled and executed too; sections are cut at the MATCHING `</section>` (nested sections).
-- **Hardening:** `attributeNames`, `decodeCssEscapes`, `withoutMustaches` and `hardeningHits` re-ported
-  from the editor's current `gates.ts`, plus one app-side addition: Handlebars-only hits that appear
-  only after entity decoding are ignored (an encoded brace is text). One line per distinct lint
-  message.
-- **Sonar S5852:** `EXTERNAL_URL`, the external-URL attribute rule and the tag strip rewritten to
-  linear forms with the same matches (20k-char adversarial input: ~115 ms → 0 ms each); the section
-  opener now finds `<section…>` tags linearly and tests the class on the tag.
-- **Guardrail 74:** any engine, `launch*`/`connect*`, bracket access, any `.newContext(`/`.newPage(`,
-  and `.js`/`.mjs`/`.cjs` files.
-- **bm75 render e2e:** the Standard v1 case now counts the PDF's own pages, plain vs hardened (3 = 3).
-- **Follow-up (2026-10-25, `2aaec90`):** Sonar S5852 second scan — the re-ported mustache strip
-  `/\{\{[\s\S]*?\}\}/g` (in `attributeNames`, `withoutMustaches`) replaced by a linear
-  `replaceMustaches` scan with identical output (edge cases + 2,000 random strings; 20k unclosed
-  `{{`: 180 ms → 0 ms). Review comment on `INVTPL-BASIC-A4/v1/shell.hbs`: the render e2e now renders
-  BASIC to real draft and final PDFs through the hardened page (final 3 pages; draft 900 rows > 10
-  pages under the fixed watermark; `.sec--half` side by side, `.sec` margin, full-width `table`,
-  `thead` `table-header-group`, `tr` `break-inside: avoid`, each detail/Total page `break-before`).
-- **Spec drift:** bm76 spec §2 (signatures, `html` only) and §Hardening line refs are superseded by the
-  above. **Cross-repo (editor E7):** snapshot this `compliance.ts`; the editor's own `gates.ts` still
-  has the escaped-brace false positive and the super-linear lint regexes until then.
-
-**bm76 notes (2026-10-25):**
-
-- `compliance.ts` holds the lint (moved verbatim from the lint test), `PROBE_RENDER_INPUT` +
-  `deepFreeze` (moved verbatim from `load.ts`, which re-exports it), the editor's hardening and
-  entity decoder (ported verbatim, plus its `LINT_REASONS`/`lintReason` messages), the new
-  typed-supplier rule, `lintLayoutTemplates`, and both compliance tiers. Static required-value
-  matching collapses whitespace on both sides (the `money` output may carry an NBSP).
-- **Deviation 1 — entity table size.** The spec says the editor's `NAMED_ENTITIES` has 46 entries;
-  the editor file has 28. Ported verbatim (28).
-- **Deviation 2 — the `&#104;ttps://` hardening case.** The editor's `hardeningHits`, ported
-  verbatim, reports only what the plain lint misses, and that snippet still carries a raw `//`
-  the plain lint already refuses, so `hardeningHits` alone returns `[]`. All four spec cases are
-  asserted through `lintLayoutTemplates` (guardrail 73: "rejected by `compliance.ts`"), plus a
-  separate `hardeningHits` set where the plain lint is blind (`&#104;ttps&#58;&#47;&#47;…`, the CSS
-  escape, `image-set()`, `onclick`).
-- `INVTPL-BASIC-A4/v1`: no catalog row, not in `SEEDED_TEMPLATE_VERSION_IDS`, no `fonts/`; seed
-  checksum and seed-upload suites unchanged and green. The negative "taxSummary deleted" fixture
-  empties the partial (the loader needs every file).
-- Editor counterpart (E7 snapshot of `compliance.ts`, E8 BASIC source) is the editor repo's work.
-
-**bm75 notes (2026-10-25):**
-
-- `withHardenedPage(html, inPage)` as specified: one launch per render inside the unchanged T9
-  semaphore, `newContext({ javaScriptEnabled: false, offline: true })`, `page.route("**/*")`
-  continuing only `data:`/`about:`, the unchanged bounded close. `renderPdfFromHtml` calls it and
-  logs `INVOICE_RENDER_BLOCKED_FETCH` (both version ids, count, first 5 URLs); never throws on it.
-- **Deviation — parameter name.** The spec's second parameter `use` trips ESLint
-  `react-hooks/rules-of-hooks` (it reads as React's `use()`), so it is `inPage`; positional, so
-  the call shape for bm76/bm78 is unchanged.
-- The e2e's existing three cases keep their own `chromium.launch()` (spec: "kept as is"); the
-  guardrail scans only production dirs. The Standard v1 page count (1) was measured with the old
-  plain-page renderer before the hardened case was pinned to it.
-
-**bm74 notes (2026-10-25):**
-
-- `0053` exactly as the spec's SQL; journal `idx 53`; mirrors gain `layoutCode` (NOT NULL) and
-  `lastModifiedBy`; comment-only edits in `bill-template-version.ts` and `activate-template.ts`.
-- **Deviation 1 — fixtures the spec said would pass unchanged.** Five second-family fixtures
-  (`run-template-capture` ×2, `draft-uses-run-stamps`, `posting-skips-null-template`, the template
-  journey) inserted a family with no `layout_code`, a hyphenated code (`BM65-EMPTY`, refused by
-  `btf_code_format`) and a generated row on Standard's layout (refused by
-  `btv_pair_same_type_fk`). New helper `tests/db/helpers/template-type-fixtures.ts`
-  (`insertTemplateTypeFixture`) inserts the type with its own ACTIVE layout v1 (a copy of Standard
-  v1's files) and the generated rows point at it; codes now use `_`.
-- **Deviation 2 — more forced test edits:** two family-insert fixtures in the catalog suite gain
-  `layout_code`; the unit mocks in `resolve-template.test.ts` and `invoice-template-settings.test.ts`
-  gain `layoutCode` (tsc); `billing-schema.test.ts` has no version column-set test, so
-  `last_modified_by` (and `layout_code` NOT NULL) got their own column assertions.
-- The precondition case runs on the same disposable DB reset to `0052` (schemas dropped, trimmed
-  journal), not a separate database; drizzle wraps the driver error, so it reads `err.cause`.
-
-| Unit | What | Status |
-| --- | --- | --- |
-| bm74 | Type-scoped template catalog in the DB (migration `0053`, two Drizzle mirrors) | **Built** (2026-10-25, `d1fbb92`) — tsc/ESLint/Prettier clean; integration 124/0 on the disposable `ebill-test` DB (new types-catalog suite incl. precondition abort + the full §5 matrix; catalog, activate, save-draft, capture, seed-upload, migration, draft-stamps, posting-skip, template journey); unit 4564 passed, 1 failed (`ratecard-demo-seed-boundary`, pre-existing since `771d39b`, unrelated) + 8 files fail to load without an env file |
-| bm75 | Network-blocked, script-free Chromium rendering (`withHardenedPage`, guardrail 74 draft/final half) | **Built** (2026-10-25, `a2a74d3`) — tsc/ESLint/Prettier clean; `render-invoice.service` 15/0 (4 spec cases + a final-render blocked-fetch case); guardrail `chromium-single-factory` 2/0, mutation-checked (a scratch `chromium.launch()` under `services/` fails it); Chromium e2e 7/0 (`RUN_CHROMIUM_E2E=1`: zero stub-server hits, 4 URLs blocked, script not run, data: allowed, Standard v1 1 page as before, no blocked URL); unchanged: golden, `post-run.service`, `draft-invoice-route` (87/0 with the above) and the template journey 19/19 on the disposable DB |
-| bm76 | Layout rules module `compliance.ts` (static + visible tiers) and the `INVTPL-BASIC-A4` reference package | **Built** (2026-10-25, `d7bbca4`) — tsc/ESLint/Prettier clean; lint guardrail 55/0 (22 `.hbs` incl. BASIC, hardening + typed-supplier cases); static compliance guardrail 16/0 (both packages clean, BASIC checksums match, 5 negative fixtures, import scan); visible e2e 7/0 (`RUN_CHROMIUM_E2E=1`: both packages clean, all 5 hiding tricks pass static and fail visible); template + golden + seed-checksum + guardrail unit suites 564 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload integration 17/0 on the disposable DB. **PR note: "editor contract refresh needed"** (E7/E8) |
-| bm75–76 code review fixes | xhigh review of `a2a74d3`+`d7bbca4` (15 findings) + Sonar S5852 (3 regexes) | **Built** (2026-10-25, `1abf17c`) — tsc/ESLint/Prettier clean; lint guardrail 62/0; static compliance 24/0; visible e2e 14/0 and render e2e 7/0 (`RUN_CHROMIUM_E2E=1`); guardrail 74 2/0, mutation-checked against 5 bypasses (all passed the old pattern); billing + guardrail unit suites 1134 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); activate + seed-upload + template journey 36/0 on the disposable DB |
-| bm77 | Invoice template type list, create type, per-type detail page (`[typeId]`), `app_runtime` grant | **Built** (2026-10-25, `e251953`) — tsc/ESLint/Prettier clean; unit 4735 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) — incl. new template-types 9/0, list page 6/0, detail page 6/0, read service 13/0, authz matrix + nav guard + audit filters 39/0; integration on the disposable DB: 22 template/grant/invoice suites 250+/0 incl. new create-type 10/0, save-draft + activate 31/0, template journey 19/0; admin browser e2e 5/0 after a fresh `next build` (`RUN_INVOICE_SETTINGS_E2E=1`; the first run had one company-profile `waitFor` timeout, passed on rerun) |
-| bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`, draft-layout preview) | **Built** (2026-10-25, `6366487` fflate, `1f1c895`) — tsc/ESLint/Prettier clean; unit 4797 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new gate 35/0, load-layout-draft 14/0, single-layout-writer 5/0 (mutation-checked), authz matrix 32/0; integration on the disposable DB 83/0 incl. new upload 9/0, preview 2/0, capture +1 DRAFT-only case; Chromium e2e 26/0 incl. new upload gate 3/0 |
-| bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4829 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new discard action 15/0, Discard + discarded-row component cases, pair form cases 5/0, authz matrix + discard READ refusal; integration on the disposable DB 163/0 across 16 template suites incl. new pair activation 8/0 (guardrail 71 activation half, interleaved upload, compliance re-run, retired type, frozen files, Standard untouched), new discard 6/0, bm58 activate suite on the `STANDARD/` path, template journey; Chromium e2e 27/0 incl. new activation re-run 1/0; admin browser e2e 5/0 after a fresh `next build` |
-| bm80 | Overwrite an open layout draft by upload, with the warning (`overwriteLayoutDraft`, `DRAFT_LAYOUT_REPLACED`) | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4877 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 46/0 (`matchExpectedDraft` table + stage 3 at the DRAFT's number), upload dialog 12/0, structure form 54/0, upload + save-draft actions, read service 14/0, single-layout-writer (`overwriteLayoutDraft` added); integration on the disposable DB 179/0 across 19 template suites incl. new overwrite 7/0 (in place, stale warning, same bytes, stale Activate, activated meanwhile, two guardrail-71 races), upload +1 overwrite case, preview +1 (guardrail 70), save-draft +2 (`DRAFT_LAYOUT_REPLACED` / `DRAFT_CONFLICT`). Chromium and admin browser e2e not re-run (no gate, render or route change) |
-| bm81 | Export a version pair and restore it by upload (export Route Handler, `settings.json` schema, restore path) | **Built** (2026-10-25) — tsc/ESLint/Prettier clean; unit 4907 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 52/0 (6 restore cases), load-layout-draft 19/0 (`loadLayoutForExport`), new export route 9/0, upload dialog 19/0 (restore note, 64 KiB cap), Version history Export 27/0, authz matrix + export row, status-literal sweep, audit filters 92; integration on the disposable DB 191/0 across 20 template suites incl. new export/restore 12/0 (byte identity for ACTIVE, Standard v1, DRAFT (EDIT only) and RETIRED pairs; tamper; four refusals writing nothing; fresh-environment round trip with equal preview HTML; restore over an open DRAFT). Chromium and admin browser e2e not re-run (no render or compliance change) |
-| bm81 code review fixes | max review of bm81 (15 findings + 5 cleanups; owner decisions on #1, #2, #4, #5/#9, #6, #14) | **Built** (2026-10-26) — tsc/ESLint/Prettier clean; unit 4925 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. gate 58/0 (settings budget, #12, #15), upload dialog 23/0 (D127 wording, race, size, BOM, settings token), export route 15/0 (HEAD 405, cross-site 403), action, read service; integration on the disposable DB: 19 template suites 175/0, bm58 activation 15/0 on its own (order-dependent in a batch, known-issues §31d), incl. export/restore 12/0 with the restore-over-draft case covering #1, #2 and #4 (mutation-checked: #1 fails with `now()`) |
-| bm82 | Bill run captures the BAN's template type (`listBanFamilies` on `ref_bill_template_family_id`, Bound BANs column). One merge with cm23 | **Built** (2026-10-26) — tsc/ESLint/Prettier clean; unit (guardrails, invoice-settings components, billing services, app) 1719 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. CM guardrail 11 green (`listBanFamilies` names the type column, the old column gone everywhere); integration on the disposable DB 77/0 across 13 suites: capture 7 cases (retired / empty / DRAFT-only types → NULL version, approval blocked by `template_versions_captured`; new Wholesale case: bound via cm23's `setBillingAccountTemplate`, stamped Wholesale v1, draft HTML on `INVTPL-WHOLESALE`, NULL BAN on Standard), bm77 type list Bound BANs (NULL and closed BANs counted), posting-skips, draft-uses-run-stamps, template journey, trigger-run, cm23 bind/journey/column/`0054`, customer-bill-stamps, default-resolution, version-pinning |
-| bm83 | Retire a type with a bulk switch (`retireTemplateType`, `RetireTemplateTypeDialog`, retired read-only detail page, `TEMPLATE_TYPE_RETIRED` on save and preview) | **Built** (2026-10-26) — tsc/ESLint/Prettier clean; unit 5021 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new retire + list-bound-bans actions 24/0, new `RetireTemplateTypeDialog` 14/0, detail page 12/0 (retired: Info line, no Upload/Save/Activate/Discard/Retire, read-only form, `canEdit: false`, Export kept), read service 21/0, preview action +4 (both sources × `draft`), save action +1, structure form +1, preview frame +1, guardrails (CM boundary test 5 writer pin, phase-3 check 4 pin, authz matrix +2 rows), audit filters 93; integration on the disposable DB: new retire suite 11/0 (guardrail 77: open + closed BANs → NULL, D4 audit payload, type audit, row-by-row version compare, party_role untouched, retire to Retail, every refusal writes nothing, 1,201 BANs → 500/500/201, rollback on a BAN bound before the re-count, every refusal after retire; guardrail 76: bind first, retire first, opposite retires held and free, save racing retire both ways, zero BANs on a retired type after every case); save-draft 19/0 (+1 retired case); template/bind regression 20 suites 152/0, plus the bm74 catalog suite 29/0 after its migration-count fix (see notes) |
-| bm84 | Rerun warns when a BAN's type changed since run start (`selectRerunEligible`, `listRerunTemplateChanges`, `RerunDialog` Warning callout) | **Built** (2026-10-26) — the overview's **Rerun warning** is built. tsc/ESLint/Prettier clean; unit 5046 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. new read service 4/0 (eligible-only, changed → both names, unchanged/NULL stamp → none, retired source named, sorted, NULL current → "—"), new action 8/0 (guard first, Zod, default `[]`, SERVER_ERROR), rerun service 21/0 (+`selectRerunEligible` cases and the `accountCount` parity check), `RerunDialog` 11/0 (+5: one read on open, Warning callout with mono id and from → to, "and {n} more" above 10, none on no change/failure/rejection, Confirm stays enabled), CM boundary guardrail unchanged and green; integration on the disposable DB: new rerun-template-change 3/0 (A stamped Wholesale, B Standard; retire Wholesale → exactly `[A: Wholesale → Standard]`; rerun of A re-stamps Standard's family and current version and its draft renders on `INVTPL-STD-A4`; then `[]`), plus run-template-capture, trigger-run, retire, draft-uses-run-stamps and the phase-3 journey green |
-| bm83–84 code review fixes | xhigh review of bm83–bm84 (the inline Retire-dialog comment + 10 findings; owner decisions on #3, #4, #5, #9) | **Built** (2026-10-26) — tsc/ESLint/Prettier clean; unit 5050 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`) incl. Retire dialog 19/0, detail page 11/0, read service, rerun-warning action 9/0, authz matrix 36/0, status-literal sweep; integration on the disposable DB 8 suites 99/0 (retire, rerun-template-change, discard, export/restore, create, capture, save-draft, bm74 catalog) |
-| bm85 | Invoice Template Types ship gate (journey steps 1–8, suites, invariant audit, doc fold). Joint with CM cm24 | **Built** (2026-10-26), with cm24; **manual pass pending** (owner) — tsc/ESLint clean; unit 5050 passed, 1 failed (pre-existing `ratecard-demo-seed-boundary`); integration 146/148 files in the full batch (1403 passed; bm58 order-dependent, passes alone; the audit-repository pin fixed, then 3/0); new Types journey 9/0; Chromium e2e 27/0; admin browser e2e 5/0 after a fresh `next build`; `invoice-editor` 147/0 (contract unchanged since its snapshot) |
-
-**bm85 + cm24 ship gate (2026-10-26):** nothing new built; tests, docs and the tracker only, joint with CM cm24 (`custmgmt-progress-tracker.md`).
-
-- **Suites:**
-  - typecheck clean; `npm run lint` (ESLint over the repo) clean; Prettier clean on every changed file.
-  - Unit: 5050 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`), 27 skipped; every guardrail file in `tests/guardrails/` green, including items 68–79, the checksum items, the route-handler inventory and CM guardrails 11–13.
-  - Integration on the disposable DB + Azurite: 146 of 148 files passed in the full batch (1403 passed). The two failures: `tests/db/activate-template.integration.test.ts` (bm58, order-dependent in a full batch, known-issues §31d; passes alone, 15/0) and `tests/db/audit-repository.integration.test.ts` (a gate finding, fixed below; then 3/0).
-  - Chromium e2e (`RUN_CHROMIUM_E2E=1`): 4 files 27/0 (render, upload gate, activation, visible compliance).
-  - Admin browser e2e after a fresh `next build`: 5/0.
-  - `invoice-editor`: 10 files 147/0, incl. the contract-drift test. Since the snapshot's source commit (recorded in its `contract/CONTRACT.json`), `compliance.ts`, `generate.ts`, `compile.ts`, `helpers.ts`, `layout-manifest.schema.ts` and `layout-page-setup.schema.ts` are unchanged since, so no editor contract refresh is due.
-- **Journey (new block "bm85 + cm24" in `tests/e2e/invoice-template-journey.integration.test.ts`): 9/0**, steps 1–8 plus cm24's step-4 checks, on a fresh `db:setup` + `ci` database. Built with bm78's `tests/helpers/layout-package.ts`, which gains a `baseDir` option (`STANDARD_PACKAGE_DIR`) for the Standard v2 export. Step 8 creates a second database on the throwaway server, marks it disposable (`markDatabaseDisposable`), builds it with the harness's `freshTemplateDatabase`, and points the services at it through a switchable `@/db/client` mock (pass-through for the other journeys).
-- **Gate finding (fixed, test-only):** `tests/db/audit-repository.integration.test.ts` pinned the audit repository's exports to `insertAuditEvent`; bm83 added `insertAuditEvents` (insert-only). The pin lists both, plus a multi-row / empty-list case.
-- **Manual run (bm85 §3): PENDING with the owner.** Export `INVTPL-WHOLESALE` v1 from the real editor; run steps 1–3 and step 9 in two browser sessions (MANAGER, RevOps) on the local Postgres + Azurite stack; record the type id, run id, the zip's sha256, the overwrite warning text as shown, and the stale-Activate result.
-- **Journey deviations:** (1) every step runs as the bootstrap admin (it holds `invoice_settings`, `customers` and `accounts_transactions` EDIT); the approver is a second user, as in the earlier journeys. (2) Step 7's "new run" is a fixture run: the `ci` seed has one due period, so the `ci` BANs (all NULL by then) and a fresh fixture BAN are captured with the real `captureTemplateStamps` on it, and the fixture BAN's trial bill is rendered. (3) Step 8 compares the restored DRAFT's preview (`draft: true`) with the ACTIVE pair's preview taken in step 1, because a retired type has no live preview (bm83); the second database gets the first one's `app` system-config rows so the locale is the same.
-
-**bm85 success criteria → evidence:**
-
-| # | Criterion | Evidence |
-|---|---|---|
-| 1 | New type to live invoice | Types journey steps 1–3 and 6; `upload-layout-package`, `activate-template-pair`, `run-template-capture` (Wholesale case) integration suites |
-| 2 | New version of an existing type | Types journey step 7 (Standard v2 from a fixture export: Standard v1's files re-versioned and marked, the marker rendered for every NULL `ci` BAN and a fixture BAN; v1 rows byte-identical; no BAN row changes); `invoice-template-v1-pin.test.ts` green |
-| 3 | Overwrite with warning | `overwrite-layout-draft.integration.test.ts`; journey step 9 (manual, **pending**) |
-| 4 | Bad packages rejected, nothing written | `upload-layout-gate.test.ts`, the no-write cases in `upload-layout-package.integration.test.ts` (guardrail 69); `invoice-layout-compliance.test.ts`, `compliance-visible.e2e.test.ts` (guardrails 72, 73) |
-| 5 | Drafts never reach a bill | `load-layout-draft.test.ts` and the capture DRAFT case (guardrail 70); the stale-preview cases in `activate-template-pair` and `overwrite-layout-draft` (guardrail 71) |
-| 6 | Rendering network-blocked | `upload-gate-chromium.e2e.test.ts`, `invoice-render-chromium.e2e.test.ts`, `activate-template-chromium.e2e.test.ts` (guardrail 74); the Standard v1 golden unchanged |
-| 7 | Export and restore round trip | `export-restore-template.integration.test.ts` (guardrail 78); Types journey step 8 (a second fresh database: byte-identical files, same settings, DRAFT v1, equal preview HTML) |
-| 8 | Binding and retire race-safe | `retire-template-type.integration.test.ts` race cases (guardrail 76); cm23's bind-gate lock tests |
-| 9 | Migrations on a populated DB | `invoice-template-types-catalog.integration.test.ts` (guardrail 75); `billing-account-template-type-migration.integration.test.ts` (cm23) |
-| 10 | Access holds | `invoice-settings-authz-matrix.test.ts` (every new action and route); CM's authz rows |
-| 11 | The editor and the app agree | `invoice-editor`: 147/0 incl. contract-drift, no contract file changed since the snapshot's source commit (in `contract/CONTRACT.json`); the automated Types journey passed on fixture exports. Uploading a real editor export (the manual pass) is **pending**, so this criterion is not yet fully verified |
-
-**bm85 invariant audit (every cite opened in the current tree):**
-
-| Inv | Rule | Code | Test(s) |
-|---|---|---|---|
-| #59 | Layouts enter only by upload, one writer | `install-layout-package.ts:81` (`installLayoutPackage`); `bill-template-version.ts:367` (`overwriteLayoutDraft`, called only by install) | `single-layout-writer.test.ts` (guardrail 68); `upload-layout-package` and `overwrite-layout-draft` integration |
-| #60 | The whole gate before any write | `upload-layout-package.ts:138` (`readZip`, no inflate before the central-directory checks), `:586` (`checkLayoutPackage`), `:617` (install only after `gate.ok`) | `upload-layout-gate.test.ts` (guardrail 69); `upload-layout-package.integration.test.ts`; `upload-gate-chromium.e2e.test.ts` |
-| #61 | A DRAFT never reaches a bill | `load.ts:99` (`assertLoadable`), `load.ts:267` (`loadLayoutDraft`, not memoized) | `load-layout-draft.test.ts` (guardrail 70); capture DRAFT case; `activate-template-pair` |
-| #62 | Activate promotes only what was previewed | `bill-template-version.ts:415` (`repointDraftLayout` bumps the token); `activate-template.ts:288` (token) and `:324` (checksum) under lock; `install-layout-package.ts:161` (`matchExpectedDraft`) | `activate-template-pair` and `overwrite-layout-draft` (guardrail 71); `upload-layout-package` re-point case |
-| #63 | Visible required values; rules in one file | `compliance.ts:797` (static), `:908` (visible); callers `upload-layout-package.ts:539/:562`, `activate-template.ts:205` | `invoice-layout-compliance.test.ts` (72), `compliance-visible.e2e.test.ts`, `invoice-layout-lint.test.ts` (73), `activate-template-pair` LAYOUT_REJECTED |
-| #64 | Network blocked, no script | `render-invoice.ts:117` (`withHardenedPage`, :125–126, `route` at :130); `upload-layout-package.ts:575` (`LAYOUT_EXTERNAL_FETCH`); `invoice-preview-frame.tsx:101` (`sandbox=""`) | `chromium-single-factory.test.ts` (74); `render-invoice.service.test.ts`; `invoice-render-chromium.e2e.test.ts`; `upload-gate-chromium.e2e.test.ts` |
-| #65 | Type identity frozen; one type per version | `0053_invoice_template_types.sql:132` (guard), `:102`/`:107` (composite FKs), `:35`/`:32` (name index, spacing CHECK) | `invoice-template-types-catalog.integration.test.ts` (guardrail 75) |
-| #66 | Bind and retire serialised; a retired type has no BANs | `bill-template-family.ts:36` (`lockTemplateType`); `assert-bindable-template.ts:14` (FOR SHARE); `template-types.ts:223` (`retireTemplateType`: ascending ids :232, switch :272, re-count :309) | `retire-template-type.integration.test.ts` (guardrail 76); `customer-accounts-binding-boundaries.test.ts`; `phase3-boundaries.test.ts`; Types journey steps 4–5 |
-| #67 | Retire changes only the type row; one-way | `bill-template-family.ts:112` (`retireType`); `0053:141` (guard allows only NULL → value); refusals `save-template-draft.ts:100`, `upload-layout-package.ts:631`, `install-layout-package.ts:143`, `activate-template.ts:153`, `preview.ts:211` | `retire-template-type.integration.test.ts` (guardrail 77); `invoice-template-catalog.integration.test.ts` (un-retire refused); preview action test; detail-page test |
-| #68 | Export reads verified bytes; restore through the gate | `load.ts:289` (`loadLayoutForExport`); `export-template-version.ts:78`; `upload-layout-package.ts:426` (`settings.json` binding) | `export-restore-template.integration.test.ts` (guardrail 78); `export-route.test.ts`; `load-layout-draft.test.ts`; Types journey step 8 |
-| #44 amend. | Per-type uniqueness; DRAFT layout overwritable; ACTIVE immutable | `0053:119` (`btv_one_active_family_uq`), `:127` (`btv_one_draft_uq`), `:179` (DRAFT→DRAFT guard branch); `install-layout-package.ts:111`/`:120` (content-addressed, `writeOnce`) | `invoice-template-types-catalog`; `overwrite-layout-draft`; `activate-template-pair` (frozen files) |
-| #45 amend. | DRAFT layouts verified on every load, never cached | `load.ts:267` → `verifyVersionFiles`; `load.ts:289` | `load-layout-draft.test.ts`; `export-restore-template` tamper case |
-| #46 amend. | An uploaded layout is the only exception; compile settings stay | `compile.ts:23` (`knownHelpersOnly`, `strict`); `upload-layout-package.ts:536` (lint inside the gate), `:617` | `invoice-layout-lint.test.ts`; `upload-layout-gate.test.ts`; `single-layout-writer.test.ts` |
-| #47 amend. | The renderer itself enforces no-fetch | `render-invoice.ts:117`/`:130`; blocked-URL log `:191` | `invoice-render-chromium.e2e.test.ts`; `chromium-single-factory.test.ts` |
-| #49 amend. | Compliance on rendered output at upload and activation; new actions audited | `upload-layout-package.ts:539`/`:562`; `activate-template.ts:205`; audits `install-layout-package.ts:298`, `template-types.ts:144` (create), `:319` (retire), `export-template-version.ts:107` | `activate-template-pair`; `activate-template-chromium.e2e.test.ts`; `upload-layout-package`, `template-types-create`, `retire-template-type`, `export-restore-template` audit cases; Types journey step 1 |
-| #54 amend. | Capture reads the BAN's type; NULL = Standard | `bill-run-account.repository.ts:44` (`listBanFamilies`); `0054_billing_account_template_type.sql:9` (FK), `:26` (old column dropped); the one Billing writer `template-types.ts:272` | `run-template-capture` case 7; `customer-accounts-binding-boundaries.test.ts`; `rerun-template-change.integration.test.ts`; Types journey step 3 |
-
-No invariant lacks code or a test. Audit notes: the raw-text lint can be passed by an empty-block-split URL (`url(http{{#if company}}{{/if}}://…)`), which the gate's network-blocked render still refuses (`LAYOUT_EXTERNAL_FETCH`, e2e-proven; tracker line 271); the Chromium tiers run only with `RUN_CHROMIUM_E2E=1` (re-run green here); the un-retire refusal is proven by the bm64-era catalog suite, not the retire suite.
-
-**Docs (bm85 §4, with cm24 §3.3 in the same change):** `billmgmt-project-overview.md` gains "Invoice Template Types — editor upload, type catalog, BAN binding (delivered, bm74–bm85)" and its Current state; `billmgmt-update-overview.md` and `custmgmt-update-overview.md` are deleted together, and every link in the Billing and CM docs and specs is repointed (`AGENTS.md` left as is, owner 2026-10-26); architecture #59–#68 and the amendments → built; code standards: guardrails 68–79 → built with their test files; workflow rules: §0 item 9 carries the Types rules forward plus a "What changed" entry; UI context §10a/§10e → delivered; known issues: new §32 (the audit pin, resolved), a dated §31d line, §31c closed; `bm00-build-plan.md` Part 6 → delivered and compacted; `TODOS.md` (the `_plan_enterprise-billing-app` repo, left uncommitted there, owner-approved): the "Phase 3: catalog + posting reads the BAN binding" entry closed, the three Types follow-ups kept open. The bm85 spec's status → delivered.
-
-**bm85 + cm24 code review fixes (2026-10-26):** xhigh review of the ship-gate change (15 findings, plus 4 inline/outside-diff comments on the tracker and the CM architecture status; the Retire-dialog inline comment was already fixed). Owner: repoint `AGENTS.md` now (it was left as is at the gate); keep step 8 in the shared journey file with the `@/db/client` override hardened rather than moving it out.
-- **Journey evidence (`tests/e2e/invoice-template-journey.integration.test.ts`):**
-  - Step 8 (criterion 7) now proves the restore wrote every file: Wholesale's layout blobs are deleted after step 6's export and before the restore (write-once would otherwise adopt step 1's blobs at the same content-addressed path), and the restored prefix must hold every layout file plus the index.
-  - Step 7 (criterion 2): the Standard v2 package carries a visible marker; every NULL `ci` BAN (with a trial bill on the new run) and the fixture BAN render on layout v2 with the marker.
-  - Step 4: exactly one retire-switch audit row, and two `BILLING_ACCOUNT_TEMPLATE_CHANGED` rows in total (the bind and the switch).
-  - Step 8 safety: the second database's URL is checked before anything is dropped or created, and the `DROP`/`CREATE DATABASE` run on a short-lived `BOOTSTRAP_DATABASE_URL` (superuser) connection, also in `afterAll`. The override is set and cleared inside a `try/finally` in step 8 only.
-  - Cleanups: `signalStage` and `runStampsOf` are shared file-level helpers (the bm73 and Types blocks); `settingsDraft` uses the repository's `findDraft` (its token format); the redundant `generated/INVOICE/WHOLESALE/` deletes are gone (`purgeInvoiceBlobs` covers them).
-- **Helpers:** `tests/helpers/layout-package.ts` `readPackageFiles(dir)` (renamed from `readBasicPackageFiles`), and an unset `layoutCode`/`layoutVersion` now keeps the base package's own manifest values; `tests/db/audit-repository.integration.test.ts` asserts the rule (every export is an `insert…`, none updates or deletes) rather than an exact name list.
-- **Docs:** `AGENTS.md` reading list → the two project overviews (no update in flight); workflow rules §1–§2 marked as the Types update's record (the "write/build `bm00` Part 6" instructions were planning-time; Part 6 is now the `74–85` numbering-record row), with the tracker and `cm00` pointers updated; UI context points at CM UI §10.1–§10.3; criterion 2's evidence says "fixture export"; no commit hash in this tracker (the editor snapshot's commit is named by `contract/CONTRACT.json`); criterion 11 says the real-editor upload is pending; the "Current state" heading is dated 2026-10-26; `custmgmt-architecture.md` status → BUILT.
-- **Found while re-running:** `tests/app/route-manifest.test.ts` flags any `(admin)` text in code (the retired route group), and the new `withBootstrap((admin) => …)` callbacks tripped it; the parameter is `superuser`.
-- **Full set on the disposable DB + Azurite (2026-10-26):** typecheck and `npm run lint` clean; unit 5050 passed, 1 failed (the pre-existing `ratecard-demo-seed-boundary`); **integration 148/148 files, 1416 passed, 0 failed** (bm58 passed in the batch this time); the whole journey file 28/28 (bm63, bm73 and the Types block); Chromium e2e 27/0; admin browser e2e 5/0. The bm85 manual pass with a real editor export is still pending with the owner.
-
-**bm83–84 code review fixes (2026-10-26):**
-- **Inline comment — the Retire dialog kept a refused retire's form.** One `resetForm` (typed name, target back to Standard, message) runs on every close, `handleOpenChange(false)` and `retire()` alike; a thrown action keeps the dialog open for a retry.
-- **#1–#2 — the dialog's BAN list over a live set.** Each opening re-lists from the page's current `firstBoundBans` (page 0), so a refresh's new count and first page are used; "Show more" de-duplicates by `billingAccountId` and stops at a short page (`RETIRE_BAN_PAGE_SIZE`), even when the count says there are more. OFFSET paging is kept (a concurrent unbind can still skip a row; the count stays authoritative and the retire re-checks everything).
-- **#3 (owner: the loader decides) — one read decides "retired".** `getInvoiceTemplatePageData` applies `canEdit && type.retiredDatetime === null` from its single read of the type and returns `retiredDatetime`; the page derives `editView` from it, and only then loads the Retire dialog data (`getTemplateTypeRetireData`, which replaces `getTemplateTypeRetirement`). **Deviation from bm83 D7's wording:** the page passes the user's `canEdit`, and the loader downgrades it (same behaviour, no window between two reads).
-- **#4 (owner: single-type count) — `countBoundBans(db, typeId)`** in `template-types.ts` (count where `ref_bill_template_family_id = $1`; never Standard, which retire isn't offered on) replaces `countBoundBansByType` for the dialog. **Deviation from bm83 D8**, which named the all-types function; the type list keeps it.
-- **#5 (owner: skip the posted-bills list) — a retired type offers no bill to preview:** `canPreviewBills` is false and `listRecentPostedBills` isn't read. The spec-required type read in `previewInvoiceTemplate` stays (a primary-key read), and the frame keeps the retired message.
-- **#6 — `listRerunTemplateChangesAction`** returns `SERVER_ERROR` (logged) for a non-redirect guard failure instead of rejecting.
-- **#7 — `selectRerunEligible` lives in the pure `services/billing/rerun-eligibility.ts`**; `rerun-run.ts` re-exports it (the bm84 spec's import path still works), and the warning read no longer loads the rerun's engine graph.
-- **#8 — `canUpload = editView`** (the duplicate `typeStatus !== "RETIRED"` check is gone); the page's status-literal allow-list entry is removed as stale.
-- **#9 (owner: pluralise) — "1 billing account moved"**; bm83 spec §6 amended.
-- **#10 — `RetireTemplateTypeResult`** no longer excludes the non-member `"TEMPLATE_NOT_BINDABLE"`.
-- **Out of scope / cross-domain:** none; every change stays inside Billing's invoice-settings and bill-run files. CM guardrail 11 is unchanged (`countBoundBans` lives in `template-types.ts`, the exempt file).
-
-**bm84 notes (2026-10-26):** built as specified — `listForRerun` returns the run-start stamp (`refBillTemplateFamilyId`); the eligibility filter moved verbatim into `selectRerunEligible` (`rerunRun` calls it, nothing else changed); `listRerunTemplateChanges` compares the stamp with `listBanFamilies` (the sanctioned BAN-column reader) and names types from `listAll`; `listRerunTemplateChangesAction` (`billrun_operate : EDIT`, `rerunRunSchema.pick`); the `RerunDialog` Warning callout. **Deviations:** (1) the read fires from the handler that opens the confirm, not from an effect on `confirming` (the `react-hooks/set-state-in-effect` lint rule refuses the reset inside an effect); a response from an earlier opening, closed meanwhile, is dropped. (2) The dialog takes the change row type from the action's result type, so the client component doesn't import the read service. (3) The callout has `role="note"` named by its heading, so tests and assistive tech can find it.
-
-**bm83 notes (2026-10-26):** built as specified — `retireTemplateType` (ascending-id locks, D3 re-checks, one set-based switch with `last_modified`/`last_edited_by`, `insertAuditEvents` in chunks of 500, the zero-BANs re-count, `retireType`, `INVOICE_TEMPLATE_TYPE_RETIRED`), `listBoundBans`, `retireType` (the guard-allowed update), the two actions and schema, `TEMPLATE_TYPE_RETIRED` on save (under the type lock) and preview (`TemplateTypeRetiredError`, before any resolve), `typeRetiredEdit`, the dialog, the retired detail page; Inv #66/#67 and the Retire permission row marked built. **Deviations:** (1) the page reads `getTemplateTypeRetirement(typeId, { canEdit })` before `getInvoiceTemplatePageData`, since it needs `retired` to pass `canEdit: canEdit && !retired`; the retire data (`boundBanCount`, `firstBoundBans`, `retireTargets`) and `retiredDatetime` come from it, not from the page data object. (2) `canEdit: false` alone still lists DRAFT/discarded rows (a READ user sees them, linkless), so the read service also drops draft-like rows from a **retired** type's history (D7 "neither opened nor listed"); live types are unchanged. (3) `list-bound-bans.action.ts` reads through the read service (`getBoundBansPage` → `listBoundBans`), not `db` directly. (4) `tests/guardrails/phase3-boundaries.test.ts` check 4 ("no billing file writes billing_account") gains the pinned exemption too (one Drizzle update inside `retireTemplateType`, no raw write); the spec listed only the CM boundary test, but the superseded-rules table covers both. (5) `CreateTemplateTypeResult` is narrowed to its two codes, since `TemplateTypeErrorCode` now carries the retire codes. (6) A retired type with no ACTIVE settings shows the retired status line instead of the upload empty state. (7) A dialog refusal closes, shows a toast and refreshes (the `DiscardDraftDialog` precedent, since the refresh can remove the dialog); `TEMPLATE_TYPE_RETIRED` there uses a new `retireAlreadyRetired` message (`typeRetired` is worded for activate/discard). (8) The races are deterministic: one side is held at an audit insert, and the other is released once `pg_stat_activity` shows a lock waiter; one free `Promise.all` opposite-retire case is added. **Fixed alongside (owner request):** `tests/db/invoice-template-types-catalog.integration.test.ts` "populated-database apply" expected `appliedCount() === before + 1` after migrating from 0052, which cm23's `0054` broke (`+ 2`). It now derives the count from the journal (`migrationsFrom0053Count()`: every entry from 0053 on); 29/0.
-
-**bm82 code review fixes (2026-10-26; joint with cm23, see `custmgmt-progress-tracker.md`):**
-- `countBoundBansByType` uses `LEFT JOIN … ON true` (was `CROSS JOIN`). A missing default family no longer zeroes every type's count, and the NULL-row guard is now live.
-- The type list page's legacy `?tab=` / `?version=` redirect reads Standard's id through the new `getStandardTemplateTypeId` (`findDefault`) before the list loads, so it skips the Bound BANs aggregate.
-- Tests: page test asserts the redirect never calls `listTemplateTypes`; type-list integration green.
-
-**bm82 notes (2026-10-26):** built as specified — `listBanFamilies` is `COALESCE(ba.ref_bill_template_family_id, default family)` (the old non-generated-version case is gone); `captureTemplateStamps` comment only; `countBoundBansByType` in `template-types.ts` (NULL under Standard via `is_default`, every BAN state), merged by `listTemplateTypes` into `boundBanCount`; `TemplateTypeList` "Bound BANs" column after Status, right-aligned tabular numerals. Inv #54's amendment marked built. **Deviations:** the visible-result case renders the draft as HTML (`buildInvoiceHtml`), not PDF, from a SQL trial-bill fixture (no engine in the suite); there is no separate `TemplateTypeList` component test, so the column is asserted in `invoice-template-types-page.test.tsx`.
 
 ## Delivered units
 
@@ -760,6 +282,123 @@ logs, test runs and the Inv #51–#58 code ↔ test audit are in this file's git
   pass alone); integration with the rating runtime 1388/0 (6 opt-in skips then run green);
   journey 19/19; Chromium e2e 3/3; admin e2e 5/5.
 
+### Invoice Template Types — COMPLETED (bm74–bm85, 2026-10-25 → 2026-10-26)
+
+Editor upload, type catalog, BAN binding. Spec per unit: `specs/bm74…bm85-*.md`; build plan `bm00`
+Part 6 (the `74–85` numbering-record row); criteria 1–11 + evidence in
+`billmgmt-project-overview.md`. CM side (cm23–cm24): `custmgmt-completed-tracker.md` Phase 3.
+
+| Unit | What | Commits |
+| --- | --- | --- |
+| bm74 | Type-scoped template catalog (migration `0053`, two Drizzle mirrors) | `d1fbb92` |
+| bm75 | Network-blocked, script-free Chromium rendering (`withHardenedPage`) | `a2a74d3` |
+| bm76 | Layout rules module `compliance.ts` (static + visible tiers), `INVTPL-BASIC-A4` reference package | `d7bbca4` |
+| bm74–76 review | xhigh review + two Sonar S5852 passes | `1abf17c`, `2aaec90` |
+| bm77 | Type list, create type, per-type detail page (`[typeId]`), `app_runtime` grant | `e251953`, `fd1eb4e` |
+| bm78 | Upload a layout package as a new draft (`fflate` gate, `installLayoutPackage`) | `6366487`, `1f1c895` |
+| bm79 | Activate an uploaded draft pair, discard a draft, per-type generated blob path | `5367309` |
+| bm77–79 review | Zip-bomb + deadlock fixes, draft preview, Sonar duplication helpers | `92cb0dc`, `ed84ccb` |
+| bm80 | Overwrite an open layout draft by upload, with the warning (`DRAFT_LAYOUT_REPLACED`) | `508263a` |
+| bm81 | Export a version pair and restore it by upload | `bf5e7c6` |
+| bm80–81 review | max review of bm81 (15 findings, owner decisions #1/#2/#4/#5/#6/#14) | `8517e72` |
+| bm82 | Bill run captures the BAN's type; Bound BANs column. One merge with cm23 (`567f4f8`) | `b5e4674`, `a3a716f` |
+| bm83 | Retire a type with a bulk switch; retired read-only detail page | `eb41cbd` |
+| bm84 | Rerun warns when a BAN's type changed since run start | `3e7d864` |
+| bm83–84 review | Retire-dialog reset, single-read "retired", `countBoundBans`, pure `rerun-eligibility.ts` | `2e24298` |
+| bm85 | Ship gate (journey steps 1–8, suites, invariant audit, doc fold). Joint with cm24 | `790c05e`, `907dca8` |
+
+**Durable facts and decisions from this update:**
+
+- **Catalog (`0053`, Inv #65).** `bill_template_family` is the template *type* (`layout_code` NOT
+  NULL, `retired_datetime` one-way). One ACTIVE and one DRAFT per type and kind; composite FKs keep
+  a settings version and its layout in the same type; type identity is frozen by the guard
+  trigger. cm23's `0054` binds the BAN through `billing_account.ref_bill_template_family_id`
+  (NULL = Standard) and drops the old version column.
+- **Layouts enter only by upload, through the whole gate (Inv #59/#60).** `installLayoutPackage`
+  is the single writer (`overwriteLayoutDraft` is called only by it; guardrail 68). The zip is read
+  in two passes: central directory first, with nothing inflated, then a streamed inflate in 1 KiB
+  steps under a running 2 MiB cap. Stages 1–3 block; stages 4–7 collect problems. Stage 7 reads both
+  probe renders. Blobs are write-once under `layouts/<code>/v<n>-<digest12>/`; generated blobs go under
+  `generated/INVOICE/<type code>/v<n>-<digest12>/`.
+- **Rendering is hardened (Inv #64/#47).** `withHardenedPage` runs with JavaScript off and offline,
+  and lets only `data:`/`about:` through. Blocked fetches are logged
+  (`INVOICE_RENDER_BLOCKED_FETCH`) and never throw. The preview iframe is `sandbox=""`. Guardrail 74
+  allows a single Chromium factory.
+- **Compliance rules live in one file (Inv #63).** `compliance.ts` holds the lint, the editor's
+  hardening, the static tier (`COMPLIANCE_PROBE`) and the visible tier (legibility, opacity ≥ 0.1,
+  font ≥ 6px, each section exactly once). Both run at upload and again at activation. Known
+  weakness: an empty-block-split URL (`url(http{{#if company}}{{/if}}://…)`) passes the lint, but
+  stage 7's blocked render still refuses it.
+- **Drafts never reach a bill (Inv #61/#62).** `loadLayoutDraft` is the only DRAFT loader; it is
+  verified on every load and never cached. Activation promotes the *pair*: it re-runs compliance,
+  then re-checks the token and the layout checksum under the lock. **Lock order:** type row, then
+  the kind advisory lock, for every DRAFT writer (this fixed a 40P01 deadlock in save-draft).
+  Discarded drafts (RETIRED, never activated) are EDIT-only. The draft preview (`draft: true`) is
+  honoured only for EDIT on a draft's working copy.
+- **Overwrite and restore (bm80/bm81, Inv #68).** An upload over an open DRAFT carries
+  `expectedDraftVersionId`/`expectedDraftToken`, and a restore also carries `expectedSettingsToken`.
+  A stale editor gets `DRAFT_LAYOUT_REPLACED` (plain overwrite) or `DRAFT_CONFLICT` (restore,
+  written with `clock_timestamp()`). The export reads verified bytes in one REPEATABLE READ snapshot.
+  The export route refuses `HEAD` (405) and cross-site requests (403), a recorded module exception
+  to platform §5.9. `settings.json` is bound to the package's index digest and has its own 64 KiB
+  budget. A NULL uploader reads "an unknown user" (owner).
+- **Retire (bm83, Inv #66/#67).** One transaction locks ascending ids, switches every bound BAN to
+  the target in a single set-based update (audit rows in chunks of 500), re-counts to zero, then
+  retires the type. Retire is one-way. Save, preview, upload and activation refuse a retired type
+  with `TEMPLATE_TYPE_RETIRED`, and its detail page is read-only (Export kept).
+- **Capture reads the BAN's type (bm82, Inv #54 amend.).** `listBanFamilies` =
+  `COALESCE(ba.ref_bill_template_family_id, default family)`. Billing's one `billing_account`
+  writer is the retire switch in `template-types.ts` (CM guardrail 11 exemption).
+- **Rerun warning (bm84).** `RerunDialog` shows a Warning callout listing BANs whose type changed
+  since run start (`listRerunTemplateChanges`, `selectRerunEligible` in the pure
+  `rerun-eligibility.ts`). It warns only; Confirm stays enabled.
+- **Shared test helpers:** `tests/db/helpers/template-type-db-harness.ts`,
+  `tests/db/helpers/template-type-fixtures.ts`, `tests/helpers/layout-package.ts`,
+  `tests/helpers/in-memory-blob-store.ts`, `tests/helpers/list-source-files.ts`.
+- **Final test baseline (2026-10-26):** typecheck + lint clean; unit 5050 passed, 1 failed
+  (pre-existing `ratecard-demo-seed-boundary`); integration 148/148 files, 1416/0; journey file
+  28/28 (bm63, bm73, Types); Chromium e2e 27/0; admin browser e2e 5/0; `invoice-editor` 147/0
+  (contract unchanged since its snapshot).
+
+### Standalone units after the Types update (bm86–bm88)
+
+- **bm86** (2026-10-26, `b051641`) — company-profile logo: shorter side ≥ `LOGO_MIN_SIDE_PX = 96`
+  (was 300; 3 × the header's 32 px logo height). No migration; stored logos unaffected.
+- **bm87** (2026-10-28, `8ac1d54`) — Workflow tab `RunFlowProgressBar` redrawn as a dot stepper
+  (markup only; props, export and server-component nature unchanged; plan
+  `_change-billrun-flow-stepper-plan.md` §3.3).
+- **bm88** (2026-10-29) — bm62 invoice CSV retired (owner decision, option B; spec
+  `specs/bm88-retire-invoice-csv-output.md`). Migration `0055` (irreversible): drops
+  `customer_bill`/`bill_run_account.ref_csv_template_version_id` + the CSV index and CSV-only
+  `bill_template_version` indexes/CHECKs, deletes the `kind = 'csv'` rows under a one-time guard
+  disable, and adds `btv_kind_check` (`layout | generated`) + `btv_has_family`. Removed: the
+  Download CSV button, the `…/stored-invoice/[banId]/csv` route (now 404), `invoice-csv.ts`,
+  `loadCsvMap`, the CSV stamp in capture/posting/resolution, seed files `system/csv/` and
+  `BTV00000003` from the seed uploader (seed now uploads two versions; run it after `db:migrate`).
+  Orphan `system/csv/v1/` blobs left in place (optional ops delete). Guardrail 55 retired;
+  new `tests/guardrails/no-invoice-csv.test.ts`, `tests/db/retire-invoice-csv.integration.test.ts`,
+  `tests/db/pdf-unchanged-after-csv-retire.integration.test.ts` (identical `final` / draft /
+  `preview-family` HTML and stored PDF digest across `0055`). Known-issues §23j closed.
+  Tests: unit 5017 passed / 8 failed under parallel load (all 10 s repo-scan timeouts; pass when
+  re-run alone); integration 16 bm88-relevant files, 160/0 (full integration suite not run);
+  tsc, ESLint, Prettier clean.
+  SonarQube duplication fix: the two `0055` suites' shared setup (pre-0055 journal copy, 0054
+  database + fixtures, CSV stamps, real-folder migrate, teardown) moved to
+  `tests/db/helpers/csv-retire-fixtures.ts`; assertions unchanged.
+
+### Review corrections (2026-10-29)
+
+- **bm87:** keep the scroll region's focus outline visible in forced-colors mode
+  (`focus:outline-hidden`), alongside the existing focus ring.
+- **bm88:** complete the removal of the remaining stored-invoice CSV route, generator and
+  their three feature suites; the retirement guardrail now also checks that the route and
+  generator are absent. The stored-invoice PDF controls and unrelated bill-run routes are unchanged.
+- Restore the update overview's delivered status, draft/discarded export EDIT gate,
+  `settings.json` checksum exclusion/rejection and never-retired default-version rule.
+- Validation: 405 unit/guardrail tests, 36 rm07 cases and 13 bm88 integration cases passed
+  (454 distinct tests); lint, formatting and compiled focus CSS passed. Typecheck retains
+  23 pre-existing legacy usage-annex errors; SAST retains one unchanged `.npmrc` finding.
+
 ## Outstanding / Next
 
 - **Release gate before any production template activation (known-issues §20).** Seed
@@ -783,7 +422,13 @@ logs, test runs and the Inv #51–#58 code ↔ test audit are in this file's git
   earlier-period rows reappear on every later run with no "handled" marker, unresolvable
   earlier-period rows are not counted, billing that usage (options 2/3) undecided
   (known-issues §28); partial index on unclaimed `RATED` rows deferred to rating
-  (known-issues §29); the template family UI is deferred (planning `TODOS.md`, §7.3).
+  (known-issues §29). (The deferred template family UI was delivered by the Types update, bm77.)
+- **Types update carried items (not blocking):** the owner's manual passes are not recorded here —
+  bm85 §3 (upload a real `INVTPL-WHOLESALE` editor export, steps 1–3 and 9 in two browser sessions;
+  criterion 11's real-editor half) and bm87's browser check of the stepper. The bm58 activation
+  suite is order-dependent in a full batch (known-issues §31d; passes alone). Known-issues §31's
+  other display/logging items stay open. Three Types follow-ups stay open in the planning repo's
+  `TODOS.md`.
 - **Build a capacity-aware live-Kestra smoke harness (TC54).** `scripts/billrun-live-kestra-smoke.ts`
   is `ci`-seed-only; it needs a seed-profile parameter or a sibling script targeting `capacity`
   (four anchors, six `CAPACITY_*` guards, `CAPACITY_RATE_MATCHING` ON/OFF). Blocked on a live
@@ -838,6 +483,10 @@ YAML-blind CI suite; all fixed, flows redeployed. Detail in `git log` /
   never stored; a real stage row always wins), `distribution` removed from the
   per-account grid, run-level `RunFlowProgressBar` added (run status floors the bar);
   mid-flight summary gated on run status. Post-review hardening fixed 6 edge cases.
+  - **Dot stepper redraw (bm87, 2026-10-28).** `RunFlowProgressBar` is drawn as one rail
+    of nine dots (glyph + label + sr-only state, rail filled through the last `done`
+    step, `aria-current="step"` on `currentStage`, scrolls instead of wrapping). Markup
+    only — no data, derivation, contract or caller change.
 
 ## Known residuals
 

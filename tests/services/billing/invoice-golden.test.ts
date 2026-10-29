@@ -397,7 +397,7 @@ describe("layout v1 Total Amount page (bm72, guardrail 64 final)", () => {
         total: "150000.00",
         regions: [
           {
-            label: "SELANGOR - PETALING",
+            label: "STATE-2 - DIST-5",
             subTotal: "200000.00",
             rows: [
               {

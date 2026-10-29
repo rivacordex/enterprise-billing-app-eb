@@ -43,7 +43,8 @@ import { formatUdrResource } from "@/validation/rating/udr-resource.schema";
 // Proves the units (rm21 PRP / rm20 RP / rm09+rm10 RL) compose end to end, not
 // just pass in isolation — R1 (FLAT→PER_UNIT) asserted here as ship-blocking.
 // rm29 refresh (Inv 27, 28): each rated row's udr_key is the raw cell key and
-// its udr_resource is the cell's `state|district|polygon_start_date`.
+// its udr_resource is the cell's `state|district|polygon_start_date` — since
+// rm32 (Phase J) the only place the cell's geo is written.
 //
 // Requires DATABASE_URL + python3 with the worker runtime (psycopg + polars);
 // shells the real runtime modules exactly as the flow's tasks do (no live Kestra
@@ -183,14 +184,12 @@ describe.skipIf(!databaseUrl || !pythonReady)(
         amountRaw: "10000.000000",
       });
 
-      // bm48 — every rated row carries its matched ratecard cell's geo, frozen
-      // at rating; rm29 — and the raw key + udr_resource of that cell. Cell i
-      // was written at volume [100, 200, 300][i].
+      // rm29 — every rated row carries its matched ratecard cell's raw key and
+      // udr_resource, frozen at rating (rm32: the geo lives only in
+      // udr_resource). Cell i was written at volume [100, 200, 300][i].
       SAMPLE_5G_LKP_ROWS.forEach((cell, i) => {
         const quantity = `${[100, 200, 300][i]}.000000`;
         const row = rated.find((r) => r.udrUsageQuantity === quantity)!;
-        expect(row.state).toBe(SAMPLE_5G_RATECARD_STATE);
-        expect(row.district).toBe(cell.district);
         expect(row.udrKey).toBe(
           buildRawUdrKey(
             {

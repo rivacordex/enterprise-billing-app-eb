@@ -273,21 +273,21 @@ describe("rl flow wiring + COPY (rm09-spec D1/D4/D8 — static)", () => {
 });
 
 // ---------------------------------------------------------------------
-// bm48-spec D2/D4 + rm28 — RL's COPY row builder, the geo columns and
-// udr_resource. Exercises the real `runtime.rl.build_chunk_rows` on hand-built
-// rated frames (python3 only, no DB): the columns are appended last, copied
-// as-is when present, required for RAN_USAGE (the loud guard that PRP stamped +
-// RP carried them), and written NULL only for a usage type that reads no
-// ratecard. udr_resource is stricter than the geo columns: a RAN_USAGE row
-// with it NULL or empty also fails (Inv 28). argv[3] is the udr_resource mode:
-// 'absent', 'null', 'empty', or a value to carry.
+// rm28 + rm32 — RL's COPY row builder and udr_resource. Exercises the real
+// `runtime.rl.build_chunk_rows` on hand-built rated frames (python3 only, no
+// DB): udr_resource is the last COPY column, copied as-is when present,
+// required and non-empty for RAN_USAGE (the loud guard that PRP stamped + RP
+// carried it, Inv 28), and written NULL only for a usage type that reads no
+// ratecard. Since rm32 (Phase J) RL writes no state/district: a frame that still
+// carries them builds a row without them (ignored, not rejected). argv[2] is the
+// udr_resource mode: 'absent', 'null', 'empty', or a value to carry.
 // ---------------------------------------------------------------------
 const BUILD_ROW_SCRIPT = [
   "import sys, json",
   "from datetime import datetime, timezone",
   "import polars as pl",
   "from runtime import rl",
-  "udr_type, with_geo, resource = sys.argv[1], sys.argv[2] == '1', sys.argv[3]",
+  "udr_type, resource = sys.argv[1], sys.argv[2]",
   "ts = datetime(2026, 8, 14, 10, tzinfo=timezone.utc)",
   "data = {'udr_type': [udr_type], 'start_datetime': [ts], 'end_datetime': [ts],",
   "  'udr_subscription_ref_id': ['PIV1'], 'udr_key': ['K1'],",
@@ -300,9 +300,6 @@ const BUILD_ROW_SCRIPT = [
   "  'udr_ref_batch_id': ['B1'], 'udr_source_file': ['f.csv'],",
   "  'rating_engine_version': ['v'], 'rating_flow_revision': [1],",
   "  'rated_datetime': [ts]}",
-  "if with_geo:",
-  "  data['state'] = ['STATE-1']",
-  "  data['district'] = pl.Series('district', [None], dtype=pl.Utf8)",
   "if resource == 'null':",
   "  data['udr_resource'] = pl.Series('udr_resource', [None], dtype=pl.Utf8)",
   "elif resource == 'empty':",
@@ -311,9 +308,9 @@ const BUILD_ROW_SCRIPT = [
   "  data['udr_resource'] = [resource]",
   "try:",
   "  row = rl.build_chunk_rows(pl.DataFrame(data))[0]",
-  "  print(json.dumps({'ok': True, 'tail': list(rl.COPY_COLUMNS[-3:]),",
-  "    'state': row[rl.COPY_COLUMNS.index('state')],",
-  "    'district': row[rl.COPY_COLUMNS.index('district')],",
+  "  print(json.dumps({'ok': True, 'tail': list(rl.COPY_COLUMNS[-1:]),",
+  "    'width': len(row) == len(rl.COPY_COLUMNS),",
+  "    'stale_geo': any(v in ('STALE-STATE', 'STALE-DIST') for v in row),",
   "    'udr_resource': row[rl.COPY_COLUMNS.index('udr_resource')]}))",
   // The guard that fired is reported (type + message) so each fail-loud case
   // can assert it is THIS guard, not another KeyError/ValueError (rm29 review).
@@ -321,23 +318,39 @@ const BUILD_ROW_SCRIPT = [
   "  print(json.dumps({'ok': False, 'error': type(e).__name__, 'message': str(e)}))",
 ].join("\n");
 
-const COPY_TAIL = ["state", "district", "udr_resource"];
+const COPY_TAIL = ["udr_resource"];
 const RESOURCE = "STATE-1|DIST-1|2026-01-01";
+// rm32 regression — the bm48 geo columns a pre-Phase-J chunk would carry.
+const STALE_GEO_LINES = [
+  "data['state'] = ['STALE-STATE']",
+  "data['district'] = ['STALE-DIST']",
+];
 
 describe.skipIf(!pythonReady)(
-  "rl COPY row builder carries udr_rated geo + udr_resource (bm48-spec D2/D4, rm28-spec, requires python3+runtime)",
+  "rl COPY row builder carries udr_resource (rm28-spec, rm32-spec, requires python3+runtime)",
   () => {
-    function buildRow(udrType: string, withGeo: boolean, resource: string) {
+    function buildRow(
+      udrType: string,
+      resource: string,
+      extraLines: string[] = [],
+    ) {
+      const script = BUILD_ROW_SCRIPT.replace(
+        "try:",
+        [...extraLines, "try:"].join("\n"),
+      );
       const out = execFileSync(
         ratingPython3(),
-        ["-c", BUILD_ROW_SCRIPT, udrType, withGeo ? "1" : "0", resource],
-        { cwd: workerDir, encoding: "utf8" },
+        ["-c", script, udrType, resource],
+        {
+          cwd: workerDir,
+          encoding: "utf8",
+        },
       );
       return JSON.parse(out.trim().split(/\r?\n/).pop() as string) as {
         ok: boolean;
         tail?: string[];
-        state?: string | null;
-        district?: string | null;
+        width?: boolean;
+        stale_geo?: boolean;
         udr_resource?: string | null;
         error?: string;
         message?: string;
@@ -356,43 +369,35 @@ describe.skipIf(!pythonReady)(
       expect(result.message).toContain(fragment);
     }
 
-    it("appends state/district last and copies them as-is (NULL stays NULL)", () => {
-      expect(buildRow("RAN_USAGE", true, RESOURCE)).toEqual({
+    it("a usage type that reads no ratecard writes NULL when udr_resource is absent", () => {
+      expect(buildRow("SMS_USAGE", "absent")).toEqual({
         ok: true,
         tail: COPY_TAIL,
-        state: "STATE-1",
-        district: null,
-        udr_resource: RESOURCE,
-      });
-    });
-
-    it("a RAN_USAGE chunk missing the geo columns fails loud (KeyError guard)", () => {
-      expectGuard(
-        buildRow("RAN_USAGE", false, RESOURCE),
-        "KeyError",
-        "has no 'state' column",
-      );
-    });
-
-    it("a usage type that reads no ratecard writes NULL geo when the columns are absent", () => {
-      expect(buildRow("SMS_USAGE", false, "absent")).toEqual({
-        ok: true,
-        tail: COPY_TAIL,
-        state: null,
-        district: null,
+        width: true,
+        stale_geo: false,
         udr_resource: null,
       });
     });
 
     it("rm28 1. udr_resource is the last COPY column and a present value is copied as is", () => {
-      const row = buildRow("RAN_USAGE", true, RESOURCE);
+      const row = buildRow("RAN_USAGE", RESOURCE);
       expect(row.tail).toEqual(COPY_TAIL);
       expect(row.udr_resource).toBe(RESOURCE);
     });
 
+    it("rm32. a RAN_USAGE frame that still carries state/district loads; the columns are ignored, not rejected", () => {
+      expect(buildRow("RAN_USAGE", RESOURCE, STALE_GEO_LINES)).toEqual({
+        ok: true,
+        tail: COPY_TAIL,
+        width: true,
+        stale_geo: false,
+        udr_resource: RESOURCE,
+      });
+    });
+
     it("rm28 2. a RAN_USAGE chunk without udr_resource fails loud", () => {
       expectGuard(
-        buildRow("RAN_USAGE", true, "absent"),
+        buildRow("RAN_USAGE", "absent"),
         "KeyError",
         "has no 'udr_resource' column",
       );
@@ -402,7 +407,7 @@ describe.skipIf(!pythonReady)(
       "rm28 3. a RAN_USAGE chunk whose udr_resource is %s fails loud",
       (mode) => {
         expectGuard(
-          buildRow("RAN_USAGE", true, mode),
+          buildRow("RAN_USAGE", mode),
           "ValueError",
           "has an empty 'udr_resource'",
         );
@@ -411,7 +416,7 @@ describe.skipIf(!pythonReady)(
 
     it("rm28 4b. a usage type that reads no ratecard but carries a udr_resource value fails loud (broken handoff)", () => {
       expectGuard(
-        buildRow("SMS_USAGE", false, RESOURCE),
+        buildRow("SMS_USAGE", RESOURCE),
         "ValueError",
         "carries 'udr_resource'",
       );
@@ -420,11 +425,11 @@ describe.skipIf(!pythonReady)(
     it.each(["absent", "null"])(
       "rm28 4. a usage type that reads no ratecard writes NULL udr_resource (column %s)",
       (mode) => {
-        expect(buildRow("SMS_USAGE", false, mode)).toEqual({
+        expect(buildRow("SMS_USAGE", mode)).toEqual({
           ok: true,
           tail: COPY_TAIL,
-          state: null,
-          district: null,
+          width: true,
+          stale_geo: false,
           udr_resource: null,
         });
       },

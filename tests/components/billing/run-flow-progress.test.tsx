@@ -105,4 +105,154 @@ describe("RunFlowProgressBar", () => {
     expect(screen.getByText("— done")).toBeTruthy();
     expect(screen.getByText("— failed")).toBeTruthy();
   });
+
+  // bm87 — the dot stepper. `aria-current="step"` anchors the step the run is
+  // at; `data-stage`/`data-state` let these cases assert behaviour, not styling.
+  function currentItems(): HTMLElement[] {
+    return screen
+      .getAllByRole("listitem")
+      .filter((li) => li.getAttribute("aria-current") === "step");
+  }
+
+  it("makes the scrolling row a keyboard-reachable named region", () => {
+    render(
+      <RunFlowProgressBar
+        runId="BRN00000001"
+        flow={{ steps: steps(), currentStage: "scoping" }}
+      />,
+    );
+
+    const region = screen.getByRole("region", { name: "Run pipeline stages" });
+    expect(region.getAttribute("tabindex")).toBe("0");
+    expect(region.querySelector("ol")).toBeTruthy();
+  });
+
+  it("marks exactly one current step", () => {
+    render(
+      <RunFlowProgressBar
+        runId="BRN00000001"
+        flow={{
+          steps: steps({ scoping: "done", validation: "current" }),
+          currentStage: "validation",
+        }}
+      />,
+    );
+
+    const current = currentItems();
+    expect(current).toHaveLength(1);
+    expect(current[0]?.getAttribute("data-stage")).toBe("validation");
+  });
+
+  it("anchors the current step on a failed step", () => {
+    render(
+      <RunFlowProgressBar
+        runId="BRN00000001"
+        flow={{
+          steps: steps({ scoping: "done", validation: "failed" }),
+          currentStage: "validation",
+        }}
+      />,
+    );
+
+    const current = currentItems();
+    expect(current).toHaveLength(1);
+    expect(current[0]?.getAttribute("data-state")).toBe("failed");
+  });
+
+  it("has no current step on a finished run", () => {
+    const allDone = Object.fromEntries(
+      STAGES.map((stage) => [stage, "done" as const]),
+    );
+    render(
+      <RunFlowProgressBar
+        runId="BRN00000001"
+        flow={{ steps: steps(allDone), currentStage: null }}
+      />,
+    );
+
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(STAGES.length);
+    expect(currentItems()).toHaveLength(0);
+    for (const li of items) {
+      expect(li.getAttribute("data-state")).toBe("done");
+    }
+  });
+
+  // The fill IS the behaviour under test here, so the rail classes are asserted.
+  it("fills the rail after done steps only", () => {
+    const { container } = render(
+      <RunFlowProgressBar
+        runId="BRN00000001"
+        flow={{
+          steps: steps({
+            scoping: "done",
+            validation: "done",
+            collection: "current",
+          }),
+          currentStage: "collection",
+        }}
+      />,
+    );
+
+    // The two rail half-segments are the first and last children of the row
+    // above the label; the dot sits between them.
+    function rails(stage: string): [Element, Element] {
+      const row = container.querySelector(
+        `li[data-stage="${stage}"] > div`,
+      ) as HTMLElement;
+      return [row.firstElementChild!, row.lastElementChild!];
+    }
+    const FILLED = "bg-[color:var(--color-success-500)]";
+    const EMPTY = "bg-[color:var(--border-default)]";
+
+    const [collectionBefore, collectionAfter] = rails("collection");
+    expect(collectionBefore.getAttribute("aria-hidden")).toBe("true");
+    expect(collectionBefore.classList.contains(FILLED)).toBe(true);
+    expect(collectionAfter.getAttribute("aria-hidden")).toBe("true");
+    expect(collectionAfter.classList.contains(EMPTY)).toBe(true);
+
+    const [aggregationBefore, aggregationAfter] = rails("aggregation");
+    expect(aggregationBefore.classList.contains(EMPTY)).toBe(true);
+    expect(aggregationAfter.classList.contains(EMPTY)).toBe(true);
+  });
+
+  // A failed or skipped step in the middle must not break the rail before
+  // later done steps (one account failed validation, the others carried on).
+  it("keeps the rail filled across a failed step before later done steps", () => {
+    const { container } = render(
+      <RunFlowProgressBar
+        runId="BRN00000001"
+        flow={{
+          steps: steps({
+            scoping: "done",
+            validation: "failed",
+            collection: "done",
+            aggregation: "done",
+          }),
+          currentStage: "validation",
+        }}
+      />,
+    );
+
+    const FILLED = "bg-[color:var(--color-success-500)]";
+    const EMPTY = "bg-[color:var(--border-default)]";
+    function rails(stage: string): [Element, Element] {
+      const row = container.querySelector(
+        `li[data-stage="${stage}"] > div`,
+      ) as HTMLElement;
+      return [row.firstElementChild!, row.lastElementChild!];
+    }
+
+    for (const stage of ["validation", "collection", "aggregation"]) {
+      expect(rails(stage)[0].classList.contains(FILLED)).toBe(true);
+    }
+    const [validationBefore, validationAfter] = rails("validation");
+    expect(validationBefore.classList.contains(FILLED)).toBe(true);
+    expect(validationAfter.classList.contains(FILLED)).toBe(true);
+    // The connector after the last done step reaches the next dot; nothing
+    // past it is filled.
+    expect(rails("taxation")[0].classList.contains(FILLED)).toBe(true);
+    expect(rails("taxation")[1].classList.contains(EMPTY)).toBe(true);
+    expect(rails("verification")[0].classList.contains(EMPTY)).toBe(true);
+  });
 });

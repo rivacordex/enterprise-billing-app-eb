@@ -132,7 +132,7 @@ tasks:
     # `name=value|…`, each value exactly as the feed sent it — no trim, no case
     # folding, no normalised form of any kind; Inv 27), matches it exactly to
     # an ACTIVE ratecard cell (no match → INPUT_UNMAPPED, whole batch) and
-    # stamps that cell's state/district/udr_resource (Inv 28), quarantines invalid
+    # stamps that cell's udr_resource (Inv 28), quarantines invalid
     # rows to error/ against the reject threshold, stamps the counts, and emits a
     # manifest file URI (outputs.prp.vars.uri) listing the survivor Parquet chunks for
     # rp. runtime.db reads SECRET_RATING_RUNTIME_PASSWORD + RATING_DB_* from the

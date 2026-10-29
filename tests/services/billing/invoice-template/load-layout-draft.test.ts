@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // bm78-spec §5 / §13 (Inv #61, guardrail 70 — CRITICAL regression):
 // `loadLayoutDraft` is the ONLY loader that accepts a DRAFT. It verifies the
 // draft row's CURRENT checksum and every file, accepts only a stored layout
-// DRAFT, and is never memoized; `loadLayout`, `loadGenerated` and `loadCsvMap`
-// still refuse a DRAFT. The blob store is an in-memory map serving a package
+// DRAFT, and is never memoized; `loadLayout` and `loadGenerated` still refuse
+// a DRAFT. The blob store is an in-memory map serving a package
 // built from INVTPL-BASIC-A4 v1.
 
 vi.mock("@/services/billing/blob-store", async () =>
@@ -18,7 +18,6 @@ vi.mock("@/services/billing/blob-store", async () =>
 import type { BillTemplateVersion } from "@/db/schema/billing/bill-template-version";
 import {
   clearLoadedTemplateMemo,
-  loadCsvMap,
   loadedTemplateMemo,
   loadGenerated,
   loadLayout,
@@ -119,7 +118,6 @@ describe("bm78 loadLayoutDraft (Inv #61)", () => {
     ["an ACTIVE layout", { status: "ACTIVE" }],
     ["a RETIRED layout", { status: "RETIRED" }],
     ["a generated DRAFT", { kind: "generated" }],
-    ["a csv DRAFT", { kind: "csv" }],
     ["a DRAFT with no blob_ref", { blobRef: null }],
     ["a DRAFT with no checksum", { checksum: null }],
     ["a DRAFT with no checksum algorithm", { checksumAlgorithm: null }],
@@ -160,22 +158,6 @@ describe("bm78 every other loader still refuses a DRAFT (guardrail 70)", () => {
       "TEMPLATE_VERSION_NOT_FOUND",
     );
     expect(loadedTemplateMemo.has("BTV00000079")).toBe(false);
-  });
-
-  it("loadCsvMap handed a csv DRAFT throws TEMPLATE_VERSION_NOT_FOUND", async () => {
-    const draft: BillTemplateVersion = {
-      ...SEEDED_GENERATED_ROW,
-      billTemplateVersionId: "BTV00000080",
-      kind: "csv",
-      status: "DRAFT",
-      isDefault: false,
-      structure: null,
-      refLayoutVersionId: null,
-      blobRef: "invoice-templates/csv/INVOICE/v2/",
-    };
-    expect(await errorCode(loadCsvMap(draft))).toBe(
-      "TEMPLATE_VERSION_NOT_FOUND",
-    );
   });
 });
 

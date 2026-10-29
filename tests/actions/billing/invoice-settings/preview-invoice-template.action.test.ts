@@ -120,15 +120,6 @@ const NO_PAYMENT_EDITED: InvoiceTemplateStructure = {
   footnote: [EDITED_LINE],
 };
 
-const CSV_ROW: BillTemplateVersion = {
-  ...SEEDED_GENERATED_ROW,
-  billTemplateVersionId: "BTV00000003",
-  kind: "csv",
-  refLayoutVersionId: null,
-  structure: null,
-  blobRef: "invoice-templates/system/csv/v1/",
-};
-
 // A newer ACTIVE generated version whose blobs do not exist — a posted bill
 // stamped with v1 must never touch it (Inv #42).
 const ACTIVE_V2: BillTemplateVersion = {
@@ -142,7 +133,6 @@ const ACTIVE_V2: BillTemplateVersion = {
 const ROWS: Record<string, BillTemplateVersion> = {
   BTV00000001: SEEDED_LAYOUT_ROW,
   BTV00000002: SEEDED_GENERATED_ROW,
-  BTV00000003: CSV_ROW,
 };
 
 // The shared fixture cut to its RM50 recurring line, on a customer with no
@@ -195,11 +185,7 @@ beforeEach(() => {
   );
   repo.findActive.mockResolvedValue(null);
   repo.findDefault.mockImplementation(async (_db, { kind }) =>
-    kind === "generated"
-      ? SEEDED_GENERATED_ROW
-      : kind === "layout"
-        ? SEEDED_LAYOUT_ROW
-        : CSV_ROW,
+    kind === "generated" ? SEEDED_GENERATED_ROW : SEEDED_LAYOUT_ROW,
   );
   repo.findById.mockImplementation(async (_db, id) => ROWS[id] ?? null);
 
@@ -433,7 +419,6 @@ describe("previewInvoiceTemplateAction — bill source", () => {
       refBillTemplateFamilyId: "BTF00000001",
       refBillTemplateVersionId: "BTV00000002",
       refInvoiceProfileVersion: null,
-      refCsvTemplateVersionId: "BTV00000003",
       refInvDocumentId: "INV00000001",
     });
     renderInput.read.mockResolvedValue(rawBill(true));
@@ -478,7 +463,6 @@ describe("previewInvoiceTemplateAction — bill source", () => {
       refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
       refInvoiceProfileVersion: null,
-      refCsvTemplateVersionId: null,
       refInvDocumentId: null,
     });
     renderInput.read.mockResolvedValue(rawBill(false));
@@ -557,7 +541,6 @@ describe("previewInvoiceTemplateAction — bill source", () => {
       refBillTemplateFamilyId: null,
       refBillTemplateVersionId: null,
       refInvoiceProfileVersion: null,
-      refCsvTemplateVersionId: null,
       refInvDocumentId: null,
     });
     renderInput.read.mockResolvedValue({

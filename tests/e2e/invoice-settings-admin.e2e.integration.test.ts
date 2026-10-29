@@ -582,10 +582,10 @@ describe.skipIf(
       .getByRole("alert");
     await upload("big.png", "image/png", png(400, 400, 600_000));
     await expect.poll(() => alert.innerText()).toMatch(/the limit is 500 KB/);
-    await upload("small.png", "image/png", decodablePng(200, 200));
+    await upload("small.png", "image/png", decodablePng(80, 80));
     await expect
       .poll(() => alert.innerText())
-      .toMatch(/the shorter side must be at least 300 px/);
+      .toMatch(/the shorter side must be at least 96 px/);
     await upload("fake.svg", "image/svg+xml", decodablePng(320, 320));
     await expect
       .poll(() => alert.innerText())
