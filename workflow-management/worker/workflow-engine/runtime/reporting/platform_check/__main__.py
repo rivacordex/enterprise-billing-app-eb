@@ -28,6 +28,9 @@ from zoneinfo import ZoneInfo
 from ..common import codes, db, trace
 
 BUSINESS_TZ = ZoneInfo("Asia/Kuala_Lumpur")  # §1.5
+# Where the destination shares are mounted (rpt01 D7) — the mount layout, not a
+# report setting; ``--outbound-dir`` must name one folder directly under it.
+OUTBOUND_ROOT = Path("/data/outbound")
 
 EXPECTED_USER = "reporting_runtime"
 EXPECTED_READ_ONLY = "on"
@@ -92,12 +95,25 @@ def _render(values: dict[str, object]) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def _confine(outbound_dir: Path) -> Path:
+    """``outbound_dir`` resolved, refused unless it is one destination's folder
+    directly under ``OUTBOUND_ROOT`` — each destination is its own share,
+    mounted at ``/data/outbound/<destination>/`` (rptmgmt-architecture.md §7).
+    """
+    resolved = outbound_dir.resolve()
+    if resolved.parent != OUTBOUND_ROOT:
+        raise PlatformCheckFailed(f"OUTBOUND_DIR_INVALID {outbound_dir}")
+    return resolved
+
+
 def _deliver(content: bytes, name: str, outbound_dir: Path) -> Path:
     """Write ``.<name>.tmp`` in ``outbound_dir``, fsync, then rename to ``name``.
 
     The reader never sees a partial file, and an existing file is never
-    replaced (Inv 11).
+    replaced (Inv 11). ``outbound_dir`` must be a destination folder under
+    ``OUTBOUND_ROOT`` (``_confine``).
     """
+    outbound_dir = _confine(outbound_dir)
     outbound_dir.mkdir(parents=True, exist_ok=True)
     target = outbound_dir / name
     if target.exists():

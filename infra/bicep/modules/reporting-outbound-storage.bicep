@@ -46,6 +46,25 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     // Left enabled: the ACA Azure Files mount authenticates with the account
     // key (as the engine's `landing` mount does).
     allowSharedKeyAccess: true
+    // Encryption at rest, stated explicitly: Microsoft-managed keys on the
+    // file and blob services, plus the infrastructure (second) layer.
+    // requireInfrastructureEncryption and keyType are fixed at creation, so
+    // they hold only for an account created with them; changing them later
+    // means recreating the account.
+    encryption: {
+      keySource: 'Microsoft.Storage'
+      requireInfrastructureEncryption: true
+      services: {
+        file: {
+          enabled: true
+          keyType: 'Account'
+        }
+        blob: {
+          enabled: true
+          keyType: 'Account'
+        }
+      }
+    }
   }
 }
 
