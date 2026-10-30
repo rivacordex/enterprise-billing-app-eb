@@ -105,12 +105,44 @@ def _column(raw: object, index: int, contract_id: str) -> Column:
     return Column(name, type_, required)
 
 
+def _duplicate_key(node: yaml.Node | None, visited: set[int] | None = None) -> str | None:
+    """The first key repeated within one mapping of the composed tree, or ``None``.
+
+    ``safe_load`` keeps the last of two equal keys silently, so a repeated
+    ``type:`` or ``required:`` would hide the first value.
+    """
+    visited = set() if visited is None else visited
+    if node is None or id(node) in visited:
+        return None
+    visited.add(id(node))
+    if isinstance(node, yaml.MappingNode):
+        seen: set[str] = set()
+        for key, value in node.value:
+            if isinstance(key, yaml.ScalarNode):
+                if key.value in seen:
+                    return key.value
+                seen.add(key.value)
+            found = _duplicate_key(value, visited)
+            if found is not None:
+                return found
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            found = _duplicate_key(item, visited)
+            if found is not None:
+                return found
+    return None
+
+
 def load_contract(path: str | Path) -> Contract:
     """Read and validate one contract file (D2); raise ``ContractInvalid``."""
     p = Path(path)
     stem = p.stem
     try:
-        raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+        text = p.read_text(encoding="utf-8")
+        duplicate = _duplicate_key(yaml.compose(text, yaml.SafeLoader))
+        if duplicate is not None:
+            raise ContractInvalid(stem, f"duplicate key {duplicate!r}")
+        raw = yaml.safe_load(text)
     except (OSError, UnicodeDecodeError) as exc:
         raise ContractInvalid(stem, f"unreadable ({type(exc).__name__})") from None
     except yaml.YAMLError:
@@ -203,12 +235,9 @@ def _check_bytes(data: bytes) -> tuple[list[Violation], str]:
     except UnicodeDecodeError as exc:
         violations.append(Violation(_line_of(data, exc.start), NO_COLUMN, codes.NOT_UTF8))
         text = ""
-    offset = data.find(b"\r")
-    while offset >= 0:
-        line = _line_of(data, offset)
-        if not any(v.row == line and v.reason == codes.CR_IN_FILE for v in violations):
-            violations.append(Violation(line, NO_COLUMN, codes.CR_IN_FILE))
-        offset = data.find(b"\r", offset + 1)
+    for number, chunk in enumerate(data.split(b"\n"), 1):
+        if b"\r" in chunk:
+            violations.append(Violation(number, NO_COLUMN, codes.CR_IN_FILE))
     if not data.endswith(b"\n"):
         violations.append(Violation(_line_of(data, len(data)), NO_COLUMN, codes.NO_FINAL_LF))
     return violations, text

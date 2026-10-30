@@ -14,7 +14,7 @@ Stand up everything the five reports share on the platform, and prove it works e
 
 1. a `SELECT`-only Postgres login **`reporting_runtime`**, granted the tables Parts A–C read;
 2. the Kestra namespace **`reporting`** and its directory, deployed from git in dev and CI like the other functions;
-3. a **separate storage account** for reporting outbound files, mounted into the engine at `/data/outbound`;
+3. a **separate storage account** for reporting outbound files, each destination's share mounted into the engine at `/data/outbound/<destination>/` (rpt01: `/data/outbound/_platform-check`; rpt04 D1 amendment);
 4. the run-trace convention (`flow_revision` label, `DELIVERED` line) and the WARNING mechanism, verified on the pinned Kestra version (v1.3.35).
 
 No report is built here.
@@ -103,10 +103,10 @@ New module `infra/bicep/modules/reporting-outbound-storage.bicep`, wired from `m
   - file service `protocolSettings.smb`: `versions: 'SMB3.1.1'`, `channelEncryption: 'AES-256-GCM'`.
 - One share, `outbound`. Subfolders are created by the reports that use them (`polygon-capacity/` in rpt04); rpt01 creates `_platform-check/` through the check flow. **Amended by rpt04 D1 (2026-10-29):** one share **per destination**, because Azure Files can't scope read access to a folder. rpt01's share is named `platform-check` and mounted at `/data/outbound/_platform-check/`; each later destination adds its own share and mount.
 - An environment storage definition (`Microsoft.App/managedEnvironments/storages`), name from a parameter defaulting to `reporting-outbound` (unique per instance, as `landingEnvStorageName`), `ReadWrite`, authenticated with the account key via `listKeys()`.
-- `workflow-engine-container-app.bicep`: when `enableReporting`, a volume and a mount at **`/data/outbound`**, plus the D3 env vars and the `reporting-runtime-db-password` Key Vault secret reference exposed as `SECRET_REPORTING_RUNTIME_PASSWORD`.
+- `workflow-engine-container-app.bicep`: when `enableReporting`, one volume and mount per destination at **`/data/outbound/<destination>/`** (rpt01: `/data/outbound/_platform-check`; flows deliver to that mounted path, never the unmounted `/data/outbound` root), plus the D3 env vars and the `reporting-runtime-db-password` Key Vault secret reference exposed as `SECRET_REPORTING_RUNTIME_PASSWORD`.
 - **Reader access is out of scope.** How Mediation and the CSP read the account (SAS, their own identity, or the key) is agreed when their folder is set up (rpt04 for Mediation/CSP). Whatever is chosen grants access to this account only.
 - **Audience is recorded where the destination is defined:** the `flows/reporting/README.md` _Outbound destinations_ table (`outbound_dir`, readers, report, since) and a matching comment in the bicep module. rpt01's only row is `_platform-check/` → no external reader.
-- **Local dev:** compose mounts `./workflow-management/dev/outbound:/data/outbound` on the engine, with a `README.md` and `.gitignore` in that folder like `landing/`. No `allowed-paths` change in `kestra.yml`: the Python runtime writes the files, not the `fs.local` plugins.
+- **Local dev:** compose mounts `./workflow-management/dev/outbound:/data/outbound` on the engine (one folder standing in for every destination's share; flows still deliver under `/data/outbound/<destination>/`), with a `README.md` and `.gitignore` in that folder like `landing/`. No `allowed-paths` change in `kestra.yml`: the Python runtime writes the files, not the `fs.local` plugins.
 
 ### D8 — The check flow `report-platform-check` and the WARNING mechanism
 

@@ -25,6 +25,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import psycopg
+
 from ..common import codes, db, trace
 
 BUSINESS_TZ = ZoneInfo("Asia/Kuala_Lumpur")  # §1.5
@@ -73,6 +75,9 @@ def _read() -> dict[str, object]:
             row = conn.execute(CHECK_QUERY).fetchone()
     except RuntimeError as exc:
         raise PlatformCheckFailed(f"CONNECT_FAILED {exc}") from None
+    except psycopg.Error as exc:
+        # The type only: a driver message may quote the query or server detail.
+        raise PlatformCheckFailed(f"QUERY_FAILED {type(exc).__name__}") from None
     return {
         "current_user": row[0],
         "transaction_read_only": row[1],

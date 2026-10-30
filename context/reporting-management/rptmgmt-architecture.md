@@ -49,7 +49,7 @@ The exact list, including any other table `capacityDetailCte` joins, is fixed in
 | Part B file (and later destinations) | Its own outbound share, `outbound_dir` per report | Safe write by rename; never overwrite (PC13, PC14; `common/delivery.py`). Egress rules apply (RF8). Each reader gets a read-only SAS on its share only (RF-OI2). |
 | Column definitions | Kestra namespace files, versioned in git | A column change is a reviewed commit (SR35) |
 | Settings that change output | Flow `variables` (e.g. `occ_reason_codes`, `encryption`, `outbound_dir`, `capacity_source`) | Never hard-coded in Python |
-| Secrets | Kestra secrets in `reporting` (`GLFEED_ZIP_PASSWORD`; DB credential) | Never in a flow or in git |
+| Secrets | Kestra secret in `reporting`: `GLFEED_ZIP_PASSWORD`. The DB password is Key Vault `reporting-runtime-db-password`, injected into the engine as env var `SECRET_REPORTING_RUNTIME_PASSWORD`, which `common/db.py` reads | Never in a flow or in git |
 | Run trace | Kestra labels and logs | `flow_revision`, `report`, inputs, `skipped_*`; `SKIPPED` / `DELIVERED` lines (RF7) |
 
 ## 4. Authentication, authorization & data ownership
@@ -57,7 +57,7 @@ The exact list, including any other table `capacityDetailCte` joins, is fixed in
 - **No app permissions.** Revenue Ops reaches the flows through the Kestra UI behind the platform's Entra Easy Auth proxy. The OSS shared-instance accepted risk applies (`wfm-architecture.md` §6).
 - **DB:** one `SELECT`-only login role, grants enumerated per table, never `ON ALL TABLES`, no `DEFAULT PRIVILEGES` (`architecture.md` §4 DB roles). It connects to the billing database, so it carries the `PUBLIC`-`CONNECT` ordering hazard and the same fail-closed precondition as `billrun-db-roles.sql`.
 - **Engine:** no credential of its own. Kestra OSS has one instance login, and the app never calls reporting; the app's credential and the registry entry arrive with I-OI3 (RF5).
-- **Outbound share:** a **separate storage account** (Azure Files on Container Apps mounts with the account key, so a separate key needs a separate account); secure transfer, SMB 3.1.1 with AES-256-GCM; mounted at `/data/outbound`; the key goes from the account to the platform at deploy time and never reaches Kestra or the runtime; audience recorded per `outbound_dir` in `flows/reporting/README.md` (RF8, rpt01 D7). **One share per destination**, because Azure Files can't scope read access to a folder; each reader gets a read-only SAS on its own share (rpt04 D1, RF-OI2).
+- **Outbound share:** a **separate storage account** (Azure Files on Container Apps mounts with the account key, so a separate key needs a separate account); secure transfer, SMB 3.1.1 with AES-256-GCM; each destination's share mounted at `/data/outbound/<destination>/` (e.g. `/data/outbound/_platform-check`), and flows deliver only to that mounted path, never the `/data/outbound` root; the key goes from the account to the platform at deploy time and never reaches Kestra or the runtime; audience recorded per `outbound_dir` in `flows/reporting/README.md` (RF8, rpt01 D7). **One share per destination**, because Azure Files can't scope read access to a folder; each reader gets a read-only SAS on its own share (rpt04 D1, RF-OI2).
 - **Role:** `reporting_runtime`, with `default_transaction_read_only = on` as defence in depth (rpt01 D1).
 
 ## 5. Background tasks & AI

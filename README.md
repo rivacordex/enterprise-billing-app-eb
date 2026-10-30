@@ -354,15 +354,18 @@ UI: **http://localhost:8085/ui/** — user `workflow-ops@billing.ops`, password
 ### 10. Deploy the flows
 
 **Recommended — the one-shot deployer** (mirrors the CI deploy stage; deploys
-rating flows to `rating` and both bill-run placeholders to `billrun`,
-idempotently):
+rating flows to `rating`, both bill-run placeholders to `billrun`, and the
+reporting flows to `reporting`, then uploads reporting's column definitions as
+namespace files, idempotently):
 
 ```powershell
 docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml run --rm --no-deps flow-deploy
 ```
 
-You should see `4 flow(s) … 'rating'`, then `1 flow(s) … 'billrun'` twice. (A
-`PrometheusMeterRegistry` WARN and a "command is deprecated" notice are benign.)
+You should see `4 flow(s) … 'rating'`, then `1 flow(s) … 'billrun'` twice, then
+`4 flow(s) … 'reporting'`, then `Uploading /flows/reporting/contracts ->
+namespace reporting at contracts/`. (A `PrometheusMeterRegistry` WARN and
+"command is deprecated" notices are benign.)
 
 <details>
 <summary>Alternative — deploy only the two bill-run flows by hand (curl)</summary>

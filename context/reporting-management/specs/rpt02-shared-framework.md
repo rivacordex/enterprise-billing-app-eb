@@ -73,7 +73,7 @@ columns:
   - `resolve_default(rule)`: `today` for `not_future` inputs that default to today (SR40's `as_of_date`), `yesterday` for the rest (PC15, MO9, IC14, GL3). The report's spec states which default it uses; the subflow takes it as an input.
 - **`report-validate-date`** (subflow). Inputs: `name` (the input's name, e.g. `report_date`), `value` (string, may be empty), `rule`, `default` (`today` \| `yesterday`). It resolves an empty value to its default, applies the rule, and returns `effective_date`. On failure: FAILED with `INVALID_<NAME uppercased>` (`INVALID_REPORT_DATE`, `INVALID_AS_OF_DATE`, …). Defaults are computed here, not in Kestra input `defaults`, so "today in Kuala Lumpur" exists in one place.
 - **`report-validate-period`** (subflow, SR33). Inputs: `billing_period`, `as_of_date`. It checks `billing_period` (`INVALID_BILLING_PERIOD`), calls `report-validate-date` for `as_of_date` (rule `not_future`, default `today`), then checks `as_of_date` is not before the period's first day (`INVALID_AS_OF_DATE`). Outputs: `period_start`, `period_end`, `effective_as_of_date`.
-- Both run `python3 -m runtime.reporting.validate date|period …` in one `Commands` task on the `Process` runner; they read no database.
+- `report-validate-date` runs `python3 -m runtime.reporting.validate date …` in one `Commands` task on the `Process` runner. **As built (accepted 2026-10-30):** `report-validate-period` runs two `Commands` tasks on the `Process` runner around its `report-validate-date` call — `check_period` (`validate period --billing-period`) before it, `check_as_of` (`validate period --billing-period --as-of-date`) after it — so the check order above holds with no computation in YAML (Inv 13). Neither subflow reads the database.
 - **Calling pattern for every report:** `io.kestra.plugin.core.flow.Subflow` with `namespace: reporting`, `wait: true`, `transmitFailed: true`, then reading the subflow's outputs. The exact output-passing syntax on v1.3.35 is fixed in `flows/reporting/README.md` when built.
 
 ### D5 — `common/csv_writer.py` (RF4)
@@ -155,4 +155,5 @@ Tests are vitest suites in `tests/reporting/` using rpt01's `reporting-harness.t
 1. T-R02-1–T-R02-13 pass; the Kestra cases on a local engine.
 2. Python lint and unit tests green; flows parse and deploy; the image builds with hashes.
 3. No report flow, contract, grant or `common/` module beyond D9's list.
-4. Docs synced (above); the subflow, output and namespace-file mechanics recorded in `flows/reporting/README.md`.
+4. `report-validate-date` has one `Commands` task; `report-validate-period` has `check_period` → `as_of_date` (the date subflow) → `check_as_of` (D4).
+5. Docs synced (above); the subflow, output and namespace-file mechanics recorded in `flows/reporting/README.md`.

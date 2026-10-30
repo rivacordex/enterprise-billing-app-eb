@@ -22,14 +22,14 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 
 ## Reporting Module Context
 
-Read the following files in order before implementing or making changes related to the Reporting Management module — the read-only report flows that run as function 4 on the Kestra workflow-management platform. Current unit: rpt01, the `reporting` namespace, the `reporting_runtime` read-only role, deploy wiring and the outbound share (spec: `context/reporting-management/specs/rpt01-namespace-role-and-outbound.md`). The unit list and build order are in `context/reporting-management/specs/rpt00-build-plan.md`:
+Read the following files in order before implementing or making changes related to the Reporting Management module — the read-only report flows that run as function 4 on the Kestra workflow-management platform. rpt01 and rpt02 are complete; the next unit is rpt03 (its spec is in `context/reporting-management/specs/`). The unit list, build order and status are in `context/reporting-management/specs/rpt00-build-plan.md`:
 
 1. `context/reporting-management/rptmgmt-project-overview.md` — the module's definition, goals, the five reports and scope
 2. `context/reporting-management/rptmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
 3. `context/reporting-management/rptmgmt-code-standards.md` — implementation rules and conventions
 4. `context/reporting-management/rptmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
 
-This module has no pages, Server Actions, components, permissions or tables, so it has no UI context document. Report logic lives in `workflow-management/` (flows and the worker's `runtime/reporting/`), never in the Next.js app.
+This module has no pages, Server Actions, components or RBAC permissions, and owns no tables, so it has no UI context document. Its database access is the `reporting_runtime` role's `SELECT`-only grants on nine tables owned by other modules. Report logic lives in `workflow-management/` (flows and the worker's `runtime/reporting/`), never in the Next.js app.
 
 Update `context/reporting-management/rptmgmt-progress-tracker.md` after each meaningful implementation change.
 

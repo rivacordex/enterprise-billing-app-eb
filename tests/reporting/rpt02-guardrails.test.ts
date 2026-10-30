@@ -153,7 +153,7 @@ describe("T-R02-13 — hash lock (static half; the image build is the other)", (
     );
     const lock = read(join(worker, "requirements.txt"));
     const entry =
-      /^pyyaml==(\S+) \\\n((?:\s+--hash=sha256:[0-9a-f]{64}(?: \\)?\n)+)/m.exec(
+      /^pyyaml==(\S+) \\\r?\n((?:\s+--hash=sha256:[0-9a-f]{64}(?: \\)?\r?\n)+)/m.exec(
         lock,
       );
     expect(

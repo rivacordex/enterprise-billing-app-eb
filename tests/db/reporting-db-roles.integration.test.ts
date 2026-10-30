@@ -154,7 +154,7 @@ describe.skipIf(!databaseUrl)(
         JOIN pg_namespace n ON n.oid = c.relnamespace,
         LATERAL aclexplode(c.relacl) a
         WHERE a.grantee = ${ROLE}::regrole
-        ORDER BY 1
+        ORDER BY 1 COLLATE "C"
       `;
       return rows.map((r) => r.entry);
     }
@@ -332,7 +332,7 @@ describe.skipIf(!databaseUrl)(
           SELECT table_schema || '.' || table_name || ':' || privilege_type AS entry
           FROM information_schema.role_table_grants
           WHERE grantee = ${ROLE}
-          ORDER BY 1
+          ORDER BY 1 COLLATE "C"
         `;
         const expected = GRANTED_TABLES.map((t) => `${t}:SELECT`);
         expect(rows.map((r) => r.entry)).toEqual(expected);

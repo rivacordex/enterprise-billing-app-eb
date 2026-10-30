@@ -40,6 +40,8 @@ const BAD_CONTRACTS: Record<string, string> = {
     "id: bad_type\nfile: x.csv\nheader: false\ncolumns:\n  - name: a\n    type: money\n    required: true\n",
   dup_name:
     "id: dup_name\nfile: x.csv\nheader: true\ncolumns:\n  - name: a\n    type: text\n    required: true\n  - name: a\n    type: date\n    required: false\n",
+  dup_key:
+    "id: dup_key\nfile: x.csv\nheader: false\ncolumns:\n  - name: a\n    type: text\n    type: date\n    required: true\n",
   wrong_id:
     "id: other\nfile: x.csv\nheader: false\ncolumns:\n  - name: a\n    type: text\n    required: true\n",
   missing_req:
@@ -198,6 +200,9 @@ describe.skipIf(!ready)(
       ]);
       expect(errors("contract:dup_name")).toEqual([
         "CONTRACT_INVALID dup_name duplicate name 'a'",
+      ]);
+      expect(errors("contract:dup_key")).toEqual([
+        "CONTRACT_INVALID dup_key duplicate key 'type'",
       ]);
       expect(errors("contract:wrong_id")).toEqual([
         "CONTRACT_INVALID wrong_id id 'other' does not equal the file name",
