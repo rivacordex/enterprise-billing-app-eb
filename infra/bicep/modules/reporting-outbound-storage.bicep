@@ -38,6 +38,12 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     name: 'Standard_LRS'
   }
   kind: 'StorageV2'
+  // The account's own identity (e.g. for customer-managed keys later). It holds
+  // no role assignments, and it is not how the share is mounted: the ACA mount
+  // still authenticates with the account key (see header).
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     // Secure transfer required: on Azure Files this refuses unencrypted SMB.
     supportsHttpsTrafficOnly: true
