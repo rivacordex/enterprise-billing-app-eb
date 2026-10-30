@@ -50,3 +50,7 @@ param topology = 'collapsed'
 // bm19/bm34 — wire the invoice artifact store (app writes / distributor reads) on
 // dev. Requires the billrun-blob-connection-string + -b64 Key Vault secrets.
 param enableBlobArtifacts = true
+// rpt01 D6 — reporting deploys to the engine hosting `billrun` (every topology
+// here hosts it). Needs the reporting-runtime-db-password Key Vault secret before
+// an engine deploy (deployWorkflowEngine=true).
+param enableReporting = true

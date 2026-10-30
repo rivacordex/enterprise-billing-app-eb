@@ -1,0 +1,5 @@
+# rpt01 — delivered report files are runtime output, not source. Keep only
+# this file and the README.
+*
+!.gitignore
+!README.md

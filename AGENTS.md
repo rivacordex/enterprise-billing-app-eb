@@ -20,22 +20,23 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 -->
  
 
-## Billing Module Context
+## Reporting Module Context
 
-Read the following files in order before implementing or making changes related to bm88, retiring the bm62 invoice CSV output and its CSV template machinery (spec: `context/billing-management/specs/bm88-retire-invoice-csv-output.md`):
+Read the following files in order before implementing or making changes related to the Reporting Management module — the read-only report flows that run as function 4 on the Kestra workflow-management platform. Current unit: rpt01, the `reporting` namespace, the `reporting_runtime` read-only role, deploy wiring and the outbound share (spec: `context/reporting-management/specs/rpt01-namespace-role-and-outbound.md`). The unit list and build order are in `context/reporting-management/specs/rpt00-build-plan.md`:
 
-1. `context/billing-management/billmgmt-update-overview.md` — the module's definition, goals, core flow and scope;
-2. `context/billing-management/billmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
-3. `context/billing-management/billmgmt-code-standards.md` — implementation rules and conventions
-4. `context/billing-management/billmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-5. `context/billing-management/billmgmt-ui-context.md` — theme, colors, typography, and component conventions
+1. `context/reporting-management/rptmgmt-project-overview.md` — the module's definition, goals, the five reports and scope
+2. `context/reporting-management/rptmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
+3. `context/reporting-management/rptmgmt-code-standards.md` — implementation rules and conventions
+4. `context/reporting-management/rptmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
 
-Update `context/billing-management/billmgmt-progress-tracker.md` after each meaningful implementation change.
+This module has no pages, Server Actions, components, permissions or tables, so it has no UI context document. Report logic lives in `workflow-management/` (flows and the worker's `runtime/reporting/`), never in the Next.js app.
 
-Read also the general context document to support the changes as referenced by the context files above:
-1. `context/architecture.md` — system structure, boundaries, storage model, and invariants  
-2. `context/code-standards.md`— implementation rules and conventions
-3. `context/ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
-4. `context/ui-context.md` — theme, colors, typography, and component conventions
+Update `context/reporting-management/rptmgmt-progress-tracker.md` after each meaningful implementation change.
+
+Read also the general context documents to support the changes as referenced by the context files above:
+1. `context/architecture.md` — system structure, boundaries, storage model, and invariants
+2. `context/workflow-management/wfm-architecture.md` — the Kestra platform, topology and engine registry (reporting is function 4, §10)
+3. `context/code-standards.md` — implementation rules and conventions
+4. `context/ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
 
  

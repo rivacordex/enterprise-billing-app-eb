@@ -12,6 +12,7 @@ workflow-management/
     rating-engine/       # function 1 — rating (real flows, computation stubbed)
     bill-run-processor/  # function 2 — bill-run processing (template skeleton this phase)
     bill-run-distributor/# function 3 — bill-run distribution (template skeleton this phase)
+    reporting/           # function 4 — read-only report flows (platform check only, rpt01)
   worker/
     workflow-engine/     # THE ONE shared process-runner image (Python toolchain + Postgres client)
   kestra/kestra.yml      # platform config (datasource, storage, default-namespace)
@@ -34,5 +35,8 @@ instance count (`services/billing/engine-registry.ts`). The Azure bicep stays at
 the app-root `infra/` (the solution deploys as one app), named `workflow-engine`.
 
 **Naming rule.** Flow directories are named for the **solution function**, never
-the module abbreviation or the logical-engine name. Logical-engine names
-(`rating`, `billrun`) live only in each flow's `namespace:` and the app registry.
+the module abbreviation or the logical-engine name (`rating-engine/`,
+`bill-run-processor/`, `bill-run-distributor/`, `reporting/`). Logical-engine
+names (`rating`, `billrun`, `reporting`) live only in each flow's `namespace:`
+and, for engines the app calls, the app registry (reporting has no registry
+entry until I-OI3).

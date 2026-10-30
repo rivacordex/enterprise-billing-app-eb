@@ -494,6 +494,8 @@ stages:
                 #   rating-engine        → rating   (real flows)
                 #   bill-run-processor   → billrun  (# STUB template shells)
                 #   bill-run-distributor → billrun  (# STUB template shells)
+                #   reporting            → reporting (real flows, rpt01 — rides
+                #                          the billrun-hosting engine, RF6)
                 #
                 # `--no-delete`: `flow namespace update` reconciles the whole
                 # namespace to the input directory and, by default, DELETES
@@ -535,6 +537,8 @@ stages:
                 deploy_fn rating-engine                  rating
                 deploy_fn bill-run-processor/local-dev   billrun
                 deploy_fn bill-run-distributor/local-dev billrun
+                # rpt01 D6 — reporting's function root holds only real flows.
+                deploy_fn reporting                      reporting
             displayName: kestra flow namespace update — all functions (D2)
 
   # ---------------------------------------------------------------------

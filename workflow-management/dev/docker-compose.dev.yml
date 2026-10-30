@@ -130,8 +130,8 @@ services:
     restart: "no"
 
   # The shared workflow engine (wfm01) — same image, same process runner, same
-  # kestra.yml as the deployed Container App; hosts BOTH the `rating` and
-  # `billrun` namespaces (flows deployed by the flow-deploy one-shot below).
+  # kestra.yml as the deployed Container App; hosts the `rating`, `billrun`
+  # and `reporting` namespaces (flows deployed by the flow-deploy one-shot below).
   workflow-engine:
     build:
       context: ./workflow-management/worker/workflow-engine
@@ -199,6 +199,14 @@ services:
       # deployed billrun engine's mounted Azure Files share; inspectable on the
       # host under workflow-management/dev/distribution/{invoices,reports}/.
       - ./workflow-management/dev/distribution:/distribution
+      # rpt01 D7 — the reporting outbound shares. Deployed, each destination is
+      # its own Azure Files share mounted at /data/outbound/<destination>/
+      # (rpt04 D1); locally one bind mount stands in for all of them, and each
+      # report creates its own subfolder (rpt01: _platform-check/). Inspect on
+      # the host under workflow-management/dev/outbound/. No kestra.yml
+      # allowed-paths entry: the Python runtime writes these files, not the
+      # fs.local plugins.
+      - ./workflow-management/dev/outbound:/data/outbound
       # Deliberately NOT present: "- /var/run/docker.sock:/var/run/docker.sock" (D9).
     ports:
       - "${RATING_ENGINE_PORT:-8085}:8080"
@@ -229,7 +237,7 @@ services:
   # deploy EVERY function's flows to its namespace, idempotently, using the SAME
   # pinned Kestra image as its CLI (mirrors the CI deploy_workflow_flows stage).
   # `up` then ends with rating flows under `rating` and the bill-run placeholder
-  # flow shells under `billrun` in the UI. `--no-delete` keeps re-runs additive
+  # flow shells under `billrun`, and the reporting flows under `reporting`, in the UI. `--no-delete` keeps re-runs additive
   # (upsert, no duplication). `$$` escapes Compose's own interpolation so the
   # shell vars resolve inside the container.
   #
@@ -243,6 +251,8 @@ services:
   # `local-dev/` (the `*.template.yml` at the bill-run function root is a
   # NON-deployable contract doc whose tasks omit `type:`, and `kestra flow`
   # does not recurse into subdirectories — so the target must be `.../local-dev`).
+  # Reporting (rpt01 D6, function 4) holds only real flows at its function
+  # root, so it deploys from `reporting` directly, no `local-dev/` indirection.
   flow-deploy:
     image: kestra/kestra:v1.3.35@sha256:0b880e20e403ef635a6bc7e9e72786c7a6dde143858723449dc57500830868e2
     env_file:
@@ -258,7 +268,7 @@ services:
         set -euo pipefail
         SERVER="http://workflow-engine:8080"
         CRED="$${KESTRA_SERVER_BASIC_AUTH_USERNAME}:$${KESTRA_SERVER_BASIC_AUTH_PASSWORD}"
-        for pair in "rating-engine:rating" "bill-run-processor/local-dev:billrun" "bill-run-distributor/local-dev:billrun"; do
+        for pair in "rating-engine:rating" "bill-run-processor/local-dev:billrun" "bill-run-distributor/local-dev:billrun" "reporting:reporting"; do
           dir="$${pair%%:*}"; ns="$${pair##*:}"
           echo "Deploying /flows/$$dir -> namespace $$ns"
           /app/kestra flow namespace update "$$ns" "/flows/$$dir" --no-delete --server "$$SERVER" --user "$$CRED"

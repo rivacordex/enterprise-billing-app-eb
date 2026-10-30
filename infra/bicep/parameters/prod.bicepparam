@@ -10,3 +10,7 @@ param appTimezone = 'Asia/Kuala_Lumpur'
 // engine instances, rating | billrun isolated) — a param + env-template change
 // only, no app-code change (engine-registry is by-name).
 param topology = 'collapsed'
+// rpt01 D6 — reporting deploys to the engine hosting `billrun` (every topology
+// here hosts it). Needs the reporting-runtime-db-password Key Vault secret before
+// an engine deploy (deployWorkflowEngine=true).
+param enableReporting = true

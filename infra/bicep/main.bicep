@@ -165,6 +165,24 @@ param appBlobAuth string = 'connectionString'
 @allowed(['collapsed', 'split-by-module', 'enterprise'])
 param topology string = 'collapsed'
 
+// rpt01-spec D6/D7 — Reporting Management (function 4, namespace `reporting`).
+// Deploys to the engine that hosts `billrun` (the collapsed engine, or the
+// billrun instance under split-by-module, RF6), so it is passed ONLY at the
+// engine call sites below that set hostsBillrunNamespace: true. When true (and
+// deployWorkflowEngine), the separate reporting outbound storage account
+// (reporting-outbound-storage.bicep) is created and its shares mounted at
+// /data/outbound/<destination>/ on that engine, with the reporting_runtime DB
+// credential wired. Requires the `reporting-runtime-db-password` Key Vault
+// secret (fail-closed otherwise). Default false.
+@description('rpt01 — deploy Reporting on the billrun-hosting engine: the separate outbound storage account + share mounts, and the reporting_runtime DB credential (needs the reporting-runtime-db-password Key Vault secret). Default false.')
+param enableReporting bool = false
+
+@description('rpt01 D7 — name of the separate reporting outbound storage account (3–24 lowercase letters/digits, globally unique). Empty (default) derives one from the environment name; never the engine\'s account.')
+param reportingOutboundStorageAccountName string = ''
+
+@description('rpt01 D7 — prefix of the reporting outbound Container Apps Environment storage definitions (one per destination, e.g. `reporting-outbound-platform-check`). Unique per instance, as landingEnvStorageName.')
+param reportingOutboundEnvStorageName string = 'reporting-outbound'
+
 @description('rm04-spec D2 — the worker image, pinned by digest. Empty (default) resolves to a bootstrap placeholder on the shared ACR at the module call site below — a param default cannot reference another resource\'s output (BCP072), so this mirrors how containerApp/containerAppJob resolve their own placeholder imageName inline.')
 param workflowEngineImageName string = ''
 
@@ -195,6 +213,10 @@ var namePrefix = 'ebill-${environmentName}'
 var uniqueSuffix = uniqueString(resourceGroup().id)
 // wfm01 §4b — true only under the split-by-module topology (two engine instances).
 var splitByModule = topology == 'split-by-module'
+// rpt01 D7 — a separate account from every engine account above/below.
+var reportingOutboundAccountName = empty(reportingOutboundStorageAccountName)
+  ? take(replace('${namePrefix}rptout${uniqueSuffix}', '-', ''), 24)
+  : reportingOutboundStorageAccountName
 
 resource appManagedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${namePrefix}-app-mi'
@@ -445,6 +467,20 @@ module workflowEngineStorage 'modules/workflow-engine-storage.bicep' = if (deplo
   }
 }
 
+// rpt01-spec D7 — the reporting outbound storage: a SEPARATE account (never an
+// engine's), its per-destination shares and their environment storage
+// definitions. One instance under either topology — the shares mount only on
+// the reporting-hosting (billrun-hosting) engine, and the environment is shared.
+module reportingOutboundStorage 'modules/reporting-outbound-storage.bicep' = if (deployWorkflowEngine && enableReporting) {
+  name: 'reportingOutboundStorage'
+  params: {
+    location: location
+    storageAccountName: reportingOutboundAccountName
+    containerAppsEnvironmentId: containerAppsEnvironment.id
+    envStorageName: reportingOutboundEnvStorageName
+  }
+}
+
 // rm04-spec Implementation §3 — the collapsed `workflow-engine` Container App.
 module workflowEngineContainerApp 'modules/workflow-engine-container-app.bicep' = if (deployWorkflowEngine && !splitByModule) {
   name: 'workflowEngineContainerApp'
@@ -481,6 +517,9 @@ module workflowEngineContainerApp 'modules/workflow-engine-container-app.bicep' 
     // defaultNamespace stays `rating` here even though the engine hosts
     // `billrun`, so it cannot be derived from the namespace default.
     hostsBillrunNamespace: true
+    // rpt01 D6 — reporting rides the billrun-hosting engine (RF6).
+    enableReporting: enableReporting
+    reportingPlatformCheckEnvStorageName: enableReporting ? reportingOutboundStorage!.outputs.platformCheckEnvStorageName : ''
     // bm36 — the app's HTTPS URL for the bill-run flows' signal-back callbacks
     // (ENV_BILLRUN_APP_BASE_URL). Same derivation as the app's own appBaseUrl.
     billrunAppBaseUrl: 'https://${namePrefix}-app.${containerAppsEnvironment.properties.defaultDomain}'
@@ -586,6 +625,9 @@ module workflowEngineBillrunContainerApp 'modules/workflow-engine-container-app.
     // (billrun-runtime-db-password secret + SECRET_BILLRUN_RUNTIME_PASSWORD /
     // BILLRUN_DB_* env).
     hostsBillrunNamespace: true
+    // rpt01 D6 — reporting rides the billrun instance under split-by-module (RF6).
+    enableReporting: enableReporting
+    reportingPlatformCheckEnvStorageName: enableReporting ? reportingOutboundStorage!.outputs.platformCheckEnvStorageName : ''
     // bm36 — signal-back callback host for the split billrun instance (same app).
     billrunAppBaseUrl: 'https://${namePrefix}-app.${containerAppsEnvironment.properties.defaultDomain}'
     // bm34 — distributor Blob artifact download for the split billrun instance.
