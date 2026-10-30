@@ -65,13 +65,20 @@ itself (``CLEARED``) once a later batch for that period lands and completes,
 and surfaces superseded-never-replaced usage via the rm01 orphan index.
 """
 
-# Eager-import the library submodules only, so ``import runtime; runtime.db``
-# works for the reusable plumbing. ``prp``, ``rp``, ``rl``, ``log_sweep``,
+# The library submodules load on first attribute access (PEP 562), so
+# ``import runtime; runtime.db`` still works for the reusable plumbing while a
+# ``python3 -m runtime.reporting.*`` entry point — which shares this package
+# but must never use rating's ``runtime.db`` (rptmgmt-code-standards §2.7) —
+# loads neither it nor polars. ``prp``, ``rp``, ``rl``, ``log_sweep``,
 # ``emit_terminal_log``, ``stranded_reconcile`` and ``completeness_check`` are
 # executable entry points (run as ``python3 -m runtime.<module>``), not part
-# of the package API — importing them here would pull their module-level code
-# (and run it twice under ``-m``) into every ``import runtime``. Import them
-# directly (``python3 -m runtime.rl``) instead.
-from . import db, logemit, storage, transform
+# of the package API; import them directly (``python3 -m runtime.rl``).
+import importlib
 
 __all__ = ["db", "logemit", "storage", "transform"]
+
+
+def __getattr__(name: str):
+    if name in __all__:
+        return importlib.import_module(f".{name}", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

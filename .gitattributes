@@ -35,6 +35,10 @@
 db/seeds/invoice-templates/** text eol=lf
 db/seeds/invoice-templates/**/*.woff2 binary
 
+# rpt02 — the reporting CSV writer is byte-compared against these (LF only,
+# no BOM); never convert them.
+tests/fixtures/reporting/**/*.csv -text
+
 # Binary — never touch these.
 *.png binary
 *.jpg binary

@@ -8,3 +8,7 @@ param maxReplicas = 4
 param appTimezone = 'Asia/Kuala_Lumpur'
 // wfm01 §4b — non-prod is collapsed (one workflow-engine instance, both namespaces).
 param topology = 'collapsed'
+// rpt01 D6 — reporting deploys to the engine hosting `billrun` (every topology
+// here hosts it). Needs the reporting-runtime-db-password Key Vault secret before
+// an engine deploy (deployWorkflowEngine=true).
+param enableReporting = true

@@ -1,0 +1,61 @@
+# rpt01-spec D8 — the reporting platform check. Proves the shared reporting
+# platform end to end: the runtime connects as `reporting_runtime` in one
+# REPEATABLE READ READ ONLY snapshot (Inv 1, Inv 2), reads a granted table,
+# publishes a file as an execution output and delivers it to the outbound share
+# by write-then-rename (RF8, Inv 11), and emits the RF7 trace (`flow_revision`
+# label, `DELIVERED` line) and the `status` output. Stays deployed after rpt01
+# as Revenue Ops' health check. Computes nothing itself (Inv 13).
+#
+# Never edit this flow in the Kestra UI — deployed from git by the dev
+# `flow-deploy` service and the CI `deploy_workflow_flows` stage (SR41).
+id: report-platform-check
+namespace: reporting
+description: Reporting platform check
+
+labels:
+  report: platform_check
+
+inputs:
+  # Exists only so the WARNING path can be proven in place; it changes
+  # nothing else (D8).
+  - id: simulate_warning
+    type: BOOLEAN
+    defaults: false
+
+variables:
+  # The destination's own share, mounted at /data/outbound/_platform-check/
+  # (rpt04 D1 amendment: one share per destination). Audience: no external
+  # reader — see flows/reporting/README.md, Outbound destinations.
+  outbound_dir: /data/outbound/_platform-check
+
+tasks:
+  # RF7 — `flow_revision` as a run label. A runtime Labels task, because flow
+  # `labels:` are not rendered (a flow-level `{{ flow.revision }}` would be
+  # stored literally).
+  - id: trace
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      flow_revision: "{{ flow.revision }}"
+
+  - id: check
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # ACA has no Docker daemon
+    commands:
+      - >
+        python3 -m runtime.reporting.platform_check
+        --outbound-dir "{{ vars.outbound_dir }}"
+        --flow-revision "{{ flow.revision }}"
+        --simulate-warning "{{ inputs.simulate_warning }}"
+    outputFiles:
+      - platform_check_*.txt
+
+  # The WARNING contract (code-standards §2.6): exit 0 = the runtime finished;
+  # WARNING is the runtime's `status` output applied here, never an exit code.
+  - id: set_status
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.check.vars.status == 'WARNING' }}"
+    then:
+      - id: warning
+        type: io.kestra.plugin.core.execution.Exit
+        state: WARNING

@@ -9,3 +9,7 @@ azure-storage-blob==12.30.0
 azure-identity==1.25.3
 # orjson optional (JSON Lines throughput, D3) — stdlib json is used until a
 # throughput need is measured; add here + recompile if that changes.
+# rpt02-spec D1 — reporting reads its column definitions
+# (flows/reporting/contracts/*.yaml) with PyYAML, through `yaml.safe_load`
+# only (guardrail T-R02-12). The reporting module's first library.
+PyYAML==6.0.3

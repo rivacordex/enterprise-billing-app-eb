@@ -1,0 +1,3 @@
+Invoice Date,Invoice No,Customer Name,Invoice Amount,Discount Amount,Usage Count,Due Date,Note
+20261029,INV-0001,"Acme, Sdn Bhd",1234.50,0.00,1001,20261128,"He said ""hi"""
+20261029,INV-0002,Beta Telco,-12.35,,0,,

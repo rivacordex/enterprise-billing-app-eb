@@ -1,0 +1,1 @@
+rpt01 R01-T10 trace fixture: DELIVERED line + SHA-256 (single line, no newline, so no EOL conversion can change its bytes)

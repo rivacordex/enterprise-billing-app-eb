@@ -71,6 +71,37 @@ app_migrate` so future tables `app_migrate` creates auto-grant to
    in SQL (it cannot run inside a transaction block, so it cannot sit in an
    `IF NOT EXISTS` guard); the runner instead catches Postgres error code
    `42P04` (duplicate_database) and treats a second run as a no-op.
+3c. `npm run db:bootstrap-reporting-roles` — runs
+   `db/bootstrap/reporting-db-roles.ts`, which reads the same
+   `BOOTSTRAP_DATABASE_URL` and executes `db/bootstrap/reporting-db-roles.sql`:
+   creates the **`SELECT`-only** `reporting_runtime` login role (CONNECTION
+   LIMIT 10, `default_transaction_read_only = on`) that the Reporting
+   Management flows (namespace `reporting`) read as, and grants it `USAGE` on
+   `billing`/`customer`/`product` plus `SELECT` on exactly nine tables
+   (rpt01-spec D1/D2). **Run order:** `roles → rating-roles → billrun-roles →
+   reporting-roles`, then `kestra-roles` as today — run it **after** step 3a.
+   Like billrun's, its Step 0 fails loudly (`ORDERING: ...`) unless step 3's
+   `REVOKE CONNECT ... FROM PUBLIC` has already run, and its Step 1 fails
+   closed (`DRIFT: ...`) if the role has become a member of another role or
+   owns an object. Idempotent; a re-run resets drifted attributes to least
+   privilege.
+
+   It contains **no password**. Afterwards, generate a strong random password
+   (URI-safe alphabet, as for `billrun_runtime`) and set it directly against
+   `psql` — **never** in a source-controlled file:
+
+   ```sql
+   ALTER ROLE reporting_runtime WITH PASSWORD '<generated>';
+   ```
+
+   Store the same value as the Key Vault secret **`reporting-runtime-db-password`**
+   (a bare password, not a connection string). The engine that hosts `billrun`
+   reads it as `SECRET_REPORTING_RUNTIME_PASSWORD`, alongside the non-secret
+   `REPORTING_DB_HOST/PORT/NAME/USER/SSLMODE` env vars
+   (`enableReporting` in `workflow-engine-container-app.bicep`). Create the
+   secret **before** the first engine deploy with `enableReporting: true` — the
+   secret reference fails the deploy otherwise. Verify with the queries in
+   "Verification SQL — the `reporting_runtime` read-only role" below.
 4. Set passwords + store connection strings in Key Vault (steps below).
 
 After provisioning, every subsequent deploy's `migrate` Container Apps Job
@@ -198,7 +229,12 @@ connection themselves from the coordinates and read the password from the
   cutover" below), not a default in this module. (The separate rating-worker
   configuration is out of scope here and left unchanged.)
 
-All three are `see workflow-engine-container-app.bicep`.
+- `reporting-runtime-db-password` → `SECRET_REPORTING_RUNTIME_PASSWORD`
+  (rpt01), consumed by the billrun-hosting engine when `enableReporting` is
+  true; the reporting runtime's `common/db.py` reads it +
+  `REPORTING_DB_HOST/PORT/NAME/USER/SSLMODE`. See step 3c.
+
+All four are `see workflow-engine-container-app.bicep`.
 
 ## Verification SQL
 
@@ -300,6 +336,49 @@ SELECT rolconnlimit FROM pg_roles WHERE rolname = 'billrun_runtime';            
 
 Not yet verified against a live cluster in this session — see
 `billmgmt-progress-tracker.md`.
+
+## Verification SQL — the `reporting_runtime` read-only role (rpt01)
+
+Run after step 3c and its password step, connecting to the **billing**
+database as a superuser/owner:
+
+```sql
+-- Attributes: login, least privilege, 10 connections, sessions start read-only.
+SELECT rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolreplication,
+       rolbypassrls, rolconnlimit, rolconfig
+FROM pg_roles WHERE rolname = 'reporting_runtime';
+  -- t, f, f, f, f, f, 10, {default_transaction_read_only=on}
+
+-- Exactly the nine granted tables, SELECT only (no ON ALL TABLES).
+SELECT table_schema, table_name, privilege_type
+FROM information_schema.role_table_grants
+WHERE grantee = 'reporting_runtime'
+ORDER BY 1, 2;
+  -- billing.{billing_account,customer_bill,document,document_line,
+  --          financial_account,ledger_binding}, customer.party_role,
+  -- product.{ratecard_ran_usage_lkp,ratecard_version} — all SELECT
+
+-- No write on any granted table; nothing beyond them.
+SELECT has_table_privilege('reporting_runtime', 'billing.document', 'INSERT');      -- false
+SELECT has_table_privilege('reporting_runtime', 'billing.gl_mapping', 'SELECT');    -- false
+SELECT has_schema_privilege('reporting_runtime', 'rating', 'USAGE');                -- false
+SELECT has_function_privilege('reporting_runtime',
+  'billing.pgledger_create_transfer(text, text, numeric, timestamptz, jsonb)', 'EXECUTE'); -- false
+
+-- No default privileges, no role membership, CONNECT only by explicit grant,
+-- none on kestra.
+SELECT count(*) FROM pg_default_acl d, aclexplode(d.defaclacl) a
+  WHERE a.grantee = 'reporting_runtime'::regrole;                                   -- 0
+SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member
+  WHERE r.rolname = 'reporting_runtime';                                            -- 0
+SELECT has_database_privilege('public', current_database(), 'CONNECT');             -- false
+SELECT has_database_privilege('reporting_runtime', current_database(), 'CONNECT');  -- true
+SELECT has_database_privilege('reporting_runtime', 'kestra', 'CONNECT');            -- false
+```
+
+The same assertions (and a per-table refusal of every `INSERT`, `UPDATE`,
+`DELETE` and `TRUNCATE`, with read-only turned off for the session) run in
+`tests/db/reporting-db-roles.integration.test.ts`.
 
 ## Production cutover — the `billrun` module (bm38)
 

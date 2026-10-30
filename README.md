@@ -278,21 +278,23 @@ a real Kestra.
 > (`workflow-management/flows/bill-run-*/local-dev/`), which carry real
 > processing SQL and real callback tasks — see step 11 for what that gets you.
 
-### 8. Provision the `rating_runtime`, `billrun_runtime`, and Kestra DB roles
+### 8. Provision the `rating_runtime`, `billrun_runtime`, `reporting_runtime`, and Kestra DB roles
 
 Order matters (`rating` roles' `REVOKE CONNECT … FROM PUBLIC` must run before
-`billrun_runtime` is created — the `rm03a` ordering hazard):
+`billrun_runtime` and `reporting_runtime` are created — the `rm03a` ordering
+hazard):
 
 ```powershell
 npm run db:bootstrap-rating-roles
 npm run db:bootstrap-billrun-roles
+npm run db:bootstrap-reporting-roles
 npm run db:bootstrap-kestra-roles
 ```
 
 Each script prints a `DROP ... does not exist, skipping` notice on a fresh
 database before its success line — that is expected, not an error.
 
-Now set the role passwords. ⚠️ **These three values are not free choices** — each
+Now set the role passwords. ⚠️ **These four values are not free choices** — each
 must match the value the Kestra container reads from the committed
 `workflow-management/dev/.env.example`, the single source the flows and the
 engine datasource use:
@@ -300,9 +302,10 @@ engine datasource use:
 ```powershell
 docker exec -e PGPASSWORD=postgres enterprise-billing-app-db-1 `
   psql -U postgres -d enterprise_billing -v ON_ERROR_STOP=1 `
-  -c "ALTER ROLE billrun_runtime WITH PASSWORD 'billrun_runtime_dev_password';" `
-  -c "ALTER ROLE rating_runtime  WITH PASSWORD 'rating_runtime_dev_password';" `
-  -c "ALTER ROLE kestra_engine   WITH PASSWORD 'kestra_dev_password';"
+  -c "ALTER ROLE billrun_runtime   WITH PASSWORD 'billrun_runtime_dev_password';" `
+  -c "ALTER ROLE rating_runtime    WITH PASSWORD 'rating_runtime_dev_password';" `
+  -c "ALTER ROLE reporting_runtime WITH PASSWORD 'reporting_runtime_dev_password';" `
+  -c "ALTER ROLE kestra_engine     WITH PASSWORD 'kestra_dev_password';"
 ```
 
 | Role | Password | Read from `dev/.env.example` as | Used by |
@@ -310,6 +313,7 @@ docker exec -e PGPASSWORD=postgres enterprise-billing-app-db-1 `
 | `kestra_engine` | `kestra_dev_password` | `KESTRA_DATASOURCES_POSTGRES_PASSWORD` | the engine's own datasource |
 | `billrun_runtime` | `billrun_runtime_dev_password` | `SECRET_BILLRUN_RUNTIME_PASSWORD` | `bill_run_processing`'s psql tasks (the two-writer identity) |
 | `rating_runtime` | `rating_runtime_dev_password` | `SECRET_RATING_RUNTIME_PASSWORD` | the rating worker's `db.py` |
+| `reporting_runtime` | `reporting_runtime_dev_password` | `SECRET_REPORTING_RUNTIME_PASSWORD` | the reporting runtime's `common/db.py` (`SELECT` only) |
 
 ### 9. Build the worker image and start Kestra + Azurite
 
@@ -350,15 +354,18 @@ UI: **http://localhost:8085/ui/** — user `workflow-ops@billing.ops`, password
 ### 10. Deploy the flows
 
 **Recommended — the one-shot deployer** (mirrors the CI deploy stage; deploys
-rating flows to `rating` and both bill-run placeholders to `billrun`,
-idempotently):
+rating flows to `rating`, both bill-run placeholders to `billrun`, and the
+reporting flows to `reporting`, then uploads reporting's column definitions as
+namespace files, idempotently):
 
 ```powershell
 docker compose -f docker-compose.dev.yml -f workflow-management/dev/docker-compose.dev.yml run --rm --no-deps flow-deploy
 ```
 
-You should see `4 flow(s) … 'rating'`, then `1 flow(s) … 'billrun'` twice. (A
-`PrometheusMeterRegistry` WARN and a "command is deprecated" notice are benign.)
+You should see `4 flow(s) … 'rating'`, then `1 flow(s) … 'billrun'` twice, then
+`4 flow(s) … 'reporting'`, then `Uploading /flows/reporting/contracts ->
+namespace reporting at contracts/`. (A `PrometheusMeterRegistry` WARN and
+"command is deprecated" notices are benign.)
 
 <details>
 <summary>Alternative — deploy only the two bill-run flows by hand (curl)</summary>
@@ -681,8 +688,8 @@ the workflow engine first**. `tests/db/billrun-db-roles.integration.test.ts`'s
 (never the whole database, and never `WITH (FORCE)` — bm40/TC58 removed both:
 `FORCE` used to terminate every live connection first, so pointed at a shared
 dev stack it killed a running engine's connections out from under it). It still
-rewrites the shared `app_runtime` / `rating_runtime` / `billrun_runtime`
-passwords to a test value (roles are cluster-level), so your dev app's next
+rewrites the shared `app_runtime` / `rating_runtime` / `billrun_runtime` /
+`reporting_runtime` passwords to a test value (roles are cluster-level), so your dev app's next
 connection fails `28P01`.
 
 So: either run the DB-gated suite against a **separate Postgres instance** (a
@@ -753,6 +760,7 @@ All values below are **local-only dummies** — never used in any real environme
 | `app_runtime` / `app_migrate` | `apprun_local_dev_pw` |
 | `billrun_runtime` | `billrun_runtime_dev_password` (must match `SECRET_BILLRUN_RUNTIME_PASSWORD`) |
 | `rating_runtime` | `rating_runtime_dev_password` (must match `SECRET_RATING_RUNTIME_PASSWORD`) |
+| `reporting_runtime` | `reporting_runtime_dev_password` (must match `SECRET_REPORTING_RUNTIME_PASSWORD`) |
 | `kestra_engine` | `kestra_dev_password` (must match `KESTRA_DATASOURCES_POSTGRES_PASSWORD`) |
 | `BILLRUN_APP_TOKEN` | `billrun_dev_app_token_change_me_0123456789` (decoded `SECRET_BILLRUN_APP_TOKEN`) |
 | Azurite blob | Microsoft's published well-known dev account/key (`devstoreaccount1`) |
@@ -810,6 +818,7 @@ docker exec -e PGPASSWORD=postgres enterprise-billing-app-db-1 `
   -c "ALTER ROLE app_migrate      WITH PASSWORD 'apprun_local_dev_pw';" `
   -c "ALTER ROLE billrun_runtime  WITH PASSWORD 'billrun_runtime_dev_password';" `
   -c "ALTER ROLE rating_runtime   WITH PASSWORD 'rating_runtime_dev_password';" `
+  -c "ALTER ROLE reporting_runtime WITH PASSWORD 'reporting_runtime_dev_password';" `
   -c "ALTER ROLE kestra_engine    WITH PASSWORD 'kestra_dev_password';"
 ```
 
@@ -885,6 +894,7 @@ fi
 | `npm run db:bootstrap-roles` | create `app_runtime`/`app_migrate` + grants |
 | `npm run db:bootstrap-rating-roles` | create `rating_runtime` + grants |
 | `npm run db:bootstrap-billrun-roles` | create `billrun_runtime` + grants |
+| `npm run db:bootstrap-reporting-roles` | create the `SELECT`-only `reporting_runtime` + grants |
 | `npm run db:bootstrap-kestra-roles` | create the `kestra` DB + `kestra_engine` role |
 | `npm run dev:azurite-init` | create the `kestra-internal` + `invoices` blob containers (idempotent) |
 | `npm run billrun:live-kestra-smoke` | headless full `SCHEDULED → COMPLETED` journey against real Kestra (see Part 3) |

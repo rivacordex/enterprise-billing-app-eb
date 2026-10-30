@@ -1,0 +1,9 @@
+# rpt01 — delivered report files are runtime output, not source. Keep only
+# this file, the README and each destination folder's .gitkeep: the runtime
+# never creates a destination folder (deployed, each is its own mounted share).
+*
+!.gitignore
+!README.md
+!_platform-check/
+_platform-check/*
+!_platform-check/.gitkeep

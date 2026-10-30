@@ -149,6 +149,28 @@ param sftpRemoteBase string = '/upload'
 @description('bm34 — mount an Azure Files share at /distribution as the loopback distribution sink (bill_run_distribution\'s fs.local.Upload writes delivered artifacts there). Enable on the billrun-hosting instance so the default `loopback` target has a durable, inspectable destination without any SFTP/keys. Default false.')
 param enableLocalDistributionSink bool = false
 
+// rpt01-spec D6/D7 — this engine instance hosts the `reporting` namespace
+// (function 4), which deploys to the engine that hosts `billrun` (RF6): set true
+// at exactly the main.bicep call sites that set hostsBillrunNamespace true. Wires
+// the `reporting_runtime` DB credential the same way as billrun's (a bare-password
+// Key Vault secret exposed as SECRET_REPORTING_RUNTIME_PASSWORD + non-secret
+// REPORTING_DB_* coordinates, read by runtime/reporting/common/db.py) and mounts
+// each reporting outbound share (reporting-outbound-storage.bicep) at
+// /data/outbound/<destination>/. The outbound account key is NOT here: it lives
+// only in that module's environment storage definition (D3). Requires the
+// `reporting-runtime-db-password` Key Vault secret to exist (fail-closed).
+@description('rpt01 — true when this engine hosts the `reporting` namespace (the billrun-hosting instance). Wires the reporting-runtime-db-password secret + SECRET_REPORTING_RUNTIME_PASSWORD / REPORTING_DB_* env vars and the outbound share mounts. Default false.')
+param enableReporting bool = false
+
+@description('rpt01 — name of the `platform-check` outbound share\'s environment storage definition (reporting-outbound-storage.bicep output). Required when enableReporting is true.')
+param reportingPlatformCheckEnvStorageName string = ''
+
+@description('rpt01 — libpq sslmode for the reporting_runtime connection (REPORTING_DB_SSLMODE). `require` (the default) refuses plaintext; `verify-full` also needs reportingDbSslRootCert.')
+param reportingDbSslMode string = 'require'
+
+@description('rpt01 — path to the CA bundle in the image for REPORTING_DB_SSLROOTCERT (verify-full). Emitted only when non-empty.')
+param reportingDbSslRootCert string = ''
+
 // Extracted to a var — a for-expression can't sit inline inside a ternary
 // property value (BCP disallows it there even though it's allowed as a
 // property value directly).
@@ -365,6 +387,21 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
                 identity: workflowEngineManagedIdentityId
               }
             ]
+          : [],
+        enableReporting
+          ? [
+              // rpt01 D3 — the dedicated `reporting_runtime` password, a BARE
+              // password (same shape as billrun-runtime-db-password), set by the
+              // manual `ALTER ROLE reporting_runtime WITH PASSWORD` step 3c in
+              // infra/docs/db-role-verification.md. Read RAW by
+              // runtime/reporting/common/db.py — not a Kestra secret() lookup, so
+              // NOT base64.
+              {
+                name: 'reporting-runtime-db-password'
+                keyVaultUrl: '${keyVaultUri}secrets/reporting-runtime-db-password'
+                identity: workflowEngineManagedIdentityId
+              }
+            ]
           : []
       )
       // No `traffic` block on either ingress branch — activeRevisionsMode
@@ -564,7 +601,22 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
           enableBlobArtifactAccess ? [
             { name: 'ENV_BILLRUN_BLOB_ENDPOINT', value: 'https://${storageAccountName}.blob.${environment().suffixes.storage}' }
             { name: 'SECRET_AZURE_STORAGE_CONNECTION_STRING', secretRef: 'billrun-blob-connection-string-b64' }
-          ] : [])
+          ] : [],
+          // rpt01 D3 — the reporting_runtime connection, read by
+          // runtime/reporting/common/db.py: the bare password (raw, not
+          // base64) + the non-secret coordinates, the same shape as RATING_DB_*.
+          // REPORTING_DB_HOST is the Flexible Server FQDN (the billing database
+          // shares it with `kestra`; only the name differs).
+          enableReporting ? concat([
+            { name: 'SECRET_REPORTING_RUNTIME_PASSWORD', secretRef: 'reporting-runtime-db-password' }
+            { name: 'REPORTING_DB_HOST', value: postgresServerFqdn }
+            { name: 'REPORTING_DB_PORT', value: '5432' }
+            { name: 'REPORTING_DB_NAME', value: 'enterprise_billing' }
+            { name: 'REPORTING_DB_USER', value: 'reporting_runtime' }
+            { name: 'REPORTING_DB_SSLMODE', value: reportingDbSslMode }
+          ], empty(reportingDbSslRootCert) ? [] : [
+            { name: 'REPORTING_DB_SSLROOTCERT', value: reportingDbSslRootCert }
+          ]) : [])
           volumeMounts: concat(
             [
               {
@@ -578,6 +630,15 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
               {
                 volumeName: 'distribution'
                 mountPath: '/distribution'
+              }
+            ] : [],
+            // rpt01 D7 — one mount per reporting outbound share, at the
+            // destination's `outbound_dir` (report-platform-check's
+            // `vars.outbound_dir`).
+            enableReporting ? [
+              {
+                volumeName: 'reporting-platform-check'
+                mountPath: '/data/outbound/_platform-check'
               }
             ] : []
           )
@@ -619,6 +680,15 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             name: 'distribution'
             storageType: 'AzureFile'
             storageName: distributionFileStorage!.name
+          }
+        ] : [],
+        // rpt01 D7 — the storage definition lives in reporting-outbound-storage.bicep
+        // (with its account key); only its name crosses into this module.
+        enableReporting ? [
+          {
+            name: 'reporting-platform-check'
+            storageType: 'AzureFile'
+            storageName: reportingPlatformCheckEnvStorageName
           }
         ] : []
       )
