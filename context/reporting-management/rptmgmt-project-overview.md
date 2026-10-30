@@ -1,6 +1,6 @@
 # Reporting Management Module — Project Overview
 
-**Status:** In progress — rpt01 and rpt02 completed 2026-10-30; rpt03 next (see `rptmgmt-progress-tracker.md`). Planned 2026-10-29; folded from `_newmodule-reporting-plan.md` (Parts 0 and A–E), which stays as the design record: every decision ID cited here (SR, RF, PC, MO, IC, GL) and every open item is defined there. Units: `specs/rpt00-build-plan.md`.
+**Status:** In progress — rpt01, rpt02 and rpt03 (settlement, Part A) completed 2026-10-30; rpt04 next (see `rptmgmt-progress-tracker.md`). Planned 2026-10-29; folded from `_newmodule-reporting-plan.md` (Parts 0 and A–E), which stays as the design record: every decision ID cited here (SR, RF, PC, MO, IC, GL) and every open item is defined there. Units: `specs/rpt00-build-plan.md`.
 
 ## Overview
 

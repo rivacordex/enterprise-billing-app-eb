@@ -21,7 +21,7 @@ Decomposition of the Reporting Management module into build units. This is the *
 > | --- | --- |
 > | rpt01 | **Built** 2026-10-30 (`specs/rpt01-namespace-role-and-outbound.md`). R01-T15 what-if not yet run. |
 > | rpt02 | **Built** 2026-10-30 (`specs/rpt02-shared-framework.md`). |
-> | rpt03 | **Specced** 2026-10-29 (`specs/rpt03-settlement-reports.md`), not built. |
+> | rpt03 | **Built** 2026-10-30 (`specs/rpt03-settlement-reports.md`). |
 > | rpt04 | **Specced** 2026-10-29 (`specs/rpt04-polygon-capacity-lookup.md`), not built. |
 > | rpt05 | **Specced** 2026-10-29 (`specs/rpt05-mno-outstanding.md`), not built. |
 > | rpt07 | **Specced** 2026-10-29 (`specs/rpt07-revenue-ops-guide.md`), not built. |

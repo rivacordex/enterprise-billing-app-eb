@@ -10,7 +10,8 @@ import type postgresjs from "postgres";
 import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
-// rpt01-spec Tests R01-T1–R01-T8 (rptmgmt-code-standards §9 guardrail 1). The
+// rpt01-spec Tests R01-T1–R01-T8 (rptmgmt-code-standards §9 guardrail 1) and
+// rpt03-spec R03-T5 (the one pgledger grant, `pgledger_transfers_view`). The
 // grant surface is the deliverable, so every assertion runs against a LIVE
 // database through a LIVE `reporting_runtime` connection — the posture of
 // tests/db/billrun-db-roles.integration.test.ts, which this suite mirrors.
@@ -45,6 +46,9 @@ const GRANTED_TABLES = [
   "product.ratecard_ran_usage_lkp",
   "product.ratecard_version",
 ];
+// rpt03 D1 — the one pgledger object: transfers, never balances or entries.
+const GRANTED_VIEWS = ["billing.pgledger_transfers_view"];
+const GRANTED = [...GRANTED_TABLES, ...GRANTED_VIEWS].sort();
 
 function roleUrl(base: string, user: string, password: string): string {
   const url = new URL(base);
@@ -154,7 +158,7 @@ describe.skipIf(!databaseUrl)(
         JOIN pg_namespace n ON n.oid = c.relnamespace,
         LATERAL aclexplode(c.relacl) a
         WHERE a.grantee = ${ROLE}::regrole
-        ORDER BY 1 COLLATE "C"
+        ORDER BY (n.nspname || '.' || c.relname || ':' || a.privilege_type) COLLATE "C"
       `;
       return rows.map((r) => r.entry);
     }
@@ -237,8 +241,8 @@ describe.skipIf(!databaseUrl)(
     });
 
     // ---- R01-T2 ------------------------------------------------------------
-    it("R01-T2 — SELECT succeeds on each of the nine D2 tables", async () => {
-      for (const table of GRANTED_TABLES) {
+    it("R01-T2 — SELECT succeeds on each of the nine D2 tables and the rpt03 view", async () => {
+      for (const table of GRANTED) {
         await expect(
           reporting.unsafe(`SELECT count(*) FROM ${qualified(table)}`),
           table,
@@ -327,14 +331,14 @@ describe.skipIf(!databaseUrl)(
 
     // ---- R01-T5 ------------------------------------------------------------
     describe("R01-T5 — no broad grants", () => {
-      it("information_schema.role_table_grants lists exactly the nine tables, SELECT only", async () => {
+      it("information_schema.role_table_grants lists exactly the nine tables and the rpt03 view, SELECT only", async () => {
         const rows = await sql<{ entry: string }[]>`
           SELECT table_schema || '.' || table_name || ':' || privilege_type AS entry
           FROM information_schema.role_table_grants
           WHERE grantee = ${ROLE}
-          ORDER BY 1 COLLATE "C"
+          ORDER BY (table_schema || '.' || table_name || ':' || privilege_type) COLLATE "C"
         `;
-        const expected = GRANTED_TABLES.map((t) => `${t}:SELECT`);
+        const expected = GRANTED.map((t) => `${t}:SELECT`);
         expect(rows.map((r) => r.entry)).toEqual(expected);
         // The catalog agrees (role_table_grants only shows grants whose
         // grantor or grantee is an enabled role of the caller).
@@ -360,6 +364,52 @@ describe.skipIf(!databaseUrl)(
           WHERE a.grantee = ${ROLE}::regrole
         `;
         expect(functions?.n).toBe(0);
+      });
+    });
+
+    // ---- R03-T5 ------------------------------------------------------------
+    describe("R03-T5 — the one pgledger grant (rpt03 D1)", () => {
+      it("SELECT on billing.pgledger_transfers_view succeeds", async () => {
+        await expect(
+          reporting`SELECT id, from_account_id, to_account_id, amount FROM billing.pgledger_transfers_view LIMIT 1`,
+        ).resolves.toBeDefined();
+      });
+
+      it("pgledger_accounts_view, pgledger_entries_view and the three base tables stay refused", async () => {
+        for (const relation of [
+          "pgledger_accounts_view",
+          "pgledger_entries_view",
+          "pgledger_accounts",
+          "pgledger_transfers",
+          "pgledger_entries",
+        ]) {
+          await expect(
+            reporting.unsafe(`SELECT 1 FROM billing.${relation} LIMIT 1`),
+            relation,
+          ).rejects.toThrow(
+            new RegExp(`permission denied for (table|view) ${relation}`),
+          );
+        }
+      });
+
+      it("INSERT, UPDATE and DELETE through the view are refused by the grants, with read-only turned off for the session", async () => {
+        const rw = postgres(roleUrl(databaseUrl as string, ROLE, ROLE_PW), {
+          max: 1,
+        });
+        try {
+          await rw.unsafe("SET default_transaction_read_only = off");
+          for (const write of [
+            "INSERT INTO billing.pgledger_transfers_view DEFAULT VALUES",
+            "UPDATE billing.pgledger_transfers_view SET amount = amount WHERE false",
+            "DELETE FROM billing.pgledger_transfers_view WHERE false",
+          ]) {
+            await expect(rw.unsafe(write), write).rejects.toThrow(
+              /permission denied for view pgledger_transfers_view/,
+            );
+          }
+        } finally {
+          await rw.end();
+        }
       });
     });
 
@@ -438,7 +488,7 @@ describe.skipIf(!databaseUrl)(
       ).resolves.toBeUndefined();
     });
 
-    it("R01-T7 — a privilege on a table outside the nine makes the script fail DRIFT:", async () => {
+    it("R01-T7 — a privilege on a table outside the enumerated surface makes the script fail DRIFT:", async () => {
       await sql.unsafe(`GRANT INSERT ON "billing"."gl_mapping" TO ${ROLE}`);
       try {
         await expect(runSqlFile(sql, REPORTING_ROLES_SQL)).rejects.toThrow(
@@ -456,10 +506,14 @@ describe.skipIf(!databaseUrl)(
       await sql.unsafe(
         `GRANT INSERT, REFERENCES, TRIGGER, MAINTAIN ON "billing"."document" TO ${ROLE}`,
       );
-      await sql.unsafe(`GRANT UPDATE (document_id) ON "billing"."document" TO ${ROLE}`);
+      await sql.unsafe(
+        `GRANT UPDATE (document_id) ON "billing"."document" TO ${ROLE}`,
+      );
       await sql.unsafe(`GRANT CREATE ON SCHEMA "billing" TO ${ROLE}`);
       const db = (await sql`SELECT current_database() AS d`)[0]!.d as string;
-      await sql.unsafe(`GRANT CREATE, TEMPORARY ON DATABASE "${db}" TO ${ROLE}`);
+      await sql.unsafe(
+        `GRANT CREATE, TEMPORARY ON DATABASE "${db}" TO ${ROLE}`,
+      );
       await runSqlFile(sql, REPORTING_ROLES_SQL);
       const rows = await sql`
         SELECT has_table_privilege(${ROLE}, 'billing.document', 'INSERT, REFERENCES, TRIGGER, MAINTAIN') AS table_extra,
@@ -481,7 +535,7 @@ describe.skipIf(!databaseUrl)(
     describe("R01-T8 — idempotent", () => {
       it("running the script twice leaves identical grants", async () => {
         const before = await grantSnapshot();
-        expect(before.tables).toHaveLength(GRANTED_TABLES.length);
+        expect(before.tables).toHaveLength(GRANTED.length);
         expect(before.schemas).toEqual([
           "billing:USAGE",
           "customer:USAGE",

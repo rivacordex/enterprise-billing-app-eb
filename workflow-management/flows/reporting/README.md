@@ -6,15 +6,17 @@ and the MNOs need from the billing data. Deployed to logical-engine namespace
 the billrun instance under split-by-module, RF6). Module context:
 `context/reporting-management/`.
 
-**Maturity: platform check and shared framework (rpt01, rpt02).** No report is
-built yet; the unit list is `context/reporting-management/specs/rpt00-build-plan.md`.
+**Maturity: platform check, shared framework and the settlement reports
+(rpt01–rpt03).** The unit list is
+`context/reporting-management/specs/rpt00-build-plan.md`.
 
 | Flow | Description | Trigger | Since |
 | --- | --- | --- | --- |
 | `report-platform-check.yaml` | Reporting platform check — Revenue Ops' health check: connects as `reporting_runtime`, reads a granted table, publishes and delivers one file | manual | rpt01 |
+| `report-settlement-invoice.yaml` | Settlement reports (invoice and payment) — Part A for Finance / billing ops: `Reporting_dnb_settlement_invoice_<ts>.csv` and `Reporting_dnb_settlement_invoice_payment_<ts>.csv` for one `billing_period` and an `as_of_date` payment cut-off (default today); Kestra outputs only (SR24) | manual (OI-4) | rpt03 |
 | `report-validate-date.yaml` | Reporting date check (shared subflow) — the one date rule; resolves an empty date to its default | called by reports | rpt02 |
 | `report-validate-period.yaml` | Reporting period check (shared subflow) — `billing_period` + `as_of_date` (SR33) | called by reports | rpt02 |
-| `report-validate-output.yaml` | Reporting output check (shared subflow) — a file against its column definition, before anything is published | called by reports | rpt02 |
+| `report-validate-output.yaml` | Reporting output check (shared subflow) — a file against its column definition, before anything is published | called by reports | rpt02 (`name` input: rpt03) |
 | `contracts/` | Column definitions, deployed as namespace files (format: [`contracts/README.md`](contracts/README.md)) | — | rpt02 |
 
 **Role.** Every flow reads as **`reporting_runtime`** (`db/bootstrap/reporting-db-roles.sql`):
@@ -109,7 +111,7 @@ The subflow's flow-level `outputs` are read as
 | --- | --- | --- | --- |
 | `report-validate-date` | `name` (one of `common/codes.py` `INVALID_INPUT_NAMES`), `value` (may be empty), `rule` (`not_future` \| `before_today`), `default` (`today` \| `yesterday`) | `effective_date` (`YYYYMMDD`) | `INVALID_<NAME>` |
 | `report-validate-period` | `billing_period` (`YYYYMM`), `as_of_date` (may be empty: today) | `period_start`, `period_end`, `effective_as_of_date` | `INVALID_BILLING_PERIOD`, `INVALID_AS_OF_DATE` |
-| `report-validate-output` | `file` (`FILE`), `contract` (an id) | `rows` (data rows) | `OUTPUT_CONTRACT_VIOLATION`, `CONTRACT_INVALID` |
+| `report-validate-output` | `file` (`FILE`), `contract` (an id), `name` (optional: the file name the log shows) | `rows` (data rows) | `OUTPUT_CONTRACT_VIOLATION`, `CONTRACT_INVALID` |
 
 - **Defaults are resolved in the runtime**, not in Kestra input `defaults`, so
   "today in Kuala Lumpur" exists in one place (`common/period.py`).
@@ -141,13 +143,17 @@ contract id:
   inputs:
     file: "{{ outputs.generate.outputFiles['<file name>'] }}"
     contract: polygon_capacity
+    name: "<file name>"
 ```
 
 Nothing is published or delivered if it fails (Inv 5). The check runs
 `python3 -m runtime.reporting.validate output` with the namespace files
-`contracts/**` in its working directory. The `FILE` input's URI keeps the
-original file name (`…/inputs/file/<name>`), and that name is what the log
-lines show:
+`contracts/**` in its working directory. The log lines name the file by the
+`name` input, else by the `FILE` URI's last segment. **Pass `name` for a
+generated file** — verified on v1.3.35 (rpt03): an uploaded `FILE` input's URI
+keeps the original name (`…/inputs/file/<name>`), but a task's output file is
+stored as `<id>-<name>`, so without `name` the log would show the storage
+prefix. The lines are:
 
 ```
 OUTPUT_CONTRACT_VIOLATION <file> <row> <column> <reason>
@@ -157,6 +163,27 @@ one ERROR line per violation (at most 50, then `… <n> more`); `<row>` is the
 1-based file line, `<column>` the contract's column name (it may contain
 spaces; the reason is always the last word) or `-`. Reasons and the contract
 format: [`contracts/README.md`](contracts/README.md).
+
+## Published files (rpt03 D8)
+
+A report's published files are the **`publish` task's output files**:
+`publish` runs only after every `validate_output` call has passed, takes the
+generated files as `inputFiles` (keyed by their names — Pebble renders the
+keys, verified on v1.3.35), logs one `DELIVERED` line per file with
+`python3 -m runtime.reporting.common.trace delivered --flow-revision <n>
+<file> …`, and lists them in `outputFiles`. Revenue Ops download them from the
+`publish` task in the execution's Outputs.
+
+- **No flow-level `outputs:`.** Verified on v1.3.35 (rpt03): when the `Exit`
+  task ends a run WARNING, Kestra does not render the flow's `outputs`, so
+  they would exist on SUCCESS runs only. The `publish` task's files exist on
+  SUCCESS and WARNING alike.
+- **`generate`'s copies.** The output check reads the files as a subflow
+  `FILE` input, which must already be in Kestra's internal storage, so
+  `generate` lists them in its own `outputFiles`. Those copies stay task
+  outputs of `generate` even when a check fails; they are the input to the
+  check, not a published file, and carry no `DELIVERED` line. A FAILED run
+  never has a `publish` task, so it publishes nothing.
 
 ## Namespace files — deploying the contracts (rpt02 D8)
 

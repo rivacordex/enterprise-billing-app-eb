@@ -27,7 +27,7 @@
 1. Flow ids are kebab-case `report-<name>`; each has a `description` naming the report as its readers know it (e.g. "GL feed (Oracle Financials)").
 2. Task order is fixed per report (SR38, PC22, MO17, IC21, GL23): validate input → `generate` → `validate_output` → (`encrypt`) → (`deliver`) → `publish` → `set_status`. Nothing is published or delivered before `validate_output` passes.
 3. Labels on every execution: the report's inputs, `report=<name>`, its `skipped_*` / count labels, and `flow_revision`.
-4. One `INFO` line per published file: `DELIVERED <filename> sha256=<hash> rev=<n>` (RF7).
+4. One `INFO` line per published file: `DELIVERED <filename> sha256=<hash> rev=<n>` (RF7). Files written by `generate` are published by a `publish` task that takes them as `inputFiles` (keyed by name), runs `python3 -m runtime.reporting.common.trace delivered --flow-revision <n> <file> …` and lists them in `outputFiles`; those are the published files. No flow-level `outputs:` — the `Exit` task that ends a run WARNING skips rendering them (v1.3.35, rpt03). Each `validate_output` call passes the generated file's `name`, so the log names the file rather than its storage id (rpt03).
 5. Shared subflows (`report-validate-date`, `report-validate-period`, `report-validate-output`) are called, never copied.
 6. A flow that isn't ready for use is deployed `disabled: true` (PC25), never left out of the repository.
 7. Never edit a flow in the Kestra UI (SR41).

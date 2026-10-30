@@ -1,0 +1,48 @@
+# Reporting_dnb_settlement_invoice_payment_<ts>.csv — Finance / billing ops
+# (collections follow-up and month-end reconciliation); Revenue Ops fill in
+# `comment` by hand after downloading (SR15). Changing this file changes what
+# Finance / billing ops receive: agree it with them first (rptmgmt-architecture
+# Inv 9). One row per (document, invoice) and one UNAPPLIED row per MNO, sorted
+# by mno_id, then invoice-linked rows (invoice_id, payment_transaction_no), then
+# account-level rows (payment_transaction_no), then the UNAPPLIED row (plan
+# §A.1, rpt03 D3). Written by runtime/reporting/settlement_invoice.
+id: settlement_invoice_payment
+file: Reporting_dnb_settlement_invoice_payment_<ts>.csv
+header: true
+columns:
+  - name: mno_id
+    type: text
+    required: true
+    # decision: SR17; source mnoPublicKey1 of the billing account's party role
+    # (of the financial account's party role for UNAPPLIED)
+  - name: payment_transaction_no
+    type: text
+    required: false
+    # decision: SR17; source document.document_id (the reversal's own id for
+    # REV); blank for UNAPPLIED
+  - name: type_of_payment
+    type: text
+    required: true
+    # decision: SR11; PAY | CRN | DBN | ADJ | REV | UNAPPLIED (OI-5: no payment mode)
+  - name: payment_amount
+    type: amount
+    required: true
+    # decision: SR18, rpt03 D1; positive when it reduces what the MNO owes —
+    # read from each line's posted ledger transfer (common/receivables.py)
+  - name: invoice_id
+    type: text
+    required: false
+    # decision: SR12, SR17; the line's ref_settled_document_id, traced through
+    # the original line for REV; blank for account-level and UNAPPLIED rows
+  - name: payment_reference
+    type: text
+    required: false
+    # decision: SR17; source document.reference_info
+  - name: cheque_realization_date
+    type: date
+    required: false
+    # decision: SR16; always blank — no source exists (OI-5)
+  - name: comment
+    type: text
+    required: false
+    # decision: SR15; always blank — Revenue Ops add the polygon code by hand

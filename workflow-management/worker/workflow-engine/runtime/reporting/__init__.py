@@ -14,7 +14,9 @@ trace and the Kestra ``status`` output) and ``platform_check`` (the
 ``common.codes`` (the executable register of outcome codes), ``common.period``
 (the date and period rules), ``common.contract`` (column definitions and the
 output check), ``common.csv_writer`` (the one CSV writer) and ``validate``
-(behind the three shared subflows). No report is built yet.
+(behind the three shared subflows). rpt03 adds ``common.receivables`` (the one
+sign rule, read from each line's posted ledger transfer — Inv 3) and
+``settlement_invoice`` (Part A, ``report-settlement-invoice``).
 
 Never import the rating runtime's ``runtime.db`` from here (§2.7).
 """

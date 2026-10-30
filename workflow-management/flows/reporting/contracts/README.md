@@ -10,7 +10,12 @@ never edited in the Kestra UI (SR41).
 first (`rptmgmt-architecture.md` Inv 9); once a reader consumes a file, its
 contract is not modified without explicit instruction (`rptmgmt-ai-workflow-rules.md` §6).
 
-No contract exists yet: each report unit adds its own (rpt03–rpt09).
+Each report unit adds its own (rpt03–rpt09):
+
+| Contract | File | Readers | Since |
+| --- | --- | --- | --- |
+| `settlement_invoice.yaml` | `Reporting_dnb_settlement_invoice_<ts>.csv` (header) | Finance / billing ops | rpt03 |
+| `settlement_invoice_payment.yaml` | `Reporting_dnb_settlement_invoice_payment_<ts>.csv` (header) | Finance / billing ops | rpt03 |
 
 ## Format (rpt02 D2)
 

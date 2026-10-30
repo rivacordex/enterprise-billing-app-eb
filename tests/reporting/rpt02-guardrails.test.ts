@@ -258,11 +258,12 @@ describe("shared subflows — static shape (D4, D6)", () => {
     ]);
   });
 
-  it("report-validate-output: FILE + contract inputs, contracts/** namespace files, output rows", () => {
+  it("report-validate-output: FILE + contract inputs (+ the optional name, rpt03), contracts/** namespace files, output rows", () => {
     const f = flow("report-validate-output");
     expect(f.inputs).toEqual([
       { id: "file", type: "FILE" },
       { id: "contract", type: "STRING" },
+      { id: "name", type: "STRING", required: false },
     ]);
     const check = f.tasks[0]!;
     expect(commandsTask(check, "output")).toContain(
@@ -277,8 +278,14 @@ describe("shared subflows — static shape (D4, D6)", () => {
     ]);
   });
 
-  it("contracts/ holds no report contract yet (D9) — only its README", () => {
-    expect(readdirSync(join(FLOWS, "contracts"))).toEqual(["README.md"]);
+  // rpt02 shipped none (D9); each report unit adds its own (rpt03: Part A's
+  // two). Nothing else lives there.
+  it("contracts/ holds its README and the built reports' contracts only", () => {
+    expect(readdirSync(join(FLOWS, "contracts")).sort()).toEqual([
+      "README.md",
+      "settlement_invoice.yaml",
+      "settlement_invoice_payment.yaml",
+    ]);
   });
 });
 
