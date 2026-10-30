@@ -11,7 +11,8 @@ import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
 // rpt01-spec Tests R01-T1–R01-T8 (rptmgmt-code-standards §9 guardrail 1) and
-// rpt03-spec R03-T5 (the one pgledger grant, `pgledger_transfers_view`). The
+// rpt03-spec R03-T5 (the one pgledger grant, `pgledger_transfers_view`) and the
+// rpt04 grant (`product.product_offering_price`, rpt04 D2). The
 // grant surface is the deliverable, so every assertion runs against a LIVE
 // database through a LIVE `reporting_runtime` connection — the posture of
 // tests/db/billrun-db-roles.integration.test.ts, which this suite mirrors.
@@ -34,7 +35,7 @@ const BILLRUN_ROLES_SQL = sqlPath("billrun-db-roles.sql");
 const REPORTING_ROLES_SQL = sqlPath("reporting-db-roles.sql");
 const KESTRA_ROLES_SQL = sqlPath("kestra-db-roles.sql");
 
-// D2 — the nine tables, and nothing else.
+// D2 — the nine tables, plus rpt04 D2's `product_offering_price`, and nothing else.
 const GRANTED_TABLES = [
   "billing.billing_account",
   "billing.customer_bill",
@@ -43,6 +44,7 @@ const GRANTED_TABLES = [
   "billing.financial_account",
   "billing.ledger_binding",
   "customer.party_role",
+  "product.product_offering_price",
   "product.ratecard_ran_usage_lkp",
   "product.ratecard_version",
 ];
@@ -241,7 +243,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     // ---- R01-T2 ------------------------------------------------------------
-    it("R01-T2 — SELECT succeeds on each of the nine D2 tables and the rpt03 view", async () => {
+    it("R01-T2 — SELECT succeeds on each of the granted tables (D2 + rpt04) and the rpt03 view", async () => {
       for (const table of GRANTED) {
         await expect(
           reporting.unsafe(`SELECT count(*) FROM ${qualified(table)}`),
@@ -251,7 +253,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     // ---- R01-T3 (guardrail 1) ------------------------------------------------
-    it("R01-T3 — [guardrail 1] INSERT, UPDATE, DELETE and TRUNCATE on each of the nine tables are refused by the grants, with read-only turned off for the session", async () => {
+    it("R01-T3 — [guardrail 1] INSERT, UPDATE, DELETE and TRUNCATE on each of the granted tables are refused by the grants, with read-only turned off for the session", async () => {
       const rw = postgres(roleUrl(databaseUrl as string, ROLE, ROLE_PW), {
         max: 1,
       });
@@ -331,7 +333,7 @@ describe.skipIf(!databaseUrl)(
 
     // ---- R01-T5 ------------------------------------------------------------
     describe("R01-T5 — no broad grants", () => {
-      it("information_schema.role_table_grants lists exactly the nine tables and the rpt03 view, SELECT only", async () => {
+      it("information_schema.role_table_grants lists exactly the granted tables and the rpt03 view, SELECT only", async () => {
         const rows = await sql<{ entry: string }[]>`
           SELECT table_schema || '.' || table_name || ':' || privilege_type AS entry
           FROM information_schema.role_table_grants
@@ -502,7 +504,7 @@ describe.skipIf(!databaseUrl)(
       ).resolves.toBeUndefined();
     });
 
-    it("R01-T7 — extra privileges on the nine tables, their schemas and the database converge on a re-run", async () => {
+    it("R01-T7 — extra privileges on the granted tables, their schemas and the database converge on a re-run", async () => {
       await sql.unsafe(
         `GRANT INSERT, REFERENCES, TRIGGER, MAINTAIN ON "billing"."document" TO ${ROLE}`,
       );

@@ -1,0 +1,47 @@
+# Polygon_capacity_lookup_<report_date>.csv — Mediation and the CSP (Customer
+# Service Portal), both reading by position: there is no header, and the
+# column names below exist only here and in the documentation (PC4). Changing
+# this file changes what Mediation and the CSP receive: agree it with them
+# first (rptmgmt-architecture Inv 9). One row per polygon an MNO subscribes to
+# on the RAN usage rate card in force at the end of report_date, sorted by
+# mno_public_key, commercial_unit_public_key, polygon_public_key (PC10; plan
+# §B.1, rpt04 D4). Written by runtime/reporting/polygon_capacity.
+id: polygon_capacity
+file: Polygon_capacity_lookup_<report_date>.csv
+header: false
+columns:
+  - name: mno_public_key
+    type: text
+    required: true
+    # decision: PC4; source ratecard_ran_usage_lkp.mno_public_key
+  - name: commercial_unit_public_key
+    type: text
+    required: true
+    # decision: PC4; source ratecard_ran_usage_lkp.commercial_unit_public_key
+  - name: polygon_public_key
+    type: text
+    required: true
+    # decision: PC4; source ratecard_ran_usage_lkp.polygon_id
+  - name: report_date
+    type: date
+    required: true
+    # decision: PC7; the report_date input (default yesterday, Asia/Kuala_Lumpur)
+  - name: polygon_start_date
+    type: date
+    required: true
+    # decision: PC4; source ratecard_ran_usage_lkp.polygon_start_date
+  - name: resource_identifier_buffer_usage
+    type: text
+    required: true
+    # decision: PC5; mno_public_key || '_' || ratecard_ran_usage_lkp.district
+    # (one underscore; Mediation matches the whole string, never splits it)
+  - name: service_code_buffer_usage
+    type: text
+    required: true
+    # decision: PC6; source ratecard_ran_usage_lkp.service_code
+  - name: polygon_coverage_capacity_mbps
+    type: integer
+    required: true
+    # decision: PC8, PC9; the MNO's subscribed capacity for the polygon, from
+    # the capacity source (P1 open: fixture only until rpt06), rounded half-up
+    # to a whole number

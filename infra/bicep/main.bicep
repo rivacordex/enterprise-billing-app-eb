@@ -180,7 +180,7 @@ param enableReporting bool = false
 @description('rpt01 D7 — name of the separate reporting outbound storage account (3–24 lowercase letters/digits, globally unique). Empty (default) derives one from the environment name; never the engine\'s account.')
 param reportingOutboundStorageAccountName string = ''
 
-@description('rpt01 D7 — prefix of the reporting outbound Container Apps Environment storage definitions (one per destination, e.g. `reporting-outbound-platform-check`). Unique per instance, as landingEnvStorageName.')
+@description('rpt01 D7 — prefix of the reporting outbound Container Apps Environment storage definitions (one per destination, e.g. `reporting-outbound-platform-check`, `reporting-outbound-polygon-capacity`). Unique per instance, as landingEnvStorageName.')
 param reportingOutboundEnvStorageName string = 'reporting-outbound'
 
 @description('rm04-spec D2 — the worker image, pinned by digest. Empty (default) resolves to a bootstrap placeholder on the shared ACR at the module call site below — a param default cannot reference another resource\'s output (BCP072), so this mirrors how containerApp/containerAppJob resolve their own placeholder imageName inline.')
@@ -520,6 +520,7 @@ module workflowEngineContainerApp 'modules/workflow-engine-container-app.bicep' 
     // rpt01 D6 — reporting rides the billrun-hosting engine (RF6).
     enableReporting: enableReporting
     reportingPlatformCheckEnvStorageName: enableReporting ? reportingOutboundStorage!.outputs.platformCheckEnvStorageName : ''
+    reportingPolygonCapacityEnvStorageName: enableReporting ? reportingOutboundStorage!.outputs.polygonCapacityEnvStorageName : ''
     // bm36 — the app's HTTPS URL for the bill-run flows' signal-back callbacks
     // (ENV_BILLRUN_APP_BASE_URL). Same derivation as the app's own appBaseUrl.
     billrunAppBaseUrl: 'https://${namePrefix}-app.${containerAppsEnvironment.properties.defaultDomain}'
@@ -628,6 +629,7 @@ module workflowEngineBillrunContainerApp 'modules/workflow-engine-container-app.
     // rpt01 D6 — reporting rides the billrun instance under split-by-module (RF6).
     enableReporting: enableReporting
     reportingPlatformCheckEnvStorageName: enableReporting ? reportingOutboundStorage!.outputs.platformCheckEnvStorageName : ''
+    reportingPolygonCapacityEnvStorageName: enableReporting ? reportingOutboundStorage!.outputs.polygonCapacityEnvStorageName : ''
     // bm36 — signal-back callback host for the split billrun instance (same app).
     billrunAppBaseUrl: 'https://${namePrefix}-app.${containerAppsEnvironment.properties.defaultDomain}'
     // bm34 — distributor Blob artifact download for the split billrun instance.

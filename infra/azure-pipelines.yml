@@ -521,9 +521,23 @@ stages:
                 # connects to a server (not an offline file check), so it is not
                 # used — `flow namespace update --server` validates server-side on
                 # ingest and rejects an invalid flow.
+                #
+                # Only the directory's TOP-LEVEL flow files are deployed: verified
+                # on v1.3.35 (rpt04, 2026-10-30), `flow namespace update` DOES
+                # recurse into subdirectories, and refuses the whole namespace
+                # on a YAML file that isn't a flow (`GenericFlow.getNamespace()
+                # is null`) — reporting's contracts/*.yaml, which deploy as
+                # namespace files below. So each function's top-level *.yml /
+                # *.yaml are staged in a temp dir and that is mounted instead.
+                # No other function has nested YAML, so their deploys are
+                # unchanged.
                 deploy_fn() {  # $1 = flow dir under workflow-management/flows, $2 = namespace
                   local dir="$(System.DefaultWorkingDirectory)/workflow-management/flows/$1"
-                  docker run --rm -v "${dir}:/flows" "$KESTRA_IMAGE" \
+                  local stage
+                  stage="$(mktemp -d "$(Agent.TempDirectory)/flows-XXXXXX")"
+                  find "$dir" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) \
+                    -exec cp {} "$stage"/ \;
+                  docker run --rm -v "${stage}:/flows:ro" "$KESTRA_IMAGE" \
                     flow namespace update "$2" /flows \
                       --no-delete \
                       --server "https://${ENGINE_FQDN}" \
@@ -533,11 +547,14 @@ stages:
                 # Rating flows are real (function root); each bill-run function's
                 # deployable placeholder is the shell under local-dev/ (the
                 # *.template.yml at the bill-run root is a non-deployable contract
-                # doc — tasks omit `type:` — and `kestra flow` does not recurse).
+                # doc — tasks omit `type:` — and deploy_fn stages top-level files
+                # only, so local-dev/ is deployed by its own call).
                 deploy_fn rating-engine                  rating
                 deploy_fn bill-run-processor/local-dev   billrun
                 deploy_fn bill-run-distributor/local-dev billrun
-                # rpt01 D6 — reporting's function root holds only real flows.
+                # rpt01 D6 — reporting's function root holds only real flows;
+                # its contracts/ subdirectory is left out by deploy_fn (rpt04)
+                # and uploaded as namespace files below.
                 deploy_fn reporting                      reporting
 
                 # rpt02 D8 — reporting's column definitions as namespace files

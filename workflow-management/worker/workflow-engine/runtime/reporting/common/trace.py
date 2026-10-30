@@ -17,6 +17,8 @@
 Run as ``python3 -m runtime.reporting.common.trace delivered --flow-revision
 <n> <file> …`` by a report's ``publish`` task (rpt03 D8), when the files were
 written by an earlier task: one ``DELIVERED`` line per file, in argument order.
+Each ``<file>`` must be a bare name of a file in the working directory; any
+other argument fails the task (argparse exit 2).
 """
 
 from __future__ import annotations
@@ -88,12 +90,26 @@ def set_status(status: str) -> None:
     outputs(status=status)
 
 
+def _published_file(name: str) -> Path:
+    """A ``delivered`` argument: a bare file name in the working directory,
+    where the ``publish`` task's ``inputFiles`` put the files. Anything else —
+    a path, ``..``, or a symlink out — is refused, so the CLI hashes only the
+    task's own files."""
+    if not name or name != Path(name).name or name in (".", ".."):
+        raise argparse.ArgumentTypeError(f"not a file name: {name!r}")
+    cwd = Path.cwd().resolve()
+    resolved = (cwd / name).resolve()
+    if resolved.parent != cwd or not resolved.is_file():
+        raise argparse.ArgumentTypeError(f"no such file in the working directory: {name!r}")
+    return resolved
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m runtime.reporting.common.trace")
     sub = parser.add_subparsers(dest="command", required=True)
     delivered_p = sub.add_parser("delivered")
     delivered_p.add_argument("--flow-revision", required=True, type=int)
-    delivered_p.add_argument("files", nargs="+", type=Path)
+    delivered_p.add_argument("files", nargs="+", type=_published_file)
     args = parser.parse_args(argv)
     for path in args.files:
         delivered(path, args.flow_revision)

@@ -1,6 +1,6 @@
 # Reporting Management Module — Code Standards
 
-**Planned (2026-10-29, not built).** Supplements `context/code-standards.md` and states **only what Reporting Management changes or adds**. The rules here turn `rptmgmt-architecture.md` §6 (Invariants) into conventions. Flow conventions shared with the other functions are in `workflow-management/flows/README.md` (codebase).
+**Planned 2026-10-29; rpt01–rpt04 built (2026-10-30).** Supplements `context/code-standards.md` and states **only what Reporting Management changes or adds**. The rules here turn `rptmgmt-architecture.md` §6 (Invariants) into conventions. Flow conventions shared with the other functions are in `workflow-management/flows/README.md` (codebase).
 
 ---
 
@@ -58,7 +58,7 @@ This table is the register. Its executable twin is `runtime/reporting/common/cod
 | `INVALID_INVOICE_DATE`; `OUTPUT_CONTRACT_VIOLATION … INVOICE_AMOUNT_NOT_CONSTANT` / `DISCOUNT_ROW_INVALID` | D |
 | `INVALID_POSTING_DATE`, `ENCRYPTION_KEY_MISSING`, `GL_ROW_INVALID <document_id> <reason>` (ERROR, one per problem) | E |
 | `OUTPUT_CONTRACT_VIOLATION <file> <row> <column>` (and `… GL_RECONCILIATION <mno>`) | all |
-| `FILE_ALREADY_EXISTS <filename>` | any report delivering to a folder |
+| `FILE_ALREADY_EXISTS <filename>`; `OUTBOUND_DIR_INVALID <dir>`, `OUTBOUND_DIR_NOT_MOUNTED <dir>`, `DELIVERY_FAILED <exception type>` (`common/delivery.py`, rpt04 D7) | any report delivering to a folder |
 | `PLATFORM_CHECK_FAILED <reason>` | `report-platform-check` |
 | `CONTRACT_INVALID <id> <reason>` | `report-validate-output` (and any report loading a contract) |
 | `WRITER_INVALID_VALUE <column>` | any report (a value with CR or LF) |
@@ -116,7 +116,7 @@ workflow-management/worker/workflow-engine/runtime/reporting/
 ├── validate/{__init__,__main__}.py     # date | period | output, behind the three subflows (rpt02)
 ├── platform_check/{__init__,__main__}.py
 ├── settlement_invoice/{extract,exceptions,payment_report,invoice_report,__main__}.py
-├── polygon_capacity/{extract,builder,capacity_source,__main__}.py
+├── polygon_capacity/{__init__,extract,builder,capacity_source,__main__}.py   # rpt04; capacity_source: fixture only until rpt06 (P1)
 ├── mno_outstanding/{extract,builder,__main__}.py
 ├── invoice_csv/{extract,builder,__main__}.py
 └── gl_feed/{extract,rows,gl_codes,__main__}.py

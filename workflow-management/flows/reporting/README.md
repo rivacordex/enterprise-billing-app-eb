@@ -6,14 +6,15 @@ and the MNOs need from the billing data. Deployed to logical-engine namespace
 the billrun instance under split-by-module, RF6). Module context:
 `context/reporting-management/`.
 
-**Maturity: platform check, shared framework and the settlement reports
-(rpt01–rpt03).** The unit list is
+**Maturity: platform check, shared framework, the settlement reports and the
+polygon capacity lookup, deployed disabled (rpt01–rpt04).** The unit list is
 `context/reporting-management/specs/rpt00-build-plan.md`.
 
 | Flow | Description | Trigger | Since |
 | --- | --- | --- | --- |
 | `report-platform-check.yaml` | Reporting platform check — Revenue Ops' health check: connects as `reporting_runtime`, reads a granted table, publishes and delivers one file | manual | rpt01 |
 | `report-settlement-invoice.yaml` | Settlement reports (invoice and payment) — Part A for Finance / billing ops: `Reporting_dnb_settlement_invoice_<ts>.csv` and `Reporting_dnb_settlement_invoice_payment_<ts>.csv` for one `billing_period` and an `as_of_date` payment cut-off (default today); Kestra outputs only (SR24) | manual (OI-4) | rpt03 |
+| `report-polygon-capacity-lookup.yaml` | Polygon capacity lookup — Part B for Mediation and the CSP: `Polygon_capacity_lookup_<report_date>.csv` (no header) for one `report_date` (default yesterday), delivered to the `polygon-capacity` share and published. **Deployed `disabled: true`** until the capacity source exists (P1, PC25; rpt06 enables it) | manual (P5) | rpt04 |
 | `report-validate-date.yaml` | Reporting date check (shared subflow) — the one date rule; resolves an empty date to its default | called by reports | rpt02 |
 | `report-validate-period.yaml` | Reporting period check (shared subflow) — `billing_period` + `as_of_date` (SR33) | called by reports | rpt02 |
 | `report-validate-output.yaml` | Reporting output check (shared subflow) — a file against its column definition, before anything is published | called by reports | rpt02 (`name` input: rpt03) |
@@ -33,6 +34,12 @@ settings in flow `variables`; the YAML orchestrates and computes nothing (Inv 13
 `flow-deploy` compose service and the CI `deploy_workflow_flows` stage
 (`flow namespace update reporting … --no-delete`, SR41). A UI edit is an
 untracked change to a financial file.
+
+Both deploy only this directory's **top-level** `*.yaml`, staged in a temp
+dir: verified on v1.3.35 (rpt04), `flow namespace update` recurses into
+subdirectories and refuses the whole namespace on a YAML file that isn't a
+flow, such as `contracts/*.yaml` (uploaded as namespace files instead, below).
+Keep flows at the top level; `contracts/` is the only subdirectory.
 
 ## Run trace (RF7)
 
@@ -226,3 +233,4 @@ set up (RF-OI2), and grants access to that share only.
 | `outbound_dir` | Share | Readers | Report | Since |
 | --- | --- | --- | --- | --- |
 | `_platform-check/` | `platform-check` | none (no external reader) | `report-platform-check` | rpt01 |
+| `polygon-capacity/` | `polygon-capacity` | Mediation and the CSP (a read-only SAS on this share only — RF-OI2) | `report-polygon-capacity-lookup` | rpt04 |

@@ -279,10 +279,11 @@ describe("shared subflows — static shape (D4, D6)", () => {
   });
 
   // rpt02 shipped none (D9); each report unit adds its own (rpt03: Part A's
-  // two). Nothing else lives there.
+  // two; rpt04: Part B's one). Nothing else lives there.
   it("contracts/ holds its README and the built reports' contracts only", () => {
     expect(readdirSync(join(FLOWS, "contracts")).sort()).toEqual([
       "README.md",
+      "polygon_capacity.yaml",
       "settlement_invoice.yaml",
       "settlement_invoice_payment.yaml",
     ]);

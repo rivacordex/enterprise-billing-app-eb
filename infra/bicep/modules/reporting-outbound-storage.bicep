@@ -22,13 +22,14 @@
 //
 //   outbound_dir        share            readers                    since
 //   _platform-check/    platform-check   none (no external reader)  rpt01
+//   polygon-capacity/   polygon-capacity Mediation and the CSP      rpt04
 param location string
 param storageAccountName string
 
 @description('Container Apps Environment the storage definitions are registered on (the engine\'s environment).')
 param containerAppsEnvironmentId string
 
-@description('Prefix for the environment storage definitions, one per destination (`<prefix>-platform-check`). MUST be unique per instance on a shared environment, as landingEnvStorageName.')
+@description('Prefix for the environment storage definitions, one per destination (`<prefix>-platform-check`, `<prefix>-polygon-capacity`). MUST be unique per instance on a shared environment, as landingEnvStorageName.')
 param envStorageName string = 'reporting-outbound'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -95,6 +96,14 @@ resource platformCheckShare 'Microsoft.Storage/storageAccounts/fileServices/shar
   name: 'platform-check'
 }
 
+// polygon-capacity/ — report-polygon-capacity-lookup (rpt04 D1, PC12). Readers:
+// Mediation and the CSP, each with a read-only SAS on this share only — issuing,
+// storing and rotating it is RF-OI2 (the flow is disabled until P1).
+resource polygonCapacityShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
+  parent: fileService
+  name: 'polygon-capacity'
+}
+
 resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' existing = {
   name: last(split(containerAppsEnvironmentId, '/'))
 }
@@ -112,6 +121,20 @@ resource platformCheckEnvStorage 'Microsoft.App/managedEnvironments/storages@202
   }
 }
 
+resource polygonCapacityEnvStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
+  parent: containerAppsEnvironment
+  name: '${envStorageName}-polygon-capacity'
+  properties: {
+    azureFile: {
+      accountName: storageAccount.name
+      accountKey: storageAccount.listKeys().keys[0].value
+      shareName: polygonCapacityShare.name
+      accessMode: 'ReadWrite'
+    }
+  }
+}
+
 output storageAccountName string = storageAccount.name
 // The storage-definition name the engine's volume references — never the key.
 output platformCheckEnvStorageName string = platformCheckEnvStorage.name
+output polygonCapacityEnvStorageName string = polygonCapacityEnvStorage.name

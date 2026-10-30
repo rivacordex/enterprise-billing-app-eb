@@ -63,7 +63,7 @@ BEGIN
       RAISE EXCEPTION 'DRIFT: reporting_runtime owns one or more objects — reconcile ownership drift before provisioning (rpt01 D1)';
     END IF;
     -- A privilege on any object in this database outside the enumerated
-    -- surface (the nine tables and one view of Step 5, the three schemas of
+    -- surface (the ten tables and one view of Step 5, the three schemas of
     -- Step 4) is drift too: this file only grants and revokes on that
     -- surface, so a stray grant elsewhere would survive every re-run. The
     -- database itself is a shared object (dbid 0) and is converged by Step 3.
@@ -85,6 +85,7 @@ BEGIN
             '"customer"."party_role"'::regclass,
             '"product"."ratecard_version"'::regclass,
             '"product"."ratecard_ran_usage_lkp"'::regclass,
+            '"product"."product_offering_price"'::regclass,
             '"billing"."pgledger_transfers_view"'::regclass))
           OR (d.classid = 'pg_catalog.pg_namespace'::regclass AND d.objid IN (
             '"billing"'::regnamespace,
@@ -135,7 +136,8 @@ GRANT USAGE ON SCHEMA "customer" TO reporting_runtime;
 GRANT USAGE ON SCHEMA "product"  TO reporting_runtime;
 --> statement-breakpoint
 
--- Step 5 — SELECT on exactly the tables Parts A–C read (SR39, MO19, PC24),
+-- Step 5 — SELECT on exactly the tables Parts A–C read (SR39, MO19, PC24,
+-- rpt04 D2),
 -- enumerated per table (rptmgmt-code-standards §7): never ON ALL TABLES, no
 -- ALTER DEFAULT PRIVILEGES, no sequence USAGE, no EXECUTE. rpt08/rpt09 add
 -- theirs.
@@ -167,6 +169,13 @@ GRANT SELECT ON TABLE
   "product"."ratecard_ran_usage_lkp"
 TO reporting_runtime;
 --> statement-breakpoint
+-- rpt04 D2 — the card the RAN usage product names (PC1 as amended):
+-- `price_component #>> '{params,rateCardLookUp}'` on `usage_rate` prices, read
+-- only by runtime/reporting/polygon_capacity/extract.py.
+GRANT SELECT ON TABLE
+  "product"."product_offering_price"
+TO reporting_runtime;
+--> statement-breakpoint
 
 -- Step 6 — explicit REVOKEs, for the record (D2). No-ops on a fresh role, but
 -- they make the boundary readable and survive a future accidental grant to
@@ -186,6 +195,7 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE
   "customer"."party_role",
   "product"."ratecard_version",
   "product"."ratecard_ran_usage_lkp",
+  "product"."product_offering_price",
   "billing"."pgledger_transfers_view"
 FROM reporting_runtime;
 --> statement-breakpoint
