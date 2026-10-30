@@ -13,7 +13,7 @@ Like Rating, this is a **non-Next.js** module: no pages, Server Actions, compone
 | Kestra namespace `reporting` (flows in `workflow-management/flows/reporting/`) | The five report flows and the shared subflows (RF1) |
 | Python packages in the shared worker image (`worker/workflow-engine/runtime/reporting/`) | Report logic, run as `python3 -m runtime.reporting.<report>` (SR36) |
 | Column definitions as Kestra namespace files (`contracts/*.yaml`), deployed by the CLI with the flows; the platform's first namespace files | The file contracts (RF3, SR35, rpt02 D8) |
-| **PyYAML** (pinned, hash-locked; `safe_load` only) | Reading the contracts (rpt02 D1). The module's first library. |
+| **PyYAML** 6.0.3 (pinned in `requirements.in`, hash-locked in `requirements.txt`; `safe_load` only) | Reading the contracts (rpt02 D1). The module's first library. |
 | AES-256 zip encryption (`common/encrypt.py`) with **`pyzipper`** (pinned, hash-locked) | GL feed (GL15, rpt09 D6); PGP later (G-OI7). AES zips open in 7-Zip/WinZip, not Windows Explorer. |
 | A separate storage account with **one Azure Files share per destination** (`platform-check`, `polygon-capacity`, later `mno-outstanding`, `invoice-csv`, `gl-feed`), each mounted at `/data/outbound/<destination>/` | Folder delivery (PC12, RF8, rpt01 D7, rpt04 D1) |
 

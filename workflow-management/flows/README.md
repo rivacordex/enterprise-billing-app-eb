@@ -8,7 +8,7 @@
 | `rating-engine/` | 1 · Rating engine | `rating` | real flows (computation stubbed, rating v1) |
 | `bill-run-processor/` | 2 · Bill run — processor | `billrun` | `# STUB` template + local-dev placeholder |
 | `bill-run-distributor/` | 3 · Bill run — distributor | `billrun` | local-dev placeholder |
-| `reporting/` | 4 · Reporting | `reporting` | platform check (rpt01) |
+| `reporting/` | 4 · Reporting | `reporting` | platform check (rpt01), shared subflows + contracts as namespace files (rpt02) |
 
 **Naming rule (wfm-architecture §4.3 / D-D):** directories are named for the
 **function**, never the module abbreviation or the logical-engine name. The

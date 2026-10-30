@@ -1,0 +1,17 @@
+# rpt02 test fixture — not a report contract. The header: false shape.
+id: rpt02_headerless
+file: Rpt02_headerless_<report_date>.csv
+header: false
+columns:
+  - name: mno_public_key
+    type: text
+    required: true
+  - name: polygon_id
+    type: text
+    required: true
+  - name: capacity
+    type: integer
+    required: true
+  - name: report_date
+    type: date
+    required: true

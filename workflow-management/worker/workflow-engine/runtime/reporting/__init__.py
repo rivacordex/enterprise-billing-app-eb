@@ -10,7 +10,11 @@ connection is ``reporting_runtime``, a ``SELECT``-only role, opened only through
 Shared code lives only in ``common/`` (rptmgmt-code-standards.md §2.1). rpt01
 adds ``common.db`` (the one read transaction), ``common.trace`` (the RF7 run
 trace and the Kestra ``status`` output) and ``platform_check`` (the
-``report-platform-check`` health check). No report is built yet.
+``report-platform-check`` health check). rpt02 adds the shared framework:
+``common.codes`` (the executable register of outcome codes), ``common.period``
+(the date and period rules), ``common.contract`` (column definitions and the
+output check), ``common.csv_writer`` (the one CSV writer) and ``validate``
+(behind the three shared subflows). No report is built yet.
 
 Never import the rating runtime's ``runtime.db`` from here (§2.7).
 """

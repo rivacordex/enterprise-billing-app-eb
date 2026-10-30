@@ -39,14 +39,14 @@ Next.js, Server Actions, components, pages, RBAC permissions, the route × level
 ## 5. Files, CSV and column definitions
 
 1. **One writer:** `common/csv_writer.py` (RF4). Comma, no spaces; UTF-8 without BOM; LF; RFC 4180 quoting only when needed; blank = empty field; dates `YYYYMMDD`; amounts 2 dp, no thousands separator, leading `-` for negatives.
-2. **One column definition per file** in `flows/reporting/contracts/<id>.yaml`, with `header: true | false`, and per column: name, type (`date`, `amount`, `integer`, `text`), `required` (RF3). Allowed keys only (`id`, `file`, `header`, `columns`; per column `name`, `type`, `required`); anything else is `CONTRACT_INVALID`. Read only with `yaml.safe_load` (rpt02 D1–D3). Comments record the readers and the decision behind each column. Fixed headers are copied exactly from the readers' briefs (IC6, GL10) and are never "tidied".
+2. **One column definition per file** in `flows/reporting/contracts/<id>.yaml`, with `header: true | false`, and per column: name, type (`date`, `amount`, `integer`, `text`), `required` (RF3). Allowed keys only, every one present (`id`, `file`, `header`, `columns`; per column `name`, `type`, `required`); anything else is `CONTRACT_INVALID <id> <reason>`. `id` matches `[a-z0-9_]+` and equals the file name; names are unique and contain no `,`, `"`, CR or LF (headers are written unquoted). Read only with `yaml.safe_load` (rpt02 D1–D3). The format and the type rules are in `flows/reporting/contracts/README.md`. Comments record the readers and the decision behind each column. Fixed headers are copied exactly from the readers' briefs (IC6, GL10) and are never "tidied".
 3. **File names** are exact and case-sensitive (PC11, MO10, IC5, GL4, SR22). The date in a name is the report's business date, except Part A, which uses the run start timestamp.
 4. **Folder delivery** goes only through `common/delivery.py` `deliver()` (rpt04 D7): it fails `FILE_ALREADY_EXISTS` if the target exists, writes `.<name>.tmp` in the same folder, `fsync`s, and renames without ever replacing a file (PC13, PC14). Each destination is its own share, mounted at `/data/outbound/<destination>/`.
 5. **Encryption** happens after `validate_output` and before `publish`; the unencrypted CSV exists only in the task's working directory and is never an output (GL15, Inv 6).
 
 ## 6. Outcome codes and log lines (register)
 
-This table is the register. Its executable twin is `runtime/reporting/common/codes.py`; guardrail 2 keeps the two identical (rpt02 D7). A code is added to both in the same change set as the code that emits it.
+This table is the register. Its executable twin is `runtime/reporting/common/codes.py` (rpt02 D7): every code, prefix and reason in backticks below is a constant there — including those of reports not yet built — and runtime modules take codes only from it, never as literals. Guardrail 2 (T-R02-11) fails unless the two list exactly the same codes. Adding a code means adding it in both places in the same change.
 
 **FAILED codes**
 
@@ -72,7 +72,7 @@ This table is the register. Its executable twin is `runtime/reporting/common/cod
 | `SKIPPED <party_role_id> MNO_PUBLIC_KEY_MISSING` | C |
 | `GL_CODE_FALLBACK <document_id> <offering_id>` | E |
 
-`OUTPUT_CONTRACT_VIOLATION` reasons include `EMPTY_FILE` (an empty file with `header: false`).
+`OUTPUT_CONTRACT_VIOLATION <file> <row> <column> <reason>` reasons from the column-definition check (`common/contract.py`, rpt02 D6), by stage: bytes `NOT_UTF8`, `BOM`, `CR_IN_FILE`, `NO_FINAL_LF`, `EMPTY_FILE` (a file with no bytes; with `header: false` a valid file always has a row, with `header: true` its header); header `HEADER_MISMATCH`; shape `BAD_QUOTING`, `FIELD_COUNT`; fields `REQUIRED_EMPTY`, `BAD_DATE`, `BAD_AMOUNT`, `BAD_INTEGER`, `BAD_TEXT`. `<column>` is `-` when the violation isn't about one column; at most 50 lines, then `OUTPUT_CONTRACT_VIOLATION <file> … <n> more`.
 
 `GL_ROW_INVALID` reasons: `MNO_PUBLIC_KEY_MISSING`, `POLYGON_ID_MISSING`, `POLYGON_START_DATE_MISSING`, `GL_CODE_UNRESOLVED`, `UNMAPPED_DOCUMENT`, `CAPACITY_LINE_MISMATCH`. GL feed violation reasons: `GL_RECONCILIATION <mno>`, `INVOICE_SUM <invoice_id>`.
 
@@ -107,10 +107,10 @@ workflow-management/flows/reporting/
 ├── report-validate-date.yaml
 ├── report-validate-period.yaml
 ├── report-validate-output.yaml
-└── contracts/{settlement_invoice,settlement_invoice_payment,polygon_capacity,mno_outstanding,invoice_csv,gl_feed}.yaml
+└── contracts/{README.md,settlement_invoice,settlement_invoice_payment,polygon_capacity,mno_outstanding,invoice_csv,gl_feed}.yaml   # namespace files (rpt02 D8)
 
 workflow-management/worker/workflow-engine/runtime/reporting/
-├── common/{db,trace,codes,csv_writer,period,contract,delivery,receivables,polygon_lines,encrypt}.py
+├── common/{db,trace,codes,csv_writer,period,contract,delivery,receivables,polygon_lines,encrypt}.py   # codes.py: the executable register (§6)
 ├── validate/{__init__,__main__}.py     # date | period | output, behind the three subflows (rpt02)
 ├── platform_check/{__init__,__main__}.py
 ├── settlement_invoice/{extract,exceptions,payment_report,invoice_report,__main__}.py

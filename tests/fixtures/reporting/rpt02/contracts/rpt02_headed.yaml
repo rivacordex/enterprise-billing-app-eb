@@ -1,0 +1,30 @@
+# rpt02 test fixture — not a report contract. The header: true shape, eight
+# columns, names with spaces (as IC6/GL10 headers have).
+id: rpt02_headed
+file: Rpt02_headed_<report_date>.csv
+header: true
+columns:
+  - name: Invoice Date
+    type: date
+    required: true
+  - name: Invoice No
+    type: text
+    required: true
+  - name: Customer Name
+    type: text
+    required: true
+  - name: Invoice Amount
+    type: amount
+    required: true
+  - name: Discount Amount
+    type: amount
+    required: false
+  - name: Usage Count
+    type: integer
+    required: true
+  - name: Due Date
+    type: date
+    required: false
+  - name: Note
+    type: text
+    required: false

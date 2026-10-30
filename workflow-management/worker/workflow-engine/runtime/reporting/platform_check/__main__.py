@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ..common import db, trace
+from ..common import codes, db, trace
 
 BUSINESS_TZ = ZoneInfo("Asia/Kuala_Lumpur")  # §1.5
 
@@ -101,7 +101,7 @@ def _deliver(content: bytes, name: str, outbound_dir: Path) -> Path:
     outbound_dir.mkdir(parents=True, exist_ok=True)
     target = outbound_dir / name
     if target.exists():
-        raise PlatformCheckFailed(f"FILE_ALREADY_EXISTS {name}")
+        raise PlatformCheckFailed(f"{codes.FILE_ALREADY_EXISTS} {name}")
     tmp = outbound_dir / f".{name}.tmp"
     try:
         with tmp.open("xb") as handle:
@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         published = Path.cwd() / name
         published.write_bytes(content)
     except PlatformCheckFailed as exc:
-        trace.error(f"PLATFORM_CHECK_FAILED {exc.reason}")
+        trace.error(f"{codes.PLATFORM_CHECK_FAILED} {exc.reason}")
         return 1
     trace.delivered(published, args.flow_revision)
     trace.set_status("WARNING" if args.simulate_warning else "SUCCESS")

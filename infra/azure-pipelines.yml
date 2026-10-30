@@ -539,6 +539,21 @@ stages:
                 deploy_fn bill-run-distributor/local-dev billrun
                 # rpt01 D6 — reporting's function root holds only real flows.
                 deploy_fn reporting                      reporting
+
+                # rpt02 D8 — reporting's column definitions as namespace files
+                # (the platform's first), at contracts/ in namespace reporting,
+                # read by report-validate-output. Same pinned CLI and
+                # credential; verified on v1.3.35 (prints a deprecation notice
+                # naming `kestractl`, which the pinned image doesn't ship).
+                # Re-uploading the same bytes is a no-op in effect;
+                # `--no-delete` keeps it additive, like the flows.
+                docker run --rm \
+                  -v "$(System.DefaultWorkingDirectory)/workflow-management/flows/reporting/contracts:/contracts" \
+                  "$KESTRA_IMAGE" \
+                  namespace files update reporting /contracts contracts/ \
+                    --no-delete \
+                    --server "https://${ENGINE_FQDN}" \
+                    --user "workflow-ops@billing.ops:${BASIC_AUTH_PASSWORD}"
             displayName: kestra flow namespace update — all functions (D2)
 
   # ---------------------------------------------------------------------

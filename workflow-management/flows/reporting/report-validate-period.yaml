@@ -1,0 +1,70 @@
+# rpt02-spec D4 — the one period rule (SR33, SR25). Checks `billing_period`
+# (INVALID_BILLING_PERIOD), calls report-validate-date for `as_of_date` (rule
+# not_future, default today), then checks `as_of_date` is not before the
+# period's first day (INVALID_AS_OF_DATE). Returns `period_start`,
+# `period_end` and `effective_as_of_date`. The YAML computes nothing (Inv 13):
+# both checks run in the runtime, before and after the date subflow call.
+# Reads no database. Calling pattern: flows/reporting/README.md, Shared
+# subflows.
+#
+# Inputs reach the shell as env vars, never interpolated into the command.
+#
+# Never edit this flow in the Kestra UI — deployed from git (SR41).
+id: report-validate-period
+namespace: reporting
+description: Reporting period check (shared subflow)
+
+inputs:
+  # Optional only so an empty value fails with INVALID_BILLING_PERIOD from the
+  # runtime rather than a Kestra input error.
+  - id: billing_period
+    type: STRING
+    required: false
+  - id: as_of_date
+    type: STRING
+    required: false
+
+tasks:
+  - id: check_period
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # ACA has no Docker daemon
+    env:
+      BILLING_PERIOD: "{{ inputs.billing_period ?? '' }}"
+    commands:
+      - python3 -m runtime.reporting.validate period --billing-period="$BILLING_PERIOD"
+
+  - id: as_of_date
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-date
+    wait: true
+    transmitFailed: true
+    inputs:
+      name: as_of_date
+      value: "{{ inputs.as_of_date ?? '' }}"
+      rule: not_future
+      default: today
+
+  - id: check_as_of
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BILLING_PERIOD: "{{ inputs.billing_period ?? '' }}"
+      AS_OF_DATE: "{{ outputs.as_of_date.outputs.effective_date }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.validate period
+        --billing-period="$BILLING_PERIOD" --as-of-date="$AS_OF_DATE"
+
+outputs:
+  - id: period_start
+    type: STRING
+    value: "{{ outputs.check_as_of.vars.period_start }}"
+  - id: period_end
+    type: STRING
+    value: "{{ outputs.check_as_of.vars.period_end }}"
+  - id: effective_as_of_date
+    type: STRING
+    value: "{{ outputs.check_as_of.vars.effective_as_of_date }}"

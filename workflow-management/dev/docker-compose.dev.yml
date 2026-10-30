@@ -273,6 +273,12 @@ services:
           echo "Deploying /flows/$$dir -> namespace $$ns"
           /app/kestra flow namespace update "$$ns" "/flows/$$dir" --no-delete --server "$$SERVER" --user "$$CRED"
         done
+        # rpt02 D8 — the platform's first namespace files: reporting's column
+        # definitions, uploaded to namespace `reporting` at contracts/ (read by
+        # report-validate-output). Re-uploads the same bytes on every run;
+        # `--no-delete` keeps it additive, like the flows.
+        echo "Uploading /flows/reporting/contracts -> namespace reporting at contracts/"
+        /app/kestra namespace files update reporting /flows/reporting/contracts contracts/ --no-delete --server "$$SERVER" --user "$$CRED"
     restart: "no"
 
 volumes:

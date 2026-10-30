@@ -21,6 +21,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from . import codes
+
 STATUSES = ("SUCCESS", "WARNING")
 
 _CHUNK = 1024 * 1024
@@ -57,7 +59,7 @@ def sha256(path: str | Path) -> str:
 
 
 def delivered_line(filename: str, digest: str, revision: int) -> str:
-    return f"DELIVERED {filename} sha256={digest} rev={revision}"
+    return f"{codes.DELIVERED} {filename} sha256={digest} rev={revision}"
 
 
 def delivered(path: str | Path, revision: int) -> str:

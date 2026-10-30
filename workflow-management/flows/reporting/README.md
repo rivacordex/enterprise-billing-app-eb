@@ -6,12 +6,16 @@ and the MNOs need from the billing data. Deployed to logical-engine namespace
 the billrun instance under split-by-module, RF6). Module context:
 `context/reporting-management/`.
 
-**Maturity: platform check only (rpt01).** No report is built yet; the unit
-list is `context/reporting-management/specs/rpt00-build-plan.md`.
+**Maturity: platform check and shared framework (rpt01, rpt02).** No report is
+built yet; the unit list is `context/reporting-management/specs/rpt00-build-plan.md`.
 
 | Flow | Description | Trigger | Since |
 | --- | --- | --- | --- |
 | `report-platform-check.yaml` | Reporting platform check — Revenue Ops' health check: connects as `reporting_runtime`, reads a granted table, publishes and delivers one file | manual | rpt01 |
+| `report-validate-date.yaml` | Reporting date check (shared subflow) — the one date rule; resolves an empty date to its default | called by reports | rpt02 |
+| `report-validate-period.yaml` | Reporting period check (shared subflow) — `billing_period` + `as_of_date` (SR33) | called by reports | rpt02 |
+| `report-validate-output.yaml` | Reporting output check (shared subflow) — a file against its column definition, before anything is published | called by reports | rpt02 |
+| `contracts/` | Column definitions, deployed as namespace files (format: [`contracts/README.md`](contracts/README.md)) | — | rpt02 |
 
 **Role.** Every flow reads as **`reporting_runtime`** (`db/bootstrap/reporting-db-roles.sql`):
 `SELECT` only, on an enumerated table list, with `default_transaction_read_only = on`.
@@ -77,6 +81,105 @@ Output files are exposed with the `Commands` task's `outputFiles` (glob
 patterns relative to the task's working directory); the runtime writes them
 there only after the run's checks (and any delivery) have passed, so a failed
 run publishes none.
+
+## Shared subflows — the calling pattern (rpt02 D4)
+
+Every report checks its inputs and its files with the shared subflows, called
+— never copied (code-standards §3.5). Verified on v1.3.35 (rpt02, 2026-10-30):
+
+```yaml
+- id: validate_date
+  type: io.kestra.plugin.core.flow.Subflow
+  namespace: reporting
+  flowId: report-validate-date
+  wait: true            # the caller waits for the subflow's state
+  transmitFailed: true  # a FAILED check fails the caller
+  inputs:
+    name: report_date   # names the failure code: INVALID_REPORT_DATE
+    value: "{{ inputs.report_date }}"
+    rule: before_today  # or not_future
+    default: yesterday  # or today — as the report's spec states
+```
+
+The subflow's flow-level `outputs` are read as
+**`{{ outputs.<task id>.outputs.<output id> }}`** — here
+`{{ outputs.validate_date.outputs.effective_date }}`.
+
+| Subflow | Inputs | Outputs | Fails with |
+| --- | --- | --- | --- |
+| `report-validate-date` | `name` (one of `common/codes.py` `INVALID_INPUT_NAMES`), `value` (may be empty), `rule` (`not_future` \| `before_today`), `default` (`today` \| `yesterday`) | `effective_date` (`YYYYMMDD`) | `INVALID_<NAME>` |
+| `report-validate-period` | `billing_period` (`YYYYMM`), `as_of_date` (may be empty: today) | `period_start`, `period_end`, `effective_as_of_date` | `INVALID_BILLING_PERIOD`, `INVALID_AS_OF_DATE` |
+| `report-validate-output` | `file` (`FILE`), `contract` (an id) | `rows` (data rows) | `OUTPUT_CONTRACT_VIOLATION`, `CONTRACT_INVALID` |
+
+- **Defaults are resolved in the runtime**, not in Kestra input `defaults`, so
+  "today in Kuala Lumpur" exists in one place (`common/period.py`).
+- `report-validate-period` checks the period first, then calls
+  `report-validate-date` for `as_of_date` (rule `not_future`, default `today`),
+  then checks the date is not before the period's first day — two `Commands`
+  tasks around the subflow call, so the YAML computes nothing (Inv 13). A
+  failure in the nested date check is logged in **its** execution (the
+  `as_of_date` task's `executionId`).
+- Inputs reach the shell as **env vars**, never interpolated into the command
+  text, so an input value can't inject shell syntax.
+- A failed check's execution also logs `Failed to render output values …`:
+  Kestra still renders the flow's `outputs` after the task failed. It is
+  noise; the code line above it is the outcome.
+
+## Output check (rpt02 D6)
+
+Each report calls `report-validate-output` once per file, between `generate`
+and `publish` (code-standards §3.2), passing the generated file and its
+contract id:
+
+```yaml
+- id: validate_output
+  type: io.kestra.plugin.core.flow.Subflow
+  namespace: reporting
+  flowId: report-validate-output
+  wait: true
+  transmitFailed: true
+  inputs:
+    file: "{{ outputs.generate.outputFiles['<file name>'] }}"
+    contract: polygon_capacity
+```
+
+Nothing is published or delivered if it fails (Inv 5). The check runs
+`python3 -m runtime.reporting.validate output` with the namespace files
+`contracts/**` in its working directory. The `FILE` input's URI keeps the
+original file name (`…/inputs/file/<name>`), and that name is what the log
+lines show:
+
+```
+OUTPUT_CONTRACT_VIOLATION <file> <row> <column> <reason>
+```
+
+one ERROR line per violation (at most 50, then `… <n> more`); `<row>` is the
+1-based file line, `<column>` the contract's column name (it may contain
+spaces; the reason is always the last word) or `-`. Reasons and the contract
+format: [`contracts/README.md`](contracts/README.md).
+
+## Namespace files — deploying the contracts (rpt02 D8)
+
+The contracts are the platform's first **Kestra namespace files**: uploaded to
+namespace `reporting` at `contracts/` by the dev `flow-deploy` service and the
+CI `deploy_workflow_flows` stage, right after the `reporting` flows, with the
+same pinned image and credential:
+
+```
+kestra namespace files update reporting <checkout>/workflow-management/flows/reporting/contracts contracts/ \
+  --no-delete --server <url> --user <user:password>
+```
+
+Verified on v1.3.35 (rpt02, 2026-10-30): files land at `contracts/<name>`;
+re-deploying uploads the same bytes (no change); a file edited in git is
+updated on the next deploy. The command prints `WARNING: this command is
+deprecated, use kestractl nsfile upload instead`: `kestractl` is a separate
+tool the pinned image doesn't ship, and the command works — revisit when the
+base image is bumped. `--no-delete` keeps the upload additive, like the flows:
+a contract removed from git stays on the engine until removed deliberately.
+
+Contracts are deployed with their flows and never edited in the Kestra UI
+(SR41).
 
 ## Outbound destinations (RF8)
 

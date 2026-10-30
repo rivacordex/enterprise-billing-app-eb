@@ -1,0 +1,52 @@
+# rpt02-spec D4 — the one date rule (RF2, SR25). Every report checks its date
+# input by calling this subflow, never by copying it (code-standards §3.5):
+# it resolves an empty value to its default — today or yesterday in
+# Asia/Kuala_Lumpur, computed in the runtime and nowhere else, never in Kestra
+# input `defaults` — applies the rule, and returns `effective_date`. On failure
+# the execution ends FAILED with `INVALID_<NAME uppercased>` (INVALID_REPORT_DATE,
+# INVALID_AS_OF_DATE, …). Reads no database. Calling pattern:
+# flows/reporting/README.md, Shared subflows.
+#
+# Inputs reach the shell as env vars, never interpolated into the command, so
+# a value can't inject shell syntax; `--value=` keeps one starting with `-`
+# from being read as an option.
+#
+# Never edit this flow in the Kestra UI — deployed from git (SR41).
+id: report-validate-date
+namespace: reporting
+description: Reporting date check (shared subflow)
+
+inputs:
+  # The report's input name, e.g. report_date; must be one of
+  # common/codes.py INVALID_INPUT_NAMES (it names the failure code).
+  - id: name
+    type: STRING
+  - id: value
+    type: STRING
+    required: false
+  - id: rule
+    type: SELECT
+    values: [not_future, before_today]
+  - id: default
+    type: SELECT
+    values: [today, yesterday]
+
+tasks:
+  - id: check
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # ACA has no Docker daemon
+    env:
+      NAME: "{{ inputs.name }}"
+      VALUE: "{{ inputs.value ?? '' }}"
+      RULE: "{{ inputs.rule }}"
+      DEFAULT: "{{ inputs.default }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.validate date
+        --name="$NAME" --value="$VALUE" --rule="$RULE" --default="$DEFAULT"
+
+outputs:
+  - id: effective_date
+    type: STRING
+    value: "{{ outputs.check.vars.effective_date }}"
