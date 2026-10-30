@@ -11,7 +11,8 @@ pattern), so the real source has a defined behaviour for gaps.
 rpt04 ships ``FixtureCapacitySource`` only, selected by the flow variable
 ``capacity_source: fixture`` and reading the CSV file given by the
 ``--capacity-fixture`` argument; rpt06 adds the real source. Any other name —
-or a fixture that can't be read — fails ``CAPACITY_SOURCE_UNAVAILABLE <name>``.
+or a fixture that can't be read or isn't inside the working directory (where
+the flow's namespace files are) — fails ``CAPACITY_SOURCE_UNAVAILABLE <name>``.
 
 Fixture format: UTF-8 CSV with the header ``mno_public_key,
 commercial_unit_public_key,polygon_id,capacity_mbps``; one row per polygon;
@@ -65,8 +66,13 @@ class FixtureCapacitySource:
 
 
 def _read_fixture(path: Path) -> dict[Key, Decimal | None]:
+    # A namespace file, so inside the task's working directory; never a path
+    # out of it.
+    resolved = path.resolve()
+    if not resolved.is_relative_to(Path.cwd().resolve()):
+        raise CapacitySourceUnavailable(FIXTURE)
     try:
-        with path.open(encoding="utf-8", newline="") as handle:
+        with resolved.open(encoding="utf-8", newline="") as handle:
             reader = csv.reader(handle)
             if tuple(next(reader, ())) != FIXTURE_HEADER:
                 raise CapacitySourceUnavailable(FIXTURE)

@@ -1,8 +1,15 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -229,13 +236,20 @@ export interface ReportRun extends PythonRun, KestraLines {
 
 // Runs `python3 -m runtime.reporting.<module> …args` in a fresh temporary
 // working directory (the task's working directory), with the contracts the
-// flow mounts as namespace files.
+// flow mounts as namespace files. `inputFiles` (relative path → source) are
+// copied into it first, as the flow's namespace files are; put them in a
+// subfolder so `files` lists only what the run wrote.
 export function runReport(
   module: string,
   args: string[],
   env: Record<string, string>,
+  inputFiles: Record<string, string> = {},
 ): ReportRun {
   const outDir = mkdtempSync(join(tmpdir(), `rpt-${module}-`));
+  for (const [path, source] of Object.entries(inputFiles)) {
+    mkdirSync(dirname(join(outDir, path)), { recursive: true });
+    copyFileSync(source, join(outDir, path));
+  }
   const run = runReportingPython(
     [
       "-m",
@@ -247,8 +261,9 @@ export function runReport(
     { cwd: outDir, env },
   );
   const files: Record<string, string> = {};
-  for (const name of readdirSync(outDir)) {
-    files[name] = readFileSync(join(outDir, name), "utf8");
+  for (const entry of readdirSync(outDir, { withFileTypes: true })) {
+    if (entry.isFile())
+      files[entry.name] = readFileSync(join(outDir, entry.name), "utf8");
   }
   return { ...run, ...parseKestraLines(run.stdout), outDir, files };
 }

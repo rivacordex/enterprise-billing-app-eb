@@ -48,6 +48,9 @@ const CAPACITY_FIXTURE = join(
   process.cwd(),
   "tests/fixtures/reporting/polygon_capacity/capacity.csv",
 );
+// Where the run finds it: the flow's `capacity_fixture`, a namespace file in
+// the task's working directory.
+const STAGED_FIXTURE = "fixtures/polygon_capacity.csv";
 const fileName = (day: string) => `Polygon_capacity_lookup_${day}.csv`;
 
 const errors = (r: ReportRun) =>
@@ -77,9 +80,10 @@ describe.skipIf(!databaseUrl || !ready)(
         [
           `--report-date=${reportDate}`,
           `--capacity-source=${extra.source ?? "fixture"}`,
-          `--capacity-fixture=${extra.fixture ?? CAPACITY_FIXTURE}`,
+          `--capacity-fixture=${extra.fixture ?? STAGED_FIXTURE}`,
         ],
         { ...env, ...extra.env },
+        { [STAGED_FIXTURE]: CAPACITY_FIXTURE },
       );
 
     const expectFailed = (r: ReportRun, line: string) => {
@@ -216,17 +220,23 @@ describe.skipIf(!databaseUrl || !ready)(
       expect(again.outputs).toEqual(main.outputs);
     });
 
-    it("D5 — an unknown capacity source or an unreadable fixture fails CAPACITY_SOURCE_UNAVAILABLE", () => {
+    it("D5 — an unknown capacity source, an unreadable fixture or one outside the working directory fails CAPACITY_SOURCE_UNAVAILABLE", () => {
       expectFailed(
         lookup("20261026", { source: "mediation" }),
         "CAPACITY_SOURCE_UNAVAILABLE mediation",
       );
-      expectFailed(
-        lookup("20261026", {
-          fixture: join(tmpdir(), "rpt04-no-such-fixture.csv"),
-        }),
-        "CAPACITY_SOURCE_UNAVAILABLE fixture",
-      );
+      // Missing; then the real fixture, readable but outside the working
+      // directory; then a path climbing out of it.
+      for (const fixture of [
+        "fixtures/no-such-fixture.csv",
+        CAPACITY_FIXTURE,
+        `fixtures/../../${STAGED_FIXTURE}`,
+      ]) {
+        expectFailed(
+          lookup("20261026", { fixture }),
+          "CAPACITY_SOURCE_UNAVAILABLE fixture",
+        );
+      }
     });
 
     it("R04-T3 — no card named fails NO_RATECARD_NAMED; two cards fail MULTIPLE_RATECARDS_NAMED naming both", async () => {
@@ -348,18 +358,22 @@ describe.skipIf(!databaseUrl || !ready)(
     it("P-T14 (runtime) — deliver() writes the day's file once, leaves no .tmp, and a second delivery fails FILE_ALREADY_EXISTS leaving it byte-identical", () => {
       const root = mkdtempSync(join(tmpdir(), "rpt04-outbound-"));
       const generated = join(main.outDir, fileName("20261026"));
+      // Run where the file is, as the deliver task runs in its working directory.
       const deliver = () =>
-        runReportingPython([
-          "-c",
-          `import sys
+        runReportingPython(
+          [
+            "-c",
+            `import sys
 from pathlib import Path
 from runtime.reporting.common import delivery
 delivery.OUTBOUND_ROOT = Path(sys.argv[1])
 delivery._mounted = lambda path: True  # a temp dir stands in for the mount
 sys.exit(delivery.main(["--outbound-dir", str(Path(sys.argv[1]) / "polygon-capacity"), sys.argv[2]]))`,
-          root,
-          generated,
-        ]);
+            root,
+            generated,
+          ],
+          { cwd: main.outDir },
+        );
       const outbound = join(root, "polygon-capacity");
       mkdirSync(outbound);
 

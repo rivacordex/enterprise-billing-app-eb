@@ -4,7 +4,9 @@ The only way a report puts a file in an outbound folder
 (rptmgmt-code-standards.md §5.4). ``deliver(src, outbound_dir, name)``:
 
 1. refuses ``outbound_dir`` unless it is one destination's folder directly
-   under ``OUTBOUND_ROOT``, already on a mount (``confine``);
+   under ``OUTBOUND_ROOT``, already on a mount (``confine``), and ``src``
+   unless it is a file directly in the working directory
+   (``DELIVERY_FAILED ValueError``);
 2. fails ``FILE_ALREADY_EXISTS <name>`` if ``outbound_dir/name`` exists, and
    touches nothing;
 3. copies ``src`` to ``outbound_dir/.<name>.tmp`` (created exclusively),
@@ -113,15 +115,19 @@ def deliver(src: str | Path, outbound_dir: str | Path, name: str) -> Path:
     if not name or name != Path(name).name or name.startswith("."):
         raise DeliveryFailed(f"{codes.DELIVERY_FAILED} {ValueError.__name__}")
     folder = confine(Path(outbound_dir))
+    # The file being delivered is the task's own, in its working directory.
+    source = Path(src).resolve()
+    if source.parent != Path.cwd().resolve():
+        raise DeliveryFailed(f"{codes.DELIVERY_FAILED} {ValueError.__name__}")
     target = folder / name
     if target.exists():
         raise DeliveryFailed(f"{codes.FILE_ALREADY_EXISTS} {name}")  # PC14
     tmp = folder / f".{name}.tmp"  # PC13
     created = False
     try:
-        with Path(src).open("rb") as source, tmp.open("xb") as handle:
+        with source.open("rb") as reader, tmp.open("xb") as handle:
             created = True
-            shutil.copyfileobj(source, handle)
+            shutil.copyfileobj(reader, handle)
             handle.flush()
             os.fsync(handle.fileno())
         _rename_noreplace(tmp, target)

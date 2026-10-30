@@ -6,7 +6,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -38,15 +38,17 @@ const ready = reportingRuntimeReady();
 
 // Runs `delivery.deliver()` against a temporary root standing in for
 // /data/outbound (its mount check stubbed), with an optional injected failure.
+// The root is also the working directory, where `src` must be.
 function deliverInto(
   root: string,
   src: string,
   name: string,
   inject = "",
 ): ReturnType<typeof runReportingPython> {
-  return runReportingPython([
-    "-c",
-    `import json, sys
+  return runReportingPython(
+    [
+      "-c",
+      `import json, sys
 from pathlib import Path
 from runtime.reporting.common import delivery
 delivery.OUTBOUND_ROOT = Path(sys.argv[1])
@@ -57,10 +59,12 @@ try:
     print(json.dumps({"ok": True}))
 except delivery.DeliveryFailed as exc:
     print(json.dumps({"failed": exc.reason}))`,
-    root,
-    src,
-    name,
-  ]);
+      root,
+      src,
+      name,
+    ],
+    { cwd: root },
+  );
 }
 
 function outboundFixture(): { root: string; outbound: string; src: string } {
@@ -139,9 +143,10 @@ delivery._rename_noreplace = _boom`,
 
     it("refuses a folder that isn't one destination directly under the root, a missing folder, and a name that isn't a plain file name", () => {
       const { root, src } = outboundFixture();
-      const outside = runReportingPython([
-        "-c",
-        `import json, sys
+      const outside = runReportingPython(
+        [
+          "-c",
+          `import json, sys
 from pathlib import Path
 from runtime.reporting.common import delivery
 delivery.OUTBOUND_ROOT = Path(sys.argv[1])
@@ -156,9 +161,11 @@ for folder, name in [(".", "f.csv"), ("polygon-capacity/nested", "f.csv"), (".."
     except delivery.DeliveryFailed as exc:
         out.append(exc.reason.split(" ")[0])
 print(json.dumps(out))`,
-        root,
-        src,
-      ]);
+          root,
+          src,
+        ],
+        { cwd: root },
+      );
       expect(JSON.parse(outside.stdout), outside.stderr).toEqual([
         "OUTBOUND_DIR_INVALID",
         "OUTBOUND_DIR_INVALID",
@@ -167,6 +174,23 @@ print(json.dumps(out))`,
         "DELIVERY_FAILED",
         "DELIVERY_FAILED",
       ]);
+    });
+
+    it("refuses a source file outside the working directory, touching nothing", () => {
+      const { root, outbound } = outboundFixture();
+      const elsewhere = mkdtempSync(join(tmpdir(), "rpt04-elsewhere-"));
+      const src = join(elsewhere, "generated.csv");
+      writeFileSync(src, "x\n");
+      for (const given of [
+        src,
+        join("..", basename(elsewhere), "generated.csv"),
+      ]) {
+        const run = deliverInto(root, given, NAME);
+        expect(JSON.parse(run.stdout), run.stderr).toEqual({
+          failed: "DELIVERY_FAILED ValueError",
+        });
+      }
+      expect(readdirSync(outbound)).toEqual([]);
     });
 
     it("the CLI the deliver task runs logs the reason as one ERROR line and exits non-zero", () => {
