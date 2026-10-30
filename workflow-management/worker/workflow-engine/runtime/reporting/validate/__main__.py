@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 from ..common import codes, period, trace
-from ..common.contract import ContractInvalid, check_file, data_row_count, load_contract
+from ..common.contract import ContractInvalid, check_file_rows, load_contract
 from ..common.csv_writer import fmt_date
 
 MAX_LOGGED_VIOLATIONS = 50
@@ -98,7 +98,7 @@ def _output(args: argparse.Namespace) -> dict[str, int]:
         raise CheckFailed(f"{codes.CONTRACT_INVALID} {exc.contract_id} {exc.reason}") from None
 
     name = _display_name(args.file, args.name)
-    violations = check_file(args.file, contract)
+    violations, rows = check_file_rows(args.file, contract)
     if violations:
         for v in violations[:MAX_LOGGED_VIOLATIONS]:
             trace.error(f"{codes.OUTPUT_CONTRACT_VIOLATION} {name} {v.row} {v.column} {v.reason}")
@@ -106,7 +106,7 @@ def _output(args: argparse.Namespace) -> dict[str, int]:
         if more > 0:
             trace.error(f"{codes.OUTPUT_CONTRACT_VIOLATION} {name} … {more} more")
         raise CheckFailed()
-    return {"rows": data_row_count(args.file, contract)}
+    return {"rows": rows}
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

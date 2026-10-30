@@ -12,6 +12,8 @@ RF3, SR30, SR34, SR35. One contract per output file,
   stage that fails: bytes, header, shape, fields. Rows are 1-based file lines
   (the header, when present, is line 1); ``column`` is the contract's column
   name, or ``-`` when the violation isn't about one column.
+- ``check_file_rows(path, contract)`` does the same and also returns the
+  number of data rows (the header isn't counted), from the same single read.
 
 The check is independent of ``csv_writer``: it parses the file itself, so a
 writer bug can't hide behind the same code (D5).
@@ -250,17 +252,27 @@ def _lines(text: str) -> list[str]:
 
 def check_file(path: str | Path, contract: Contract) -> list[Violation]:
     """Every violation of ``contract`` in the file, from the first failing stage."""
+    return check_file_rows(path, contract)[0]
+
+
+def check_file_rows(path: str | Path, contract: Contract) -> tuple[list[Violation], int]:
+    """``check_file``'s violations and the file's data-row count (header excluded)."""
     data = Path(path).read_bytes()
     if not data:
         # Nothing to check line by line. With header: true a valid file has
         # at least its header line, so an empty one fails the same way.
-        return [Violation(1, NO_COLUMN, codes.EMPTY_FILE)]
-
-    # 1. bytes
+        return [Violation(1, NO_COLUMN, codes.EMPTY_FILE)], 0
     violations, text = _check_bytes(data)
     if violations:
-        return violations
+        return violations, 0
     lines = _lines(text)
+    rows = len(lines) - 1 if contract.header else len(lines)
+    return _check_lines(lines, contract), rows
+
+
+def _check_lines(lines: list[str], contract: Contract) -> list[Violation]:
+    """Stages 2–4 on a file that passed the bytes stage."""
+    violations: list[Violation] = []
 
     # 2. header
     first_data_line = 1
@@ -299,9 +311,3 @@ def check_file(path: str | Path, contract: Contract) -> list[Violation]:
             if reason:
                 violations.append(Violation(number, column.name, reason))
     return violations
-
-
-def data_row_count(path: str | Path, contract: Contract) -> int:
-    """Data rows in a file that passed ``check_file`` (the header isn't counted)."""
-    lines = Path(path).read_bytes().count(b"\n")
-    return lines - 1 if contract.header else lines

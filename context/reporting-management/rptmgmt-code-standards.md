@@ -74,6 +74,8 @@ This table is the register. Its executable twin is `runtime/reporting/common/cod
 
 `OUTPUT_CONTRACT_VIOLATION <file> <row> <column> <reason>` reasons from the column-definition check (`common/contract.py`, rpt02 D6), by stage: bytes `NOT_UTF8`, `BOM`, `CR_IN_FILE`, `NO_FINAL_LF`, `EMPTY_FILE` (a file with no bytes; with `header: false` a valid file always has a row, with `header: true` its header); header `HEADER_MISMATCH`; shape `BAD_QUOTING`, `FIELD_COUNT`; fields `REQUIRED_EMPTY`, `BAD_DATE`, `BAD_AMOUNT`, `BAD_INTEGER`, `BAD_TEXT`. `<column>` is `-` when the violation isn't about one column; at most 50 lines, then `OUTPUT_CONTRACT_VIOLATION <file> … <n> more`.
 
+`PLATFORM_CHECK_FAILED` reasons (rpt01 D8): `CONNECT_FAILED`, `QUERY_FAILED <exception type>`, `WRONG_USER`, `NOT_READ_ONLY`, `WRONG_ISOLATION`, `OUTBOUND_DIR_INVALID` (not a folder directly under `/data/outbound`), `OUTBOUND_DIR_NOT_MOUNTED` (the folder is missing or not on a mount; it is never created), `DELIVERY_FAILED <exception type>`, `PUBLISH_FAILED <exception type>` (the working-directory copy), and `FILE_ALREADY_EXISTS <filename>`.
+
 `GL_ROW_INVALID` reasons: `MNO_PUBLIC_KEY_MISSING`, `POLYGON_ID_MISSING`, `POLYGON_START_DATE_MISSING`, `GL_CODE_UNRESOLVED`, `UNMAPPED_DOCUMENT`, `CAPACITY_LINE_MISMATCH`. GL feed violation reasons: `GL_RECONCILIATION <mno>`, `INVOICE_SUM <invoice_id>`.
 
 **INFO lines:** `NO_INVOICES_ON <invoice_date>` (D); `DELIVERED <filename> sha256=<hash> rev=<n>` (all).

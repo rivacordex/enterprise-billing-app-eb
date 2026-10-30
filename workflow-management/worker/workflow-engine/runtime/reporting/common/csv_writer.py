@@ -13,11 +13,14 @@ not check types — ``report-validate-output`` does, independently (D6).
 
 Python's ``csv`` module is not used, so the output can't drift with its dialect
 defaults. The whole file is built in memory before anything is written, so a
-refused value leaves no file behind.
+refused value leaves no file behind; the file is created exclusively (an
+existing one is never replaced) and removed again if writing it fails, so an
+I/O error leaves no truncated file either.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Sequence
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -98,6 +101,18 @@ def render(contract: Contract, rows: Iterable[Sequence[str]]) -> bytes:
 
 
 def write_csv(path: str | Path, contract: Contract, rows: Iterable[Sequence[str]]) -> None:
-    """Write ``rows`` to ``path`` in the RF4 format; nothing is written on error."""
+    """Write ``rows`` to ``path`` in the RF4 format; nothing is left on error.
+
+    Raises ``FileExistsError`` if ``path`` exists.
+    """
     content = render(contract, rows)
-    Path(path).write_bytes(content)
+    target = Path(path)
+    with target.open("xb") as handle:
+        try:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        except OSError:
+            handle.close()
+            target.unlink(missing_ok=True)
+            raise

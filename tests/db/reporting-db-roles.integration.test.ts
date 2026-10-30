@@ -424,6 +424,59 @@ describe.skipIf(!databaseUrl)(
       ).resolves.toBeUndefined();
     });
 
+    it("R01-T7 — owning a non-table object (a schema) makes the script fail DRIFT:", async () => {
+      await sql.unsafe(`CREATE SCHEMA rpt01_drift_owned AUTHORIZATION ${ROLE}`);
+      try {
+        await expect(runSqlFile(sql, REPORTING_ROLES_SQL)).rejects.toThrow(
+          /DRIFT: reporting_runtime owns one or more objects/,
+        );
+      } finally {
+        await sql.unsafe(`DROP SCHEMA rpt01_drift_owned`);
+      }
+      await expect(
+        runSqlFile(sql, REPORTING_ROLES_SQL),
+      ).resolves.toBeUndefined();
+    });
+
+    it("R01-T7 — a privilege on a table outside the nine makes the script fail DRIFT:", async () => {
+      await sql.unsafe(`GRANT INSERT ON "billing"."gl_mapping" TO ${ROLE}`);
+      try {
+        await expect(runSqlFile(sql, REPORTING_ROLES_SQL)).rejects.toThrow(
+          /DRIFT: reporting_runtime holds a privilege outside its enumerated grants/,
+        );
+      } finally {
+        await sql.unsafe(`REVOKE ALL ON "billing"."gl_mapping" FROM ${ROLE}`);
+      }
+      await expect(
+        runSqlFile(sql, REPORTING_ROLES_SQL),
+      ).resolves.toBeUndefined();
+    });
+
+    it("R01-T7 — extra privileges on the nine tables, their schemas and the database converge on a re-run", async () => {
+      await sql.unsafe(
+        `GRANT INSERT, REFERENCES, TRIGGER, MAINTAIN ON "billing"."document" TO ${ROLE}`,
+      );
+      await sql.unsafe(`GRANT UPDATE (document_id) ON "billing"."document" TO ${ROLE}`);
+      await sql.unsafe(`GRANT CREATE ON SCHEMA "billing" TO ${ROLE}`);
+      const db = (await sql`SELECT current_database() AS d`)[0]!.d as string;
+      await sql.unsafe(`GRANT CREATE, TEMPORARY ON DATABASE "${db}" TO ${ROLE}`);
+      await runSqlFile(sql, REPORTING_ROLES_SQL);
+      const rows = await sql`
+        SELECT has_table_privilege(${ROLE}, 'billing.document', 'INSERT, REFERENCES, TRIGGER, MAINTAIN') AS table_extra,
+               has_column_privilege(${ROLE}, 'billing.document', 'document_id', 'UPDATE') AS column_update,
+               has_schema_privilege(${ROLE}, 'billing', 'CREATE') AS schema_create,
+               has_database_privilege(${ROLE}, current_database(), 'CREATE') AS db_extra,
+               has_table_privilege(${ROLE}, 'billing.document', 'SELECT') AS still_select
+      `;
+      expect(rows[0]).toEqual({
+        table_extra: false,
+        column_update: false,
+        schema_create: false,
+        db_extra: false,
+        still_select: true,
+      });
+    });
+
     // ---- R01-T8 ------------------------------------------------------------
     describe("R01-T8 — idempotent", () => {
       it("running the script twice leaves identical grants", async () => {

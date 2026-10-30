@@ -51,12 +51,47 @@ BEGIN
     ) THEN
       RAISE EXCEPTION 'DRIFT: reporting_runtime is a member of another role — reconcile membership drift before provisioning (rpt01 D1)';
     END IF;
+    -- pg_shdepend records the owner of every object of every kind (tables,
+    -- schemas, functions, types, databases …) in every database, not only
+    -- relations in this one.
     IF EXISTS (
-      SELECT FROM pg_catalog.pg_class c
-      JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
-      WHERE r.rolname = 'reporting_runtime'
+      SELECT FROM pg_catalog.pg_shdepend d
+      WHERE d.refclassid = 'pg_catalog.pg_authid'::regclass
+        AND d.refobjid = 'reporting_runtime'::regrole
+        AND d.deptype = 'o'
     ) THEN
       RAISE EXCEPTION 'DRIFT: reporting_runtime owns one or more objects — reconcile ownership drift before provisioning (rpt01 D1)';
+    END IF;
+    -- A privilege on any object in this database outside the enumerated
+    -- surface (the nine tables of Step 5, the three schemas of Step 4) is
+    -- drift too: this file only grants and revokes on that surface, so a
+    -- stray grant elsewhere would survive every re-run. The database itself
+    -- is a shared object (dbid 0) and is converged by Step 3. A unit that
+    -- grants a new object (rpt03's pgledger objects, rpt08) adds it here too.
+    IF EXISTS (
+      SELECT FROM pg_catalog.pg_shdepend d
+      WHERE d.refclassid = 'pg_catalog.pg_authid'::regclass
+        AND d.refobjid = 'reporting_runtime'::regrole
+        AND d.deptype = 'a'
+        AND d.dbid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())
+        AND NOT (
+          (d.classid = 'pg_catalog.pg_class'::regclass AND d.objid IN (
+            '"billing"."customer_bill"'::regclass,
+            '"billing"."document"'::regclass,
+            '"billing"."document_line"'::regclass,
+            '"billing"."billing_account"'::regclass,
+            '"billing"."financial_account"'::regclass,
+            '"billing"."ledger_binding"'::regclass,
+            '"customer"."party_role"'::regclass,
+            '"product"."ratecard_version"'::regclass,
+            '"product"."ratecard_ran_usage_lkp"'::regclass))
+          OR (d.classid = 'pg_catalog.pg_namespace'::regclass AND d.objid IN (
+            '"billing"'::regnamespace,
+            '"customer"'::regnamespace,
+            '"product"'::regnamespace))
+        )
+    ) THEN
+      RAISE EXCEPTION 'DRIFT: reporting_runtime holds a privilege outside its enumerated grants (or a default privilege) — reconcile grant drift before provisioning (rpt01 D2)';
     END IF;
 
     ALTER ROLE reporting_runtime WITH LOGIN
@@ -78,15 +113,20 @@ ALTER ROLE reporting_runtime SET default_transaction_read_only = on;
 -- rating-db-roles.sql Step 2, so this role must be granted it explicitly).
 -- Nothing on the `kestra` database: kestra-db-roles.sql revokes PUBLIC's
 -- CONNECT there and no grant is made here (D2).
+-- CONNECT only: CREATE and TEMPORARY are revoked so a stray grant converges.
 DO $$
 BEGIN
+  EXECUTE format('REVOKE CREATE, TEMPORARY ON DATABASE %I FROM reporting_runtime', current_database());
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO reporting_runtime', current_database());
 END
 $$;
 --> statement-breakpoint
 
 -- Step 4 — schema USAGE (confers no table access on its own). Only the three
--- schemas Parts A–C read; `rating` arrives with rpt08 (IC23).
+-- schemas Parts A–C read; `rating` arrives with rpt08 (IC23). CREATE is
+-- revoked so a stray grant converges.
+REVOKE CREATE ON SCHEMA "billing", "customer", "product" FROM reporting_runtime;
+--> statement-breakpoint
 GRANT USAGE ON SCHEMA "billing"  TO reporting_runtime;
 --> statement-breakpoint
 GRANT USAGE ON SCHEMA "customer" TO reporting_runtime;
@@ -122,8 +162,10 @@ TO reporting_runtime;
 -- the role. pgledger signatures MUST match bootstrap-db-roles.sql /
 -- billrun-db-roles.sql exactly or the REVOKE errors on an unknown function
 -- (the desired failure mode if signatures drift); FROM PUBLIC as well so this
--- file does not silently depend on rating's having run first.
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE
+-- file does not silently depend on rating's having run first. Every
+-- privilege but SELECT (PostgreSQL 17's list, MAINTAIN included); a REVOKE on
+-- the table also removes the same privilege granted on any of its columns.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE
   "billing"."customer_bill",
   "billing"."document",
   "billing"."document_line",

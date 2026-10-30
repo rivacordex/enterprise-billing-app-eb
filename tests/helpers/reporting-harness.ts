@@ -29,8 +29,10 @@ export function reportingPython3(): string {
   return PYTHON3;
 }
 
-// The worker image's runtime package imports polars at `import runtime`, so
-// the gate imports exactly what a reporting entry point loads.
+// The gate imports every third-party package a reporting entry point loads
+// (psycopg through db, PyYAML through contract), so an interpreter missing one
+// — e.g. a reused RATING_PYTHON3 venv without PyYAML — skips the suites
+// instead of failing them.
 export function reportingRuntimeReady(): boolean {
   if (!PYTHON3) return false;
   try {
@@ -38,7 +40,7 @@ export function reportingRuntimeReady(): boolean {
       PYTHON3,
       [
         "-c",
-        "import runtime.reporting.common.db, runtime.reporting.common.trace",
+        "import runtime.reporting.common.db, runtime.reporting.common.trace, runtime.reporting.common.contract",
       ],
       { cwd: REPORTING_WORKER_DIR, stdio: "ignore" },
     );

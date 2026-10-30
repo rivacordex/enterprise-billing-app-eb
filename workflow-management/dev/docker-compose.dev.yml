@@ -201,8 +201,8 @@ services:
       - ./workflow-management/dev/distribution:/distribution
       # rpt01 D7 — the reporting outbound shares. Deployed, each destination is
       # its own Azure Files share mounted at /data/outbound/<destination>/
-      # (rpt04 D1); locally one bind mount stands in for all of them, and each
-      # report creates its own subfolder (rpt01: _platform-check/). Inspect on
+      # (rpt04 D1); locally one bind mount stands in for all of them, with each
+      # destination's subfolder committed (rpt01: _platform-check/). Inspect on
       # the host under workflow-management/dev/outbound/. No kestra.yml
       # allowed-paths entry: the Python runtime writes these files, not the
       # fs.local plugins.

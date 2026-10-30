@@ -48,7 +48,7 @@ const workerDir = join(
 
 function pythonRuntimeReady(): boolean {
   try {
-    execFileSync("python3", ["-c", "import runtime"], {
+    execFileSync("python3", ["-c", "import runtime, polars, psycopg"], {
       cwd: workerDir,
       stdio: "ignore",
     });
