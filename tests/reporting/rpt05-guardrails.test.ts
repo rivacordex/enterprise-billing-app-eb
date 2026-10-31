@@ -2,8 +2,17 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { parse } from "yaml";
 
+import {
+  expectFlowRevisionTrace,
+  expectRuntimeTasks,
+  expectValidateDate,
+  expectValidateOutput,
+  type FlowTask,
+  GENERATED_FILE,
+  loadReportFlow,
+  loadReportingContract,
+} from "@/tests/helpers/reporting-flow-shape";
 import {
   REPORTING_CONTRACTS_DIR,
   reportingRuntimeReady,
@@ -31,17 +40,7 @@ const ready = reportingRuntimeReady();
 
 describe.skipIf(!ready)("the mno_outstanding contract (§C.1, D3)", () => {
   it("loads: header false, the three §C.1 columns in order, date/text/amount, all required", () => {
-    const run = runReportingPython([
-      "-c",
-      `import json, sys
-from pathlib import Path
-from runtime.reporting.common.contract import load_contract
-c = load_contract(Path(sys.argv[1]))
-print(json.dumps({"file": c.file, "header": c.header, "columns": [[x.name, x.type, x.required] for x in c.columns]}))`,
-      join(REPORTING_CONTRACTS_DIR, "mno_outstanding.yaml"),
-    ]);
-    expect(run.status, run.stderr).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(loadReportingContract("mno_outstanding")).toEqual({
       file: "Reporting_dnb_settlement_mno_<outstanding_date>.csv",
       header: false,
       columns: [
@@ -145,27 +144,9 @@ print(json.dumps({"rows": b.rows, "dup": b.duplicate_keys}))`,
   });
 });
 
-interface Task {
-  id: string;
-  type: string;
-  [key: string]: unknown;
-}
-
 describe("report-mno-outstanding — static shape (D5, MO15–MO17)", () => {
-  const flow = parse(read(FLOW)) as {
-    id: string;
-    namespace: string;
-    description: string;
-    disabled?: boolean;
-    labels: Record<string, string>;
-    inputs: { id: string; type: string; required?: boolean }[];
-    variables?: unknown;
-    tasks: Task[];
-    outputs?: unknown;
-    triggers?: unknown;
-  };
-  const task = (id: string) => flow.tasks.find((t) => t.id === id)!;
-  const command = (id: string) => (task(id).commands as string[]).join(" ");
+  const shape = loadReportFlow(FLOW);
+  const { flow, task, command } = shape;
 
   it("id, namespace, description, one optional outstanding_date input, the report label; enabled, manual (no triggers)", () => {
     expect(flow.id).toBe("report-mno-outstanding");
@@ -191,35 +172,13 @@ describe("report-mno-outstanding — static shape (D5, MO15–MO17)", () => {
       "set_status",
     ]);
     expect(flow.variables).toBeUndefined();
-    expect(task("validate_date")).toMatchObject({
-      type: "io.kestra.plugin.core.flow.Subflow",
-      flowId: "report-validate-date",
-      wait: true,
-      transmitFailed: true,
-      inputs: {
-        name: "outstanding_date",
-        value: "{{ inputs.outstanding_date ?? '' }}",
-        rule: "before_today",
-        default: "yesterday",
-      },
-    });
-    expect(task("validate_output")).toMatchObject({
-      flowId: "report-validate-output",
-      wait: true,
-      transmitFailed: true,
-      inputs: {
-        file: "{{ outputs.generate.outputFiles[outputs.generate.vars.file] }}",
-        contract: "mno_outstanding",
-        name: "{{ outputs.generate.vars.file }}",
-      },
-    });
-    expect((task("set_status").then as Task[])[0]!.state).toBe("WARNING");
+    expectValidateDate(task("validate_date"), "outstanding_date");
+    expectValidateOutput(task("validate_output"), "mno_outstanding");
+    expect((task("set_status").then as FlowTask[])[0]!.state).toBe("WARNING");
   });
 
   it("labels: flow_revision, outstanding_date (effective), skipped_mnos", () => {
-    expect(task("trace").labels).toEqual({
-      flow_revision: "{{ flow.revision }}",
-    });
+    expectFlowRevisionTrace(task("trace"));
     expect(task("inputs_labels").labels).toEqual({
       outstanding_date: "{{ outputs.validate_date.outputs.effective_date }}",
     });
@@ -229,28 +188,17 @@ describe("report-mno-outstanding — static shape (D5, MO15–MO17)", () => {
   });
 
   it("generate and publish run the runtime on the Process runner with values as env vars only", () => {
-    for (const id of ["generate", "publish"]) {
-      expect(task(id).taskRunner).toEqual({
-        type: "io.kestra.plugin.core.runner.Process",
-      });
-      expect(command(id)).not.toMatch(/\{\{/);
-    }
+    expectRuntimeTasks(shape, ["generate", "publish"]);
     expect(command("generate")).toContain(
       "python3 -m runtime.reporting.mno_outstanding",
     );
     expect(task("generate").env).toEqual({
       OUTSTANDING_DATE: "{{ outputs.validate_date.outputs.effective_date }}",
     });
-    expect(command("publish")).toContain(
-      "python3 -m runtime.reporting.common.trace delivered",
-    );
   });
 
   it("the published file is the publish task's; no flow-level outputs (Inv 5)", () => {
-    expect(task("publish").inputFiles).toEqual({
-      "{{ outputs.generate.vars.file }}":
-        "{{ outputs.generate.outputFiles[outputs.generate.vars.file] }}",
-    });
+    expect(task("publish").inputFiles).toEqual(GENERATED_FILE);
     expect(task("publish").outputFiles).toEqual([
       "Reporting_dnb_settlement_mno_*.csv",
     ]);

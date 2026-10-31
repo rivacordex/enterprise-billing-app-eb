@@ -1,9 +1,24 @@
 // @vitest-environment node
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import {
+  delivered,
+  download,
+  type Execution,
+  expectNothingPublished,
+  kestraConfigured,
+  klDate,
+  label,
+  messages,
+  published,
+  putNamespaceFile,
+  ran,
+  runFlow,
+  sha256,
+} from "@/tests/helpers/reporting-kestra-live";
 
 // rpt05-spec Tests MO-T14 and the WARNING path — `report-mno-outstanding` end
 // to end on a live engine, with the `reporting` flows and contracts deployed,
@@ -19,11 +34,6 @@ import { describe, expect, it } from "vitest";
 // contracts/mno_outstanding.yaml for one run and restores the committed one
 // afterwards.
 
-const KESTRA_URL = process.env.KESTRA_URL;
-const KESTRA_USER = process.env.KESTRA_BASIC_AUTH_USER;
-const KESTRA_PASSWORD = process.env.KESTRA_BASIC_AUTH_PASSWORD;
-const live = Boolean(KESTRA_URL && KESTRA_USER && KESTRA_PASSWORD);
-
 const CONTRACT = join(
   process.cwd(),
   "workflow-management/flows/reporting/contracts/mno_outstanding.yaml",
@@ -34,124 +44,13 @@ const EXPECTED = join(
 );
 const FLOW_ID = "report-mno-outstanding";
 
-interface TaskRun {
-  taskId: string;
-  state: { current: string };
-  outputs?: {
-    executionId?: string;
-    outputFiles?: Record<string, string>;
-    [key: string]: unknown;
-  };
-}
-interface Execution {
-  id: string;
-  state: { current: string };
-  labels?: { key: string; value: string }[];
-  taskRunList?: TaskRun[];
-}
-interface Log {
-  level: string;
-  message: string;
-}
+const run = (inputs: Record<string, string>): Promise<Execution> =>
+  runFlow(FLOW_ID, inputs);
 
-function authHeader(): string {
-  const { protocol, hostname } = new URL(KESTRA_URL!);
-  if (
-    protocol !== "https:" &&
-    hostname !== "localhost" &&
-    hostname !== "127.0.0.1"
-  ) {
-    throw new Error(
-      `Refusing to send Basic Auth to ${KESTRA_URL} over plain HTTP`,
-    );
-  }
-  return (
-    "Basic " +
-    Buffer.from(`${KESTRA_USER}:${KESTRA_PASSWORD}`).toString("base64")
-  );
-}
+const putContract = (content: string) =>
+  putNamespaceFile("/contracts/mno_outstanding.yaml", content);
 
-async function api(path: string, init: RequestInit = {}): Promise<Response> {
-  const res = await fetch(`${KESTRA_URL}/api/v1/main${path}`, {
-    ...init,
-    headers: { Authorization: authHeader(), ...init.headers },
-  });
-  if (!res.ok)
-    throw new Error(`${init.method ?? "GET"} ${path} -> HTTP ${res.status}`);
-  return res;
-}
-
-async function run(inputs: Record<string, string>): Promise<Execution> {
-  const form = new FormData();
-  for (const [key, value] of Object.entries(inputs)) form.append(key, value);
-  const res = await api(`/executions/reporting/${FLOW_ID}?wait=true`, {
-    method: "POST",
-    body: form,
-  });
-  const { id } = (await res.json()) as Execution;
-  // Re-read: the wait=true response can precede the final labels.
-  return (await (await api(`/executions/${id}`)).json()) as Execution;
-}
-
-// Logs of an execution and of every subflow execution it started.
-async function logs(execution: Execution): Promise<Log[]> {
-  const own = (await (await api(`/logs/${execution.id}`)).json()) as Log[];
-  const children: Log[] = [];
-  for (const taskRun of execution.taskRunList ?? []) {
-    const childId = taskRun.outputs?.executionId;
-    if (childId) {
-      const child = (await (
-        await api(`/executions/${childId}`)
-      ).json()) as Execution;
-      children.push(...(await logs(child)));
-    }
-  }
-  return [...own, ...children];
-}
-
-const messages = async (e: Execution, level: string) =>
-  (await logs(e)).filter((l) => l.level === level).map((l) => l.message);
-
-const label = (e: Execution, key: string) =>
-  e.labels?.find((l) => l.key === key)?.value;
-
-const ran = (e: Execution, taskId: string) =>
-  (e.taskRunList ?? []).some((t) => t.taskId === taskId);
-
-// The published files: the publish task's output files, by name.
-const published = (e: Execution): Record<string, string> =>
-  e.taskRunList?.find((t) => t.taskId === "publish")?.outputs?.outputFiles ??
-  {};
-
-async function download(e: Execution, uri: string): Promise<string> {
-  return (
-    await api(`/executions/${e.id}/file?path=${encodeURIComponent(uri)}`)
-  ).text();
-}
-
-function klDate(days = 0): string {
-  const kl = new Date(Date.now() + 8 * 3_600_000 + days * 86_400_000);
-  return kl.toISOString().slice(0, 10).replaceAll("-", "");
-}
-
-async function putContract(content: string): Promise<void> {
-  const form = new FormData();
-  form.append("fileContent", new Blob([content]));
-  await api(
-    `/namespaces/reporting/files?path=${encodeURIComponent("/contracts/mno_outstanding.yaml")}`,
-    { method: "POST", body: form },
-  );
-}
-
-async function expectNothingPublished(e: Execution): Promise<void> {
-  expect(ran(e, "publish")).toBe(false);
-  expect(published(e)).toEqual({});
-  expect(
-    (await messages(e, "INFO")).filter((m) => m.startsWith("DELIVERED")),
-  ).toEqual([]);
-}
-
-describe.skipIf(!live)(
+describe.skipIf(!kestraConfigured)(
   "rpt05 report-mno-outstanding on a live engine",
   { timeout: 180_000 },
   () => {
@@ -171,11 +70,8 @@ describe.skipIf(!live)(
       const name = `Reporting_dnb_settlement_mno_${day}.csv`;
       expect(Object.keys(files)).toEqual([name]);
       const text = await download(e, files[name]!);
-      const sha = createHash("sha256").update(text, "utf8").digest("hex");
-      expect(
-        (await messages(e, "INFO")).filter((m) => m.startsWith("DELIVERED")),
-      ).toEqual([
-        `DELIVERED ${name} sha256=${sha} rev=${label(e, "flow_revision")}`,
+      expect(await delivered(e)).toEqual([
+        `DELIVERED ${name} sha256=${sha256(text)} rev=${label(e, "flow_revision")}`,
       ]);
     });
 

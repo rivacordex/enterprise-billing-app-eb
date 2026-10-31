@@ -3,8 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { parse } from "yaml";
 
+import {
+  expectFlowRevisionTrace,
+  expectRuntimeTasks,
+  type FlowTask,
+  loadReportFlow,
+  loadReportingContract,
+} from "@/tests/helpers/reporting-flow-shape";
 import {
   parseKestraLines,
   REPORTING_CONTRACTS_DIR,
@@ -177,21 +183,7 @@ const CONTRACTS: Record<string, [string, string, boolean][]> = {
 describe.skipIf(!ready)("the two contracts (§A.1, D6)", () => {
   for (const [id, columns] of Object.entries(CONTRACTS)) {
     it(`${id}.yaml loads and has exactly the §A.1 columns, types and required flags, header: true`, () => {
-      const run = runReportingPython([
-        "-c",
-        `import json, sys
-from pathlib import Path
-from runtime.reporting.common.contract import load_contract
-c = load_contract(Path(sys.argv[1]))
-print(json.dumps({"file": c.file, "header": c.header, "columns": [[x.name, x.type, x.required] for x in c.columns]}))`,
-        join(REPORTING_CONTRACTS_DIR, `${id}.yaml`),
-      ]);
-      expect(run.status, run.stderr).toBe(0);
-      const contract = JSON.parse(run.stdout) as {
-        file: string;
-        header: boolean;
-        columns: [string, string, boolean][];
-      };
+      const contract = loadReportingContract(id);
       expect(contract.header).toBe(true);
       expect(contract.columns).toEqual(columns);
       expect(contract.file).toBe(
@@ -300,23 +292,9 @@ describe.skipIf(!ready)("publish — the DELIVERED lines (RF7, D8)", () => {
   });
 });
 
-interface Task {
-  id: string;
-  type: string;
-  [key: string]: unknown;
-}
-
 describe("report-settlement-invoice — static shape (D8)", () => {
-  const flow = parse(readFileSync(FLOW, "utf8")) as {
-    id: string;
-    namespace: string;
-    description: string;
-    labels: Record<string, string>;
-    inputs: { id: string; type: string; required?: boolean }[];
-    tasks: Task[];
-    outputs?: unknown;
-  };
-  const task = (id: string) => flow.tasks.find((t) => t.id === id)!;
+  const shape = loadReportFlow(FLOW);
+  const { flow, task, command } = shape;
 
   it("id, namespace, description, the two inputs and the report label", () => {
     expect(flow.id).toBe("report-settlement-invoice");
@@ -369,13 +347,11 @@ describe("report-settlement-invoice — static shape (D8)", () => {
         },
       ],
     ]);
-    expect((task("set_status").then as Task[])[0]!.state).toBe("WARNING");
+    expect((task("set_status").then as FlowTask[])[0]!.state).toBe("WARNING");
   });
 
   it("labels: flow_revision, billing_period, as_of_date (effective), skipped_invoices", () => {
-    expect(task("trace").labels).toEqual({
-      flow_revision: "{{ flow.revision }}",
-    });
+    expectFlowRevisionTrace(task("trace"));
     expect(task("inputs_labels").labels).toEqual({
       billing_period: "{{ inputs.billing_period }}",
       as_of_date: "{{ outputs.validate_period.outputs.effective_as_of_date }}",
@@ -386,23 +362,14 @@ describe("report-settlement-invoice — static shape (D8)", () => {
   });
 
   it("generate and publish run the runtime with inputs as env vars only, on the Process runner", () => {
-    for (const id of ["generate", "publish"]) {
-      const t = task(id);
-      expect(t.taskRunner).toEqual({
-        type: "io.kestra.plugin.core.runner.Process",
-      });
-      expect((t.commands as string[]).join(" ")).not.toMatch(/\{\{/);
-    }
-    expect((task("generate").commands as string[]).join(" ")).toContain(
+    expectRuntimeTasks(shape, ["generate", "publish"]);
+    expect(command("generate")).toContain(
       "python3 -m runtime.reporting.settlement_invoice",
     );
     expect(task("generate").namespaceFiles).toEqual({
       enabled: true,
       include: ["contracts/**"],
     });
-    expect((task("publish").commands as string[]).join(" ")).toContain(
-      "python3 -m runtime.reporting.common.trace delivered",
-    );
   });
 
   it("the published files are the publish task's, which keeps the generated names; no flow-level outputs (Inv 5)", () => {
