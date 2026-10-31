@@ -1,0 +1,30 @@
+# Reporting_dnb_settlement_mno_<outstanding_date>.csv — the CSP (Customer
+# Service Portal), reading by position: there is no header, and the column
+# names below exist only here and in the documentation (MO11). Revenue Ops
+# download the file from Kestra and pass it to the CSP until delivery is
+# decided (MO15, M-OI1). Changing this file changes what the CSP receives:
+# agree it with them first (rptmgmt-architecture Inv 9). One row per MNO —
+# every party role with a billing account and an MNO Public Key — with what it
+# still owes across all billing periods at the end of outstanding_date, sorted
+# by mno_public_key (MO6, MO7; plan §C.1, rpt05 D2, D3). Written by
+# runtime/reporting/mno_outstanding.
+id: mno_outstanding
+file: Reporting_dnb_settlement_mno_<outstanding_date>.csv
+header: false
+columns:
+  - name: outstanding_date
+    type: date
+    required: true
+    # decision: MO9, MO10; the outstanding_date input (default yesterday,
+    # Asia/Kuala_Lumpur)
+  - name: mno_public_key
+    type: text
+    required: true
+    # decision: MO6; source party_role_specification->>'mnoPublicKey1'
+  - name: outstanding_amount_myr
+    type: amount
+    required: true
+    # decision: MO3–MO5, rpt05 D1; the receivables balance of the MNO's billing
+    # accounts at the end of outstanding_date, summed from posted ledger legs
+    # (common/receivables.py receivables_balance); gross of unapplied cash;
+    # negative when the MNO is owed

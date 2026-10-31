@@ -203,6 +203,39 @@ def unapplied_held(
     return held
 
 
+# rpt05 D1 (MO2, MO3) — which documents' legs make up the receivables balance
+# at the end of a day: an INV by its ``posted_at`` day (SR3), whatever its
+# billing period; the payment side by ``entry_date`` (SR6). These choose a
+# cut-off date, never a sign.
+INVOICE_DOC_TYPE = "INV"
+PAYMENT_SIDE_DOC_TYPES = ("PAY", "CRN", "DBN", "ADJ")
+
+
+def counts_at_end_of(line: PostedLine, as_of: date) -> bool:
+    """rpt05 D1: whether ``line`` is in the receivables balance at the end of ``as_of``."""
+    if line.state not in COUNTED_STATES:
+        return False
+    if line.doc_type == INVOICE_DOC_TYPE:
+        return line.posted_date is not None and line.posted_date <= as_of
+    return line.doc_type in PAYMENT_SIDE_DOC_TYPES and line.entry_date <= as_of
+
+
+def receivables_balance(
+    snapshot: LedgerSnapshot, billing_account_ids: Iterable[str], as_of: date
+) -> Decimal:
+    """The billing accounts' receivables balance at the end of ``as_of`` (rpt05 D1).
+
+    Σ ``receivables_effects`` over the lines ``counts_at_end_of`` keeps — the
+    same effects Part A reports, so Parts A, C and E can't disagree (MO18;
+    rpt09's GL20 per-MNO check). Gross of unapplied cash (MO4: a capture moves
+    no receivables), negative when the MNO is owed (MO5). Never the live
+    balance, so a past ``as_of`` reproduces (Inv 7).
+    """
+    # date.max: every line with a counted state, cut off here by document kind.
+    effects = receivables_effects(snapshot, billing_account_ids, date.max)
+    return sum((e.amount for e in effects if counts_at_end_of(e.line, as_of)), Decimal("0"))
+
+
 def payment_amount(effect: Decimal) -> Decimal:
     """SR18: positive when it reduces what the MNO owes."""
     return -effect

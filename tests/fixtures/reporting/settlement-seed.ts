@@ -2,7 +2,10 @@ import type postgresjs from "postgres";
 
 import { db } from "@/db/client";
 import { documentRepository } from "@/db/repositories/accounts/document.repository";
+import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";
 import { documentLineRepository } from "@/db/repositories/accounts/document-line.repository";
+import { ledgerBindingRepository } from "@/db/repositories/accounts/ledger-binding.repository";
+import { ledgerRepository } from "@/db/repositories/accounts/ledger.repository";
 import { allocatePayment } from "@/services/accounts/allocate-payment";
 import { capturePayment } from "@/services/accounts/capture-payment";
 import {
@@ -36,6 +39,15 @@ import { writeOff } from "@/services/accounts/write-off";
 //   MNO-D — T9 (unapplied cash, no 202609 invoice), T12 (202608 INV; an
 //           unposted 202609 bill)
 //   MNO-E — R03-T1's rounding in both directions and a DBN with tax; T21
+//
+// rpt05 (Part C, plan §C.4) adds MNOs whose invoices fall in billing periods
+// 202602–202604, which no Part A case reads, so Part A's files don't change:
+//   MNO-F — MO-T1 (INV 202603 1,000.00 + INV 202604 800.00, PAY 300.00 on the
+//           second) and MO-T8 (an INV posted and a PAY entered 2026-10-28)
+//   MNO-G — MO-T5 (two billing accounts) and R05-T4 (INVs posted 23:59 on
+//           2026-10-27 and 00:01 on 2026-10-28, Asia/Kuala_Lumpur)
+//   MNO-H — MO-T7 (a credit note larger than what is owed: −150.00)
+//   MNO-I — MO-T6 (a billing account, never invoiced: 0.00)
 // Every date is on or before 2026-10-28, except T10's PAY (2026-11-05).
 
 export const MNO = {
@@ -43,6 +55,10 @@ export const MNO = {
   B: "MNO-B",
   D: "MNO-D",
   E: "MNO-E",
+  F: "MNO-F",
+  G: "MNO-G",
+  H: "MNO-H",
+  I: "MNO-I",
 } as const;
 
 // An instant on a given Asia/Kuala_Lumpur day (09:00 local).
@@ -59,7 +75,11 @@ export interface Account {
 export interface SettlementFixture {
   actorId: string;
   managerId: string;
-  accounts: Record<"A" | "B" | "C" | "D" | "E", Account>;
+  // G2 is MNO-G's second billing account, on MNO-G's financial account.
+  accounts: Record<
+    "A" | "B" | "C" | "D" | "E" | "F" | "G" | "G2" | "H" | "I",
+    Account
+  >;
   // Invoice ids by fixture name (A1 … E2, plus the other-period ones).
   invoices: Record<string, string>;
   // Payment-side document ids by fixture name.
@@ -149,13 +169,53 @@ export async function seedSettlementFixture(
     };
   }
 
+  // A second billing account on an onboarded party role's financial account.
+  // No service adds one (onboarding runs once per party role), so this is
+  // onboarding's own steps 2b–2d: the BAN, its receivables ledger account and
+  // its binding.
+  async function addBillingAccount(account: Account): Promise<Account> {
+    return db.transaction(async (tx) => {
+      const ban = await billingAccountRepository.insert(tx, {
+        name: "Second Billing Account",
+        refPartyRoleId: account.partyRoleId,
+        refFinancialAccountId: account.financialAccountId,
+        currency: "MYR",
+        ratingType: "postpaid",
+        paymentStatus: "paid",
+        creditLimitAmount: null,
+        refBillCycleId: cycleId,
+        paymentDueDaysOverride: null,
+        refBillTemplateFamilyId: null,
+        lastEditedBy: actorId,
+      });
+      const rec = await ledgerRepository.createAccount(
+        tx,
+        `ban.${ban.billingAccountId}.receivables`,
+        "MYR",
+      );
+      await ledgerBindingRepository.insert(tx, {
+        ownerType: "billing_account",
+        ownerId: ban.billingAccountId,
+        ledgerRole: "receivables",
+        pgledgerAccountId: rec.id,
+        lastEditedBy: actorId,
+      });
+      return { ...account, billingAccountId: ban.billingAccountId };
+    });
+  }
+
   const accounts = {
     A: await onboard("MNO-A", { mnoPublicKey1: MNO.A }),
     B: await onboard("MNO-B", { mnoPublicKey1: MNO.B }),
     C: await onboard("MNO-C", {}),
     D: await onboard("MNO-D", { mnoPublicKey1: MNO.D }),
     E: await onboard("MNO-E", { mnoPublicKey1: MNO.E }),
+    F: await onboard("MNO-F", { mnoPublicKey1: MNO.F }),
+    G: await onboard("MNO-G", { mnoPublicKey1: MNO.G }),
+    H: await onboard("MNO-H", { mnoPublicKey1: MNO.H }),
+    I: await onboard("MNO-I", { mnoPublicKey1: MNO.I }),
   };
+  const G2 = await addBillingAccount(accounts.G);
 
   // A completed run per bill: a BAN has at most one bill per run, and a run
   // is unique per (cycle, period), so each run gets its own fixture cycle.
@@ -610,5 +670,78 @@ export async function seedSettlementFixture(
     postedAt: null,
   });
 
-  return { actorId, managerId, accounts, invoices, documents };
+  // ---- rpt05: MNO-F — MO-T1 (sums across periods) and MO-T8 (cut-off) ---------
+  const { F, G, H } = accounts;
+  const mar = {
+    periodStart: "2026-03-01",
+    periodEnd: "2026-03-31",
+    dueDate: "2026-05-04",
+    postedAt: "2026-04-05T10:00:00+08:00",
+  };
+  const apr = {
+    periodStart: "2026-04-01",
+    periodEnd: "2026-04-30",
+    dueDate: "2026-06-04",
+    postedAt: "2026-05-05T10:00:00+08:00",
+  };
+  invoices.F1 = await invoice(F, { ...mar, net: "1000.00", total: "1000.00" });
+  invoices.F2 = await invoice(F, { ...apr, net: "800.00", total: "800.00" });
+  documents.captureF = await capture(F, "300.00", "2026-10-01", "TT-F-1");
+  documents.payF2 = (
+    await allocate(F, "300.00", invoices.F2, "2026-10-02", "TT-F-2")
+  ).documentId;
+  // MO-T8 — a late 202602 bill posted, and a PAY entered, on 2026-10-28.
+  invoices.F_late = await invoice(F, {
+    periodStart: "2026-02-01",
+    periodEnd: "2026-02-28",
+    net: "50.00",
+    total: "50.00",
+    dueDate: "2026-11-27",
+    postedAt: "2026-10-28T10:00:00+08:00",
+  });
+  documents.captureF_late = await capture(F, "40.00", "2026-10-28", "TT-F-3");
+  documents.payF1_late = (
+    await allocate(F, "40.00", invoices.F1, "2026-10-28", "TT-F-4")
+  ).documentId;
+
+  // ---- rpt05: MNO-G — MO-T5 (two billing accounts), R05-T4 (time zone) --------
+  invoices.G1 = await invoice(G, { ...mar, net: "200.00", total: "200.00" });
+  invoices.G2 = await invoice(G2, { ...mar, net: "100.00", total: "100.00" });
+  invoices.G_in = await invoice(G2, {
+    ...apr,
+    net: "10.00",
+    total: "10.00",
+    postedAt: "2026-10-27T23:59:00+08:00",
+  });
+  invoices.G_out = await invoice(G2, {
+    ...apr,
+    net: "20.00",
+    total: "20.00",
+    postedAt: "2026-10-28T00:01:00+08:00",
+  });
+
+  // ---- rpt05: MNO-H — MO-T7 (a credit note larger than what is owed) ----------
+  invoices.H1 = await invoice(H, { ...mar, net: "100.00", total: "100.00" });
+  documents.crnH = posted(
+    await raiseCreditNote(
+      {
+        financialAccountId: H.financialAccountId,
+        billingAccountId: H.billingAccountId,
+        amount: "250.00",
+        eventAt: klDay("2026-10-06"),
+        entryDate: klDay("2026-10-06"),
+        referenceInfo: "Service credit, larger than the balance",
+      },
+      actorId,
+    ),
+  ).documentId;
+  // MNO-I — onboarded only (MO-T6).
+
+  return {
+    actorId,
+    managerId,
+    accounts: { ...accounts, G2 },
+    invoices,
+    documents,
+  };
 }

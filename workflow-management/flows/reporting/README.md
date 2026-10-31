@@ -6,8 +6,9 @@ and the MNOs need from the billing data. Deployed to logical-engine namespace
 the billrun instance under split-by-module, RF6). Module context:
 `context/reporting-management/`.
 
-**Maturity: platform check, shared framework, the settlement reports and the
-polygon capacity lookup, deployed disabled (rpt01–rpt04).** The unit list is
+**Maturity: platform check, shared framework, the settlement reports, the
+polygon capacity lookup (deployed disabled) and MNO outstanding
+(rpt01–rpt05).** The unit list is
 `context/reporting-management/specs/rpt00-build-plan.md`.
 
 | Flow | Description | Trigger | Since |
@@ -15,6 +16,7 @@ polygon capacity lookup, deployed disabled (rpt01–rpt04).** The unit list is
 | `report-platform-check.yaml` | Reporting platform check — Revenue Ops' health check: connects as `reporting_runtime`, reads a granted table, publishes and delivers one file | manual | rpt01 |
 | `report-settlement-invoice.yaml` | Settlement reports (invoice and payment) — Part A for Finance / billing ops: `Reporting_dnb_settlement_invoice_<ts>.csv` and `Reporting_dnb_settlement_invoice_payment_<ts>.csv` for one `billing_period` and an `as_of_date` payment cut-off (default today); Kestra outputs only (SR24) | manual (OI-4) | rpt03 |
 | `report-polygon-capacity-lookup.yaml` | Polygon capacity lookup — Part B for Mediation and the CSP: `Polygon_capacity_lookup_<report_date>.csv` (no header) for one `report_date` (default yesterday), delivered to the `polygon-capacity` share and published. **Deployed `disabled: true`** until the capacity source exists (P1, PC25; rpt06 enables it) | manual (P5) | rpt04 |
+| `report-mno-outstanding.yaml` | MNO outstanding — Part C for the CSP: `Reporting_dnb_settlement_mno_<outstanding_date>.csv` (no header), each MNO's receivables balance across all billing periods at the end of one `outstanding_date` (default yesterday); Kestra outputs only — Revenue Ops pass it to the CSP until delivery is decided (MO15, M-OI1) | manual (M-OI2) | rpt05 |
 | `report-validate-date.yaml` | Reporting date check (shared subflow) — the one date rule; resolves an empty date to its default | called by reports | rpt02 |
 | `report-validate-period.yaml` | Reporting period check (shared subflow) — `billing_period` + `as_of_date` (SR33) | called by reports | rpt02 |
 | `report-validate-output.yaml` | Reporting output check (shared subflow) — a file against its column definition, before anything is published | called by reports | rpt02 (`name` input: rpt03) |
