@@ -537,6 +537,10 @@ stages:
                   stage="$(mktemp -d "$(Agent.TempDirectory)/flows-XXXXXX")"
                   find "$dir" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) \
                     -exec cp {} "$stage"/ \;
+                  # mktemp -d creates the dir 0700 (agent user only); the Kestra
+                  # image runs as a non-root user, so grant read + traverse to
+                  # all — ownership is left as-is.
+                  chmod -R a+rX "$stage"
                   docker run --rm -v "${stage}:/flows:ro" "$KESTRA_IMAGE" \
                     flow namespace update "$2" /flows \
                       --no-delete \
