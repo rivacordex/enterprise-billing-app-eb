@@ -99,13 +99,11 @@ def _write(files: list[tuple[Path, Contract, list[list[str]]]]) -> None:
         for path, contract, rows in files:
             write_csv(path, contract, rows)
             written.append(path)
-    except WriterInvalidValue as exc:
+    except BaseException as exc:
         for path in written:
             path.unlink(missing_ok=True)
-        raise RunFailed(f"{codes.WRITER_INVALID_VALUE} {exc.column}") from None
-    except BaseException:
-        for path in written:
-            path.unlink(missing_ok=True)
+        if isinstance(exc, WriterInvalidValue):
+            raise RunFailed(f"{codes.WRITER_INVALID_VALUE} {exc.column}") from None
         raise
 
 

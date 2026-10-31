@@ -34,7 +34,9 @@ const ready = reportingRuntimeReady();
 //   (a) nothing reads a transfer's accounts — no from_account_id /
 //       to_account_id attribute, name or string, and no pgledger object;
 //   (b) nothing flips a sign — no unary minus on a non-literal, no -1
-//       (an index such as [-1] excepted);
+//       (an index such as [-1] excepted), no subtraction from zero
+//       (`0 - x`, `Decimal("0") - x`) and no `copy_negate()` / `__neg__` /
+//       `operator.neg`;
 //   (c) nothing maps a doc_type / line_kind to a number — no dict literal
 //       keyed by one with numeric values.
 // Docstrings are exempt (they describe the rule).
@@ -42,6 +44,12 @@ const SIGN_RULE_CHECK = `import ast, json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 KINDS = {"PAY", "DEP", "CRN", "DBN", "ADJ", "INV", "capture", "allocation", "charge", "release", "refund"}
 ACCOUNT_WORDS = ("from_account_id", "to_account_id", "pgledger_")
+NEGATORS = ("copy_negate", "__neg__")
+def is_zero(node):
+    # 0, 0.0, or a one-argument call such as Decimal("0") / Decimal(0).
+    if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
+        node = node.args[0]
+    return isinstance(node, ast.Constant) and str(node.value).strip() in ("0", "0.0", "0.00")
 problems = []
 for path in sorted(root.rglob("*.py")):
     rel = path.relative_to(root).as_posix()
@@ -72,6 +80,11 @@ for path in sorted(root.rglob("*.py")):
                 problems.append(f"{where} flips a sign: {ast.unparse(node)}")
             elif node.operand.value == 1 and id(node) not in indexes:
                 problems.append(f"{where} a -1 literal")
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub) and is_zero(node.left):
+            problems.append(f"{where} flips a sign: {ast.unparse(node)}")
+        if isinstance(node, ast.Attribute) and (node.attr in NEGATORS or (
+                node.attr == "neg" and isinstance(node.value, ast.Name) and node.value.id == "operator")):
+            problems.append(f"{where} flips a sign: {ast.unparse(node)}")
         if isinstance(node, ast.Dict):
             keys = [k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
             numeric = any(isinstance(v, (ast.Constant, ast.UnaryOp)) and not isinstance(getattr(v, "value", None), str) for v in node.values)
@@ -93,7 +106,7 @@ describe.skipIf(!ready)(
       expect(signRuleProblems(REPORTING_RUNTIME)).toEqual([]);
     });
 
-    it("the check bites: a sign table, an account read and a sign flip in a scratch module are each reported", () => {
+    it("the check bites: a sign table, an account read and each form of sign flip in a scratch module are reported", () => {
       const scratch = mkdtempSync(join(tmpdir(), "rpt03-guard-"));
       writeFileSync(
         join(scratch, "bad.py"),
@@ -103,6 +116,12 @@ describe.skipIf(!ready)(
           "    return line.from_account_id",
           "def g(amount):",
           "    return -amount",
+          "def h(amount):",
+          "    return 0 - amount",
+          "def i(amount):",
+          '    return Decimal("0") - amount',
+          "def j(amount):",
+          "    return amount.copy_negate()",
           "",
         ].join("\n"),
       );
@@ -113,7 +132,12 @@ describe.skipIf(!ready)(
       expect(problems.some((p) => p.includes("reads .from_account_id"))).toBe(
         true,
       );
-      expect(problems.some((p) => p.includes("flips a sign"))).toBe(true);
+      const flips = problems.filter((p) => p.includes("flips a sign"));
+      for (const line of ["bad.py:5", "bad.py:7", "bad.py:9", "bad.py:11"])
+        expect(
+          flips.some((p) => p.startsWith(`${line} `)),
+          line,
+        ).toBe(true);
     });
 
     it("common/receivables.py is the module that reads the transfer view", () => {

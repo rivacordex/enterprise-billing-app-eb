@@ -15,8 +15,8 @@ before any file is built (code-standards §2.2).
 - **Financial accounts per MNO (SR13):** every financial account whose party
   role carries the key (``financial_account.ref_party_role_id``), for the
   UNAPPLIED row.
-- **Ledger:** ``common/receivables.py`` ``read_ledger`` for the invoices'
-  billing accounts and those financial accounts.
+- **Ledger:** ``common/receivables.py`` ``read_ledger`` for the billing
+  accounts of the invoices whose MNO has a key, and those financial accounts.
 """
 
 from __future__ import annotations
@@ -99,9 +99,11 @@ def extract(period_start: date, period_end: date) -> Extract:
             _MNO_FINANCIAL_ACCOUNTS, {"mno_key": MNO_KEY, "mno_ids": mno_ids}
         ).fetchall():
             by_mno.setdefault(mno_id, []).append(financial_account_id)
+        # A billing account whose MNO has no key has no reported invoice
+        # (exceptions, SR27), so its receivables are never read.
         ledger = receivables.read_ledger(
             conn,
-            (inv.billing_account_id for inv in invoices),
+            (inv.billing_account_id for inv in invoices if inv.mno_id is not None),
             (fa for fas in by_mno.values() for fa in fas),
         )
     return Extract(

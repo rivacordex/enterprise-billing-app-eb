@@ -322,9 +322,10 @@ print(json.dumps({"rows": [",".join(r) for r in out], "skipped": [s.line for s i
       );
       writeFileSync(join(dir, "number.csv"), header + "M,C,P1,1e400x\n");
       writeFileSync(join(dir, "float.csv"), header + "M,C,P1,NaN\n");
-      const run = runReportingPython([
-        "-c",
-        `import json, sys
+      const run = runReportingPython(
+        [
+          "-c",
+          `import json, sys
 from datetime import date
 from pathlib import Path
 from runtime.reporting.polygon_capacity import capacity_source as cs
@@ -342,8 +343,12 @@ for case, args in {"header": ("fixture", d / "header.csv"), "number": ("fixture"
     except cs.CapacitySourceUnavailable as exc:
         out[case] = exc.name
 print(json.dumps(out))`,
-        dir,
-      ]);
+          dir,
+        ],
+        // The fixture must be inside the working directory, as the flow's
+        // namespace file is.
+        { cwd: dir },
+      );
       expect(run.status, run.stderr).toBe(0);
       expect(JSON.parse(run.stdout)).toEqual({
         ok: { "M|C|P1": "1000.50", "M|C|P2": null, "M|C|P3": null },

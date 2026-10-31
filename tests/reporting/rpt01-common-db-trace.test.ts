@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -152,13 +152,18 @@ describe.skipIf(!ready)(
     });
 
     it("delivered() logs one INFO `DELIVERED <filename> sha256=<hex> rev=<n>` line whose hash matches the fixture", () => {
-      const run = runReportingPython([
-        "-c",
-        `import sys
+      // Run where the fixture is: sha256() reads only a file directly in the
+      // working directory, as a publish task's files are (rpt03).
+      const run = runReportingPython(
+        [
+          "-c",
+          `import sys
 from runtime.reporting.common import trace
 print("RETURNED " + trace.delivered(sys.argv[1], 7))`,
-        FIXTURE,
-      ]);
+          FIXTURE,
+        ],
+        { cwd: dirname(FIXTURE) },
+      );
       expect(run.status, run.stderr).toBe(0);
       const { logs } = parseKestraLines(run.stdout);
       expect(logs).toEqual([
