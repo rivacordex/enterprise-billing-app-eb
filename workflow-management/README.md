@@ -22,7 +22,9 @@ workflow-management/
 
 **Operations.** Reloading usage files, releasing a stuck rating batch (marking
 it `FAILED`) and reissuing corrected data: see
-[`docs/opsguide-rating-batch.md`](docs/opsguide-rating-batch.md).
+[`docs/opsguide-rating-batch.md`](docs/opsguide-rating-batch.md). Running,
+reading, rerunning and tracing the report flows (Revenue Ops): see
+[`docs/opsguide-reporting.md`](docs/opsguide-reporting.md).
 
 **One shared engine image.** ACA has no Docker daemon, so Kestra runs as a
 **process runner** on one custom image (`worker/workflow-engine/`, `FROM` a

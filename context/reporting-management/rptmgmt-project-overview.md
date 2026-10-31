@@ -1,6 +1,6 @@
 # Reporting Management Module — Project Overview
 
-**Status:** In progress — rpt01, rpt02, rpt03 (settlement, Part A) and rpt04 (polygon capacity lookup, Part B, deployed disabled until P1) completed 2026-10-30; rpt05 (MNO outstanding, Part C) completed 2026-10-31; rpt07 next (see `rptmgmt-progress-tracker.md`). Planned 2026-10-29; folded from `_newmodule-reporting-plan.md` (Parts 0 and A–E), which stays as the design record: every decision ID cited here (SR, RF, PC, MO, IC, GL) and every open item is defined there. Units: `specs/rpt00-build-plan.md`.
+**Status:** In progress — rpt01, rpt02, rpt03 (settlement, Part A) and rpt04 (polygon capacity lookup, Part B, deployed disabled until P1) completed 2026-10-30; rpt05 (MNO outstanding, Part C) and rpt07 (the Revenue Ops guide) completed 2026-10-31; rpt08 next (see `rptmgmt-progress-tracker.md`). Planned 2026-10-29; folded from `_newmodule-reporting-plan.md` (Parts 0 and A–E), which stays as the design record: every decision ID cited here (SR, RF, PC, MO, IC, GL) and every open item is defined there. Units: `specs/rpt00-build-plan.md`.
 
 ## Overview
 

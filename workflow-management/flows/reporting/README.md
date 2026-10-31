@@ -11,6 +11,10 @@ polygon capacity lookup (deployed disabled) and MNO outstanding
 (rpt01–rpt05).** The unit list is
 `context/reporting-management/specs/rpt00-build-plan.md`.
 
+**Operations.** Revenue Ops run, read, rerun and trace these flows from
+[`docs/opsguide-reporting.md`](../../docs/opsguide-reporting.md) (rpt07). A
+change to a flow updates the guide in the same change set.
+
 | Flow | Description | Trigger | Since |
 | --- | --- | --- | --- |
 | `report-platform-check.yaml` | Reporting platform check — Revenue Ops' health check: connects as `reporting_runtime`, reads a granted table, publishes and delivers one file | manual | rpt01 |
