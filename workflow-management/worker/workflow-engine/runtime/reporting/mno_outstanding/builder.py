@@ -12,7 +12,7 @@ party roles it skipped and any MNO key carried by more than one party role:
   point, in contract column order: 1. ``outstanding_date``,
   2. ``mno_public_key``, 3. ``outstanding_amount_myr`` = the receivables
   balance of all the party role's billing accounts at the end of the day
-  (``common/receivables.py`` ``receivables_balance``, rpt05 D1): gross of
+  (``common/receivables.py`` ``receivables_balances``, rpt05 D1): gross of
   unapplied cash (MO4), negative when the MNO is owed (MO5), ``0.00`` when it
   owes nothing or was never invoiced (MO7).
 """
@@ -62,7 +62,8 @@ def build(
     duplicate_keys = sorted(key for key, roles in by_key.items() if len(roles) > 1)
     if duplicate_keys:
         return Built(rows=[], skipped=skipped, duplicate_keys=duplicate_keys)
-    balances = _balances_by_account(
+    # One pass over the ledger for every keyed billing account (rpt05 D1).
+    balances = receivables.receivables_balances(
         ledger, {ban for roles in by_key.values() for ban in _accounts(roles)}, outstanding_date
     )
     zero = Decimal("0")
@@ -81,16 +82,3 @@ def build(
 def _accounts(roles: list[PartyRole]) -> set[str]:
     """The billing accounts of a key's (single, after the duplicate check) party role."""
     return set(roles[0].billing_account_ids)
-
-
-def _balances_by_account(
-    ledger: receivables.LedgerSnapshot, billing_account_ids: set[str], as_of: date
-) -> dict[str, Decimal]:
-    """``receivables_balance`` per billing account, in one pass over the ledger."""
-    balances: dict[str, Decimal] = {}
-    # date.max as in receivables_balance: the cut-off is by document kind.
-    for effect in receivables.receivables_effects(ledger, billing_account_ids, date.max):
-        if receivables.counts_at_end_of(effect.line, as_of):
-            ban = effect.billing_account_id
-            balances[ban] = balances.get(ban, Decimal("0")) + effect.amount
-    return balances

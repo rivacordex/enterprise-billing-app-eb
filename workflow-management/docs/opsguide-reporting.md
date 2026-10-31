@@ -266,7 +266,7 @@ execution):
 | Code | Usual cause | Action |
 |---|---|---|
 | `OUTPUT_CONTRACT_VIOLATION <file> <row> <column> <reason>` | The built file doesn't match its column definition (for example `REQUIRED_EMPTY`: a required value is blank). Up to 50 lines, then a count | Module owner, with the lines |
-| `CONTRACT_INVALID` | A column definition on the engine is broken or missing (a deployment problem) | BSS Ops |
+| `CONTRACT_INVALID` | A column definition on the engine is broken or missing (a deployment problem). `generate` logs it too, when it loads the definition before building the file | BSS Ops |
 
 **Delivery (Part B)**, logged by the `deliver` task. Nothing is published:
 
@@ -322,7 +322,8 @@ in Excel changes it), or it came from another run.
   section 8.
 - **Backdated entries change the past.** Parts A and C count payments, credit
   notes, debit notes and adjustments by their entry date. If one is entered
-  later with an earlier entry date, a rerun for a past date includes it, and
+  later with an earlier entry date, or one waiting for approval is approved
+  later (it keeps its entry date), a rerun for a past date includes it, and
   differs from the file you passed on earlier. Compare the hashes (section 6)
   to tell which version a recipient holds.
 
@@ -403,7 +404,8 @@ indefinitely, and at least 7 years if a purge is ever added (section 1).
 3. **Part C: the amount is gross of unapplied cash.** A payment captured but
    not yet allocated to the MNO's invoices doesn't reduce the outstanding
    amount. The MNO's unapplied cash is the UNAPPLIED row in the Part A payment
-   file.
+   file, which has one only for an MNO with an invoice in the billing period
+   you ran Part A for.
 4. **Part B: the polygon flow is disabled** until the real capacity source
    exists. Until then there is no daily polygon file for Mediation and the
    CSP.

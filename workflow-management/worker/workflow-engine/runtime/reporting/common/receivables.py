@@ -220,6 +220,24 @@ def counts_at_end_of(line: PostedLine, as_of: date) -> bool:
     return line.doc_type in PAYMENT_SIDE_DOC_TYPES and line.entry_date <= as_of
 
 
+def receivables_balances(
+    snapshot: LedgerSnapshot, billing_account_ids: Iterable[str], as_of: date
+) -> dict[str, Decimal]:
+    """``receivables_balance`` per billing account, in one pass over the lines (rpt05 D1).
+
+    A billing account with no counted effect is absent (its balance is 0).
+    Callers that need many accounts' balances use this once rather than
+    ``receivables_balance`` per account, which re-reads every line each time.
+    """
+    balances: dict[str, Decimal] = {}
+    # date.max: every line with a counted state, cut off here by document kind.
+    for effect in receivables_effects(snapshot, billing_account_ids, date.max):
+        if counts_at_end_of(effect.line, as_of):
+            ban = effect.billing_account_id
+            balances[ban] = balances.get(ban, Decimal("0")) + effect.amount
+    return balances
+
+
 def receivables_balance(
     snapshot: LedgerSnapshot, billing_account_ids: Iterable[str], as_of: date
 ) -> Decimal:
@@ -231,9 +249,7 @@ def receivables_balance(
     no receivables), negative when the MNO is owed (MO5). Never the live
     balance, so a past ``as_of`` reproduces (Inv 7).
     """
-    # date.max: every line with a counted state, cut off here by document kind.
-    effects = receivables_effects(snapshot, billing_account_ids, date.max)
-    return sum((e.amount for e in effects if counts_at_end_of(e.line, as_of)), Decimal("0"))
+    return sum(receivables_balances(snapshot, billing_account_ids, as_of).values(), Decimal("0"))
 
 
 def payment_amount(effect: Decimal) -> Decimal:

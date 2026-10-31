@@ -105,7 +105,7 @@ describe.skipIf(!kestraConfigured)(
       // The runtime still writes 2 dp amounts; the contract now wants an
       // integer, so the output check (not the writer) must catch it.
       const wrong = committed.replace(
-        /(- name: outstanding_amount_myr\n\s+type:) amount/,
+        /(- name: outstanding_amount_myr\r?\n\s+type:) amount/,
         "$1 integer",
       );
       expect(wrong).not.toBe(committed);
