@@ -249,10 +249,16 @@ services:
   # `dir:namespace` map: rating flows are REAL and live at the function root;
   # each bill-run function's deployable flow is the placeholder shell under
   # `local-dev/` (the `*.template.yml` at the bill-run function root is a
-  # NON-deployable contract doc whose tasks omit `type:`, and `kestra flow`
-  # does not recurse into subdirectories — so the target must be `.../local-dev`).
-  # Reporting (rpt01 D6, function 4) holds only real flows at its function
-  # root, so it deploys from `reporting` directly, no `local-dev/` indirection.
+  # NON-deployable contract doc whose tasks omit `type:` — so the target must
+  # be `.../local-dev`). Reporting (rpt01 D6, function 4) holds only real flows
+  # at its function root, so it deploys from `reporting` directly.
+  #
+  # Only each directory's TOP-LEVEL *.yml / *.yaml are deployed, staged in a
+  # temp dir: verified on v1.3.35 (rpt04, 2026-10-30), `flow namespace update`
+  # DOES recurse, and refuses the whole namespace on a YAML file that isn't a
+  # flow — reporting's contracts/*.yaml, uploaded as namespace files below. No
+  # other function has nested YAML, so their deploys are unchanged (the same
+  # staging as CI's deploy_fn, infra/azure-pipelines.yml).
   flow-deploy:
     image: kestra/kestra:v1.3.35@sha256:0b880e20e403ef635a6bc7e9e72786c7a6dde143858723449dc57500830868e2
     env_file:
@@ -270,8 +276,10 @@ services:
         CRED="$${KESTRA_SERVER_BASIC_AUTH_USERNAME}:$${KESTRA_SERVER_BASIC_AUTH_PASSWORD}"
         for pair in "rating-engine:rating" "bill-run-processor/local-dev:billrun" "bill-run-distributor/local-dev:billrun" "reporting:reporting"; do
           dir="$${pair%%:*}"; ns="$${pair##*:}"
-          echo "Deploying /flows/$$dir -> namespace $$ns"
-          /app/kestra flow namespace update "$$ns" "/flows/$$dir" --no-delete --server "$$SERVER" --user "$$CRED"
+          stage="$$(mktemp -d)"
+          find "/flows/$$dir" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -exec cp {} "$$stage"/ \;
+          echo "Deploying /flows/$$dir (top-level flow files) -> namespace $$ns"
+          /app/kestra flow namespace update "$$ns" "$$stage" --no-delete --server "$$SERVER" --user "$$CRED"
         done
         # rpt02 D8 — the platform's first namespace files: reporting's column
         # definitions, uploaded to namespace `reporting` at contracts/ (read by

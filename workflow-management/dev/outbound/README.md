@@ -1,4 +1,4 @@
-# `dev/outbound/` — local reporting outbound folder (rpt01)
+# `dev/outbound/` — local reporting outbound folder (rpt01, rpt04)
 
 The local stand-in for the reporting outbound shares (rpt01 D7, RF8). Bound
 into the `workflow-engine` service at `/data/outbound`
@@ -16,6 +16,7 @@ delivered file is never overwritten.
 | Subfolder | Flow | Readers |
 | --- | --- | --- |
 | `_platform-check/` | `report-platform-check` | none (health check) |
+| `polygon-capacity/` | `report-polygon-capacity-lookup` (rpt04; deployed disabled until P1) | Mediation and the CSP |
 
 The audience of every destination is recorded in
 `workflow-management/flows/reporting/README.md` (_Outbound destinations_).

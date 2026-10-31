@@ -1,0 +1,149 @@
+# rpt03-spec D8 — the settlement reports (Part A, SR32). For one billing period
+# and a payment cut-off date, writes from one consistent read (Inv 2, SR21):
+#   - Reporting_dnb_settlement_invoice_<ts>.csv — one row per posted invoice,
+#     with how much is still open;
+#   - Reporting_dnb_settlement_invoice_payment_<ts>.csv — every payment-side
+#     movement behind those numbers, account-level items and each MNO's
+#     unapplied cash.
+# Readers: Finance / billing ops (contracts/settlement_invoice*.yaml). Outputs
+# stay in Kestra (SR24); no folder delivery for Part A. Manual trigger only
+# (SR40; the automatic trigger is OI-4).
+#
+# Task order (SR38, code-standards §3.2): validate_period → generate →
+# validate_output (once per file) → publish → set_status. Nothing is published
+# unless both files pass (Inv 5): the published files are the `publish` task's
+# output files, and `publish` runs only after both checks pass. `generate`'s
+# own copies are what the checks read (a subflow FILE input must be in
+# internal storage); they stay task outputs of `generate` even when a check
+# fails — flows/reporting/README.md, Published files.
+#
+# Inputs reach the shell as env vars, never interpolated into the command.
+# The YAML computes nothing (Inv 13).
+#
+# Never edit this flow in the Kestra UI — deployed from git (SR41).
+id: report-settlement-invoice
+namespace: reporting
+description: Settlement reports (invoice and payment)
+
+labels:
+  report: settlement_invoice
+
+inputs:
+  # Optional only so an empty value fails with INVALID_BILLING_PERIOD from the
+  # runtime rather than a Kestra input error.
+  - id: billing_period
+    type: STRING
+    required: false
+    description: Billing (service) period, YYYYMM
+  - id: as_of_date
+    type: STRING
+    required: false
+    description: Payment cut-off, YYYYMMDD (default today, Asia/Kuala_Lumpur)
+
+tasks:
+  # RF7 — `flow_revision` as a run label (flow-level `labels:` are not
+  # rendered), first, so a failed run is traceable too.
+  - id: trace
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      flow_revision: "{{ flow.revision }}"
+
+  # SR25, SR33 — INVALID_BILLING_PERIOD / INVALID_AS_OF_DATE.
+  - id: validate_period
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-period
+    wait: true
+    transmitFailed: true
+    inputs:
+      billing_period: "{{ inputs.billing_period ?? '' }}"
+      as_of_date: "{{ inputs.as_of_date ?? '' }}"
+
+  - id: inputs_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      billing_period: "{{ inputs.billing_period }}"
+      as_of_date: "{{ outputs.validate_period.outputs.effective_as_of_date }}"
+
+  # One runtime command writing both files (SR37). `--ts` is the execution's
+  # start; the runtime turns it into the files' shared <ts> (SR22, D6).
+  - id: generate
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # ACA has no Docker daemon
+    namespaceFiles:
+      enabled: true
+      include:
+        - contracts/**
+    env:
+      BILLING_PERIOD: "{{ inputs.billing_period }}"
+      AS_OF_DATE: "{{ outputs.validate_period.outputs.effective_as_of_date }}"
+      STARTED_AT: "{{ execution.startDate }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.settlement_invoice
+        --billing-period="$BILLING_PERIOD" --as-of-date="$AS_OF_DATE"
+        --ts="$STARTED_AT" --out-dir=. --contracts-dir=contracts
+    outputFiles:
+      - Reporting_dnb_settlement_invoice_*.csv
+
+  - id: count_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      skipped_invoices: "{{ outputs.generate.vars.skipped_invoices }}"
+
+  # SR30, SR34 — each file against its column definition.
+  - id: validate_output_invoice
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-output
+    wait: true
+    transmitFailed: true
+    inputs:
+      file: "{{ outputs.generate.outputFiles[outputs.generate.vars.invoice_file] }}"
+      contract: settlement_invoice
+      name: "{{ outputs.generate.vars.invoice_file }}"
+
+  - id: validate_output_payment
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-output
+    wait: true
+    transmitFailed: true
+    inputs:
+      file: "{{ outputs.generate.outputFiles[outputs.generate.vars.payment_file] }}"
+      contract: settlement_invoice_payment
+      name: "{{ outputs.generate.vars.payment_file }}"
+
+  # RF7 — the two files as this task's output files (the published files),
+  # one DELIVERED line each. The inputFiles keys keep the real file names
+  # (verified on v1.3.35, rpt03). No flow-level `outputs:`: on v1.3.35 the
+  # Exit task that ends a run WARNING skips rendering them, so they would exist
+  # on SUCCESS only (rpt03).
+  - id: publish
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    inputFiles:
+      "{{ outputs.generate.vars.invoice_file }}": "{{ outputs.generate.outputFiles[outputs.generate.vars.invoice_file] }}"
+      "{{ outputs.generate.vars.payment_file }}": "{{ outputs.generate.outputFiles[outputs.generate.vars.payment_file] }}"
+    env:
+      FLOW_REVISION: "{{ flow.revision }}"
+      INVOICE_FILE: "{{ outputs.generate.vars.invoice_file }}"
+      PAYMENT_FILE: "{{ outputs.generate.vars.payment_file }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.common.trace delivered
+        --flow-revision="$FLOW_REVISION" "$INVOICE_FILE" "$PAYMENT_FILE"
+    outputFiles:
+      - Reporting_dnb_settlement_invoice_*.csv
+
+  # The WARNING contract (code-standards §2.6): WARNING when any invoice was
+  # skipped (SR29), applied here, never an exit code.
+  - id: set_status
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.generate.vars.status == 'WARNING' }}"
+    then:
+      - id: warning
+        type: io.kestra.plugin.core.execution.Exit
+        state: WARNING

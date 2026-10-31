@@ -165,6 +165,9 @@ param enableReporting bool = false
 @description('rpt01 — name of the `platform-check` outbound share\'s environment storage definition (reporting-outbound-storage.bicep output). Required when enableReporting is true.')
 param reportingPlatformCheckEnvStorageName string = ''
 
+@description('rpt04 — name of the `polygon-capacity` outbound share\'s environment storage definition (reporting-outbound-storage.bicep output). Required when enableReporting is true.')
+param reportingPolygonCapacityEnvStorageName string = ''
+
 @description('rpt01 — libpq sslmode for the reporting_runtime connection (REPORTING_DB_SSLMODE). `require` (the default) refuses plaintext; `verify-full` also needs reportingDbSslRootCert.')
 param reportingDbSslMode string = 'require'
 
@@ -633,12 +636,16 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
               }
             ] : [],
             // rpt01 D7 — one mount per reporting outbound share, at the
-            // destination's `outbound_dir` (report-platform-check's
-            // `vars.outbound_dir`).
+            // destination's `outbound_dir` (each flow's `vars.outbound_dir`:
+            // report-platform-check, report-polygon-capacity-lookup — rpt04 D1).
             enableReporting ? [
               {
                 volumeName: 'reporting-platform-check'
                 mountPath: '/data/outbound/_platform-check'
+              }
+              {
+                volumeName: 'reporting-polygon-capacity'
+                mountPath: '/data/outbound/polygon-capacity'
               }
             ] : []
           )
@@ -689,6 +696,11 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
             name: 'reporting-platform-check'
             storageType: 'AzureFile'
             storageName: reportingPlatformCheckEnvStorageName
+          }
+          {
+            name: 'reporting-polygon-capacity'
+            storageType: 'AzureFile'
+            storageName: reportingPolygonCapacityEnvStorageName
           }
         ] : []
       )

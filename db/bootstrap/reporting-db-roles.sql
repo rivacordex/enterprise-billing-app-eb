@@ -63,11 +63,11 @@ BEGIN
       RAISE EXCEPTION 'DRIFT: reporting_runtime owns one or more objects — reconcile ownership drift before provisioning (rpt01 D1)';
     END IF;
     -- A privilege on any object in this database outside the enumerated
-    -- surface (the nine tables of Step 5, the three schemas of Step 4) is
-    -- drift too: this file only grants and revokes on that surface, so a
-    -- stray grant elsewhere would survive every re-run. The database itself
-    -- is a shared object (dbid 0) and is converged by Step 3. A unit that
-    -- grants a new object (rpt03's pgledger objects, rpt08) adds it here too.
+    -- surface (the ten tables and one view of Step 5, the three schemas of
+    -- Step 4) is drift too: this file only grants and revokes on that
+    -- surface, so a stray grant elsewhere would survive every re-run. The
+    -- database itself is a shared object (dbid 0) and is converged by Step 3.
+    -- A unit that grants a new object (rpt08, rpt09) adds it here too.
     IF EXISTS (
       SELECT FROM pg_catalog.pg_shdepend d
       WHERE d.refclassid = 'pg_catalog.pg_authid'::regclass
@@ -84,7 +84,9 @@ BEGIN
             '"billing"."ledger_binding"'::regclass,
             '"customer"."party_role"'::regclass,
             '"product"."ratecard_version"'::regclass,
-            '"product"."ratecard_ran_usage_lkp"'::regclass))
+            '"product"."ratecard_ran_usage_lkp"'::regclass,
+            '"product"."product_offering_price"'::regclass,
+            '"billing"."pgledger_transfers_view"'::regclass))
           OR (d.classid = 'pg_catalog.pg_namespace'::regclass AND d.objid IN (
             '"billing"'::regnamespace,
             '"customer"'::regnamespace,
@@ -134,10 +136,11 @@ GRANT USAGE ON SCHEMA "customer" TO reporting_runtime;
 GRANT USAGE ON SCHEMA "product"  TO reporting_runtime;
 --> statement-breakpoint
 
--- Step 5 — SELECT on exactly the tables Parts A–C read (SR39, MO19, PC24),
+-- Step 5 — SELECT on exactly the tables Parts A–C read (SR39, MO19, PC24,
+-- rpt04 D2),
 -- enumerated per table (rptmgmt-code-standards §7): never ON ALL TABLES, no
--- ALTER DEFAULT PRIVILEGES, no sequence USAGE, no EXECUTE. The pgledger
--- objects in SR39 are deferred to rpt03 (D2); rpt08/rpt09 add theirs.
+-- ALTER DEFAULT PRIVILEGES, no sequence USAGE, no EXECUTE. rpt08/rpt09 add
+-- theirs.
 GRANT SELECT ON TABLE
   "billing"."customer_bill",
   "billing"."document",
@@ -147,6 +150,16 @@ GRANT SELECT ON TABLE
   "billing"."ledger_binding"
 TO reporting_runtime;
 --> statement-breakpoint
+-- rpt03 D1 — the one pgledger object (SR14, SR18): each posted line's transfer
+-- (`document_line.pgledger_transfer_id`), read only by
+-- runtime/reporting/common/receivables.py. A plain view (migration 0011, owner
+-- rights), so the base table needs no grant; balances
+-- (`pgledger_accounts_view`) and entries (`pgledger_entries_view`) stay
+-- refused — a past balance is computed from transfers, never read live (Inv 7).
+GRANT SELECT ON TABLE
+  "billing"."pgledger_transfers_view"
+TO reporting_runtime;
+--> statement-breakpoint
 GRANT SELECT ON TABLE
   "customer"."party_role"
 TO reporting_runtime;
@@ -154,6 +167,13 @@ TO reporting_runtime;
 GRANT SELECT ON TABLE
   "product"."ratecard_version",
   "product"."ratecard_ran_usage_lkp"
+TO reporting_runtime;
+--> statement-breakpoint
+-- rpt04 D2 — the card the RAN usage product names (PC1 as amended):
+-- `price_component #>> '{params,rateCardLookUp}'` on `usage_rate` prices, read
+-- only by runtime/reporting/polygon_capacity/extract.py.
+GRANT SELECT ON TABLE
+  "product"."product_offering_price"
 TO reporting_runtime;
 --> statement-breakpoint
 
@@ -174,7 +194,9 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE
   "billing"."ledger_binding",
   "customer"."party_role",
   "product"."ratecard_version",
-  "product"."ratecard_ran_usage_lkp"
+  "product"."ratecard_ran_usage_lkp",
+  "product"."product_offering_price",
+  "billing"."pgledger_transfers_view"
 FROM reporting_runtime;
 --> statement-breakpoint
 REVOKE EXECUTE ON FUNCTION

@@ -148,6 +148,8 @@ Each function runs as its **own least-privilege Postgres role**; the boundary be
 | `kestra_engine` | platform | `CONNECT`+`CREATE` on the `kestra` DB only; **no `CONNECT` on billing** | `rm03a` |
 | Kestra Basic Auth | platform | instance-admin on the engine (OSS) | `rm04` D5, phase-2 D27 |
 | `BILLRUN_APP_TOKEN` | 2 & 3 | scoped to the bill-run M2M endpoints; **billing's — rating has none** | phase-2 D27 |
+| `reporting_runtime` | 4 | `SELECT` only, on ten enumerated tables and one view (`pgledger_transfers_view`); **no write anywhere**; `default_transaction_read_only = on` | `rptmgmt-code-standards.md` §7, rpt01 D1/D2, rpt03 D1, rpt04 D2 |
+| Reporting outbound account key | 4 | read/write on the reporting outbound storage account — **one Azure Files share per destination** (`platform-check`, `polygon-capacity`, …), each mounted at `/data/outbound/<destination>/`; never reaches Kestra or the runtime. Each reader gets a read-only SAS on **its own share only** (RF-OI2) | rpt01 D7, rpt04 D1 |
 
 **Deploy run-order is load-bearing:** `platform → rating → billrun` (D15). `billrun_runtime` must never be created during the window where `PUBLIC` still holds `CONNECT` on the billing database (the `rm03a` ordering hazard). `billrun-db-roles.sql` self-asserts the precondition and fails closed (phase-2 eng-review #12).
 
@@ -203,3 +205,13 @@ Each module doc keeps its functional content; only its **topology / layout / log
 **Additions folded in by `wfm01` (clarifications):** (a) the workflow surface is a **spin-off subdirectory `workflow-management/`**, not a separate repo (§4.1–§4.2); (b) **one shared process-runner image `workflow-engine`** with Python + a Postgres client, serving both functions (ACA has no Docker daemon — §4.1); (c) the physical engine is renamed **`rating-engine` → `workflow-engine`** (§5, §6); (d) topology is a single **`topology` deploy parameter**, default `collapsed`/one instance (§5); (e) stand-up **deploys both functions' flows into the running engine** (`wfm01` §7b).
 
 **No functional invariant changes.** Nothing here touches a `[CRITICAL]` rating or billing invariant, the grant model, the claim contract, the two-writer boundary, or the money math. This is a **positioning + layout** reframe; every enforceable guarantee stays exactly where its module put it.
+
+---
+
+## 10. Function 4 — Reporting
+
+Reporting Management (`context/reporting-management/`) is the platform's **fourth function**: the read-only report flows in namespace `reporting` (`workflow-management/flows/reporting/`), running their logic from the shared worker image as `python3 -m runtime.reporting.<report>`. Its placement decisions are RF5–RF8 in `_newmodule-reporting-plan.md`; the module's own rules are in `rptmgmt-architecture.md`. Stated here only as the platform picture:
+
+- **Logical engine `reporting`, on the `billrun`-hosting instance** (the collapsed engine, or the billrun instance under split-by-module; RF5, RF6). No app engine-registry entry until the app first calls it (I-OI3), and no Basic-Auth credential of its own.
+- **Role `reporting_runtime`**, `SELECT` only (§6). It writes nothing, so the flow revision is traced in Kestra (`flow_revision` label, `DELIVERED <file> sha256=… rev=<n>` line), not stamped on rows (RF7; Inv 5's reporting deviation).
+- **Outbound egress** (RF8): a separate storage account with **one Azure Files share per destination**, mounted at `/data/outbound/<destination>/` on the reporting-hosting engine, because Azure Files can't scope read access to a folder; each reader gets a read-only SAS on its own share (rpt04 D1, RF-OI2). Shares so far: `platform-check` (rpt01, no external reader) and `polygon-capacity` (rpt04, Mediation and the CSP; its flow is deployed disabled until P1). Files arrive by write-then-rename and are never overwritten (`runtime/reporting/common/delivery.py`).

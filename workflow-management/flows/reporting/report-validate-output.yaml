@@ -7,6 +7,9 @@
 #   - violations: FAILED, one ERROR `OUTPUT_CONTRACT_VIOLATION <file> <row>
 #     <column> <reason>` per violation (at most 50, then `… <n> more`);
 #   - unreadable or invalid contract: FAILED `CONTRACT_INVALID <id> <reason>`.
+# <file> is the optional `name` input, else the FILE URI's last segment — a
+# task's output file has a storage prefix there (`<id>-<name>`), so a report
+# passes the generated file's name (rpt03).
 # Calling pattern: flows/reporting/README.md, Output check.
 #
 # Inputs reach the shell as env vars, never interpolated into the command.
@@ -22,6 +25,11 @@ inputs:
   # The contract id: the file name under contracts/ without .yaml.
   - id: contract
     type: STRING
+  # The file name the log lines show (rpt03); optional, so a caller passing an
+  # uploaded file (whose URI keeps its name) needn't.
+  - id: name
+    type: STRING
+    required: false
 
 tasks:
   - id: check
@@ -36,8 +44,9 @@ tasks:
       output.csv: "{{ inputs.file }}"
     env:
       CONTRACT: "{{ inputs.contract }}"
-      # The kestra:// URI; the runtime logs its last segment as <file>.
-      FILE_URI: "{{ inputs.file }}"
+      # The file's name, or the kestra:// URI; the runtime logs its last
+      # segment as <file>.
+      FILE_URI: "{{ inputs.name ?? inputs.file }}"
     commands:
       - >
         python3 -m runtime.reporting.validate output

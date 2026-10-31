@@ -9,16 +9,24 @@
   reads. The WARNING contract (code-standards §2.6): exit 0 means the runtime
   finished, SUCCESS or WARNING; any non-zero exit is FAILED. WARNING is never
   an exit code — it is this output plus the flow's ``Exit`` task.
-- ``outputs(**values)`` / ``info`` / ``error``: Kestra's script-output protocol
-  (``::{"outputs": …}::`` and ``::{"logs": …}::`` lines on stdout), as
-  ``runtime/storage.py``'s ``hand_off`` does for outputs. A bare print is not a
-  Kestra output.
+- ``outputs(**values)`` / ``info`` / ``warn`` / ``error``: Kestra's
+  script-output protocol (``::{"outputs": …}::`` and ``::{"logs": …}::`` lines
+  on stdout), as ``runtime/storage.py``'s ``hand_off`` does for outputs. A bare
+  print is not a Kestra output.
+
+Run as ``python3 -m runtime.reporting.common.trace delivered --flow-revision
+<n> <file> …`` by a report's ``publish`` task (rpt03 D8), when the files were
+written by an earlier task: one ``DELIVERED`` line per file, in argument order.
+Each ``<file>`` must be in the working directory (``sha256``); any other
+path fails the task.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 from . import codes
@@ -45,14 +53,28 @@ def info(message: str) -> None:
     _log("INFO", message)
 
 
+def warn(message: str) -> None:
+    """A WARN line — ``SKIPPED <key> <reason>`` (SR28, Inv 10)."""
+    _log("WARN", message)
+
+
 def error(message: str) -> None:
     _log("ERROR", message)
 
 
 def sha256(path: str | Path) -> str:
-    """Hex SHA-256 of a file's bytes, read in chunks."""
+    """Hex SHA-256 of a file's bytes, read in chunks.
+
+    ``path`` must be a file directly in the working directory, where a
+    published file always is; any other path (``..``, elsewhere, a symlink
+    out) raises ``ValueError`` and nothing is read.
+    """
+    cwd = Path.cwd().resolve()
+    resolved = Path(path).resolve()
+    if resolved.parent != cwd:
+        raise ValueError(f"not a file in the working directory: {path}")
     digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
+    with resolved.open("rb") as handle:
         for chunk in iter(lambda: handle.read(_CHUNK), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -75,3 +97,19 @@ def set_status(status: str) -> None:
     if status not in STATUSES:
         raise ValueError(f"status must be one of {STATUSES}, got {status!r}")
     outputs(status=status)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python3 -m runtime.reporting.common.trace")
+    sub = parser.add_subparsers(dest="command", required=True)
+    delivered_p = sub.add_parser("delivered")
+    delivered_p.add_argument("--flow-revision", required=True, type=int)
+    delivered_p.add_argument("files", nargs="+", type=Path)
+    args = parser.parse_args(argv)
+    for path in args.files:
+        delivered(path, args.flow_revision)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -7,3 +7,6 @@
 !_platform-check/
 _platform-check/*
 !_platform-check/.gitkeep
+!polygon-capacity/
+polygon-capacity/*
+!polygon-capacity/.gitkeep

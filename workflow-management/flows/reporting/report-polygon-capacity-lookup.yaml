@@ -1,0 +1,165 @@
+# rpt04-spec D8 — the polygon capacity lookup (Part B, PC21). For one report
+# date, writes Polygon_capacity_lookup_<report_date>.csv: one positional row
+# (no header) per polygon an MNO subscribes to on the RAN usage rate card in
+# force that day, with its buffer-usage resource identifier, service code and
+# subscribed capacity (contracts/polygon_capacity.yaml). Readers: Mediation and
+# the CSP, from the `polygon-capacity` outbound share (flows/reporting/README.md,
+# Outbound destinations); Revenue Ops download the same file from the
+# `publish` task. Manual trigger only (PC15; the scheduler is P5).
+#
+# DEPLOYED DISABLED (PC25): the capacity source is open (P1), so only the
+# fixture source exists (`capacity_source: fixture`) and the flow can't be
+# started. rpt06 plugs in the real source and enables it. Tests enable it in
+# the local test namespace only.
+#
+# Task order (PC22, code-standards §3.2): validate_date → generate →
+# validate_output → deliver → publish → set_status. Nothing is delivered
+# unless the file passes its column definition (Inv 5), and nothing is
+# published unless it was delivered: a FAILED delivery (FILE_ALREADY_EXISTS —
+# PC14 — or any other) ends the run before `publish`.
+#
+# Inputs reach the shell as env vars, never interpolated into the command.
+# The YAML computes nothing (Inv 13).
+#
+# Never edit this flow in the Kestra UI — deployed from git (SR41).
+id: report-polygon-capacity-lookup
+namespace: reporting
+description: Polygon capacity lookup
+disabled: true
+
+labels:
+  report: polygon_capacity
+
+inputs:
+  # Optional: empty means yesterday in Asia/Kuala_Lumpur, resolved by
+  # report-validate-date (PC15).
+  - id: report_date
+    type: STRING
+    required: false
+    description: Report date, YYYYMMDD (default yesterday, Asia/Kuala_Lumpur)
+
+variables:
+  # The destination's own share, mounted at /data/outbound/polygon-capacity/
+  # (rpt04 D1, PC12). Audience: Mediation and the CSP — flows/reporting/README.md,
+  # Outbound destinations; reader access is RF-OI2.
+  outbound_dir: /data/outbound/polygon-capacity/
+  # PC8, D5 — only `fixture` exists until P1 (rpt06).
+  capacity_source: fixture
+  # The fixture source's file, a namespace file. Only the tests upload it; no
+  # deploy does (CI deploys contracts/ only), so it exists nowhere else.
+  capacity_fixture: fixtures/polygon_capacity.csv
+
+tasks:
+  # RF7 — `flow_revision` as a run label (flow-level `labels:` are not
+  # rendered), first, so a failed run is traceable too.
+  - id: trace
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      flow_revision: "{{ flow.revision }}"
+
+  # PC16 — INVALID_REPORT_DATE unless yesterday or earlier; empty = yesterday.
+  - id: validate_date
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-date
+    wait: true
+    transmitFailed: true
+    inputs:
+      name: report_date
+      value: "{{ inputs.report_date ?? '' }}"
+      rule: before_today
+      default: yesterday
+
+  - id: inputs_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      report_date: "{{ outputs.validate_date.outputs.effective_date }}"
+
+  # PC23 — the runtime reads the card, its version and the rows in one
+  # snapshot and writes the file.
+  - id: generate
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # ACA has no Docker daemon
+    namespaceFiles:
+      enabled: true
+      include:
+        - contracts/**
+        - fixtures/**
+    env:
+      REPORT_DATE: "{{ outputs.validate_date.outputs.effective_date }}"
+      CAPACITY_SOURCE: "{{ vars.capacity_source }}"
+      CAPACITY_FIXTURE: "{{ vars.capacity_fixture }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.polygon_capacity
+        --report-date="$REPORT_DATE" --capacity-source="$CAPACITY_SOURCE"
+        --capacity-fixture="$CAPACITY_FIXTURE" --out-dir=. --contracts-dir=contracts
+    outputFiles:
+      - Polygon_capacity_lookup_*.csv
+
+  - id: generate_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      ratecard_card_name: "{{ outputs.generate.vars.ratecard_card_name }}"
+      ratecard_version_id: "{{ outputs.generate.vars.ratecard_version_id }}"
+      skipped_polygons: "{{ outputs.generate.vars.skipped_polygons }}"
+
+  # PC20 — the file against its column definition, before anything is
+  # delivered or published.
+  - id: validate_output
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-output
+    wait: true
+    transmitFailed: true
+    inputs:
+      file: "{{ outputs.generate.outputFiles[outputs.generate.vars.file] }}"
+      contract: polygon_capacity
+      name: "{{ outputs.generate.vars.file }}"
+
+  # PC13, PC14 — common/delivery.py deliver(): FILE_ALREADY_EXISTS if the day's
+  # file is already there (nothing touched), else .<name>.tmp, fsync, and a
+  # rename that never replaces a file.
+  - id: deliver
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    inputFiles:
+      "{{ outputs.generate.vars.file }}": "{{ outputs.generate.outputFiles[outputs.generate.vars.file] }}"
+    env:
+      OUTBOUND_DIR: "{{ vars.outbound_dir }}"
+      FILE: "{{ outputs.generate.vars.file }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.common.delivery
+        --outbound-dir="$OUTBOUND_DIR" "$FILE"
+
+  # RF7 — the file as this task's output file (the published file), with its
+  # DELIVERED line. No flow-level `outputs:` (rpt03: the Exit task that ends a
+  # run WARNING skips rendering them).
+  - id: publish
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    inputFiles:
+      "{{ outputs.generate.vars.file }}": "{{ outputs.generate.outputFiles[outputs.generate.vars.file] }}"
+    env:
+      FLOW_REVISION: "{{ flow.revision }}"
+      FILE: "{{ outputs.generate.vars.file }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.common.trace delivered
+        --flow-revision="$FLOW_REVISION" "$FILE"
+    outputFiles:
+      - Polygon_capacity_lookup_*.csv
+
+  # The WARNING contract (code-standards §2.6): WARNING when any polygon was
+  # skipped (PC19), applied here, never an exit code.
+  - id: set_status
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.generate.vars.status == 'WARNING' }}"
+    then:
+      - id: warning
+        type: io.kestra.plugin.core.execution.Exit
+        state: WARNING

@@ -1,6 +1,6 @@
 # Reporting Management Module — Architecture
 
-**Planned design (2026-10-29, not built).** Extends `context/architecture.md` (platform stack, boundaries, storage, auth, platform invariants) and `context/workflow-management/wfm-architecture.md` (the Kestra platform; reporting is function 4, §10). It records **only what Reporting Management adds or does differently**. Functional design: `rptmgmt-project-overview.md`. Decision record: `_newmodule-reporting-plan.md`.
+**Planned design 2026-10-29; rpt01–rpt04 built (2026-10-30).** Extends `context/architecture.md` (platform stack, boundaries, storage, auth, platform invariants) and `context/workflow-management/wfm-architecture.md` (the Kestra platform; reporting is function 4, §10). It records **only what Reporting Management adds or does differently**. Functional design: `rptmgmt-project-overview.md`. Decision record: `_newmodule-reporting-plan.md`.
 
 Like Rating, this is a **non-Next.js** module: no pages, Server Actions, components or RBAC permissions. Unlike Rating, it **owns no tables and writes nothing**. It reads other modules' data, builds files, and publishes them from Kestra.
 
@@ -45,7 +45,7 @@ The exact list, including any other table `capacityDetailCte` joins, is fixed in
 | Data | Where | Notes |
 |---|---|---|
 | Source data | Postgres, other modules' tables | Read only, one `REPEATABLE READ READ ONLY` transaction per run |
-| Report files | Kestra execution outputs | Every run makes new outputs; nothing is overwritten (SR24) |
+| Report files | Kestra execution outputs: the `publish` task's output files (rpt03 D8; `flows/reporting/README.md`, Published files) | Every run makes new outputs; nothing is overwritten (SR24). `publish` runs only after every output check passes (Inv 5) |
 | Part B file (and later destinations) | Its own outbound share, `outbound_dir` per report | Safe write by rename; never overwrite (PC13, PC14; `common/delivery.py`). Egress rules apply (RF8). Each reader gets a read-only SAS on its share only (RF-OI2). |
 | Column definitions | Kestra namespace files, versioned in git | A column change is a reviewed commit (SR35) |
 | Settings that change output | Flow `variables` (e.g. `occ_reason_codes`, `encryption`, `outbound_dir`, `capacity_source`) | Never hard-coded in Python |
