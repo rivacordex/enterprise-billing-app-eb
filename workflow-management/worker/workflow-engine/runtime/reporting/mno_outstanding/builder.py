@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 
 from ..common import codes, receivables
 from ..common.csv_writer import fmt_amount, fmt_date
@@ -61,17 +62,35 @@ def build(
     duplicate_keys = sorted(key for key, roles in by_key.items() if len(roles) > 1)
     if duplicate_keys:
         return Built(rows=[], skipped=skipped, duplicate_keys=duplicate_keys)
+    balances = _balances_by_account(
+        ledger, {ban for roles in by_key.values() for ban in _accounts(roles)}, outstanding_date
+    )
+    zero = Decimal("0")
     day = fmt_date(outstanding_date)
     rows = [
         [
             day,
             key,
-            fmt_amount(
-                receivables.receivables_balance(
-                    ledger, by_key[key][0].billing_account_ids, outstanding_date
-                )
-            ),
+            fmt_amount(sum((balances.get(ban, zero) for ban in _accounts(by_key[key])), zero)),
         ]
         for key in sorted(by_key)  # MO11
     ]
     return Built(rows=rows, skipped=skipped, duplicate_keys=[])
+
+
+def _accounts(roles: list[PartyRole]) -> set[str]:
+    """The billing accounts of a key's (single, after the duplicate check) party role."""
+    return set(roles[0].billing_account_ids)
+
+
+def _balances_by_account(
+    ledger: receivables.LedgerSnapshot, billing_account_ids: set[str], as_of: date
+) -> dict[str, Decimal]:
+    """``receivables_balance`` per billing account, in one pass over the ledger."""
+    balances: dict[str, Decimal] = {}
+    # date.max as in receivables_balance: the cut-off is by document kind.
+    for effect in receivables.receivables_effects(ledger, billing_account_ids, date.max):
+        if receivables.counts_at_end_of(effect.line, as_of):
+            ban = effect.billing_account_id
+            balances[ban] = balances.get(ban, Decimal("0")) + effect.amount
+    return balances

@@ -37,6 +37,13 @@ const FLOW = join(
 const read = (path: string) => readFileSync(path, "utf8");
 
 const ready = reportingRuntimeReady();
+// Skipping is for local machines without the runtime; in CI (GitHub's CI,
+// Azure Pipelines' TF_BUILD) a missing runtime fails the file instead.
+if (!ready && (process.env.CI || process.env.TF_BUILD)) {
+  throw new Error(
+    "reporting runtime unavailable in CI (set REPORTING_PYTHON3 to a python3 with the worker's packages)",
+  );
+}
 
 describe.skipIf(!ready)("the mno_outstanding contract (§C.1, D3)", () => {
   it("loads: header false, the three §C.1 columns in order, date/text/amount, all required", () => {
