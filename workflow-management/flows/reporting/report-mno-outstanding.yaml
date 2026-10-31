@@ -1,0 +1,122 @@
+# rpt05-spec D5 — MNO outstanding (Part C, MO17). For one outstanding date,
+# writes Reporting_dnb_settlement_mno_<outstanding_date>.csv: one positional
+# row (no header) per MNO with everything it still owes across all billing
+# periods at the end of that day (contracts/mno_outstanding.yaml). Reader: the
+# CSP. Kestra output only (MO15): Revenue Ops download the file from the
+# `publish` task and pass it on until delivery is decided (M-OI1). Manual
+# trigger only (MO16; the daily schedule is M-OI2).
+#
+# Task order (MO17, code-standards §3.2): validate_date → generate →
+# validate_output → publish → set_status. Nothing is published unless the
+# file passes its column definition (Inv 5).
+#
+# Inputs reach the shell as env vars, never interpolated into the command.
+# The YAML computes nothing (Inv 13).
+#
+# Never edit this flow in the Kestra UI — deployed from git (SR41).
+id: report-mno-outstanding
+namespace: reporting
+description: MNO outstanding
+
+labels:
+  report: mno_outstanding
+
+inputs:
+  # Optional: empty means yesterday in Asia/Kuala_Lumpur, resolved by
+  # report-validate-date (MO9).
+  - id: outstanding_date
+    type: STRING
+    required: false
+    description: Outstanding date, YYYYMMDD (default yesterday, Asia/Kuala_Lumpur)
+
+tasks:
+  # RF7 — `flow_revision` as a run label (flow-level `labels:` are not
+  # rendered), first, so a failed run is traceable too.
+  - id: trace
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      flow_revision: "{{ flow.revision }}"
+
+  # MO9 — INVALID_OUTSTANDING_DATE unless yesterday or earlier; empty = yesterday.
+  - id: validate_date
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-date
+    wait: true
+    transmitFailed: true
+    inputs:
+      name: outstanding_date
+      value: "{{ inputs.outstanding_date ?? '' }}"
+      rule: before_today
+      default: yesterday
+
+  - id: inputs_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      outstanding_date: "{{ outputs.validate_date.outputs.effective_date }}"
+
+  # MO18 — the runtime reads the party roles, billing accounts and ledger in
+  # one snapshot and writes the file.
+  - id: generate
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # ACA has no Docker daemon
+    namespaceFiles:
+      enabled: true
+      include:
+        - contracts/**
+    env:
+      OUTSTANDING_DATE: "{{ outputs.validate_date.outputs.effective_date }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.mno_outstanding
+        --outstanding-date="$OUTSTANDING_DATE" --out-dir=. --contracts-dir=contracts
+    outputFiles:
+      - Reporting_dnb_settlement_mno_*.csv
+
+  - id: count_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      skipped_mnos: "{{ outputs.generate.vars.skipped_mnos }}"
+
+  # MO13 — the file against its column definition, before anything is
+  # published.
+  - id: validate_output
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-output
+    wait: true
+    transmitFailed: true
+    inputs:
+      file: "{{ outputs.generate.outputFiles[outputs.generate.vars.file] }}"
+      contract: mno_outstanding
+      name: "{{ outputs.generate.vars.file }}"
+
+  # RF7 — the file as this task's output file (the published file), with its
+  # DELIVERED line. No flow-level `outputs:` (rpt03: the Exit task that ends a
+  # run WARNING skips rendering them).
+  - id: publish
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    inputFiles:
+      "{{ outputs.generate.vars.file }}": "{{ outputs.generate.outputFiles[outputs.generate.vars.file] }}"
+    env:
+      FLOW_REVISION: "{{ flow.revision }}"
+      FILE: "{{ outputs.generate.vars.file }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.common.trace delivered
+        --flow-revision="$FLOW_REVISION" "$FILE"
+    outputFiles:
+      - Reporting_dnb_settlement_mno_*.csv
+
+  # The WARNING contract (code-standards §2.6): WARNING when any MNO was
+  # skipped (MO8), applied here, never an exit code.
+  - id: set_status
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.generate.vars.status == 'WARNING' }}"
+    then:
+      - id: warning
+        type: io.kestra.plugin.core.execution.Exit
+        state: WARNING

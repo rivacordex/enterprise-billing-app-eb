@@ -1,6 +1,6 @@
 # Reporting Management Module — Architecture
 
-**Planned design 2026-10-29; rpt01–rpt04 built (2026-10-30).** Extends `context/architecture.md` (platform stack, boundaries, storage, auth, platform invariants) and `context/workflow-management/wfm-architecture.md` (the Kestra platform; reporting is function 4, §10). It records **only what Reporting Management adds or does differently**. Functional design: `rptmgmt-project-overview.md`. Decision record: `_newmodule-reporting-plan.md`.
+**Planned design 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31).** Extends `context/architecture.md` (platform stack, boundaries, storage, auth, platform invariants) and `context/workflow-management/wfm-architecture.md` (the Kestra platform; reporting is function 4, §10). It records **only what Reporting Management adds or does differently**. Functional design: `rptmgmt-project-overview.md`. Decision record: `_newmodule-reporting-plan.md`.
 
 Like Rating, this is a **non-Next.js** module: no pages, Server Actions, components or RBAC permissions. Unlike Rating, it **owns no tables and writes nothing**. It reads other modules' data, builds files, and publishes them from Kestra.
 

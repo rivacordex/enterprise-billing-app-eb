@@ -12,6 +12,16 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 import {
+  expectFlowRevisionTrace,
+  expectRuntimeTasks,
+  expectValidateDate,
+  expectValidateOutput,
+  type FlowTask,
+  GENERATED_FILE,
+  loadReportFlow,
+  loadReportingContract,
+} from "@/tests/helpers/reporting-flow-shape";
+import {
   parseKestraLines,
   REPORTING_CONTRACTS_DIR,
   REPORTING_WORKER_DIR,
@@ -229,17 +239,7 @@ print(json.dumps(out))`,
 
 describe.skipIf(!ready)("the polygon_capacity contract (§B.1, D8)", () => {
   it("loads: header false, the eight §B.1 columns in order, text/text/text/date/date/text/text/integer, all required", () => {
-    const run = runReportingPython([
-      "-c",
-      `import json, sys
-from pathlib import Path
-from runtime.reporting.common.contract import load_contract
-c = load_contract(Path(sys.argv[1]))
-print(json.dumps({"file": c.file, "header": c.header, "columns": [[x.name, x.type, x.required] for x in c.columns]}))`,
-      join(REPORTING_CONTRACTS_DIR, "polygon_capacity.yaml"),
-    ]);
-    expect(run.status, run.stderr).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(loadReportingContract("polygon_capacity")).toEqual({
       file: "Polygon_capacity_lookup_<report_date>.csv",
       header: false,
       columns: [
@@ -390,27 +390,9 @@ print(json.dumps({"status": status, "calls": calls}))`,
   },
 );
 
-interface Task {
-  id: string;
-  type: string;
-  [key: string]: unknown;
-}
-
 describe("report-polygon-capacity-lookup — static shape (D8, PC21, PC22, PC25)", () => {
-  const flow = parse(read(FLOW)) as {
-    id: string;
-    namespace: string;
-    description: string;
-    disabled?: boolean;
-    labels: Record<string, string>;
-    inputs: { id: string; type: string; required?: boolean }[];
-    variables: Record<string, string>;
-    tasks: Task[];
-    outputs?: unknown;
-    triggers?: unknown;
-  };
-  const task = (id: string) => flow.tasks.find((t) => t.id === id)!;
-  const command = (id: string) => (task(id).commands as string[]).join(" ");
+  const shape = loadReportFlow(FLOW);
+  const { flow, task, command } = shape;
 
   it("R04-T7 (static) — deployed disabled: `disabled: true`, no triggers", () => {
     expect(flow.disabled).toBe(true);
@@ -443,35 +425,13 @@ describe("report-polygon-capacity-lookup — static shape (D8, PC21, PC22, PC25)
       "publish",
       "set_status",
     ]);
-    expect(task("validate_date")).toMatchObject({
-      type: "io.kestra.plugin.core.flow.Subflow",
-      flowId: "report-validate-date",
-      wait: true,
-      transmitFailed: true,
-      inputs: {
-        name: "report_date",
-        value: "{{ inputs.report_date ?? '' }}",
-        rule: "before_today",
-        default: "yesterday",
-      },
-    });
-    expect(task("validate_output")).toMatchObject({
-      flowId: "report-validate-output",
-      wait: true,
-      transmitFailed: true,
-      inputs: {
-        file: "{{ outputs.generate.outputFiles[outputs.generate.vars.file] }}",
-        contract: "polygon_capacity",
-        name: "{{ outputs.generate.vars.file }}",
-      },
-    });
-    expect((task("set_status").then as Task[])[0]!.state).toBe("WARNING");
+    expectValidateDate(task("validate_date"), "report_date");
+    expectValidateOutput(task("validate_output"), "polygon_capacity");
+    expect((task("set_status").then as FlowTask[])[0]!.state).toBe("WARNING");
   });
 
   it("labels: flow_revision, report_date (effective), ratecard_card_name, ratecard_version_id, skipped_polygons", () => {
-    expect(task("trace").labels).toEqual({
-      flow_revision: "{{ flow.revision }}",
-    });
+    expectFlowRevisionTrace(task("trace"));
     expect(task("inputs_labels").labels).toEqual({
       report_date: "{{ outputs.validate_date.outputs.effective_date }}",
     });
@@ -483,12 +443,7 @@ describe("report-polygon-capacity-lookup — static shape (D8, PC21, PC22, PC25)
   });
 
   it("generate, deliver and publish run the runtime on the Process runner with values as env vars only", () => {
-    for (const id of ["generate", "deliver", "publish"]) {
-      expect(task(id).taskRunner).toEqual({
-        type: "io.kestra.plugin.core.runner.Process",
-      });
-      expect(command(id)).not.toMatch(/\{\{/);
-    }
+    expectRuntimeTasks(shape, ["generate", "deliver", "publish"]);
     expect(command("generate")).toContain(
       "python3 -m runtime.reporting.polygon_capacity",
     );
@@ -501,19 +456,12 @@ describe("report-polygon-capacity-lookup — static shape (D8, PC21, PC22, PC25)
     expect(task("deliver").env).toMatchObject({
       OUTBOUND_DIR: "{{ vars.outbound_dir }}",
     });
-    expect(command("publish")).toContain(
-      "python3 -m runtime.reporting.common.trace delivered",
-    );
   });
 
   it("the published file is the publish task's; deliver publishes nothing; no flow-level outputs (Inv 5)", () => {
-    const files = {
-      "{{ outputs.generate.vars.file }}":
-        "{{ outputs.generate.outputFiles[outputs.generate.vars.file] }}",
-    };
-    expect(task("deliver").inputFiles).toEqual(files);
+    expect(task("deliver").inputFiles).toEqual(GENERATED_FILE);
     expect(task("deliver").outputFiles).toBeUndefined();
-    expect(task("publish").inputFiles).toEqual(files);
+    expect(task("publish").inputFiles).toEqual(GENERATED_FILE);
     expect(task("publish").outputFiles).toEqual([
       "Polygon_capacity_lookup_*.csv",
     ]);

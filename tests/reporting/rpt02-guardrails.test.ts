@@ -30,6 +30,12 @@ function pythonFiles(dir: string): string[] {
   });
 }
 
+function addCodeTokens(span: string, codes: Set<string>): void {
+  for (const [token] of span.matchAll(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*\b/g)) {
+    if (token.length > 1) codes.add(token);
+  }
+}
+
 // Every upper-case code token in backticks in rptmgmt-code-standards.md §6.
 function registerFromDoc(): Set<string> {
   const doc = read(
@@ -37,13 +43,22 @@ function registerFromDoc(): Set<string> {
   );
   const section = doc.slice(doc.indexOf("## 6."), doc.indexOf("## 7."));
   const codes = new Set<string>();
-  for (const [, span] of section.matchAll(/`([^`]+)`/g)) {
-    for (const [token] of span!.matchAll(
-      /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*\b/g,
-    )) {
-      if (token.length > 1) codes.add(token);
-    }
-  }
+  for (const [, span] of section.matchAll(/`([^`]+)`/g))
+    addCodeTokens(span!, codes);
+  return codes;
+}
+
+// rpt07-spec D4 — every upper-case code token the Revenue Ops guide shows in
+// code: fenced blocks, then inline backtick spans outside them.
+function codesInGuide(): Set<string> {
+  const guide = read(
+    join(ROOT, "workflow-management/docs/opsguide-reporting.md"),
+  );
+  const codes = new Set<string>();
+  const fence = /^```[^\n]*\n([\s\S]*?)^```/gm;
+  for (const [, block] of guide.matchAll(fence)) addCodeTokens(block!, codes);
+  for (const [, span] of guide.replace(fence, "").matchAll(/`([^`\n]+)`/g))
+    addCodeTokens(span!, codes);
   return codes;
 }
 
@@ -108,6 +123,20 @@ print(json.dumps(problems))`,
       ]);
       expect(run.status, run.stderr).toBe(0);
       expect(JSON.parse(run.stdout)).toEqual([]);
+    });
+
+    it("every code the Revenue Ops guide names is in codes.py (rpt07 D4, R07-T2)", () => {
+      const run = runReportingPython([
+        "-c",
+        `import json
+from runtime.reporting.common import codes
+print(json.dumps(sorted(codes.REGISTER)))`,
+      ]);
+      expect(run.status, run.stderr).toBe(0);
+      const register = new Set(JSON.parse(run.stdout) as string[]);
+      const named = [...codesInGuide()];
+      expect(named.length).toBeGreaterThan(0);
+      expect(named.filter((c) => !register.has(c)).sort()).toEqual([]);
     });
 
     it("INVALID_<NAME> is built only through codes.invalid(), for registered input names", () => {
@@ -279,10 +308,11 @@ describe("shared subflows — static shape (D4, D6)", () => {
   });
 
   // rpt02 shipped none (D9); each report unit adds its own (rpt03: Part A's
-  // two; rpt04: Part B's one). Nothing else lives there.
+  // two; rpt04: Part B's one; rpt05: Part C's one). Nothing else lives there.
   it("contracts/ holds its README and the built reports' contracts only", () => {
     expect(readdirSync(join(FLOWS, "contracts")).sort()).toEqual([
       "README.md",
+      "mno_outstanding.yaml",
       "polygon_capacity.yaml",
       "settlement_invoice.yaml",
       "settlement_invoice_payment.yaml",

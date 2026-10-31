@@ -1,5 +1,4 @@
 // @vitest-environment node
-import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -10,6 +9,24 @@ import {
   EXPECTED_20261026,
   SKIPPED_20261026,
 } from "@/tests/fixtures/reporting/polygon-capacity-seed";
+import {
+  api,
+  delivered,
+  download,
+  type Execution,
+  expectNothingPublished,
+  kestraConfigured,
+  klDate,
+  label,
+  messages,
+  published,
+  putNamespaceFile,
+  ran,
+  request,
+  runFlow,
+  sha256,
+  startForm,
+} from "@/tests/helpers/reporting-kestra-live";
 
 // rpt04-spec Tests — `report-polygon-capacity-lookup` end to end on a live
 // engine: R04-T7 (the committed flow is disabled and can't be started),
@@ -34,13 +51,8 @@ import {
 //   KESTRA_BASIC_AUTH_USER=… KESTRA_BASIC_AUTH_PASSWORD=…
 //   RPT04_OUTBOUND_HOST_DIR=…/workflow-management/dev/outbound
 
-const KESTRA_URL = process.env.KESTRA_URL;
-const KESTRA_USER = process.env.KESTRA_BASIC_AUTH_USER;
-const KESTRA_PASSWORD = process.env.KESTRA_BASIC_AUTH_PASSWORD;
 const OUTBOUND_HOST_DIR = process.env.RPT04_OUTBOUND_HOST_DIR;
-const live = Boolean(
-  KESTRA_URL && KESTRA_USER && KESTRA_PASSWORD && OUTBOUND_HOST_DIR,
-);
+const live = kestraConfigured && Boolean(OUTBOUND_HOST_DIR);
 
 const FLOW_ID = "report-polygon-capacity-lookup";
 const FLOW_FILE = join(
@@ -60,60 +72,6 @@ const FIXTURE_PATH = "/fixtures/polygon_capacity.csv"; // the flow's vars.capaci
 const fileName = (day: string) => `Polygon_capacity_lookup_${day}.csv`;
 const outbound = () => join(OUTBOUND_HOST_DIR!, "polygon-capacity");
 
-interface TaskRun {
-  taskId: string;
-  state: { current: string };
-  outputs?: {
-    outputFiles?: Record<string, string>;
-    executionId?: string;
-    [key: string]: unknown;
-  };
-}
-interface Execution {
-  id: string;
-  state: { current: string };
-  labels?: { key: string; value: string }[];
-  taskRunList?: TaskRun[];
-}
-interface Log {
-  level: string;
-  message: string;
-}
-
-function authHeader(): string {
-  const { protocol, hostname } = new URL(KESTRA_URL!);
-  if (
-    protocol !== "https:" &&
-    hostname !== "localhost" &&
-    hostname !== "127.0.0.1"
-  ) {
-    throw new Error(
-      `Refusing to send Basic Auth to ${KESTRA_URL} over plain HTTP`,
-    );
-  }
-  return (
-    "Basic " +
-    Buffer.from(`${KESTRA_USER}:${KESTRA_PASSWORD}`).toString("base64")
-  );
-}
-
-async function request(
-  path: string,
-  init: RequestInit = {},
-): Promise<Response> {
-  return fetch(`${KESTRA_URL}/api/v1/main${path}`, {
-    ...init,
-    headers: { Authorization: authHeader(), ...init.headers },
-  });
-}
-
-async function api(path: string, init: RequestInit = {}): Promise<Response> {
-  const res = await request(path, init);
-  if (!res.ok)
-    throw new Error(`${init.method ?? "GET"} ${path} -> HTTP ${res.status}`);
-  return res;
-}
-
 async function putFlow(source: string): Promise<void> {
   await api(`/flows/reporting/${FLOW_ID}`, {
     method: "PUT",
@@ -122,81 +80,15 @@ async function putFlow(source: string): Promise<void> {
   });
 }
 
-async function putNamespaceFile(path: string, content: string): Promise<void> {
-  const form = new FormData();
-  form.append("fileContent", new Blob([content]));
-  await api(`/namespaces/reporting/files?path=${encodeURIComponent(path)}`, {
-    method: "POST",
-    body: form,
-  });
-}
-
-function startForm(inputs: Record<string, string>): FormData {
-  const form = new FormData();
-  for (const [key, value] of Object.entries(inputs)) form.append(key, value);
-  return form;
-}
-
-async function run(inputs: Record<string, string>): Promise<Execution> {
-  const res = await api(`/executions/reporting/${FLOW_ID}?wait=true`, {
-    method: "POST",
-    body: startForm(inputs),
-  });
-  const { id } = (await res.json()) as Execution;
-  // Re-read: the wait=true response can precede the final labels.
-  return (await (await api(`/executions/${id}`)).json()) as Execution;
-}
-
-// Logs of an execution and of every subflow execution it started.
-async function logs(execution: Execution): Promise<Log[]> {
-  const own = (await (await api(`/logs/${execution.id}`)).json()) as Log[];
-  const children: Log[] = [];
-  for (const taskRun of execution.taskRunList ?? []) {
-    const childId = taskRun.outputs?.executionId;
-    if (childId) {
-      const child = (await (
-        await api(`/executions/${childId}`)
-      ).json()) as Execution;
-      children.push(...(await logs(child)));
-    }
-  }
-  return [...own, ...children];
-}
-
-const messages = async (e: Execution, level: string) =>
-  (await logs(e)).filter((l) => l.level === level).map((l) => l.message);
-const label = (e: Execution, key: string) =>
-  e.labels?.find((l) => l.key === key)?.value;
-const ran = (e: Execution, taskId: string) =>
-  (e.taskRunList ?? []).some((t) => t.taskId === taskId);
-const published = (e: Execution): Record<string, string> =>
-  e.taskRunList?.find((t) => t.taskId === "publish")?.outputs?.outputFiles ??
-  {};
-
-async function download(e: Execution, uri: string): Promise<string> {
-  return (
-    await api(`/executions/${e.id}/file?path=${encodeURIComponent(uri)}`)
-  ).text();
-}
-
-function klDate(days = 0): string {
-  const kl = new Date(Date.now() + 8 * 3_600_000 + days * 86_400_000);
-  return kl.toISOString().slice(0, 10).replaceAll("-", "");
-}
-
-const sha = (text: string) =>
-  createHash("sha256").update(text, "utf8").digest("hex");
+const run = (inputs: Record<string, string>): Promise<Execution> =>
+  runFlow(FLOW_ID, inputs);
 
 async function expectNothingDeliveredOrPublished(
   e: Execution,
   day: string,
 ): Promise<void> {
   expect(ran(e, "deliver")).toBe(false);
-  expect(ran(e, "publish")).toBe(false);
-  expect(published(e)).toEqual({});
-  expect(
-    (await messages(e, "INFO")).filter((m) => m.startsWith("DELIVERED")),
-  ).toEqual([]);
+  await expectNothingPublished(e);
   expect(existsSync(join(outbound(), fileName(day)))).toBe(false);
 }
 
@@ -265,10 +157,8 @@ describe.skipIf(!live)(
         expect(Object.keys(files)).toEqual([fileName("20261026")]);
         const content = await download(e, files[fileName("20261026")]!);
         expect(content).toBe(EXPECTED_20261026);
-        expect(
-          (await messages(e, "INFO")).filter((m) => m.startsWith("DELIVERED")),
-        ).toEqual([
-          `DELIVERED ${fileName("20261026")} sha256=${sha(content)} rev=${label(e, "flow_revision")}`,
+        expect(await delivered(e)).toEqual([
+          `DELIVERED ${fileName("20261026")} sha256=${sha256(content)} rev=${label(e, "flow_revision")}`,
         ]);
         expect(
           readdirSync(outbound()).filter((n) => n.includes("Polygon")),

@@ -34,10 +34,8 @@ from decimal import Decimal
 
 from ..common import receivables
 from ..common.csv_writer import fmt_amount, fmt_blank
+from ..common.receivables import INVOICE_DOC_TYPE, PAYMENT_SIDE_DOC_TYPES
 from .extract import Extract, Invoice
-
-PAYMENT_SIDE_DOC_TYPES = ("PAY", "CRN", "DBN", "ADJ")
-INVOICE_DOC_TYPE = "INV"
 
 # SR11 — type_of_payment values beyond the document's own doc_type.
 REV = "REV"

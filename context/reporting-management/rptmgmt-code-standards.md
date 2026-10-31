@@ -1,6 +1,6 @@
 # Reporting Management Module — Code Standards
 
-**Planned 2026-10-29; rpt01–rpt04 built (2026-10-30).** Supplements `context/code-standards.md` and states **only what Reporting Management changes or adds**. The rules here turn `rptmgmt-architecture.md` §6 (Invariants) into conventions. Flow conventions shared with the other functions are in `workflow-management/flows/README.md` (codebase).
+**Planned 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31).** Supplements `context/code-standards.md` and states **only what Reporting Management changes or adds**. The rules here turn `rptmgmt-architecture.md` §6 (Invariants) into conventions. Flow conventions shared with the other functions are in `workflow-management/flows/README.md` (codebase).
 
 ---
 

@@ -15,7 +15,7 @@ Decomposition of the Reporting Management module into build units. This is the *
 
 ---
 
-> ## Status (2026-10-30)
+> ## Status (2026-10-31)
 >
 > | Units | State |
 > | --- | --- |
@@ -23,8 +23,8 @@ Decomposition of the Reporting Management module into build units. This is the *
 > | rpt02 | **Built** 2026-10-30 (`specs/rpt02-shared-framework.md`). |
 > | rpt03 | **Built** 2026-10-30 (`specs/rpt03-settlement-reports.md`). |
 > | rpt04 | **Built** 2026-10-30 (`specs/rpt04-polygon-capacity-lookup.md`); the flow is deployed disabled until P1 (rpt06). R04-T8's what-if and Azure SAS check not yet run. |
-> | rpt05 | **Specced** 2026-10-29 (`specs/rpt05-mno-outstanding.md`), not built. |
-> | rpt07 | **Specced** 2026-10-29 (`specs/rpt07-revenue-ops-guide.md`), not built. |
+> | rpt05 | **Built** 2026-10-31 (`specs/rpt05-mno-outstanding.md`). |
+> | rpt07 | **Built** 2026-10-31 (`specs/rpt07-revenue-ops-guide.md`): `workflow-management/docs/opsguide-reporting.md`. R07-T1 walkthrough and R07-T4 BSS Ops review not yet done. |
 > | rpt08 | **Specced** 2026-10-29 (`specs/rpt08-invoice-csv.md`), not built. |
 > | rpt09 | **Specced** 2026-10-29 (`specs/rpt09-gl-feed.md`), not built. rpt08 amended the same day for discount rows. |
 > | rpt06 | **Planned.** No spec written yet. rpt06 is blocked on P1 (and P2), and on RF-OI2 before the flow is enabled. |
