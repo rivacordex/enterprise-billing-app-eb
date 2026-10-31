@@ -1,0 +1,5 @@
+MNO_ID,Commercial Unit,Polygon Public Key,Usage Amount,Polygon Subscription Date,Invoice reference Number,Transaction Entry Date,Invoice Amount,Product Type,Usage_Mbps
+MNO-Q,CU-Q-1,PCU-Q-0001,100.00,20250301,INV00000003,20261005,220.00,eMBB Wholesale 5G Network,1.00
+MNO-Q,CU-Q-1,PCU-Q-0001,-2.22,20250301,INV00000003,20261005,220.00,eMBB Wholesale 5G Network,
+MNO-Q,CU-Q-1,PCU-Q-0002,125.00,20250301,INV00000003,20261005,220.00,eMBB Wholesale 5G Network,1.25
+MNO-Q,CU-Q-1,PCU-Q-0002,-2.78,20250301,INV00000003,20261005,220.00,eMBB Wholesale 5G Network,

@@ -1,0 +1,66 @@
+# R<mno><invoice_date>.csv — the MNOs (via the CSP later, I-OI6), one file per
+# MNO per invoice date. Changing this file changes what the MNOs receive: agree
+# it with them first (rptmgmt-architecture Inv 9). The header is copied exactly
+# from the MNOs' brief (IC6) — spaces, case and underscores included; never
+# "tidy" it. One usage row per polygon charge on the MNO's invoices posted that
+# day, read as the invoice PDF's capacity detail reads it (IC2, IC22), each
+# followed by a discount row when the polygon has a discount (rpt08 D8: the
+# polygon's share of its capacity line's discount, apportioned in
+# common/polygon_lines.py; negative Usage Amount, blank Usage_Mbps). Sorted by
+# Invoice reference Number, then Polygon Public Key (IC12). Recurring, one-time,
+# tax and commitment top-up amounts get no row (IC3, I-OI1). Written by
+# runtime/reporting/invoice_csv.
+id: invoice_csv
+file: R<mno><invoice_date>.csv
+header: true
+columns:
+  - name: MNO_ID
+    type: text
+    required: true
+    # decision: IC7; source the invoice customer's
+    # party_role_specification->>'mnoPublicKey1'
+  - name: Commercial Unit
+    type: text
+    required: true
+    # decision: §D.1 col 2, rpt08 D1; source udr_rated.udr_key's whole key
+    # commercial_unit= (the RAN usage feed profile's commercial_unit_column)
+  - name: Polygon Public Key
+    type: text
+    required: true
+    # decision: IC2, rpt08 D1; source udr_rated.udr_key's whole key polygon_id=
+    # (the feed profile's polygon_column), as the PDF prints it
+  - name: Usage Amount
+    type: amount
+    required: true
+    # decision: IC2, rpt08 D1, D8; usage row: udr_rated.udr_rated_price as
+    # numeric(18,2), the PDF's capacity detail amount; discount row: minus the
+    # polygon's apportioned share of its capacity line's discount_amount
+  - name: Polygon Subscription Date
+    type: date
+    required: true
+    # decision: IC2, rpt08 D1; source the third part of udr_rated.udr_resource
+    # (state|district|YYYY-MM-DD)
+  - name: Invoice reference Number
+    type: text
+    required: true
+    # decision: IC9; source the INV document_id (customer_bill.ref_inv_document_id)
+  - name: Transaction Entry Date
+    type: date
+    required: true
+    # decision: IC1, IC10; the invoice_date input — the INV's posted_at as an
+    # Asia/Kuala_Lumpur day (the PDF's Invoice Date)
+  - name: Invoice Amount
+    type: amount
+    required: true
+    # decision: IC9; source the INV document's total_amount (tax-inclusive), on
+    # every row of that invoice (IC18: INVOICE_AMOUNT_NOT_CONSTANT)
+  - name: Product Type
+    type: text
+    required: true
+    # decision: §D.1 col 9; source product.product_offering.name for the
+    # capacity line's ref_product_offering_id
+  - name: Usage_Mbps
+    type: amount
+    required: false
+    # decision: IC8, rpt08 D3, D8; source udr_rated.udr_usage_quantity at 2 dp,
+    # half-up (as billed); blank on a discount row (IC18: DISCOUNT_ROW_INVALID)

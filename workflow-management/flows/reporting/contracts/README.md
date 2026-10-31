@@ -17,6 +17,7 @@ Each report unit adds its own (rpt03–rpt09):
 | `settlement_invoice.yaml` | `Reporting_dnb_settlement_invoice_<ts>.csv` (header) | Finance / billing ops | rpt03 |
 | `settlement_invoice_payment.yaml` | `Reporting_dnb_settlement_invoice_payment_<ts>.csv` (header) | Finance / billing ops | rpt03 |
 | `polygon_capacity.yaml` | `Polygon_capacity_lookup_<report_date>.csv` (no header, read by position) | Mediation, CSP | rpt04 |
+| `invoice_csv.yaml` | `R<mno><invoice_date>.csv` (header, IC6), one per MNO | The MNOs (via the CSP later) | rpt08 |
 
 ## Format (rpt02 D2)
 

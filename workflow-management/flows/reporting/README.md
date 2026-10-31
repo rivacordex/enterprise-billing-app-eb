@@ -7,8 +7,8 @@ the billrun instance under split-by-module, RF6). Module context:
 `context/reporting-management/`.
 
 **Maturity: platform check, shared framework, the settlement reports, the
-polygon capacity lookup (deployed disabled) and MNO outstanding
-(rpt01–rpt05).** The unit list is
+polygon capacity lookup (deployed disabled), MNO outstanding (rpt01–rpt05) and
+the invoice CSV (rpt08).** The unit list is
 `context/reporting-management/specs/rpt00-build-plan.md`.
 
 **Operations.** Revenue Ops run, read, rerun and trace these flows from
@@ -21,6 +21,7 @@ change to a flow updates the guide in the same change set.
 | `report-settlement-invoice.yaml` | Settlement reports (invoice and payment) — Part A for Finance / billing ops: `Reporting_dnb_settlement_invoice_<ts>.csv` and `Reporting_dnb_settlement_invoice_payment_<ts>.csv` for one `billing_period` and an `as_of_date` payment cut-off (default today); Kestra outputs only (SR24) | manual (OI-4) | rpt03 |
 | `report-polygon-capacity-lookup.yaml` | Polygon capacity lookup — Part B for Mediation and the CSP: `Polygon_capacity_lookup_<report_date>.csv` (no header) for one `report_date` (default yesterday), delivered to the `polygon-capacity` share and published. **Deployed `disabled: true`** until the capacity source exists (P1, PC25; rpt06 enables it) | manual (P5) | rpt04 |
 | `report-mno-outstanding.yaml` | MNO outstanding — Part C for the CSP: `Reporting_dnb_settlement_mno_<outstanding_date>.csv` (no header), each MNO's receivables balance across all billing periods at the end of one `outstanding_date` (default yesterday); Kestra outputs only — Revenue Ops pass it to the CSP until delivery is decided (MO15, M-OI1) | manual (M-OI2) | rpt05 |
+| `report-invoice-csv.yaml` | Invoice CSV — Part D for the MNOs (through the CSP later, I-OI6): one `R<MNO><invoice_date>.csv` per MNO invoiced on one `invoice_date` (default yesterday; today allowed), a usage row per polygon charge as the invoice PDF prints it and a discount row after each discounted polygon (rpt08 D8); Kestra outputs only (IC19, I-OI4) | manual (I-OI3) | rpt08 |
 | `report-validate-date.yaml` | Reporting date check (shared subflow) — the one date rule; resolves an empty date to its default | called by reports | rpt02 |
 | `report-validate-period.yaml` | Reporting period check (shared subflow) — `billing_period` + `as_of_date` (SR33) | called by reports | rpt02 |
 | `report-validate-output.yaml` | Reporting output check (shared subflow) — a file against its column definition, before anything is published | called by reports | rpt02 (`name` input: rpt03) |
@@ -197,6 +198,15 @@ keys, verified on v1.3.35), logs one `DELIVERED` line per file with
   outputs of `generate` even when a check fails; they are the input to the
   check, not a published file, and carry no `DELIVERED` line. A FAILED run
   never has a `publish` task, so it publishes nothing.
+- **A variable number of files (rpt08).** `report-invoice-csv` writes one file
+  per MNO, so `generate` emits the names as a list output (`files`), and
+  `validate_output` and `publish` are each an
+  `io.kestra.plugin.core.flow.ForEach` over it: a `report-validate-output`
+  call per file, then a `publish_file` task per file (`inputFiles` keyed by
+  `{{ taskrun.value }}`). The published files are the `publish_file` runs'
+  output files, one `DELIVERED` line each. Verified on v1.3.35 (rpt08): a
+  `ForEach` over an empty list (no invoices that day, or all skipped) runs
+  nothing and the run still ends SUCCESS or WARNING.
 
 ## Namespace files — deploying the contracts (rpt02 D8)
 

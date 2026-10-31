@@ -1,18 +1,18 @@
-# Reporting — running and checking the report flows (Parts A–C)
+# Reporting — running and checking the report flows (Parts A–D)
 
 Guide for **Revenue Ops** on the report flows in Kestra namespace `reporting`.
 It covers how to:
 
 - check the reporting platform before you run anything;
-- run the settlement reports (Part A), the polygon capacity lookup (Part B)
-  and MNO outstanding (Part C);
+- run the settlement reports (Part A), the polygon capacity lookup (Part B),
+  MNO outstanding (Part C) and the invoice CSV (Part D);
 - read a run's result, find skipped rows, and download the files;
 - rerun a report, correct a delivered polygon file, and pass the MNO
   outstanding file to the CSP;
 - trace any file a recipient holds back to the run that made it.
 
-You need nothing but this guide and the Kestra UI. The invoice CSV (Part D)
-and the GL feed (Part E) get their own sections when they are built.
+You need nothing but this guide and the Kestra UI. The GL feed (Part E) gets
+its own sections when it is built.
 
 Design authority: `context/reporting-management/` (`rptmgmt-architecture.md`
 Inv 5, 10–13; the code register in `rptmgmt-code-standards.md` §6) and the
@@ -42,6 +42,7 @@ disagree, the flows win. Fix the guide in the same change as the flow.
 | `report-settlement-invoice` | Settlement reports (Part A) | `Reporting_dnb_settlement_invoice_<ts>.csv` and `Reporting_dnb_settlement_invoice_payment_<ts>.csv` | Finance / billing ops |
 | `report-polygon-capacity-lookup` | Polygon capacity lookup (Part B) | `Polygon_capacity_lookup_<report_date>.csv` (no header) | Mediation and the CSP, from the `polygon-capacity` share. **Disabled until the capacity source exists** (section 11) |
 | `report-mno-outstanding` | MNO outstanding (Part C) | `Reporting_dnb_settlement_mno_<outstanding_date>.csv` (no header) | The CSP, passed on by you (section 9) |
+| `report-invoice-csv` | Invoice CSV (Part D) | `R<mno><invoice_date>.csv` (header), one per MNO invoiced that day | The MNOs (through the CSP later), passed on by you |
 
 The namespace also holds three helper flows that the reports call:
 `report-validate-date`, `report-validate-period` and `report-validate-output`.
@@ -171,6 +172,33 @@ page opens; wait until it shows **SUCCESS**, **WARNING** or **FAILED**
 - **Time:** about **20 seconds** on dev.
 - Then pass it to the CSP (section 9).
 
+### 4.4 Invoice CSV (Part D) — `report-invoice-csv`
+
+- **Input:** `invoice_date` (YYYYMMDD, blank = yesterday). Today is allowed:
+  invoices posted earlier today are reported. An invoice's date is the day it
+  was posted, Kuala Lumpur time, as printed on the invoice PDF.
+- **Files:** one `R<mno><invoice_date>.csv` per MNO invoiced that day (for
+  example RMNO120261005.csv), holding all of that MNO's invoices posted that
+  day, whatever bill run they came from. A header row with ten columns: MNO_ID,
+  Commercial Unit, Polygon Public Key, Usage Amount, Polygon Subscription Date,
+  Invoice reference Number, Transaction Entry Date, Invoice Amount, Product
+  Type, Usage_Mbps. Then, per invoice and per polygon, a **usage row** with the same polygon,
+  amount and Mbps as the invoice PDF's capacity detail. When the polygon has a
+  discount, a **discount row** follows straight after it: the same values,
+  with Usage Amount = minus the polygon's share of the discount, and Usage_Mbps
+  blank. Billing discounts each capacity line once, so a polygon's share is
+  the line's discount split across its polygons in proportion to their
+  amounts (rounded to the cent, the last polygon taking the remainder, so the
+  shares add up to the discount on the PDF). Invoice Amount is the invoice
+  total, tax included, on every row of that invoice.
+- **No invoices that day:** the run ends **SUCCESS** with no files and the
+  INFO line `NO_INVOICES_ON <invoice_date>`. Nothing was invoiced that day;
+  check the date, or rerun after the bill run is posted.
+- **Time:** under **10 seconds** on a test engine with eight invoices and two
+  files (not yet measured on dev).
+- Then download the files (section 6) and pass each to its MNO through the
+  agreed channel. Delivery straight to the MNOs is still open.
+
 ---
 
 ## 5. Read the result
@@ -191,14 +219,16 @@ Every execution carries labels. In **Executions**, filter on namespace
 
 | Label | On | Value |
 |---|---|---|
-| `report` | every run | `platform_check`, `settlement_invoice`, `polygon_capacity`, `mno_outstanding` |
+| `report` | every run | `platform_check`, `settlement_invoice`, `polygon_capacity`, `mno_outstanding`, `invoice_csv` |
 | `flow_revision` | every run, also FAILED ones | The flow version that ran (section 10) |
 | `billing_period`, `as_of_date` | A | The inputs; `as_of_date` is the date actually used (today if left blank) |
 | `report_date` | B | The date actually used |
 | `outstanding_date` | C | The date actually used |
-| `skipped_invoices` | A | How many invoices were left out (0 on SUCCESS) |
+| `invoice_date` | D | The date actually used |
+| `skipped_invoices` | A, D | How many invoices were left out (0 on SUCCESS) |
 | `skipped_polygons` | B | How many polygons were left out |
 | `skipped_mnos` | C | How many MNOs were left out |
+| `files_written` | D | How many files were published (one per MNO; 0 when nothing was invoiced that day, or every invoice was left out) |
 | `ratecard_card_name`, `ratecard_version_id` | B | The rate card and the version in force on `report_date` |
 
 A run that fails its input check has `flow_revision` and `report` only. The
@@ -213,13 +243,21 @@ out is one WARN line:
 SKIPPED <key> <reason>
 ```
 
-The key is the invoice id (A), `<mno>|<commercial unit>|<polygon>` (B) or the
-MNO's party role id (C). The same row is left out on every rerun until its
+The key is the invoice id (A, D), `<mno>|<commercial unit>|<polygon>` (B) or
+the MNO's party role id (C). The same row is left out on every rerun until its
 data is fixed in the source module.
+
+In D an invoice is either in its MNO's file whole, or left out whole: a file
+never holds part of an invoice. An MNO whose invoices were all left out gets
+no file. The D reasons other than `NO_POLYGON_LINES` shouldn't happen on a
+posted invoice (its PDF would not have rendered); treat them as data faults.
 
 | Reason | Report | What it means | What to do |
 |---|---|---|---|
-| `MNO_PUBLIC_KEY_MISSING` | A, C | The MNO's customer record has no MNO Public Key. In A the invoice and all its payment rows are left out (and the MNO's account-level and UNAPPLIED rows); in C the MNO has no row | Ask Customer Management to set the key, then rerun |
+| `MNO_PUBLIC_KEY_MISSING` | A, C, D | The MNO's customer record has no MNO Public Key. In A the invoice and all its payment rows are left out (and the MNO's account-level and UNAPPLIED rows); in C the MNO has no row; in D the invoice is left out | Ask Customer Management to set the key, then rerun |
+| `NO_POLYGON_LINES` | D | The invoice has no polygon charge: only recurring, one-time or tax amounts, or a capacity commitment with no usage. None of those are in the file | Nothing, if that is right for the invoice |
+| `POLYGON_ID_MISSING`, `POLYGON_START_DATE_MISSING`, `COMMERCIAL_UNIT_MISSING` | D | A rated usage row on the invoice has no polygon, no valid subscription date, or no commercial unit | Data fault: give the invoice id to the module owner (Rating) |
+| `USAGE_AMOUNT_MISSING`, `USAGE_MBPS_MISSING` | D | A rated usage row on the invoice has no amount or no Mbps | Data fault: give the invoice id to the module owner (Rating) |
 | `INVOICE_POSTED_AT_MISSING` | A | The invoice has no posting time, so it has no invoice date | Data fault: give the invoice id to the module owner. Until fixed, MNO outstanding (C) also leaves this invoice out of the MNO's amount, **without** a warning |
 | `DISTRICT_MISSING` | B | The polygon's district is blank on the rate card | Ask Product Management to correct the rate card |
 | `SERVICE_CODE_MISSING` | B | The polygon's service code is blank on the rate card | Ask Product Management to correct the rate card |
@@ -233,7 +271,7 @@ file check, the line is in the helper flow's own execution: open the
 also see `Failed to render output values` next to it; ignore that, it is
 Kestra noise.
 
-**Input checks (A, B, C).** Correct the input and run again.
+**Input checks (A, B, C, D).** Correct the input and run again.
 
 | Code | Meaning |
 |---|---|
@@ -241,6 +279,7 @@ Kestra noise.
 | `INVALID_AS_OF_DATE` | `as_of_date` isn't a real date, is in the future, or is before the first day of `billing_period` (so a future period can't be run yet) |
 | `INVALID_REPORT_DATE` | `report_date` isn't a real date, or is today or later |
 | `INVALID_OUTSTANDING_DATE` | `outstanding_date` isn't a real date, or is today or later |
+| `INVALID_INVOICE_DATE` | `invoice_date` isn't a real date, or is in the future |
 
 **Report codes**, logged by `generate`:
 
@@ -258,6 +297,8 @@ Kestra noise.
 | `ALL_MNOS_EXCEPTED` | C | Every MNO was left out (see the `SKIPPED` lines) | Fix the MNO keys |
 | `DUPLICATE_MNO_PUBLIC_KEY` | C | Two customer records carry the same MNO Public Key (the line names it) | Customer Management corrects one, then rerun |
 | `OUTPUT_CONTRACT_VIOLATION … PER_INVOICE_CHECK` | A | An invoice's open amount doesn't add up from its payment rows | Module owner (a fault, not a data problem) |
+| `OUTPUT_CONTRACT_VIOLATION … INVOICE_AMOUNT_NOT_CONSTANT` | D | Two rows of one invoice show different invoice totals | Module owner (a fault, not a data problem) |
+| `OUTPUT_CONTRACT_VIOLATION … DISCOUNT_ROW_INVALID` | D | A row with blank Usage_Mbps isn't a negative discount row right after its polygon's usage row | Module owner (a fault, not a data problem) |
 | `WRITER_INVALID_VALUE` | any | A text value contains a line break (the line names the column) | Correct the value in the source module |
 
 **File checks**, logged by the `validate_output…` task (in its own
@@ -285,6 +326,10 @@ execution):
    checks read, not the published files. Always take them from `publish`.)
 3. The names are exact and case-sensitive. Don't rename a file before you pass
    it on: readers match the name.
+
+**Part D** publishes one file per MNO: under `publish`, each file is the
+output of its own `publish_file` run (one per file). A run with
+`files_written` 0 has nothing to download.
 
 **Checking a file a recipient queries.** The `publish` task's log has one
 line per published file:
@@ -314,8 +359,10 @@ in Excel changes it), or it came from another run.
 - **Part A: every run makes a new pair of files.** The timestamp in the name
   is the run's start, so nothing is overwritten. The same `billing_period` and
   `as_of_date` give the same content.
-- **Part C: the same date gives the same content**, under the same file name.
-  Download the run you mean to pass on.
+- **Parts C and D: the same date gives the same content**, under the same file
+  name. Download the run you mean to pass on. In D, an invoice posted later
+  the same day (when you ran it for today) or a skip fixed since appears on a
+  rerun.
 - **Part B: a date already delivered fails.** The rerun ends FAILED with
   `FILE_ALREADY_EXISTS` at the `deliver` task, the delivered file is left
   exactly as it was, and nothing is published. To replace a wrong file, see
@@ -412,6 +459,17 @@ indefinitely, and at least 7 years if a purge is ever added (section 1).
 5. **Reader access to the shares isn't set up yet.** How Mediation and the CSP
    get read access to `polygon-capacity` (and BSS Ops their delete access,
    section 8) is still open. No one outside the engine reads a share yet.
+6. **Part D: polygon charges only.** The invoice CSV has a row for each polygon
+   charge and its discount, nothing else: recurring, one-time and tax amounts,
+   a capacity commitment top-up and "Other charges" usage are on the invoice
+   PDF but not in the file. So the rows of an invoice don't add up to its
+   Invoice Amount.
+7. **Part D: the discount is per polygon only in this file and the GL feed.**
+   The invoice PDF shows one discount per capacity line; the file's discount
+   rows are that discount split across the line's polygons (section 4.4).
+8. **Part D: no delivery and no automatic run yet.** The files are Kestra
+   outputs only, and the flow is run by hand; running it with each invoice
+   PDF, and delivery to the MNOs, are still open.
 
 ---
 

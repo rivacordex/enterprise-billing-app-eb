@@ -1,6 +1,6 @@
 # Reporting Management Module — Code Standards
 
-**Planned 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31).** Supplements `context/code-standards.md` and states **only what Reporting Management changes or adds**. The rules here turn `rptmgmt-architecture.md` §6 (Invariants) into conventions. Flow conventions shared with the other functions are in `workflow-management/flows/README.md` (codebase).
+**Planned 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31), rpt08 built (2026-11-01).** Supplements `context/code-standards.md` and states **only what Reporting Management changes or adds**. The rules here turn `rptmgmt-architecture.md` §6 (Invariants) into conventions. Flow conventions shared with the other functions are in `workflow-management/flows/README.md` (codebase).
 
 ---
 
@@ -9,7 +9,7 @@
 1. **Cite the decision.** Code comments that implement a rule name its decision ID from `_newmodule-reporting-plan.md` (e.g. `# SR18`), the way billing code cites its spec section.
 2. **No database writes, no DDL, no temporary tables.** The role can't do them anyway (Inv 1); don't write code that tries.
 3. **No settings in Python.** Card names, reason-code lists, output folders and the encryption method come from flow `variables`, passed in as arguments.
-4. **Money is `Decimal`, never `float`.** Amounts are rounded half-up to 2 dp only when written. Capacity in Part B is rounded half-up to a whole number (PC9); `Usage_Mbps` in Part D is not rounded (IC8).
+4. **Money is `Decimal`, never `float`.** Amounts are rounded half-up to 2 dp only when written. Capacity in Part B is rounded half-up to a whole number (PC9); `Usage_Mbps` in Part D is written at 2 dp, half-up, as billed (IC8, rpt08 D3). The one other rounding is Part D/E's per-polygon discount share, in `common/polygon_lines.py` `apportion_discount` (rpt08 D8, rpt09 D1).
 5. **Dates are calendar days in Asia/Kuala_Lumpur.** Convert `timestamptz` to a local day in SQL with an explicit `AT TIME ZONE 'Asia/Kuala_Lumpur'`, never through the session time zone.
 
 ## 2. Python runtime conventions

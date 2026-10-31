@@ -77,10 +77,13 @@ app_migrate` so future tables `app_migrate` creates auto-grant to
    creates the **`SELECT`-only** `reporting_runtime` login role (CONNECTION
    LIMIT 10, `default_transaction_read_only = on`) that the Reporting
    Management flows (namespace `reporting`) read as, and grants it `USAGE` on
-   `billing`/`customer`/`product` plus `SELECT` on exactly ten tables
-   (nine from rpt01-spec D1/D2, `product.product_offering_price` from
-   rpt04-spec D2) and one view, `billing.pgledger_transfers_view`
-   (rpt03-spec D1). **Run order:** `roles → rating-roles → billrun-roles →
+   `billing`/`customer`/`product`/`rating`/`inventory` plus `SELECT` on
+   exactly fourteen tables (nine from rpt01-spec D1/D2,
+   `product.product_offering_price` from rpt04-spec D2, and
+   `rating.udr_rated`, `inventory.product_inventory`,
+   `billing.customer_bill_line`, `product.product_offering` from rpt08-spec
+   D5) and one view, `billing.pgledger_transfers_view` (rpt03-spec D1).
+   **Run order:** `roles → rating-roles → billrun-roles →
    reporting-roles`, then `kestra-roles` as today — run it **after** step 3a.
    Like billrun's, its Step 0 fails loudly (`ORDERING: ...`) unless step 3's
    `REVOKE CONNECT ... FROM PUBLIC` has already run, and its Step 1 fails
@@ -351,15 +354,19 @@ SELECT rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolreplication,
 FROM pg_roles WHERE rolname = 'reporting_runtime';
   -- t, f, f, f, f, f, 10, {default_transaction_read_only=on}
 
--- Exactly the ten granted tables and one view, SELECT only (no ON ALL TABLES).
+-- Exactly the fourteen granted tables and one view, SELECT only (no ON ALL TABLES).
 SELECT table_schema, table_name, privilege_type
 FROM information_schema.role_table_grants
 WHERE grantee = 'reporting_runtime'
 ORDER BY 1, 2;
-  -- billing.{billing_account,customer_bill,document,document_line,
-  --          financial_account,ledger_binding,pgledger_transfers_view},
+  -- billing.{billing_account,customer_bill,customer_bill_line,document,
+  --          document_line,financial_account,ledger_binding,
+  --          pgledger_transfers_view},
   -- customer.party_role,
-  -- product.{product_offering_price,ratecard_ran_usage_lkp,ratecard_version}
+  -- inventory.product_inventory,
+  -- product.{product_offering,product_offering_price,ratecard_ran_usage_lkp,
+  --          ratecard_version},
+  -- rating.udr_rated
   -- — all SELECT
 
 -- No write on any granted table; nothing beyond them.
@@ -369,7 +376,11 @@ SELECT has_table_privilege('reporting_runtime', 'billing.gl_mapping', 'SELECT');
 -- computed from transfers, never read live).
 SELECT has_table_privilege('reporting_runtime', 'billing.pgledger_accounts_view', 'SELECT'); -- false
 SELECT has_table_privilege('reporting_runtime', 'billing.pgledger_entries_view', 'SELECT');  -- false
-SELECT has_schema_privilege('reporting_runtime', 'rating', 'USAGE');                -- false
+-- rpt08: USAGE on rating and inventory confers only the enumerated tables.
+SELECT has_schema_privilege('reporting_runtime', 'rating', 'USAGE');                -- true
+SELECT has_table_privilege('reporting_runtime', 'rating.udr_rated', 'INSERT');      -- false
+SELECT has_table_privilege('reporting_runtime', 'rating.udr_batch', 'SELECT');      -- false
+SELECT has_schema_privilege('reporting_runtime', 'ordering', 'USAGE');              -- false
 SELECT has_function_privilege('reporting_runtime',
   'billing.pgledger_create_transfer(text, text, numeric, timestamptz, jsonb)', 'EXECUTE'); -- false
 

@@ -1,6 +1,6 @@
 # Reporting Management Module — Architecture
 
-**Planned design 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31).** Extends `context/architecture.md` (platform stack, boundaries, storage, auth, platform invariants) and `context/workflow-management/wfm-architecture.md` (the Kestra platform; reporting is function 4, §10). It records **only what Reporting Management adds or does differently**. Functional design: `rptmgmt-project-overview.md`. Decision record: `_newmodule-reporting-plan.md`.
+**Planned design 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31), rpt08 built (2026-11-01).** Extends `context/architecture.md` (platform stack, boundaries, storage, auth, platform invariants) and `context/workflow-management/wfm-architecture.md` (the Kestra platform; reporting is function 4, §10). It records **only what Reporting Management adds or does differently**. Functional design: `rptmgmt-project-overview.md`. Decision record: `_newmodule-reporting-plan.md`.
 
 Like Rating, this is a **non-Next.js** module: no pages, Server Actions, components or RBAC permissions. Unlike Rating, it **owns no tables and writes nothing**. It reads other modules' data, builds files, and publishes them from Kestra.
 
@@ -37,6 +37,7 @@ No new app dependency. No new database.
 | Customer | `customer.party_role` (`mnoPublicKey1`) | all |
 | Product | `product.ratecard_version`, `ratecard_ran_usage_lkp`, `product_offering`, `product_offering_price` | B, D, E |
 | Rating | `rating.udr_rated` | D, E |
+| Inventory | `inventory.product_inventory` (a claimed row's subscription → its offering, as `capacityDetailCte` joins it) | D, E |
 
 The exact list, including any other table `capacityDetailCte` joins, is fixed in the specs (rpt01, rpt08, rpt09) and enumerated in the grant table (`rptmgmt-code-standards.md` §7).
 

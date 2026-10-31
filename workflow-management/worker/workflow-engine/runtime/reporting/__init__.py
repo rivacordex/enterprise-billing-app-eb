@@ -20,6 +20,9 @@ sign rule, read from each line's posted ledger transfer — Inv 3) and
 ``common.delivery`` (the one folder delivery: write-then-rename, never
 overwrite — Inv 11; the platform check uses it too) and ``polygon_capacity``
 (Part B, ``report-polygon-capacity-lookup``, deployed disabled until P1).
+rpt08 adds ``common.polygon_lines`` (the one read of a posted bill's polygon
+charges, mirroring billing's capacity detail, and the per-polygon discount
+apportionment — Inv 4) and ``invoice_csv`` (Part D, ``report-invoice-csv``).
 
 Never import the rating runtime's ``runtime.db`` from here (§2.7).
 """

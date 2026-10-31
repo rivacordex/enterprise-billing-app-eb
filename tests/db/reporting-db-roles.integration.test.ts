@@ -11,8 +11,9 @@ import * as schema from "@/db/schema";
 import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
 // rpt01-spec Tests R01-T1–R01-T8 (rptmgmt-code-standards §9 guardrail 1) and
-// rpt03-spec R03-T5 (the one pgledger grant, `pgledger_transfers_view`) and the
-// rpt04 grant (`product.product_offering_price`, rpt04 D2). The
+// rpt03-spec R03-T5 (the one pgledger grant, `pgledger_transfers_view`), the
+// rpt04 grant (`product.product_offering_price`, rpt04 D2) and rpt08-spec
+// R08-T4 (Part D's four tables and two schemas, rpt08 D5). The
 // grant surface is the deliverable, so every assertion runs against a LIVE
 // database through a LIVE `reporting_runtime` connection — the posture of
 // tests/db/billrun-db-roles.integration.test.ts, which this suite mirrors.
@@ -35,18 +36,30 @@ const BILLRUN_ROLES_SQL = sqlPath("billrun-db-roles.sql");
 const REPORTING_ROLES_SQL = sqlPath("reporting-db-roles.sql");
 const KESTRA_ROLES_SQL = sqlPath("kestra-db-roles.sql");
 
-// D2 — the nine tables, plus rpt04 D2's `product_offering_price`, and nothing else.
+// D2 — the nine tables, plus rpt04 D2's `product_offering_price` and rpt08
+// D5's four, and nothing else.
 const GRANTED_TABLES = [
   "billing.billing_account",
   "billing.customer_bill",
+  "billing.customer_bill_line",
   "billing.document",
   "billing.document_line",
   "billing.financial_account",
   "billing.ledger_binding",
   "customer.party_role",
+  "inventory.product_inventory",
+  "product.product_offering",
   "product.product_offering_price",
   "product.ratecard_ran_usage_lkp",
   "product.ratecard_version",
+  "rating.udr_rated",
+];
+// rpt08 D5 — the four tables Part D adds (R08-T4).
+const RPT08_TABLES = [
+  "rating.udr_rated",
+  "inventory.product_inventory",
+  "billing.customer_bill_line",
+  "product.product_offering",
 ];
 // rpt03 D1 — the one pgledger object: transfers, never balances or entries.
 const GRANTED_VIEWS = ["billing.pgledger_transfers_view"];
@@ -243,7 +256,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     // ---- R01-T2 ------------------------------------------------------------
-    it("R01-T2 — SELECT succeeds on each of the granted tables (D2 + rpt04) and the rpt03 view", async () => {
+    it("R01-T2 — SELECT succeeds on each of the granted tables (D2 + rpt04 + rpt08) and the rpt03 view", async () => {
       for (const table of GRANTED) {
         await expect(
           reporting.unsafe(`SELECT count(*) FROM ${qualified(table)}`),
@@ -292,14 +305,18 @@ describe.skipIf(!databaseUrl)(
 
     // ---- R01-T4 ------------------------------------------------------------
     describe("R01-T4 — no other access", () => {
-      it("SELECT on a non-granted table is refused (billing.gl_mapping, rating.udr_rated)", async () => {
+      it("SELECT on a non-granted table is refused (billing.gl_mapping, rating.udr_batch; no USAGE on ordering)", async () => {
         await expect(
           reporting`SELECT 1 FROM billing.gl_mapping LIMIT 1`,
         ).rejects.toThrow(/permission denied for table gl_mapping/);
-        // No USAGE on `rating` at all until rpt08.
+        // rpt08's schema USAGE confers nothing beyond its enumerated tables.
         await expect(
-          reporting`SELECT 1 FROM rating.udr_rated LIMIT 1`,
-        ).rejects.toThrow(/permission denied for schema rating/);
+          reporting`SELECT 1 FROM rating.udr_batch LIMIT 1`,
+        ).rejects.toThrow(/permission denied for table udr_batch/);
+        // No USAGE on a schema no report reads.
+        await expect(
+          reporting`SELECT 1 FROM ordering.product_order LIMIT 1`,
+        ).rejects.toThrow(/permission denied for schema ordering/);
       });
 
       it("EXECUTE on billing.pgledger_create_transfer is refused", async () => {
@@ -408,6 +425,52 @@ describe.skipIf(!databaseUrl)(
             await expect(rw.unsafe(write), write).rejects.toThrow(
               /permission denied for view pgledger_transfers_view/,
             );
+          }
+        } finally {
+          await rw.end();
+        }
+      });
+    });
+
+    // ---- R08-T4 ------------------------------------------------------------
+    describe("R08-T4 — Part D's grants (rpt08 D5, IC23)", () => {
+      it("reporting_runtime can read the four tables, with USAGE on rating and inventory", async () => {
+        for (const table of RPT08_TABLES) {
+          await expect(
+            reporting.unsafe(`SELECT count(*) FROM ${qualified(table)}`),
+            table,
+          ).resolves.toBeDefined();
+        }
+        const [usage] = await sql<{ rating: boolean; inventory: boolean }[]>`
+          SELECT has_schema_privilege(${ROLE}, 'rating', 'USAGE') AS rating,
+                 has_schema_privilege(${ROLE}, 'inventory', 'USAGE') AS inventory
+        `;
+        expect(usage).toEqual({ rating: true, inventory: true });
+      });
+
+      it("…and still can't write any of them, or create in their schemas, with read-only turned off for the session", async () => {
+        const rw = postgres(roleUrl(databaseUrl as string, ROLE, ROLE_PW), {
+          max: 1,
+        });
+        try {
+          await rw.unsafe("SET default_transaction_read_only = off");
+          for (const table of RPT08_TABLES) {
+            const t = qualified(table);
+            for (const write of [
+              `INSERT INTO ${t} DEFAULT VALUES`,
+              `DELETE FROM ${t} WHERE false`,
+              `TRUNCATE ${t}`,
+            ]) {
+              await expect(rw.unsafe(write), write).rejects.toThrow(
+                /permission denied for table/,
+              );
+            }
+          }
+          for (const schemaName of ["rating", "inventory"]) {
+            await expect(
+              rw.unsafe(`CREATE TABLE "${schemaName}".rpt08_probe (x int)`),
+              schemaName,
+            ).rejects.toThrow(/permission denied for schema/);
           }
         } finally {
           await rw.end();
@@ -541,7 +604,9 @@ describe.skipIf(!databaseUrl)(
         expect(before.schemas).toEqual([
           "billing:USAGE",
           "customer:USAGE",
+          "inventory:USAGE",
           "product:USAGE",
+          "rating:USAGE",
         ]);
         await runSqlFile(sql, REPORTING_ROLES_SQL);
         await runSqlFile(sql, REPORTING_ROLES_SQL);

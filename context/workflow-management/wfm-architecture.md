@@ -148,7 +148,7 @@ Each function runs as its **own least-privilege Postgres role**; the boundary be
 | `kestra_engine` | platform | `CONNECT`+`CREATE` on the `kestra` DB only; **no `CONNECT` on billing** | `rm03a` |
 | Kestra Basic Auth | platform | instance-admin on the engine (OSS) | `rm04` D5, phase-2 D27 |
 | `BILLRUN_APP_TOKEN` | 2 & 3 | scoped to the bill-run M2M endpoints; **billing's — rating has none** | phase-2 D27 |
-| `reporting_runtime` | 4 | `SELECT` only, on ten enumerated tables and one view (`pgledger_transfers_view`); **no write anywhere**; `default_transaction_read_only = on` | `rptmgmt-code-standards.md` §7, rpt01 D1/D2, rpt03 D1, rpt04 D2 |
+| `reporting_runtime` | 4 | `SELECT` only, on fourteen enumerated tables and one view (`pgledger_transfers_view`); **no write anywhere**; `default_transaction_read_only = on` | `rptmgmt-code-standards.md` §7, rpt01 D1/D2, rpt03 D1, rpt04 D2, rpt08 D5 |
 | Reporting outbound account key | 4 | read/write on the reporting outbound storage account — **one Azure Files share per destination** (`platform-check`, `polygon-capacity`, …), each mounted at `/data/outbound/<destination>/`; never reaches Kestra or the runtime. Each reader gets a read-only SAS on **its own share only** (RF-OI2) | rpt01 D7, rpt04 D1 |
 
 **Deploy run-order is load-bearing:** `platform → rating → billrun` (D15). `billrun_runtime` must never be created during the window where `PUBLIC` still holds `CONNECT` on the billing database (the `rm03a` ordering hazard). `billrun-db-roles.sql` self-asserts the precondition and fails closed (phase-2 eng-review #12).
