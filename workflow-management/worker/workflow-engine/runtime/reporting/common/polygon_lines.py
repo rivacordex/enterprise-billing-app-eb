@@ -154,6 +154,16 @@ class CapacityLine:
     rated_amount: Decimal | None
 
 
+def start_date(polygon: PolygonLine) -> date | None:
+    """``polygon_start_date`` as a date; ``None`` when absent or not a real date."""
+    if polygon.polygon_start_date is None:
+        return None
+    try:
+        return date.fromisoformat(polygon.polygon_start_date)
+    except ValueError:
+        return None
+
+
 def _params(scopes: Sequence[BillScope]) -> dict[str, object]:
     return {
         "run_ids": [s.run_id for s in scopes],

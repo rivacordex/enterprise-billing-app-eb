@@ -34,7 +34,7 @@ from decimal import Decimal
 
 from ..common import codes
 from ..common.csv_writer import fmt_amount, fmt_blank, fmt_date
-from ..common.polygon_lines import PolygonLine, apportion_discount
+from ..common.polygon_lines import PolygonLine, apportion_discount, start_date
 from .extract import Extract, Invoice
 
 # Contract column positions (contracts/invoice_csv.yaml, IC6).
@@ -79,20 +79,11 @@ class Violation:
     reason: str
 
 
-def _start_date(polygon: PolygonLine) -> date | None:
-    if polygon.polygon_start_date is None:
-        return None
-    try:
-        return date.fromisoformat(polygon.polygon_start_date)
-    except ValueError:
-        return None
-
-
 def _missing(polygon: PolygonLine) -> str | None:
     """The first value this polygon row lacks (IC16, rpt08 D4), or ``None``."""
     if polygon.polygon_id is None:
         return codes.POLYGON_ID_MISSING
-    if _start_date(polygon) is None:
+    if start_date(polygon) is None:
         return codes.POLYGON_START_DATE_MISSING
     if polygon.amount is None:
         return codes.USAGE_AMOUNT_MISSING
@@ -132,7 +123,7 @@ def _invoice_rows(
             polygon.commercial_unit or "",
             polygon.polygon_id or "",
             fmt_amount(polygon.amount),
-            fmt_date(_start_date(polygon)),
+            fmt_date(start_date(polygon)),
             invoice.invoice_id,
             fmt_date(invoice_date),
             fmt_amount(invoice.total_amount),

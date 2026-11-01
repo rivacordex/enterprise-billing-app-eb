@@ -52,6 +52,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from functools import cached_property
 
 import psycopg
 
@@ -133,6 +134,18 @@ class LedgerSnapshot:
     unapplied_accounts: Mapping[str, str]  # financial_account_id -> pgledger account
     # Read only with ``deposits=True`` (rpt09, DEP rows); empty otherwise.
     deposits_accounts: Mapping[str, str] = field(default_factory=dict)
+
+    @cached_property
+    def owners(self) -> Mapping[str, Mapping[str, str]]:
+        """``role → {pgledger account → owner}``, built once per snapshot (rpt09 D2)."""
+        return {
+            role: {account: owner for owner, account in owned.items()}
+            for role, owned in (
+                (RECEIVABLES, self.receivables_accounts),
+                (UNAPPLIED_CASH, self.unapplied_accounts),
+                (DEPOSITS, self.deposits_accounts),
+            )
+        }
 
 
 @dataclass(frozen=True)
@@ -318,15 +331,18 @@ def open_amounts(
     invoice_amounts: Mapping[str, Decimal],
     billing_account_ids: Iterable[str],
     as_of: date,
+    links: Mapping[str, str] | None = None,
 ) -> dict[str, Decimal]:
     """Each invoice's open amount at the end of ``as_of`` (rpt09 D4, as SR20).
 
     ``open_amount`` of the invoice's amount and the receivables effects of the
     payment-side lines linked to it (``invoice_links``) that are in the balance
     at the end of ``as_of`` (``counts_at_end_of``). Account-level items don't
-    reduce it (rpt03 D3).
+    reduce it (rpt03 D3). ``links``: ``invoice_links(snapshot.lines)`` when the
+    caller already has it.
     """
-    links = invoice_links(snapshot.lines)
+    if links is None:
+        links = invoice_links(snapshot.lines)
     linked: dict[str, list[Decimal]] = {invoice_id: [] for invoice_id in invoice_amounts}
     for effect in receivables_effects(snapshot, billing_account_ids, date.max):
         line = effect.line
@@ -367,12 +383,7 @@ class SubjectLeg:
 
 def _accounts_of(snapshot: LedgerSnapshot, role: str) -> Mapping[str, str]:
     """``pgledger account → owner`` for one role's bound accounts."""
-    owned = {
-        RECEIVABLES: snapshot.receivables_accounts,
-        UNAPPLIED_CASH: snapshot.unapplied_accounts,
-        DEPOSITS: snapshot.deposits_accounts,
-    }[role]
-    return {account: owner for owner, account in owned.items()}
+    return snapshot.owners[role]
 
 
 def subject_leg(snapshot: LedgerSnapshot, line: PostedLine, role: str) -> SubjectLeg | None:

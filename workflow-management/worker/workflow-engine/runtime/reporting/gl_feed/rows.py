@@ -48,7 +48,7 @@ from decimal import Decimal
 
 from ..common import codes, receivables
 from ..common.csv_writer import fmt_amount, fmt_blank, fmt_date
-from ..common.polygon_lines import PolygonLine, apportion_discount
+from ..common.polygon_lines import PolygonLine, apportion_discount, start_date
 from ..common.receivables import DEPOSITS, RECEIVABLES, UNAPPLIED_CASH, SubjectLeg
 from . import gl_codes
 from .extract import Bill, BillLine, Document, Extract
@@ -371,7 +371,7 @@ class _Builder:
         for polygon in polygons:
             amount = polygon.amount if polygon.amount is not None else Decimal("0")
             share = shares[polygon.udr_id]
-            start = _start_date(polygon)
+            start = start_date(polygon)
             if polygon.polygon_id is None:
                 self.problem(document, codes.POLYGON_ID_MISSING)
             if start is None:
@@ -395,15 +395,6 @@ class _Builder:
         return rows
 
 
-def _start_date(polygon: PolygonLine) -> date | None:
-    if polygon.polygon_start_date is None:
-        return None
-    try:
-        return date.fromisoformat(polygon.polygon_start_date)
-    except ValueError:
-        return None
-
-
 def build(data: Extract, posting_date: date, occ_reason_codes: Sequence[str]) -> Built:
     builder = _Builder(data, occ_reason_codes)
     for document in data.documents:
@@ -415,7 +406,7 @@ def build(data: Extract, posting_date: date, occ_reason_codes: Sequence[str]) ->
     built.invoice_amounts = {i: data.invoices[i].amount for i in invoice_ids if i in data.invoices}
     all_bans = [ban for bans in data.mno_billing_accounts.values() for ban in bans]
     built.invoice_open = receivables.open_amounts(
-        data.ledger, built.invoice_amounts, all_bans, posting_date
+        data.ledger, built.invoice_amounts, all_bans, posting_date, links=builder.links
     )
     built.mno_day_effects = {
         mno: sum((data.day_effects.get(ban, Decimal("0")) for ban in bans), Decimal("0"))
