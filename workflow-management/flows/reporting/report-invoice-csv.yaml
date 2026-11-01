@@ -1,0 +1,135 @@
+# rpt08-spec D5 — Invoice CSV (Part D, IC21). For one invoice date, writes one
+# R<MNO><invoice_date>.csv per MNO invoiced that day: a header row, then for
+# each polygon charge on those invoices a usage row (as the invoice PDF's
+# capacity detail prints it) and, when the polygon has a discount, a discount
+# row — its apportioned share of the capacity line's discount, negative, with
+# Usage_Mbps blank (rpt08 D8; contracts/invoice_csv.yaml). Readers: the MNOs,
+# through the CSP later (I-OI6). Kestra output only (IC19): Revenue Ops
+# download the files from the `publish` task until delivery is decided
+# (I-OI4). Manual trigger only (the per-invoice trigger is I-OI3).
+#
+# Task order (IC21, code-standards §3.2): validate_date → generate →
+# validate_output (each file) → publish (each file) → set_status. Nothing is
+# published unless every file passes its column definition and the IC18
+# report checks (Inv 5).
+#
+# Inputs reach the shell as env vars, never interpolated into the command.
+# The YAML computes nothing (Inv 13).
+#
+# Never edit this flow in the Kestra UI — deployed from git (SR41).
+id: report-invoice-csv
+namespace: reporting
+description: Invoice CSV
+
+labels:
+  report: invoice_csv
+
+inputs:
+  # Optional: empty means yesterday in Asia/Kuala_Lumpur, resolved by
+  # report-validate-date (IC14). Today is allowed: an invoice posted earlier
+  # today can be reported.
+  - id: invoice_date
+    type: STRING
+    required: false
+    description: Invoice date, YYYYMMDD (default yesterday, Asia/Kuala_Lumpur)
+
+tasks:
+  # RF7 — `flow_revision` as a run label (flow-level `labels:` are not
+  # rendered), first, so a failed run is traceable too.
+  - id: trace
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      flow_revision: "{{ flow.revision }}"
+
+  # IC14 — INVALID_INVOICE_DATE unless today or earlier; empty = yesterday.
+  - id: validate_date
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-date
+    wait: true
+    transmitFailed: true
+    inputs:
+      name: invoice_date
+      value: "{{ inputs.invoice_date ?? '' }}"
+      rule: not_future
+      default: yesterday
+
+  - id: inputs_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      invoice_date: "{{ outputs.validate_date.outputs.effective_date }}"
+
+  # IC13, IC20 — the runtime reads the day's invoices and their polygon lines
+  # in one snapshot, runs the IC18 checks and writes one file per MNO.
+  - id: generate
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # ACA has no Docker daemon
+    namespaceFiles:
+      enabled: true
+      include:
+        - contracts/**
+    env:
+      INVOICE_DATE: "{{ outputs.validate_date.outputs.effective_date }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.invoice_csv
+        --invoice-date="$INVOICE_DATE" --out-dir=. --contracts-dir=contracts
+    outputFiles:
+      - R*.csv
+
+  - id: count_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      skipped_invoices: "{{ outputs.generate.vars.skipped_invoices }}"
+      files_written: "{{ outputs.generate.vars.files_written }}"
+
+  # IC18, Inv 5 — each file against its column definition, before anything is
+  # published. No files (no invoices that day, or all skipped): nothing to check.
+  - id: validate_output
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ outputs.generate.vars.files }}"
+    tasks:
+      - id: validate_file
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: reporting
+        flowId: report-validate-output
+        wait: true
+        transmitFailed: true
+        inputs:
+          file: "{{ outputs.generate.outputFiles[taskrun.value] }}"
+          contract: invoice_csv
+          name: "{{ taskrun.value }}"
+
+  # RF7 — each file as a task output file (the published files), with its
+  # DELIVERED line. No flow-level `outputs:` (rpt03: the Exit task that ends a
+  # run WARNING skips rendering them).
+  - id: publish
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ outputs.generate.vars.files }}"
+    tasks:
+      - id: publish_file
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        inputFiles:
+          "{{ taskrun.value }}": "{{ outputs.generate.outputFiles[taskrun.value] }}"
+        env:
+          FLOW_REVISION: "{{ flow.revision }}"
+          FILE: "{{ taskrun.value }}"
+        commands:
+          - >
+            python3 -m runtime.reporting.common.trace delivered
+            --flow-revision="$FLOW_REVISION" "$FILE"
+        outputFiles:
+          - R*.csv
+
+  # The WARNING contract (code-standards §2.6): WARNING when any invoice was
+  # skipped (IC15), applied here, never an exit code.
+  - id: set_status
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.generate.vars.status == 'WARNING' }}"
+    then:
+      - id: warning
+        type: io.kestra.plugin.core.execution.Exit
+        state: WARNING

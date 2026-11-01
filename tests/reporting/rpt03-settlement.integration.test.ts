@@ -242,7 +242,7 @@ describe.skipIf(!databaseUrl || !ready)(
         [fx.documents.dbnA, "DBN", "-50.00"],
         [fx.documents.payA0, "PAY", "70.00"],
       ]);
-      // No MNO-A invoice is reduced by them (T1–T3, T5, T10 opens above).
+      // No MNO1 invoice is reduced by them (T1–T3, T5, T10 opens above).
       expect(invoiceRow("A1")?.invoice_open_amount).toBe("1000.00");
     });
 
@@ -265,7 +265,7 @@ describe.skipIf(!databaseUrl || !ready)(
       ]);
     });
 
-    it("T9 — no UNAPPLIED row for MNO-B (fully allocated) nor for MNO-D (unapplied cash, no 202609 invoice)", () => {
+    it("T9 — no UNAPPLIED row for MNO2 (fully allocated) nor for MNO4 (unapplied cash, no 202609 invoice)", () => {
       expect(
         paymentRows().filter(
           (r) => r.mno_id === MNO.B && r.type_of_payment === "UNAPPLIED",
@@ -294,7 +294,7 @@ describe.skipIf(!databaseUrl || !ready)(
       expect(invoiceRows().filter((r) => r.mno_id === MNO.D)).toEqual([]);
     });
 
-    it("T13 — missing MNO key: the invoice and every MNO-C row are absent; SKIPPED line; skipped_invoices=1; WARNING", () => {
+    it("T13 — missing MNO key: the invoice and every MNO3 row are absent; SKIPPED line; skipped_invoices=1; WARNING", () => {
       const ids = [...invoiceRows(), ...paymentRows()].flatMap((r) => [
         r.invoice_id,
         r.payment_transaction_no,
@@ -404,7 +404,7 @@ sys.exit(m.main(sys.argv[1:]))`,
       expect(past.files).toEqual({});
     });
 
-    it("T16 — all skipped: a period whose only invoices belong to MNO-C fails ALL_INVOICES_EXCEPTED; no files", () => {
+    it("T16 — all skipped: a period whose only invoices belong to MNO3 fails ALL_INVOICES_EXCEPTED; no files", () => {
       const run = settle("202605", "20261031");
       expect(run.status).toBe(1);
       expect(run.logs).toEqual([
@@ -623,7 +623,7 @@ print(json.dumps(out))`,
         );
         compared += 1;
       }
-      // MNO-E holds 49.99, so the comparison is never only 0 = 0.
+      // MNO5 holds 49.99, so the comparison is never only 0 = 0.
       expect(unapplied.get(MNO.E)).toBe("49.99");
       expect(compared).toBeGreaterThanOrEqual(2);
     });

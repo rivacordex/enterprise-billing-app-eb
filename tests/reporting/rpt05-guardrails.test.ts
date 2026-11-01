@@ -113,9 +113,9 @@ print(receivables.receivables_balance(snap, ["BAN1", "BAN2"], d(2026, 10, 27)))`
 import json
 roles = [
     PartyRole("PR3", "mno-b", ("BAN2",)),
-    PartyRole("PR1", "MNO-Z", ("BAN1", "BAN2")),
+    PartyRole("PR1", "MNO26", ("BAN1", "BAN2")),
     PartyRole("PR9", None, ("BAN9",)),
-    PartyRole("PR2", "MNO-A", ("BAN7",)),
+    PartyRole("PR2", "MNO1", ("BAN7",)),
     PartyRole("PR0", None, ("BAN8",)),
 ]
 b = builder.build(roles, snap, d(2026, 10, 27))
@@ -124,8 +124,8 @@ print(json.dumps({"rows": b.rows, "skipped": [s.line for s in b.skipped], "dup":
     expect(run.status, run.stderr).toBe(0);
     expect(JSON.parse(run.stdout)).toEqual({
       rows: [
-        ["20261027", "MNO-A", "0.00"],
-        ["20261027", "MNO-Z", "-230.00"],
+        ["20261027", "MNO1", "0.00"],
+        ["20261027", "MNO26", "-230.00"],
         ["20261027", "mno-b", "-300.00"],
       ],
       skipped: [
@@ -141,13 +141,13 @@ print(json.dumps({"rows": b.rows, "skipped": [s.line for s in b.skipped], "dup":
       "-c",
       `${LEDGER}
 import json
-roles = [PartyRole("PR1", "MNO-A", ("BAN1",)), PartyRole("PR2", "MNO-A", ("BAN2",)),
-         PartyRole("PR3", "MNO-B", ("BAN1",))]
+roles = [PartyRole("PR1", "MNO1", ("BAN1",)), PartyRole("PR2", "MNO1", ("BAN2",)),
+         PartyRole("PR3", "MNO2", ("BAN1",))]
 b = builder.build(roles, snap, d(2026, 10, 27))
 print(json.dumps({"rows": b.rows, "dup": b.duplicate_keys}))`,
     ]);
     expect(run.status, run.stderr).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({ rows: [], dup: ["MNO-A"] });
+    expect(JSON.parse(run.stdout)).toEqual({ rows: [], dup: ["MNO1"] });
   });
 });
 

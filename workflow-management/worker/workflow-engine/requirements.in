@@ -13,3 +13,7 @@ azure-identity==1.25.3
 # (flows/reporting/contracts/*.yaml) with PyYAML, through `yaml.safe_load`
 # only (guardrail T-R02-12). The reporting module's first library.
 PyYAML==6.0.3
+# rpt09-spec D6 — the GL feed's AES-256 password zip (WinZip AES, GL15), written
+# by runtime/reporting/common/encrypt.py. The standard library's zipfile can't
+# encrypt. Brings pycryptodomex.
+pyzipper==0.3.6

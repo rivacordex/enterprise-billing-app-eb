@@ -54,7 +54,7 @@ describe.skipIf(!kestraConfigured)(
   "rpt05 report-mno-outstanding on a live engine",
   { timeout: 180_000 },
   () => {
-    it("WARNING path: the default date (yesterday) skips MNO-C, ends WARNING, publishes one file with its DELIVERED line, and labels the run", async () => {
+    it("WARNING path: the default date (yesterday) skips MNO3, ends WARNING, publishes one file with its DELIVERED line, and labels the run", async () => {
       const e = await run({});
       expect(e.state.current).toBe("WARNING");
       expect(await messages(e, "WARN")).toContainEqual(

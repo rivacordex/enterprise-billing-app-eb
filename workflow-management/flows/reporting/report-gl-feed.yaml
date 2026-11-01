@@ -1,0 +1,178 @@
+# rpt09-spec D7 — GL feed for Oracle Financials (Part E, GL23). For one posting
+# date, writes GLFEED_ORAFIN_<posting_date>.zip: an AES-256 password zip
+# holding exactly one GLFEED_ORAFIN_<posting_date>.csv, one row per accounting
+# line posted that day (contracts/gl_feed.yaml). Reader: Finance, which loads
+# it into Oracle (G-OI1). Every invoice's rows add up to its total and every
+# MNO's rows reconcile to the ledger's own day before anything is published
+# (GL20, rpt09 D5); any row that can't be built fails the whole run (GL16).
+# Kestra output only (GL21): Revenue Ops download the zip from the `publish`
+# task until delivery is decided (G-OI9). Manual trigger only (GL22).
+#
+# Task order (GL23, code-standards §3.2): check_secret → validate_date →
+# generate → validate_output → encrypt → publish → set_status.
+# - check_secret runs first, so a missing zip password fails
+#   ENCRYPTION_KEY_MISSING before any CSV is built (GL15, D6).
+# - generate, validate_output and encrypt share one working directory (the
+#   `build` WorkingDirectory task): the plain CSV exists only there, is checked
+#   against its column definition, encrypted, and removed — it is never a task
+#   output (Inv 6, guardrail 7). validate_output therefore runs the shared
+#   output check's runtime (`runtime.reporting.validate output`, the code behind
+#   report-validate-output) in place: the subflow takes a FILE input, which
+#   would have to be an execution output first.
+# - publish publishes the zip only, with its DELIVERED line.
+#
+# Inputs and the secret reach the shell as env vars, never interpolated into
+# the command; the password is never on a command line or in a log. The YAML
+# computes nothing (Inv 13).
+#
+# Never edit this flow in the Kestra UI — deployed from git (SR41).
+id: report-gl-feed
+namespace: reporting
+description: GL feed (Oracle Financials)
+
+labels:
+  report: gl_feed
+
+inputs:
+  # Optional: empty means yesterday in Asia/Kuala_Lumpur, resolved by
+  # report-validate-date (GL3). Must be yesterday or earlier: a complete day.
+  - id: posting_date
+    type: STRING
+    required: false
+    description: Posting date, YYYYMMDD (default yesterday, Asia/Kuala_Lumpur)
+
+variables:
+  # GL7 — a DBN whose reason code is listed is a one-time charge (I); every
+  # other DBN is a debit adjustment (A). Comma-separated. None of these codes
+  # exists yet (G-OI5).
+  occ_reason_codes: MNO_SIGNUP_FEE,LATE_PAYMENT_CHARGE,INTEGRATION_CHARGE
+  # GL15, rpt09 D6 — the method in runtime/reporting/common/encrypt.py. PGP
+  # (G-OI7) adds a method there.
+  encryption: zip_aes256
+
+tasks:
+  # RF7 — `flow_revision` as a run label (flow-level `labels:` are not
+  # rendered), first, so a failed run is traceable too.
+  - id: trace
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      flow_revision: "{{ flow.revision }}"
+
+  # GL15, D6 — ENCRYPTION_KEY_MISSING unless the zip password secret is set,
+  # before anything is built. Not handed the secret: verified on v1.3.35, a
+  # missing secret() fails the task while Kestra renders it, before the
+  # runtime can log the code (and `??` doesn't catch it), so the runtime checks
+  # the engine's own SECRET_GLFEED_ZIP_PASSWORD (common/encrypt.py `check`).
+  - id: check_secret
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process # ACA has no Docker daemon
+    env:
+      ENCRYPTION: "{{ vars.encryption }}"
+    commands:
+      - python3 -m runtime.reporting.common.encrypt check --method="$ENCRYPTION"
+
+  # GL3 — INVALID_POSTING_DATE unless yesterday or earlier; empty = yesterday.
+  - id: validate_date
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: reporting
+    flowId: report-validate-date
+    wait: true
+    transmitFailed: true
+    inputs:
+      name: posting_date
+      value: "{{ inputs.posting_date ?? '' }}"
+      rule: before_today
+      default: yesterday
+
+  - id: inputs_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      posting_date: "{{ outputs.validate_date.outputs.effective_date }}"
+
+  # One working directory for the plain CSV's whole life (D6).
+  - id: build
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    namespaceFiles:
+      enabled: true
+      include:
+        - contracts/**
+    tasks:
+      # GL14, GL24 — the runtime reads the day in one snapshot, builds every
+      # row, runs the D5 reconciliation and writes the CSV (or fails).
+      - id: generate
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        env:
+          POSTING_DATE: "{{ outputs.validate_date.outputs.effective_date }}"
+          OCC_REASON_CODES: "{{ vars.occ_reason_codes }}"
+        commands:
+          - >
+            python3 -m runtime.reporting.gl_feed
+            --posting-date="$POSTING_DATE" --occ-reason-codes="$OCC_REASON_CODES"
+            --out-dir=. --contracts-dir=contracts
+
+      # GL18, Inv 5 — the CSV against its column definition, before encryption.
+      - id: validate_output
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        env:
+          FILE: "{{ outputs.generate.vars.file }}"
+        commands:
+          - >
+            python3 -m runtime.reporting.validate output
+            --contract=contracts/gl_feed.yaml --file="$FILE" --name="$FILE"
+
+      # GL15 — the CSV into its AES-256 zip; the CSV is removed. The zip is the
+      # only file that leaves the working directory.
+      - id: encrypt
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        env:
+          GLFEED_ZIP_PASSWORD: "{{ secret('GLFEED_ZIP_PASSWORD') }}"
+          ENCRYPTION: "{{ vars.encryption }}"
+          FILE: "{{ outputs.generate.vars.file }}"
+        commands:
+          - >
+            python3 -m runtime.reporting.common.encrypt encrypt
+            --method="$ENCRYPTION" --file="$FILE"
+        outputFiles:
+          - GLFEED_ORAFIN_*.zip
+
+  - id: count_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      rows: "{{ outputs.generate.vars.rows }}"
+      gl_code_fallbacks: "{{ outputs.generate.vars.gl_code_fallbacks }}"
+
+  # RF7 — the zip as this task's output file (the published file), with its
+  # DELIVERED line (the hash is the zip's). No flow-level `outputs:` (rpt03:
+  # the Exit task that ends a run WARNING skips rendering them).
+  - id: publish
+    type: io.kestra.plugin.scripts.python.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    inputFiles:
+      "{{ outputs.encrypt.vars.file }}": "{{ outputs.encrypt.outputFiles[outputs.encrypt.vars.file] }}"
+    env:
+      FLOW_REVISION: "{{ flow.revision }}"
+      FILE: "{{ outputs.encrypt.vars.file }}"
+    commands:
+      - >
+        python3 -m runtime.reporting.common.trace delivered
+        --flow-revision="$FLOW_REVISION" "$FILE"
+    outputFiles:
+      - GLFEED_ORAFIN_*.zip
+
+  # The WARNING contract (code-standards §2.6): WARNING when a product's GL
+  # code fell back (GL9), applied here, never an exit code.
+  - id: set_status
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.generate.vars.status == 'WARNING' }}"
+    then:
+      - id: warning
+        type: io.kestra.plugin.core.execution.Exit
+        state: WARNING

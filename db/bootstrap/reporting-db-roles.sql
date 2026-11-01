@@ -63,11 +63,11 @@ BEGIN
       RAISE EXCEPTION 'DRIFT: reporting_runtime owns one or more objects — reconcile ownership drift before provisioning (rpt01 D1)';
     END IF;
     -- A privilege on any object in this database outside the enumerated
-    -- surface (the ten tables and one view of Step 5, the three schemas of
-    -- Step 4) is drift too: this file only grants and revokes on that
+    -- surface (the fifteen tables and two views of Step 5, the five schemas
+    -- of Step 4) is drift too: this file only grants and revokes on that
     -- surface, so a stray grant elsewhere would survive every re-run. The
     -- database itself is a shared object (dbid 0) and is converged by Step 3.
-    -- A unit that grants a new object (rpt08, rpt09) adds it here too.
+    -- A unit that grants a new object adds it here too.
     IF EXISTS (
       SELECT FROM pg_catalog.pg_shdepend d
       WHERE d.refclassid = 'pg_catalog.pg_authid'::regclass
@@ -86,11 +86,19 @@ BEGIN
             '"product"."ratecard_version"'::regclass,
             '"product"."ratecard_ran_usage_lkp"'::regclass,
             '"product"."product_offering_price"'::regclass,
-            '"billing"."pgledger_transfers_view"'::regclass))
+            '"billing"."pgledger_transfers_view"'::regclass,
+            '"rating"."udr_rated"'::regclass,
+            '"inventory"."product_inventory"'::regclass,
+            '"billing"."customer_bill_line"'::regclass,
+            '"product"."product_offering"'::regclass,
+            '"billing"."gl_resolution_view"'::regclass,
+            '"billing"."bill_cycle"'::regclass))
           OR (d.classid = 'pg_catalog.pg_namespace'::regclass AND d.objid IN (
             '"billing"'::regnamespace,
             '"customer"'::regnamespace,
-            '"product"'::regnamespace))
+            '"product"'::regnamespace,
+            '"rating"'::regnamespace,
+            '"inventory"'::regnamespace))
         )
     ) THEN
       RAISE EXCEPTION 'DRIFT: reporting_runtime holds a privilege outside its enumerated grants (or a default privilege) — reconcile grant drift before provisioning (rpt01 D2)';
@@ -124,23 +132,26 @@ END
 $$;
 --> statement-breakpoint
 
--- Step 4 — schema USAGE (confers no table access on its own). Only the three
--- schemas Parts A–C read; `rating` arrives with rpt08 (IC23). CREATE is
--- revoked so a stray grant converges.
-REVOKE CREATE ON SCHEMA "billing", "customer", "product" FROM reporting_runtime;
+-- Step 4 — schema USAGE (confers no table access on its own). The three
+-- schemas Parts A–C read, plus `rating` and `inventory` for Part D's polygon
+-- lines (rpt08 D5, IC23). CREATE is revoked so a stray grant converges.
+REVOKE CREATE ON SCHEMA "billing", "customer", "product", "rating", "inventory" FROM reporting_runtime;
 --> statement-breakpoint
-GRANT USAGE ON SCHEMA "billing"  TO reporting_runtime;
+GRANT USAGE ON SCHEMA "billing"   TO reporting_runtime;
 --> statement-breakpoint
-GRANT USAGE ON SCHEMA "customer" TO reporting_runtime;
+GRANT USAGE ON SCHEMA "customer"  TO reporting_runtime;
 --> statement-breakpoint
-GRANT USAGE ON SCHEMA "product"  TO reporting_runtime;
+GRANT USAGE ON SCHEMA "product"   TO reporting_runtime;
+--> statement-breakpoint
+GRANT USAGE ON SCHEMA "rating"    TO reporting_runtime;
+--> statement-breakpoint
+GRANT USAGE ON SCHEMA "inventory" TO reporting_runtime;
 --> statement-breakpoint
 
--- Step 5 — SELECT on exactly the tables Parts A–C read (SR39, MO19, PC24,
--- rpt04 D2),
+-- Step 5 — SELECT on exactly the tables Parts A–E read (SR39, MO19, PC24,
+-- rpt04 D2, rpt08 D5, rpt09 D8),
 -- enumerated per table (rptmgmt-code-standards §7): never ON ALL TABLES, no
--- ALTER DEFAULT PRIVILEGES, no sequence USAGE, no EXECUTE. rpt08/rpt09 add
--- theirs.
+-- ALTER DEFAULT PRIVILEGES, no sequence USAGE, no EXECUTE.
 GRANT SELECT ON TABLE
   "billing"."customer_bill",
   "billing"."document",
@@ -176,6 +187,28 @@ GRANT SELECT ON TABLE
   "product"."product_offering_price"
 TO reporting_runtime;
 --> statement-breakpoint
+-- rpt08 D5 (IC23) — exactly what Part D reads: the polygon lines
+-- (runtime/reporting/common/polygon_lines.py, mirroring billing's
+-- capacityDetailCte — the claimed `udr_rated` rows, their subscription's
+-- offering, the bill's capacity lines) and each offering's name (Product Type).
+GRANT SELECT ON TABLE
+  "rating"."udr_rated",
+  "inventory"."product_inventory",
+  "billing"."customer_bill_line",
+  "product"."product_offering"
+TO reporting_runtime;
+--> statement-breakpoint
+-- rpt09 D8 (GL25 as built) — the GL feed's GL codes come from Accounts' own
+-- resolution, `gl_resolution_view` (ledger_binding + gl_mapping + system
+-- accounts → one code per pgledger account), read only by
+-- runtime/reporting/common/receivables.py. A plain view (migrations 0012,
+-- 0020; owner rights), so `gl_mapping` and the pgledger base tables need no
+-- grant and stay refused. `bill_cycle` gives GL6's `annually` frequency.
+GRANT SELECT ON TABLE
+  "billing"."gl_resolution_view",
+  "billing"."bill_cycle"
+TO reporting_runtime;
+--> statement-breakpoint
 
 -- Step 6 — explicit REVOKEs, for the record (D2). No-ops on a fresh role, but
 -- they make the boundary readable and survive a future accidental grant to
@@ -196,7 +229,13 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE
   "product"."ratecard_version",
   "product"."ratecard_ran_usage_lkp",
   "product"."product_offering_price",
-  "billing"."pgledger_transfers_view"
+  "billing"."pgledger_transfers_view",
+  "rating"."udr_rated",
+  "inventory"."product_inventory",
+  "billing"."customer_bill_line",
+  "product"."product_offering",
+  "billing"."gl_resolution_view",
+  "billing"."bill_cycle"
 FROM reporting_runtime;
 --> statement-breakpoint
 REVOKE EXECUTE ON FUNCTION

@@ -1,18 +1,19 @@
-# Reporting — running and checking the report flows (Parts A–C)
+# Reporting — running and checking the report flows (Parts A–E)
 
 Guide for **Revenue Ops** on the report flows in Kestra namespace `reporting`.
 It covers how to:
 
 - check the reporting platform before you run anything;
-- run the settlement reports (Part A), the polygon capacity lookup (Part B)
-  and MNO outstanding (Part C);
+- run the settlement reports (Part A), the polygon capacity lookup (Part B),
+  MNO outstanding (Part C), the invoice CSV (Part D) and the GL feed for
+  Oracle Financials (Part E);
 - read a run's result, find skipped rows, and download the files;
 - rerun a report, correct a delivered polygon file, and pass the MNO
   outstanding file to the CSP;
 - trace any file a recipient holds back to the run that made it.
 
-You need nothing but this guide and the Kestra UI. The invoice CSV (Part D)
-and the GL feed (Part E) get their own sections when they are built.
+You need nothing but this guide and the Kestra UI (and, for the GL feed,
+7-Zip or WinZip, section 6).
 
 Design authority: `context/reporting-management/` (`rptmgmt-architecture.md`
 Inv 5, 10–13; the code register in `rptmgmt-code-standards.md` §6) and the
@@ -42,6 +43,8 @@ disagree, the flows win. Fix the guide in the same change as the flow.
 | `report-settlement-invoice` | Settlement reports (Part A) | `Reporting_dnb_settlement_invoice_<ts>.csv` and `Reporting_dnb_settlement_invoice_payment_<ts>.csv` | Finance / billing ops |
 | `report-polygon-capacity-lookup` | Polygon capacity lookup (Part B) | `Polygon_capacity_lookup_<report_date>.csv` (no header) | Mediation and the CSP, from the `polygon-capacity` share. **Disabled until the capacity source exists** (section 11) |
 | `report-mno-outstanding` | MNO outstanding (Part C) | `Reporting_dnb_settlement_mno_<outstanding_date>.csv` (no header) | The CSP, passed on by you (section 9) |
+| `report-invoice-csv` | Invoice CSV (Part D) | `R<mno><invoice_date>.csv` (header), one per MNO invoiced that day | The MNOs (through the CSP later), passed on by you |
+| `report-gl-feed` | GL feed (Oracle Financials) (Part E) | GLFEED_ORAFIN_<posting_date>.zip: a password-protected AES-256 zip holding GLFEED_ORAFIN_<posting_date>.csv (header) | Finance, who load it into Oracle; passed on by you (section 4.5) |
 
 The namespace also holds three helper flows that the reports call:
 `report-validate-date`, `report-validate-period` and `report-validate-output`.
@@ -74,13 +77,16 @@ least 7 years (section 10).
    | A | `as_of_date` | today | today or earlier, and not before the first day of `billing_period` |
    | B | `report_date` | yesterday | yesterday or earlier |
    | C | `outstanding_date` | yesterday | yesterday or earlier |
+   | D | `invoice_date` | yesterday | today or earlier |
+   | E | `posting_date` | yesterday | yesterday or earlier (a complete day) |
 
 4. **Know where each file goes.**
    - **Part B delivers** to the `polygon-capacity` share, where Mediation and
      the CSP pick it up. Once delivered, a day's file can't be replaced by a
      rerun (section 7).
-   - **Parts A and C are outputs only.** Nothing leaves Kestra until you
-     download it and pass it on.
+   - **Parts A, C, D and E are outputs only.** Nothing leaves Kestra until you
+     download it and pass it on. Part E's output is an encrypted zip; the
+     plain CSV is never an output (section 6).
 5. **Nothing is published on a FAILED run.** Every file is checked against its
    column definition before it is published or delivered. If a check fails,
    the run fails and there is no file to download or deliver.
@@ -171,6 +177,74 @@ page opens; wait until it shows **SUCCESS**, **WARNING** or **FAILED**
 - **Time:** about **20 seconds** on dev.
 - Then pass it to the CSP (section 9).
 
+### 4.4 Invoice CSV (Part D) — `report-invoice-csv`
+
+- **Input:** `invoice_date` (YYYYMMDD, blank = yesterday). Today is allowed:
+  invoices posted earlier today are reported. An invoice's date is the day it
+  was posted, Kuala Lumpur time, as printed on the invoice PDF.
+- **Files:** one `R<mno><invoice_date>.csv` per MNO invoiced that day (for
+  example RMNO120261005.csv), holding all of that MNO's invoices posted that
+  day, whatever bill run they came from. A header row with ten columns: MNO_ID,
+  Commercial Unit, Polygon Public Key, Usage Amount, Polygon Subscription Date,
+  Invoice reference Number, Transaction Entry Date, Invoice Amount, Product
+  Type, Usage_Mbps. Then, per invoice and per polygon, a **usage row** with the same polygon,
+  amount and Mbps as the invoice PDF's capacity detail. When the polygon has a
+  discount, a **discount row** follows straight after it: the same values,
+  with Usage Amount = minus the polygon's share of the discount, and Usage_Mbps
+  blank. Billing discounts each capacity line once, so a polygon's share is
+  the line's discount split across its polygons in proportion to their
+  amounts (rounded to the cent, the last polygon taking the remainder, so the
+  shares add up to the discount on the PDF). Invoice Amount is the invoice
+  total, tax included, on every row of that invoice.
+- **No invoices that day:** the run ends **SUCCESS** with no files and the
+  INFO line `NO_INVOICES_ON <invoice_date>`. Nothing was invoiced that day;
+  check the date, or rerun after the bill run is posted.
+- **Time:** under **10 seconds** on a test engine with eight invoices and two
+  files (not yet measured on dev).
+- Then download the files (section 6) and pass each to its MNO through the
+  agreed channel. Delivery straight to the MNOs is still open.
+
+### 4.5 GL feed for Oracle Financials (Part E) — `report-gl-feed`
+
+- **Input:** `posting_date` (YYYYMMDD, blank = yesterday). It must be
+  yesterday or earlier, so the day is complete and a rerun takes the same
+  documents (section 7).
+- **File:** GLFEED_ORAFIN_<posting_date>.zip (for example
+  GLFEED_ORAFIN_20261026.zip), an AES-256 password-protected zip holding
+  exactly one file, GLFEED_ORAFIN_<posting_date>.csv. A header row with
+  sixteen columns, exactly as Finance's brief gives them, then **one row per
+  accounting line posted that day** (by posting time, Kuala Lumpur), for
+  every MNO:
+  - an invoice: one row per polygon (the polygon amount less its share of the
+    capacity line's discount, with the share in Discounted_Amount, split the
+    same way as the invoice CSV, section 4.4), a commitment top-up row when
+    the line was billed up to its commitment, one row per recurring and
+    one-time charge, and one tax row. The rows add up to the invoice total;
+  - a payment captured, a payment applied to an invoice (one row per
+    invoice), a refund or reversal, a credit note, a debit note, a write-off
+    or rounding adjustment, a deposit, its release and its refund.
+- **Signs:** accounting signs. Positive means the MNO owes more (invoices,
+  debit notes, payment reversals, deposit refunds); negative means it owes
+  less or paid (payments, credit notes, write-offs, deposits). This is the
+  **opposite** of the settlement payment file (Part A).
+- **Indicator:** I (invoice), P (payment side, deposits, and every row of an
+  invoice billed yearly in advance), A (adjustment).
+- **Checked before anything is published:** each invoice's rows add up to
+  its total, and each MNO's rows add up to what the ledger itself recorded
+  that day (captures and deposits aside, which aren't receivables). Any row
+  that can't be built fails the whole run: Finance never gets a partial day.
+- **Nothing posted that day:** the run ends **SUCCESS** and the zip holds a
+  CSV with the header row only, so Finance can tell "no activity" from "no
+  file".
+- **Opening the zip:** with **7-Zip or WinZip**, and the GL feed password.
+  Windows Explorer's built-in zip viewer **can't** open it (it doesn't
+  support AES). BSS Ops hold the password; how Finance receives it is still
+  open (section 11).
+- **Never forward, store or attach the unzipped CSV.** Pass Finance the zip
+  exactly as published. If you open it to check something, delete the
+  extracted CSV afterwards.
+- **Time:** not yet measured on dev.
+
 ---
 
 ## 5. Read the result
@@ -180,7 +254,7 @@ page opens; wait until it shows **SUCCESS**, **WARNING** or **FAILED**
 | Status | Meaning | Files |
 |---|---|---|
 | **SUCCESS** | Every row was reported | Published (and, Part B, delivered) |
-| **WARNING** | The files are complete and checked, but some rows could not be reported and were **left out** | Published (and delivered) **without** those rows. Read the `SKIPPED` lines (5.3) before you pass the file on |
+| **WARNING** | The files are complete and checked, but some rows could not be reported and were **left out** (A–D). For the GL feed (E), nothing is ever left out: WARNING means a product had no GL code and its rows carry the revenue code 4000 instead (5.3) | Published (and delivered) **without** those rows. Read the `SKIPPED` / `GL_CODE_FALLBACK` lines (5.3) before you pass the file on |
 | **FAILED** | The run stopped | **Nothing is published or delivered** |
 
 ### 5.2 Labels — finding a run
@@ -191,14 +265,19 @@ Every execution carries labels. In **Executions**, filter on namespace
 
 | Label | On | Value |
 |---|---|---|
-| `report` | every run | `platform_check`, `settlement_invoice`, `polygon_capacity`, `mno_outstanding` |
+| `report` | every run | `platform_check`, `settlement_invoice`, `polygon_capacity`, `mno_outstanding`, `invoice_csv`, `gl_feed` |
 | `flow_revision` | every run, also FAILED ones | The flow version that ran (section 10) |
 | `billing_period`, `as_of_date` | A | The inputs; `as_of_date` is the date actually used (today if left blank) |
 | `report_date` | B | The date actually used |
 | `outstanding_date` | C | The date actually used |
-| `skipped_invoices` | A | How many invoices were left out (0 on SUCCESS) |
+| `invoice_date` | D | The date actually used |
+| `posting_date` | E | The date actually used |
+| `rows` | E | How many rows the CSV inside the zip holds (0: nothing posted that day) |
+| `gl_code_fallbacks` | E | How many products fell back to the revenue GL code (0 on SUCCESS) |
+| `skipped_invoices` | A, D | How many invoices were left out (0 on SUCCESS) |
 | `skipped_polygons` | B | How many polygons were left out |
 | `skipped_mnos` | C | How many MNOs were left out |
+| `files_written` | D | How many files were published (one per MNO; 0 when nothing was invoiced that day, or every invoice was left out) |
 | `ratecard_card_name`, `ratecard_version_id` | B | The rate card and the version in force on `report_date` |
 
 A run that fails its input check has `flow_revision` and `report` only. The
@@ -213,17 +292,37 @@ out is one WARN line:
 SKIPPED <key> <reason>
 ```
 
-The key is the invoice id (A), `<mno>|<commercial unit>|<polygon>` (B) or the
-MNO's party role id (C). The same row is left out on every rerun until its
+The key is the invoice id (A, D), `<mno>|<commercial unit>|<polygon>` (B) or
+the MNO's party role id (C). The same row is left out on every rerun until its
 data is fixed in the source module.
+
+In D an invoice is either in its MNO's file whole, or left out whole: a file
+never holds part of an invoice. An MNO whose invoices were all left out gets
+no file. The D reasons other than `NO_POLYGON_LINES` shouldn't happen on a
+posted invoice (its PDF would not have rendered); treat them as data faults.
 
 | Reason | Report | What it means | What to do |
 |---|---|---|---|
-| `MNO_PUBLIC_KEY_MISSING` | A, C | The MNO's customer record has no MNO Public Key. In A the invoice and all its payment rows are left out (and the MNO's account-level and UNAPPLIED rows); in C the MNO has no row | Ask Customer Management to set the key, then rerun |
+| `MNO_PUBLIC_KEY_MISSING` | A, C, D | The MNO's customer record has no MNO Public Key. In A the invoice and all its payment rows are left out (and the MNO's account-level and UNAPPLIED rows); in C the MNO has no row; in D the invoice is left out | Ask Customer Management to set the key, then rerun |
+| `NO_POLYGON_LINES` | D | The invoice has no polygon charge: only recurring, one-time or tax amounts, or a capacity commitment with no usage. None of those are in the file | Nothing, if that is right for the invoice |
+| `POLYGON_ID_MISSING`, `POLYGON_START_DATE_MISSING`, `COMMERCIAL_UNIT_MISSING` | D | A rated usage row on the invoice has no polygon, no valid subscription date, or no commercial unit | Data fault: give the invoice id to the module owner (Rating) |
+| `USAGE_AMOUNT_MISSING`, `USAGE_MBPS_MISSING` | D | A rated usage row on the invoice has no amount or no Mbps | Data fault: give the invoice id to the module owner (Rating) |
 | `INVOICE_POSTED_AT_MISSING` | A | The invoice has no posting time, so it has no invoice date | Data fault: give the invoice id to the module owner. Until fixed, MNO outstanding (C) also leaves this invoice out of the MNO's amount, **without** a warning |
 | `DISTRICT_MISSING` | B | The polygon's district is blank on the rate card | Ask Product Management to correct the rate card |
 | `SERVICE_CODE_MISSING` | B | The polygon's service code is blank on the rate card | Ask Product Management to correct the rate card |
 | `CAPACITY_MISSING` | B | No subscribed capacity for the polygon | Ask the module owner; the capacity source is still being set up |
+
+**GL feed (E).** The GL feed never leaves a row out. Its one WARN line is
+
+```
+GL_CODE_FALLBACK <document_id> <offering_id>
+```
+
+on the `generate` task: that product's price has no GL code, so the invoice's
+rows for it carry the revenue code 4000. The file is complete and balanced;
+whether Finance can load it with 4000 is their call. Give the offering id to
+**Product Management** (the product owner sets the price's GL code); the next
+run for a later day uses it.
 
 ### 5.4 FAILED — the codes
 
@@ -233,7 +332,7 @@ file check, the line is in the helper flow's own execution: open the
 also see `Failed to render output values` next to it; ignore that, it is
 Kestra noise.
 
-**Input checks (A, B, C).** Correct the input and run again.
+**Input checks (A–E).** Correct the input and run again.
 
 | Code | Meaning |
 |---|---|
@@ -241,6 +340,8 @@ Kestra noise.
 | `INVALID_AS_OF_DATE` | `as_of_date` isn't a real date, is in the future, or is before the first day of `billing_period` (so a future period can't be run yet) |
 | `INVALID_REPORT_DATE` | `report_date` isn't a real date, or is today or later |
 | `INVALID_OUTSTANDING_DATE` | `outstanding_date` isn't a real date, or is today or later |
+| `INVALID_INVOICE_DATE` | `invoice_date` isn't a real date, or is in the future |
+| `INVALID_POSTING_DATE` | `posting_date` isn't a real date, or is today or later |
 
 **Report codes**, logged by `generate`:
 
@@ -258,10 +359,18 @@ Kestra noise.
 | `ALL_MNOS_EXCEPTED` | C | Every MNO was left out (see the `SKIPPED` lines) | Fix the MNO keys |
 | `DUPLICATE_MNO_PUBLIC_KEY` | C | Two customer records carry the same MNO Public Key (the line names it) | Customer Management corrects one, then rerun |
 | `OUTPUT_CONTRACT_VIOLATION … PER_INVOICE_CHECK` | A | An invoice's open amount doesn't add up from its payment rows | Module owner (a fault, not a data problem) |
+| `OUTPUT_CONTRACT_VIOLATION … INVOICE_AMOUNT_NOT_CONSTANT` | D | Two rows of one invoice show different invoice totals | Module owner (a fault, not a data problem) |
+| `OUTPUT_CONTRACT_VIOLATION … DISCOUNT_ROW_INVALID` | D | A row with blank Usage_Mbps isn't a negative discount row right after its polygon's usage row | Module owner (a fault, not a data problem) |
+| `GL_ROW_INVALID <document_id> <reason>` | E | A row of that document can't be built, so the whole day fails (one ERROR line per problem, all listed). Reasons: `MNO_PUBLIC_KEY_MISSING` (the MNO's customer record has no key), `POLYGON_ID_MISSING` / `POLYGON_START_DATE_MISSING` (a rated usage row on the invoice), `CAPACITY_LINE_MISMATCH` (a capacity line's polygon rows don't add up to what was billed), `GL_CODE_UNRESOLVED` (an account has no GL mapping), `UNMAPPED_DOCUMENT` (a kind of document or line the GL feed has no row for, for example an invoice with an "Other charges" usage line) | Key: Customer Management, then rerun. Every other reason: the module owner, with the lines |
+| `OUTPUT_CONTRACT_VIOLATION … INVOICE_SUM <invoice_id>` | E | An invoice's rows don't add up to its total | Module owner (a fault, not a data problem) |
+| `OUTPUT_CONTRACT_VIOLATION … GL_RECONCILIATION <mno>` | E | The MNO's rows don't add up to what the ledger recorded that day | Module owner, the same day: the file can't go to Finance until it balances |
+| `ENCRYPTION_KEY_MISSING` | E | The zip password isn't set on the engine. Logged by the first task, `check_secret`, before anything is built, so no file exists | BSS Ops |
 | `WRITER_INVALID_VALUE` | any | A text value contains a line break (the line names the column) | Correct the value in the source module |
 
 **File checks**, logged by the `validate_output…` task (in its own
-execution):
+execution; for the GL feed, in the run itself, on the `validate_output` task
+inside `build`, because the plain CSV never leaves that task's working
+directory):
 
 | Code | Usual cause | Action |
 |---|---|---|
@@ -285,6 +394,16 @@ execution):
    checks read, not the published files. Always take them from `publish`.)
 3. The names are exact and case-sensitive. Don't rename a file before you pass
    it on: readers match the name.
+
+**Part D** publishes one file per MNO: under `publish`, each file is the
+output of its own `publish_file` run (one per file). A run with
+`files_written` 0 has nothing to download.
+
+**Part E** publishes the zip only, under `publish` (the `encrypt` task inside
+`build` lists the same zip: that is the copy `publish` reads). There is never
+a CSV among the outputs, on any run, SUCCESS or FAILED. To look inside, open
+the zip with 7-Zip or WinZip and the GL feed password; Windows Explorer's
+built-in viewer can't. Pass Finance the zip itself, never the extracted CSV.
 
 **Checking a file a recipient queries.** The `publish` task's log has one
 line per published file:
@@ -314,8 +433,21 @@ in Excel changes it), or it came from another run.
 - **Part A: every run makes a new pair of files.** The timestamp in the name
   is the run's start, so nothing is overwritten. The same `billing_period` and
   `as_of_date` give the same content.
-- **Part C: the same date gives the same content**, under the same file name.
-  Download the run you mean to pass on.
+- **Parts C and D: the same date gives the same content**, under the same file
+  name. Download the run you mean to pass on. In D, an invoice posted later
+  the same day (when you ran it for today) or a skip fixed since appears on a
+  rerun.
+- **Part E: a rerun takes the same documents, but always makes a different
+  zip.** The GL feed takes documents by the day they were posted, so a rerun
+  for a past day picks up the same documents (a backdated entry appears on
+  the day it was posted, not on its entry date). Their rows aren't
+  guaranteed to match, though: an invoice's indicator follows the billing
+  account's **current** bill cycle, so if the account has moved to or from
+  yearly billing since, an old invoice's rows change between P and I.
+  Compare each rerun with the file already sent to Finance before you pass
+  it on. Each run also encrypts afresh, so the zip's bytes, and the hash in
+  its `DELIVERED` line, differ from run to run. Pass Finance one run's zip,
+  and note which (section 10).
 - **Part B: a date already delivered fails.** The rerun ends FAILED with
   `FILE_ALREADY_EXISTS` at the `deliver` task, the delivered file is left
   exactly as it was, and nothing is published. To replace a wrong file, see
@@ -383,7 +515,12 @@ From any file a recipient holds:
    history.
 
 No match means the file didn't come from a `reporting` run as it is now: it
-was changed after download, or it isn't one of ours. History is kept
+was changed after download, or it isn't one of ours.
+
+**The GL feed:** the hash in the `DELIVERED` line is the **zip's**. Trace the
+zip Finance received, not the CSV inside it (the CSV is never published, so
+no line names its hash). Because each run's zip differs (section 7), the
+match also tells you which of several runs for that date Finance holds. History is kept
 indefinitely, and at least 7 years if a purge is ever added (section 1).
 
 ---
@@ -412,6 +549,49 @@ indefinitely, and at least 7 years if a purge is ever added (section 1).
 5. **Reader access to the shares isn't set up yet.** How Mediation and the CSP
    get read access to `polygon-capacity` (and BSS Ops their delete access,
    section 8) is still open. No one outside the engine reads a share yet.
+6. **Part D: polygon charges only.** The invoice CSV has a row for each polygon
+   charge and its discount, nothing else: recurring, one-time and tax amounts,
+   a capacity commitment top-up and "Other charges" usage are on the invoice
+   PDF but not in the file. So the rows of an invoice don't add up to its
+   Invoice Amount.
+7. **Part D: the discount is per polygon only in this file and the GL feed.**
+   The invoice PDF shows one discount per capacity line; the file's discount
+   rows are that discount split across the line's polygons (section 4.4).
+8. **Part D: no delivery and no automatic run yet.** The files are Kestra
+   outputs only, and the flow is run by hand; running it with each invoice
+   PDF, and delivery to the MNOs, are still open.
+9. **Part E: Finance's Oracle import format isn't confirmed.** The columns,
+   the one-row-per-accounting-line grain and the signs follow Finance's brief
+   and are provisional until Finance confirms the import format.
+10. **Part E: interim rows Finance must confirm.** The brief didn't name an
+    invoice's recurring charges, its tax, the commitment top-up, or the
+    per-polygon split of a capacity line's discount. They are in the file so
+    every invoice adds up to its total; Finance has yet to confirm each one,
+    and the tax row's GL code.
+11. **Part E: a payment can appear twice.** A payment captured (GL 1050) and,
+    later, applied to invoices (GL 1200) are separate rows, possibly on
+    separate days; an applied row has no payment mode, because Accounts
+    doesn't record which capture funded it. Finance must not add the two
+    together.
+12. **Part E: a deposit refund is a payout row.** Accounts releases a deposit
+    to the account (one row, GL 2400) before refunding it, so the refund
+    itself pays out unapplied cash: a positive row with GL 1050 (decided
+    2026-11-01), not a second deposit row.
+13. **Part E: one-time charges are adjustments for now.** A debit note is a
+    one-time charge (I) only when its reason code is one of the one-time
+    charge codes, and none exists yet; every debit note goes out as A.
+14. **Part E: an invoice with an "Other charges" usage line fails the day.**
+    The GL feed has rows for capacity, recurring, one-time and tax amounts
+    only; any other line on a posted invoice fails the run with
+    `UNMAPPED_DOCUMENT` until the GL feed is given a row for it.
+15. **Part E: only yearly advance invoices are P, under the normal revenue
+    code.** Half-yearly billing and a deferred-revenue GL account don't exist
+    yet. Every row carries a GL code, including payment and deposit rows;
+    whether Finance wants those blank is open.
+16. **Part E: no delivery, no schedule, and the password hand-over is open.**
+    The zip is a Kestra output only, the flow is run by hand, and who holds
+    and rotates the password, and how Finance receives it, is still to be
+    decided. Encryption moves to PGP once Finance provides its key.
 
 ---
 
@@ -420,5 +600,8 @@ indefinitely, and at least 7 years if a purge is ever added (section 1).
 | Problem | Call | Contact |
 |---|---|---|
 | The engine, the Kestra UI or sign-in, a share, a deployment, the health check failing, any delivery code | **BSS Ops** | _(to be filled in by the module owner)_ |
-| Numbers that look wrong, a fault code (`PER_INVOICE_CHECK`, `OUTPUT_CONTRACT_VIOLATION`), a skip you can't explain | **The Reporting module owner** | _(to be filled in by the module owner)_ |
+| Numbers that look wrong, a fault code (`PER_INVOICE_CHECK`, `OUTPUT_CONTRACT_VIOLATION`, `GL_ROW_INVALID`, `GL_RECONCILIATION`), a skip you can't explain | **The Reporting module owner** | _(to be filled in by the module owner)_ |
+| The GL feed zip password, `ENCRYPTION_KEY_MISSING` | **BSS Ops** | _(as above)_ |
+| A product with no GL code (`GL_CODE_FALLBACK`) | **Product Management**, via the module owner | — |
+| Whether the GL feed's interim rows, signs or columns suit Oracle | **Finance**, via the module owner | — |
 | MNO keys, rate cards, documents | Customer, Product or Accounts Management, via the module owner | — |

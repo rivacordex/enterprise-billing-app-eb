@@ -136,6 +136,18 @@ export async function download(e: Execution, uri: string): Promise<string> {
   ).text();
 }
 
+// The same, as bytes: an encrypted file (rpt09's zip) isn't text.
+export async function downloadBytes(
+  e: Execution,
+  uri: string,
+): Promise<Buffer> {
+  return Buffer.from(
+    await (
+      await api(`/executions/${e.id}/file?path=${encodeURIComponent(uri)}`)
+    ).arrayBuffer(),
+  );
+}
+
 // A date `days` from today in Asia/Kuala_Lumpur, as YYYYMMDD.
 export function klDate(days = 0): string {
   const kl = new Date(Date.now() + 8 * 3_600_000 + days * 86_400_000);

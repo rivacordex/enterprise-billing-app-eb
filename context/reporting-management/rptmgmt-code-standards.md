@@ -1,6 +1,6 @@
 # Reporting Management Module — Code Standards
 
-**Planned 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31).** Supplements `context/code-standards.md` and states **only what Reporting Management changes or adds**. The rules here turn `rptmgmt-architecture.md` §6 (Invariants) into conventions. Flow conventions shared with the other functions are in `workflow-management/flows/README.md` (codebase).
+**Planned 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31), rpt08 and rpt09 built (2026-11-01).** Supplements `context/code-standards.md` and states **only what Reporting Management changes or adds**. The rules here turn `rptmgmt-architecture.md` §6 (Invariants) into conventions. Flow conventions shared with the other functions are in `workflow-management/flows/README.md` (codebase).
 
 ---
 
@@ -9,7 +9,7 @@
 1. **Cite the decision.** Code comments that implement a rule name its decision ID from `_newmodule-reporting-plan.md` (e.g. `# SR18`), the way billing code cites its spec section.
 2. **No database writes, no DDL, no temporary tables.** The role can't do them anyway (Inv 1); don't write code that tries.
 3. **No settings in Python.** Card names, reason-code lists, output folders and the encryption method come from flow `variables`, passed in as arguments.
-4. **Money is `Decimal`, never `float`.** Amounts are rounded half-up to 2 dp only when written. Capacity in Part B is rounded half-up to a whole number (PC9); `Usage_Mbps` in Part D is not rounded (IC8).
+4. **Money is `Decimal`, never `float`.** Amounts are rounded half-up to 2 dp only when written. Capacity in Part B is rounded half-up to a whole number (PC9); `Usage_Mbps` in Part D is written at 2 dp, half-up, as billed (IC8, rpt08 D3). The one other rounding is Part D/E's per-polygon discount share, in `common/polygon_lines.py` `apportion_discount` (rpt08 D8, rpt09 D1).
 5. **Dates are calendar days in Asia/Kuala_Lumpur.** Convert `timestamptz` to a local day in SQL with an explicit `AT TIME ZONE 'Asia/Kuala_Lumpur'`, never through the session time zone.
 
 ## 2. Python runtime conventions
@@ -28,7 +28,7 @@
 2. Task order is fixed per report (SR38, PC22, MO17, IC21, GL23): validate input → `generate` → `validate_output` → (`encrypt`) → (`deliver`) → `publish` → `set_status`. Nothing is published or delivered before `validate_output` passes.
 3. Labels on every execution: the report's inputs, `report=<name>`, its `skipped_*` / count labels, and `flow_revision`.
 4. One `INFO` line per published file: `DELIVERED <filename> sha256=<hash> rev=<n>` (RF7). Files written by `generate` are published by a `publish` task that takes them as `inputFiles` (keyed by name), runs `python3 -m runtime.reporting.common.trace delivered --flow-revision <n> <file> …` and lists them in `outputFiles`; those are the published files. No flow-level `outputs:` — the `Exit` task that ends a run WARNING skips rendering them (v1.3.35, rpt03). Each `validate_output` call passes the generated file's `name`, so the log names the file rather than its storage id (rpt03).
-5. Shared subflows (`report-validate-date`, `report-validate-period`, `report-validate-output`) are called, never copied.
+5. Shared subflows (`report-validate-date`, `report-validate-period`, `report-validate-output`) are called, never copied. One exception, `report-gl-feed` (rpt09 D6): its plain CSV may never be an output (guardrail 7), and the output-check subflow takes a `FILE` input, which must be one; so its `validate_output` runs the subflow's own runtime (`python3 -m runtime.reporting.validate output`) inside the `WorkingDirectory` it shares with `generate` and `encrypt` (`flows/reporting/README.md`, Encrypted files).
 6. A flow that isn't ready for use is deployed `disabled: true` (PC25), never left out of the repository.
 7. Never edit a flow in the Kestra UI (SR41).
 
