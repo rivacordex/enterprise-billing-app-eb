@@ -12,8 +12,9 @@ import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 
 // rpt01-spec Tests R01-T1–R01-T8 (rptmgmt-code-standards §9 guardrail 1) and
 // rpt03-spec R03-T5 (the one pgledger grant, `pgledger_transfers_view`), the
-// rpt04 grant (`product.product_offering_price`, rpt04 D2) and rpt08-spec
-// R08-T4 (Part D's four tables and two schemas, rpt08 D5). The
+// rpt04 grant (`product.product_offering_price`, rpt04 D2), rpt08-spec
+// R08-T4 (Part D's four tables and two schemas, rpt08 D5) and rpt09-spec
+// R09-T9 (`gl_resolution_view` and `bill_cycle`, rpt09 D8). The
 // grant surface is the deliverable, so every assertion runs against a LIVE
 // database through a LIVE `reporting_runtime` connection — the posture of
 // tests/db/billrun-db-roles.integration.test.ts, which this suite mirrors.
@@ -36,9 +37,10 @@ const BILLRUN_ROLES_SQL = sqlPath("billrun-db-roles.sql");
 const REPORTING_ROLES_SQL = sqlPath("reporting-db-roles.sql");
 const KESTRA_ROLES_SQL = sqlPath("kestra-db-roles.sql");
 
-// D2 — the nine tables, plus rpt04 D2's `product_offering_price` and rpt08
-// D5's four, and nothing else.
+// D2 — the nine tables, plus rpt04 D2's `product_offering_price`, rpt08
+// D5's four and rpt09 D8's `bill_cycle`, and nothing else.
 const GRANTED_TABLES = [
+  "billing.bill_cycle",
   "billing.billing_account",
   "billing.customer_bill",
   "billing.customer_bill_line",
@@ -62,7 +64,11 @@ const RPT08_TABLES = [
   "product.product_offering",
 ];
 // rpt03 D1 — the one pgledger object: transfers, never balances or entries.
-const GRANTED_VIEWS = ["billing.pgledger_transfers_view"];
+// rpt09 D8 — Accounts' GL resolution (a plain view: no grant on gl_mapping).
+const GRANTED_VIEWS = [
+  "billing.gl_resolution_view",
+  "billing.pgledger_transfers_view",
+];
 const GRANTED = [...GRANTED_TABLES, ...GRANTED_VIEWS].sort();
 
 function roleUrl(base: string, user: string, password: string): string {
@@ -256,7 +262,7 @@ describe.skipIf(!databaseUrl)(
     });
 
     // ---- R01-T2 ------------------------------------------------------------
-    it("R01-T2 — SELECT succeeds on each of the granted tables (D2 + rpt04 + rpt08) and the rpt03 view", async () => {
+    it("R01-T2 — SELECT succeeds on each of the granted tables (D2 + rpt04 + rpt08 + rpt09) and the rpt03 and rpt09 views", async () => {
       for (const table of GRANTED) {
         await expect(
           reporting.unsafe(`SELECT count(*) FROM ${qualified(table)}`),
@@ -471,6 +477,50 @@ describe.skipIf(!databaseUrl)(
               rw.unsafe(`CREATE TABLE "${schemaName}".rpt08_probe (x int)`),
               schemaName,
             ).rejects.toThrow(/permission denied for schema/);
+          }
+        } finally {
+          await rw.end();
+        }
+      });
+    });
+
+    // ---- R09-T9 ------------------------------------------------------------
+    describe("R09-T9 — Part E's grants (rpt09 D8, GL25 as built)", () => {
+      it("reporting_runtime can read gl_resolution_view and bill_cycle", async () => {
+        for (const table of [
+          "billing.gl_resolution_view",
+          "billing.bill_cycle",
+        ]) {
+          await expect(
+            reporting.unsafe(`SELECT count(*) FROM ${qualified(table)}`),
+            table,
+          ).resolves.toBeDefined();
+        }
+      });
+
+      it("…and still can't read gl_mapping or reason_code (GL codes come from the view)", async () => {
+        await expect(
+          reporting`SELECT 1 FROM billing.gl_mapping LIMIT 1`,
+        ).rejects.toThrow(/permission denied for table gl_mapping/);
+        await expect(
+          reporting`SELECT 1 FROM billing.reason_code LIMIT 1`,
+        ).rejects.toThrow(/permission denied for table reason_code/);
+      });
+
+      it("…and can't write bill_cycle, with read-only turned off for the session", async () => {
+        const rw = postgres(roleUrl(databaseUrl as string, ROLE, ROLE_PW), {
+          max: 1,
+        });
+        try {
+          await rw.unsafe("SET default_transaction_read_only = off");
+          for (const write of [
+            "INSERT INTO billing.bill_cycle DEFAULT VALUES",
+            "DELETE FROM billing.bill_cycle WHERE false",
+            "TRUNCATE billing.bill_cycle",
+          ]) {
+            await expect(rw.unsafe(write), write).rejects.toThrow(
+              /permission denied for table/,
+            );
           }
         } finally {
           await rw.end();

@@ -26,7 +26,7 @@ Decomposition of the Reporting Management module into build units. This is the *
 > | rpt05 | **Built** 2026-10-31 (`specs/rpt05-mno-outstanding.md`). |
 > | rpt07 | **Built** 2026-10-31 (`specs/rpt07-revenue-ops-guide.md`): `workflow-management/docs/opsguide-reporting.md`. R07-T1 walkthrough and R07-T4 BSS Ops review not yet done. |
 > | rpt08 | **Built** 2026-11-01 (`specs/rpt08-invoice-csv.md`). Verification 2 (the plan repo's `sample-files/RMNO120261005.csv`) not yet compared. |
-> | rpt09 | **Specced** 2026-10-29 (`specs/rpt09-gl-feed.md`), not built. rpt08 amended the same day for discount rows. |
+> | rpt09 | **Built** 2026-11-01 (`specs/rpt09-gl-feed.md`). Verification 2: the plan repo's `sample-files/GLFEED_ORAFIN_20261026.csv` compared with the fixture; differences explained in the tracker. |
 > | rpt06 | **Planned.** No spec written yet. rpt06 is blocked on P1 (and P2), and on RF-OI2 before the flow is enabled. |
 
 ---
@@ -75,7 +75,7 @@ Decomposition of the Reporting Management module into build units. This is the *
 ### rpt07 — Revenue Ops guide
 - **Spec:** `specs/rpt07-revenue-ops-guide.md`.
 - **Boundary:** DOCS.
-- **Builds:** the ops guide for Parts A–C: run, read status, download, rerun, find `SKIPPED` lines, correct a delivered polygon file, pass the MNO outstanding file to the CSP, trace a delivered file to its flow revision, and the retention rule (kept indefinitely; any purge keeps at least 7 years; RF7, RF-OI1 closed). rpt08 and rpt09 each add their own section.
+- **Builds:** the ops guide for Parts A–C: run, read status, download, rerun, find `SKIPPED` lines, correct a delivered polygon file, pass the MNO outstanding file to the CSP, trace a delivered file to its flow revision, and the retention rule (kept indefinitely; any purge keeps at least 7 years; RF7, RF-OI1 closed). rpt08 and rpt09 each added their own section.
 - **Visible result:** Revenue Ops can run and rerun each report from the guide alone.
 - **Depends on:** rpt03, rpt04, rpt05.
 

@@ -1,0 +1,94 @@
+# GLFEED_ORAFIN_<posting_date>.csv — Finance, loaded into Oracle Financials
+# (G-OI1: Finance's import format is still provisional). The CSV only ever
+# exists inside GLFEED_ORAFIN_<posting_date>.zip (AES-256, GL15); this check
+# runs on it before encryption (GL18). Changing this file changes what Finance
+# loads: agree it with Finance first (rptmgmt-architecture Inv 9). The header is
+# copied exactly from Finance's brief (GL10) — spaces, case, underscores and
+# the lower-case "payment ref" included; never "tidy" it. One row per
+# accounting line posted that day (GL1, GL2, §E.1), with the accounting sign
+# (GL8: positive means the MNO owes more — the opposite of the settlement
+# payment report). Sorted by MNO Public Key, then the document's posted_at,
+# document id and line (GL13). Interim rows Finance must confirm (G-OI10): an
+# invoice's recurring lines, its tax, the commitment top-up and the apportioned
+# per-polygon discount (rpt09 D1). Written by runtime/reporting/gl_feed.
+id: gl_feed
+file: GLFEED_ORAFIN_<posting_date>.csv
+header: true
+columns:
+  - name: MNO Public Key
+    type: text
+    required: true
+    # decision: §E.2 pos 1; the document's financial account's party role
+    # party_role_specification->>'mnoPublicKey1'; all rows
+  - name: Commercial Unit
+    type: text
+    required: false
+    # decision: §E.2 pos 2; udr_rated.udr_key's whole key commercial_unit=
+    # (common/polygon_lines.py); polygon rows
+  - name: Polygon ID
+    type: text
+    required: false
+    # decision: §E.2 pos 3; udr_rated.udr_key's whole key polygon_id=; polygon rows
+  - name: Service Public Key
+    type: text
+    required: false
+    # decision: GL11 (G-OI6 closed); always blank, a fixed placeholder
+  - name: Amount
+    type: amount
+    required: true
+    # decision: GL8, rpt09 D1, D2; the line's leg on the row's subject account,
+    # + into it, − out of it; a polygon row is net of its discount share
+  - name: Rev_GLCODE
+    type: text
+    required: true
+    # decision: GL9, rpt09 D3; INV charge rows: the product price's gl_code,
+    # else the revenue leg's GL (GL_CODE_FALLBACK); every other row: the GL of
+    # its subject or counter account from billing.gl_resolution_view
+  - name: Polygon Subscription Date
+    type: date
+    required: false
+    # decision: §E.2 pos 7; the third part of udr_rated.udr_resource; polygon rows
+  - name: Payment mode
+    type: text
+    required: false
+    # decision: §E.2 pos 8; document.payment_mode on capture and deposit rows;
+    # blank on allocation rows (OI-5, accepted interim)
+  - name: payment ref
+    type: text
+    required: false
+    # decision: §E.2 pos 9; the mode_ref reference (bank ref, cheque no, receipt
+    # no), else document.reference_info; payment and deposit rows
+  - name: Discounted_Amount
+    type: amount
+    required: false
+    # decision: GL11 as amended, rpt09 D1; the polygon's apportioned share of its
+    # capacity line's discount_amount; polygon rows only, blank when 0.00
+  - name: Invoice Reference Number
+    type: text
+    required: false
+    # decision: §E.1; the INV on invoice rows; the INV an allocation settles
+    # (directly or through the line it reverses) on payment rows
+  - name: Invoice/Transaction entry date
+    type: date
+    required: true
+    # decision: §E.2 pos 12; the INV's posted_at (Asia/Kuala_Lumpur) on invoice
+    # rows, document.entry_date otherwise
+  - name: Invoice Amount
+    type: amount
+    required: false
+    # decision: §E.2 pos 13; the INV's total_amount (tax included); rows with an
+    # Invoice Reference Number
+  - name: Invoice Amount-Open
+    type: amount
+    required: false
+    # decision: §E.2 pos 14, rpt09 D4; the invoice's open amount at the end of
+    # posting_date (common/receivables.py, as SR20); same rows
+  - name: Product Code
+    type: text
+    required: false
+    # decision: GL11 (GQ7.15); the product offering id; invoice charge rows
+    # (polygon, top-up, recurring, one-time)
+  - name: Indicator
+    type: text
+    required: true
+    # decision: GL5, GL6, GL7; I / P / A per §E.1 (D5(c) checks the set)

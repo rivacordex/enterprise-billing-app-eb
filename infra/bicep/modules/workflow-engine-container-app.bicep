@@ -158,8 +158,9 @@ param enableLocalDistributionSink bool = false
 // each reporting outbound share (reporting-outbound-storage.bicep) at
 // /data/outbound/<destination>/. The outbound account key is NOT here: it lives
 // only in that module's environment storage definition (D3). Requires the
-// `reporting-runtime-db-password` Key Vault secret to exist (fail-closed).
-@description('rpt01 — true when this engine hosts the `reporting` namespace (the billrun-hosting instance). Wires the reporting-runtime-db-password secret + SECRET_REPORTING_RUNTIME_PASSWORD / REPORTING_DB_* env vars and the outbound share mounts. Default false.')
+// `reporting-runtime-db-password` and (rpt09) `glfeed-zip-password` Key Vault
+// secrets to exist (fail-closed).
+@description('rpt01 — true when this engine hosts the `reporting` namespace (the billrun-hosting instance). Wires the reporting-runtime-db-password secret + SECRET_REPORTING_RUNTIME_PASSWORD / REPORTING_DB_* env vars, the rpt09 glfeed-zip-password secret (base64) as SECRET_GLFEED_ZIP_PASSWORD, and the outbound share mounts. Default false.')
 param enableReporting bool = false
 
 @description('rpt01 — name of the `platform-check` outbound share\'s environment storage definition (reporting-outbound-storage.bicep output). Required when enableReporting is true.')
@@ -404,6 +405,16 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
                 keyVaultUrl: '${keyVaultUri}secrets/reporting-runtime-db-password'
                 identity: workflowEngineManagedIdentityId
               }
+              // rpt09 D6 (GL15) — the GL feed zip password, read by the
+              // report-gl-feed flow as `{{ secret('GLFEED_ZIP_PASSWORD') }}`.
+              // A genuine Kestra secret() lookup, so the Key Vault VALUE MUST BE
+              // BASE64 (Kestra OSS's env-secret backend decodes SECRET_*).
+              // Custody and rotation: G-OI8.
+              {
+                name: 'glfeed-zip-password'
+                keyVaultUrl: '${keyVaultUri}secrets/glfeed-zip-password'
+                identity: workflowEngineManagedIdentityId
+              }
             ]
           : []
       )
@@ -610,8 +621,11 @@ resource workflowEngineApp 'Microsoft.App/containerApps@2023-05-01' = {
           // base64) + the non-secret coordinates, the same shape as RATING_DB_*.
           // REPORTING_DB_HOST is the Flexible Server FQDN (the billing database
           // shares it with `kestra`; only the name differs).
+          // rpt09 D6 — SECRET_GLFEED_ZIP_PASSWORD feeds the GL feed's
+          // `{{ secret('GLFEED_ZIP_PASSWORD') }}` (base64, decoded by Kestra).
           enableReporting ? concat([
             { name: 'SECRET_REPORTING_RUNTIME_PASSWORD', secretRef: 'reporting-runtime-db-password' }
+            { name: 'SECRET_GLFEED_ZIP_PASSWORD', secretRef: 'glfeed-zip-password' }
             { name: 'REPORTING_DB_HOST', value: postgresServerFqdn }
             { name: 'REPORTING_DB_PORT', value: '5432' }
             { name: 'REPORTING_DB_NAME', value: 'enterprise_billing' }

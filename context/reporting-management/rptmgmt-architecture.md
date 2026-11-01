@@ -1,6 +1,6 @@
 # Reporting Management Module — Architecture
 
-**Planned design 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31), rpt08 built (2026-11-01).** Extends `context/architecture.md` (platform stack, boundaries, storage, auth, platform invariants) and `context/workflow-management/wfm-architecture.md` (the Kestra platform; reporting is function 4, §10). It records **only what Reporting Management adds or does differently**. Functional design: `rptmgmt-project-overview.md`. Decision record: `_newmodule-reporting-plan.md`.
+**Planned design 2026-10-29; rpt01–rpt04 built (2026-10-30), rpt05 built (2026-10-31), rpt08 and rpt09 built (2026-11-01).** Extends `context/architecture.md` (platform stack, boundaries, storage, auth, platform invariants) and `context/workflow-management/wfm-architecture.md` (the Kestra platform; reporting is function 4, §10). It records **only what Reporting Management adds or does differently**. Functional design: `rptmgmt-project-overview.md`. Decision record: `_newmodule-reporting-plan.md`.
 
 Like Rating, this is a **non-Next.js** module: no pages, Server Actions, components or RBAC permissions. Unlike Rating, it **owns no tables and writes nothing**. It reads other modules' data, builds files, and publishes them from Kestra.
 
@@ -33,7 +33,7 @@ No new app dependency. No new database.
 | Owner | Tables / objects read | By |
 |---|---|---|
 | Billing | `billing.customer_bill`, `billing.customer_bill_line` | A, D, E |
-| Accounts | `billing.document`, `document_line`, `billing_account`, `financial_account`, `ledger_binding`, pgledger balance objects, `gl_mapping`, `reason_code`, `bill_cycle` | A, C, E |
+| Accounts | `billing.document`, `document_line`, `billing_account`, `financial_account`, `ledger_binding`, `pgledger_transfers_view`, `gl_resolution_view` (Accounts' own GL resolution; `gl_mapping` and `reason_code` are not read, rpt09 D8), `bill_cycle` | A, C, E |
 | Customer | `customer.party_role` (`mnoPublicKey1`) | all |
 | Product | `product.ratecard_version`, `ratecard_ran_usage_lkp`, `product_offering`, `product_offering_price` | B, D, E |
 | Rating | `rating.udr_rated` | D, E |

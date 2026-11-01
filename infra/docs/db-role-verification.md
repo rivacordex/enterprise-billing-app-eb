@@ -78,11 +78,13 @@ app_migrate` so future tables `app_migrate` creates auto-grant to
    LIMIT 10, `default_transaction_read_only = on`) that the Reporting
    Management flows (namespace `reporting`) read as, and grants it `USAGE` on
    `billing`/`customer`/`product`/`rating`/`inventory` plus `SELECT` on
-   exactly fourteen tables (nine from rpt01-spec D1/D2,
-   `product.product_offering_price` from rpt04-spec D2, and
+   exactly fifteen tables (nine from rpt01-spec D1/D2,
+   `product.product_offering_price` from rpt04-spec D2,
    `rating.udr_rated`, `inventory.product_inventory`,
    `billing.customer_bill_line`, `product.product_offering` from rpt08-spec
-   D5) and one view, `billing.pgledger_transfers_view` (rpt03-spec D1).
+   D5, and `billing.bill_cycle` from rpt09-spec D8) and two views,
+   `billing.pgledger_transfers_view` (rpt03-spec D1) and
+   `billing.gl_resolution_view` (rpt09-spec D8).
    **Run order:** `roles → rating-roles → billrun-roles →
    reporting-roles`, then `kestra-roles` as today — run it **after** step 3a.
    Like billrun's, its Step 0 fails loudly (`ORDERING: ...`) unless step 3's
@@ -239,7 +241,14 @@ connection themselves from the coordinates and read the password from the
   true; the reporting runtime's `common/db.py` reads it +
   `REPORTING_DB_HOST/PORT/NAME/USER/SSLMODE`. See step 3c.
 
-All four are `see workflow-engine-container-app.bicep`.
+- `glfeed-zip-password` → `SECRET_GLFEED_ZIP_PASSWORD` (rpt09 D6), on the
+  same engine when `enableReporting` is true: the GL feed zip password, read by
+  `report-gl-feed` as `{{ secret('GLFEED_ZIP_PASSWORD') }}` — a genuine
+  Kestra `secret()` lookup, so the Key Vault value is the **base64** of the
+  password. Create it before the first deploy that includes rpt09 (the secret
+  reference fails the deploy otherwise). Custody and rotation are G-OI8.
+
+All five are `see workflow-engine-container-app.bicep`.
 
 ## Verification SQL
 
@@ -354,14 +363,14 @@ SELECT rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolreplication,
 FROM pg_roles WHERE rolname = 'reporting_runtime';
   -- t, f, f, f, f, f, 10, {default_transaction_read_only=on}
 
--- Exactly the fourteen granted tables and one view, SELECT only (no ON ALL TABLES).
+-- Exactly the fifteen granted tables and two views, SELECT only (no ON ALL TABLES).
 SELECT table_schema, table_name, privilege_type
 FROM information_schema.role_table_grants
 WHERE grantee = 'reporting_runtime'
 ORDER BY 1, 2;
-  -- billing.{billing_account,customer_bill,customer_bill_line,document,
-  --          document_line,financial_account,ledger_binding,
-  --          pgledger_transfers_view},
+  -- billing.{bill_cycle,billing_account,customer_bill,customer_bill_line,
+  --          document,document_line,financial_account,gl_resolution_view,
+  --          ledger_binding,pgledger_transfers_view},
   -- customer.party_role,
   -- inventory.product_inventory,
   -- product.{product_offering,product_offering_price,ratecard_ran_usage_lkp,
@@ -372,6 +381,9 @@ ORDER BY 1, 2;
 -- No write on any granted table; nothing beyond them.
 SELECT has_table_privilege('reporting_runtime', 'billing.document', 'INSERT');      -- false
 SELECT has_table_privilege('reporting_runtime', 'billing.gl_mapping', 'SELECT');    -- false
+-- rpt09: GL codes come from gl_resolution_view (a plain view), so neither
+-- gl_mapping nor reason_code is granted.
+SELECT has_table_privilege('reporting_runtime', 'billing.reason_code', 'SELECT');   -- false
 -- rpt03: transfers only; balances and entries stay refused (a past balance is
 -- computed from transfers, never read live).
 SELECT has_table_privilege('reporting_runtime', 'billing.pgledger_accounts_view', 'SELECT'); -- false

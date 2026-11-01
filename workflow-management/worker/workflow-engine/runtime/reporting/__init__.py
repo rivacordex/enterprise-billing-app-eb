@@ -23,6 +23,10 @@ overwrite — Inv 11; the platform check uses it too) and ``polygon_capacity``
 rpt08 adds ``common.polygon_lines`` (the one read of a posted bill's polygon
 charges, mirroring billing's capacity detail, and the per-polygon discount
 apportionment — Inv 4) and ``invoice_csv`` (Part D, ``report-invoice-csv``).
+rpt09 adds ``common.encrypt`` (the AES-256 zip a file is encrypted into before
+it is published — GL15, Inv 6) and ``gl_feed`` (Part E, ``report-gl-feed``);
+``common.receivables`` gains the GL feed's subject-account legs, Accounts' GL
+codes and the ledger's own day (rpt09 D2, D3, D5).
 
 Never import the rating runtime's ``runtime.db`` from here (§2.7).
 """

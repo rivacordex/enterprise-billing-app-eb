@@ -27,14 +27,14 @@ line's posted transfer (Inv 3); this module never decides a sign.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
 from ..common import receivables
 from ..common.csv_writer import fmt_amount, fmt_blank
-from ..common.receivables import INVOICE_DOC_TYPE, PAYMENT_SIDE_DOC_TYPES
+from ..common.receivables import PAYMENT_SIDE_DOC_TYPES
 from .extract import Extract, Invoice
 
 # SR11 — type_of_payment values beyond the document's own doc_type.
@@ -70,31 +70,12 @@ def type_of_payment(line: receivables.PostedLine) -> str:
     return line.doc_type
 
 
-def _invoice_links(lines: Iterable[receivables.PostedLine]) -> Mapping[str, str]:
-    """``document_line_id`` → the INV it settles, directly or through the line it reverses."""
-    lines = list(lines)
-    original_of = {
-        line.reversed_by_line_id: line for line in lines if line.reversed_by_line_id is not None
-    }
-    links: dict[str, str] = {}
-    for line in lines:
-        current: receivables.PostedLine | None = line
-        seen: set[str] = set()
-        while current is not None and current.document_line_id not in seen:
-            seen.add(current.document_line_id)
-            if current.settled_doc_type == INVOICE_DOC_TYPE and current.ref_settled_document_id:
-                links[line.document_line_id] = current.ref_settled_document_id
-                break
-            current = original_of.get(current.document_line_id)
-    return links
-
-
 def build(data: Extract, reported: list[Invoice], as_of: date) -> list[PaymentRow]:
     """Every payment row for the reported invoices, sorted (§A.1)."""
     reported_ids = {inv.invoice_id for inv in reported}
     mno_of = {inv.billing_account_id: inv.mno_id for inv in reported}
     window_start = min(inv.posted_date for inv in reported)  # OI-6 interim
-    links = _invoice_links(data.ledger.lines)
+    links = receivables.invoice_links(data.ledger.lines)
 
     sums: dict[tuple[str, str, str], Decimal] = {}
     first_line: dict[tuple[str, str, str], receivables.PostedLine] = {}

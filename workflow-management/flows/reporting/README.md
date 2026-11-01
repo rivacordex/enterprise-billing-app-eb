@@ -7,8 +7,8 @@ the billrun instance under split-by-module, RF6). Module context:
 `context/reporting-management/`.
 
 **Maturity: platform check, shared framework, the settlement reports, the
-polygon capacity lookup (deployed disabled), MNO outstanding (rpt01–rpt05) and
-the invoice CSV (rpt08).** The unit list is
+polygon capacity lookup (deployed disabled), MNO outstanding (rpt01–rpt05),
+the invoice CSV (rpt08) and the GL feed (rpt09).** The unit list is
 `context/reporting-management/specs/rpt00-build-plan.md`.
 
 **Operations.** Revenue Ops run, read, rerun and trace these flows from
@@ -22,6 +22,7 @@ change to a flow updates the guide in the same change set.
 | `report-polygon-capacity-lookup.yaml` | Polygon capacity lookup — Part B for Mediation and the CSP: `Polygon_capacity_lookup_<report_date>.csv` (no header) for one `report_date` (default yesterday), delivered to the `polygon-capacity` share and published. **Deployed `disabled: true`** until the capacity source exists (P1, PC25; rpt06 enables it) | manual (P5) | rpt04 |
 | `report-mno-outstanding.yaml` | MNO outstanding — Part C for the CSP: `Reporting_dnb_settlement_mno_<outstanding_date>.csv` (no header), each MNO's receivables balance across all billing periods at the end of one `outstanding_date` (default yesterday); Kestra outputs only — Revenue Ops pass it to the CSP until delivery is decided (MO15, M-OI1) | manual (M-OI2) | rpt05 |
 | `report-invoice-csv.yaml` | Invoice CSV — Part D for the MNOs (through the CSP later, I-OI6): one `R<MNO><invoice_date>.csv` per MNO invoiced on one `invoice_date` (default yesterday; today allowed), a usage row per polygon charge as the invoice PDF prints it and a discount row after each discounted polygon (rpt08 D8); Kestra outputs only (IC19, I-OI4) | manual (I-OI3) | rpt08 |
+| `report-gl-feed.yaml` | GL feed (Oracle Financials) — Part E for Finance: `GLFEED_ORAFIN_<posting_date>.zip`, an AES-256 password zip (Kestra secret `GLFEED_ZIP_PASSWORD`) holding one `GLFEED_ORAFIN_<posting_date>.csv`, one row per accounting line posted on one `posting_date` (default yesterday), reconciled per invoice and per MNO against the ledger before anything is published (GL20, rpt09 D5); any bad row fails the run (GL16). Kestra outputs only (GL21, G-OI9); the plain CSV is never an output (below, Encrypted files) | manual (GL22) | rpt09 |
 | `report-validate-date.yaml` | Reporting date check (shared subflow) — the one date rule; resolves an empty date to its default | called by reports | rpt02 |
 | `report-validate-period.yaml` | Reporting period check (shared subflow) — `billing_period` + `as_of_date` (SR33) | called by reports | rpt02 |
 | `report-validate-output.yaml` | Reporting output check (shared subflow) — a file against its column definition, before anything is published | called by reports | rpt02 (`name` input: rpt03) |
@@ -207,6 +208,39 @@ keys, verified on v1.3.35), logs one `DELIVERED` line per file with
   output files, one `DELIVERED` line each. Verified on v1.3.35 (rpt08): a
   `ForEach` over an empty list (no invoices that day, or all skipped) runs
   nothing and the run still ends SUCCESS or WARNING.
+
+## Encrypted files (rpt09 D6)
+
+`report-gl-feed` publishes an encrypted file only, so its plain CSV may never
+be a task output (Inv 6, code-standards §9 guardrail 7). Its `generate`,
+`validate_output` and `encrypt` tasks therefore run inside one
+`io.kestra.plugin.core.flow.WorkingDirectory` task (`build`, with the
+`contracts/**` namespace files): the runtime writes the CSV there, the output
+check reads it there, and `encrypt` turns it into the zip and removes it. Only
+`encrypt` lists an output file (the zip), and `publish` publishes that zip
+with its `DELIVERED` line (the hash is the zip's).
+
+- **The output check runs in place.** `report-validate-output` takes a `FILE`
+  input, which must already be in Kestra's internal storage — an output. So
+  `validate_output` runs the same runtime the subflow runs,
+  `python3 -m runtime.reporting.validate output --contract=contracts/gl_feed.yaml`,
+  as a `Commands` task in the working directory. Its log lines are the
+  subflow's (`OUTPUT_CONTRACT_VIOLATION <file> <row> <column> <reason>`), on
+  the run's own `validate_output` task.
+- **The password** is the Kestra secret `GLFEED_ZIP_PASSWORD` (deployed:
+  Key Vault `glfeed-zip-password`, base64, as `SECRET_GLFEED_ZIP_PASSWORD`;
+  locally `dev/.env`). It reaches `encrypt` only as the env var
+  `GLFEED_ZIP_PASSWORD`, never on a command line or in a log. A run without it
+  fails `ENCRYPTION_KEY_MISSING` at `check_secret`, before `generate` builds
+  anything. `check_secret` is **not** handed `secret()`: verified on v1.3.35, a
+  missing secret fails the task while Kestra renders it ("Cannot find secret
+  for key"), before the runtime runs, and Pebble's `??` doesn't catch it. So
+  the runtime checks the engine's own `SECRET_GLFEED_ZIP_PASSWORD` (set, valid
+  base64, non-empty), which the Process task runner inherits, as
+  `common/db.py` reads its password.
+- **The method** is the flow variable `encryption` (`zip_aes256`), one
+  function per method in `runtime/reporting/common/encrypt.py`; PGP (G-OI7)
+  adds a method there.
 
 ## Namespace files — deploying the contracts (rpt02 D8)
 
