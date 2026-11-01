@@ -159,7 +159,7 @@ describe.skipIf(!ready)("builder (D2, D4, D8, IC12, IC15, IC16)", () => {
     expect(
       python(`${FIXTURE}
 data = Extract(
-    (invoice("INV2", "MNO-B", "B2"), invoice("INV1", "MNO-A", "B1", "900.00"), invoice("INV3", "MNO-A", "B3")),
+    (invoice("INV2", "MNO2", "B2"), invoice("INV1", "MNO1", "B1", "900.00"), invoice("INV3", "MNO1", "B3")),
     (p("u2", "Z", "500.00", "5.000000"), p("u1", "Y", "400.00", "4.125000", start="2025-04-15"),
      p("u3", "X", "100.00", line="L2", bill="B2"), p("u4", "W", "100.00", line="L3", bill="B3")),
     {"L1": cap("90.00"), "L2": cap("0.00", "L2", "B2"), "L3": cap("0.00", "L3", "B3")},
@@ -169,10 +169,10 @@ print(json.dumps({"files": [[f.mno_public_key, f.rows] for f in b.files], "skipp
     ).toEqual({
       files: [
         [
-          "MNO-A",
+          "MNO1",
           [
             [
-              "MNO-A",
+              "MNO1",
               "CU-1",
               "Y",
               "400.00",
@@ -184,7 +184,7 @@ print(json.dumps({"files": [[f.mno_public_key, f.rows] for f in b.files], "skipp
               "4.13",
             ],
             [
-              "MNO-A",
+              "MNO1",
               "CU-1",
               "Y",
               "-40.00",
@@ -196,7 +196,7 @@ print(json.dumps({"files": [[f.mno_public_key, f.rows] for f in b.files], "skipp
               "",
             ],
             [
-              "MNO-A",
+              "MNO1",
               "CU-1",
               "Z",
               "500.00",
@@ -208,7 +208,7 @@ print(json.dumps({"files": [[f.mno_public_key, f.rows] for f in b.files], "skipp
               "5.00",
             ],
             [
-              "MNO-A",
+              "MNO1",
               "CU-1",
               "Z",
               "-50.00",
@@ -220,7 +220,7 @@ print(json.dumps({"files": [[f.mno_public_key, f.rows] for f in b.files], "skipp
               "",
             ],
             [
-              "MNO-A",
+              "MNO1",
               "CU-1",
               "W",
               "100.00",
@@ -234,10 +234,10 @@ print(json.dumps({"files": [[f.mno_public_key, f.rows] for f in b.files], "skipp
           ],
         ],
         [
-          "MNO-B",
+          "MNO2",
           [
             [
-              "MNO-B",
+              "MNO2",
               "CU-1",
               "X",
               "100.00",
@@ -271,7 +271,7 @@ polys = (
     q("B8", "u8"),                               # its invoice has no key
 )
 lines = {x.line_id: cap("0.00", x.line_id, x.customer_bill_id) for x in polys}
-invs = tuple(invoice(f"INV{n}", "MNO-A", f"B{n}") for n in range(1, 8)) + (invoice("INV8", None, "B8"), invoice("INV9", "MNO-B", "B9"))
+invs = tuple(invoice(f"INV{n}", "MNO1", f"B{n}") for n in range(1, 8)) + (invoice("INV8", None, "B8"), invoice("INV9", "MNO2", "B9"))
 b = builder.build(Extract(invs, polys, lines, {}), DAY)
 print(json.dumps({"files": [f.mno_public_key for f in b.files], "skipped": [s.line for s in b.skipped], "invoices": b.invoices}))`),
     ).toEqual({
@@ -294,7 +294,7 @@ print(json.dumps({"files": [f.mno_public_key for f in b.files], "skipped": [s.li
 
 describe.skipIf(!ready)("R08-T9 — the IC18 report check", () => {
   const CHECK = `${FIXTURE}
-U = ["MNO-A", "CU-1", "A", "100.00", "20250301", "INV1", "20261005", "900.00", "eMBB", "1.00"]
+U = ["MNO1", "CU-1", "A", "100.00", "20250301", "INV1", "20261005", "900.00", "eMBB", "1.00"]
 def row(**changes):
     r = list(U)
     for k, v in changes.items():

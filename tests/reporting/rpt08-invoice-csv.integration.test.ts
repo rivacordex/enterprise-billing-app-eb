@@ -158,7 +158,7 @@ describe.skipIf(!databaseUrl || !ready)(
       });
     });
 
-    it("IC15/IC16 — one SKIPPED line per skipped invoice, in invoice order; an MNO with every invoice skipped (MNO-R, MNO-T) gets no file", () => {
+    it("IC15/IC16 — one SKIPPED line per skipped invoice, in invoice order; an MNO with every invoice skipped (MNO18, MNO20) gets no file", () => {
       const expected = [
         [inv("R1"), "POLYGON_ID_MISSING"],
         [inv("R2"), "COMMERCIAL_UNIT_MISSING"],

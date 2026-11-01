@@ -43,7 +43,7 @@ const EXPECTED = join(
 );
 const FLOW_ID = "report-invoice-csv";
 const DAY = "20261005";
-const FILES = [`RMNO-P${DAY}.csv`, `RMNO-Q${DAY}.csv`];
+const FILES = [`RMNO16${DAY}.csv`, `RMNO17${DAY}.csv`];
 
 const run = (inputs: Record<string, string>): Promise<Execution> =>
   runFlow(FLOW_ID, inputs);

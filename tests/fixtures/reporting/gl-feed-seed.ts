@@ -47,27 +47,27 @@ import type { PostedInvoice } from "@/tests/fixtures/reporting/posted-invoice-fi
 // day, so both are pinned to the same instant, as one posting would make them.
 //
 // 2026-10-26 (the default run, `GL_DAY`):
-//   MNO-J — J1 09:00, capacity: polygons 500.00 / 300.00 / 200.00 with a
+//   MNO10 — J1 09:00, capacity: polygons 500.00 / 300.00 / 200.00 with a
 //           100.00 motivation discount (R09-T1, R09-T2, G-T1), price GL 4010;
 //           a 1,500.00 capture (G-T5); 600.00 to J_old1 (G-T3, partial) and
 //           400.00 to J_old2 (G-T2, full; entry date 2026-10-21, R09-T6), both
 //           ref TT-57001 (G-T4); a CRN, a DBN MANUAL_CHARGE and a write-off
 //           (G-T7; G-T8 with occ_reason_codes=MANUAL_CHARGE); a 5,000.00 deposit
 //           (G-T9); a CRN at 23:59 (G-T17)
-//   MNO-K — K1 11:00, an annual-cycle invoice: recurring 12,000.00 + tax
+//   MNO11 — K1 11:00, an annual-cycle invoice: recurring 12,000.00 + tax
 //           960.00, every row P (G-T10); the reversal of a 300.00 allocation to
 //           K_old (G-T6); a cash refund of a 200.00 allocation to K_old2 (a
 //           release and a payout); a deposit released to account and refunded
 //           (G-T9)
-//   MNO-L — L1 12:00: recurring 300.00 + one-time 50.00 + tax 28.00 = 378.00
+//   MNO12 — L1 12:00: recurring 300.00 + one-time 50.00 + tax 28.00 = 378.00
 //           (G-T20)
-//   MNO-M — 100.02 applied to a 100.00 invoice, the 0.02 cleared by a rounding
+//   MNO13 — 100.02 applied to a 100.00 invoice, the 0.02 cleared by a rounding
 //           adjustment through its `release` leg (+0.02)
-//   MNO-N — N1 09:30, capacity: 2.5 Mbps under a 5 Mbps commitment, a 250.00
+//   MNO14 — N1 09:30, capacity: 2.5 Mbps under a 5 Mbps commitment, a 250.00
 //           top-up (R09-T3), and a price with no GL code (G-T11:
 //           GL_CODE_FALLBACK, WARNING). Its own MNO: Part C fails two party
 //           roles sharing a key, and G-T18 ties to Part C.
-// 2026-10-27 00:01: a CRN of MNO-J (G-T17's other side).
+// 2026-10-27 00:01: a CRN of MNO10 (G-T17's other side).
 // Earlier days: the invoices, captures, allocations and deposit the 26th's
 // documents settle, reverse or release (2026-10-05, 2026-10-20). Nothing on the
 // 25th (G-T13).
@@ -77,11 +77,11 @@ export const NEXT_DAY = "20261027";
 export const EMPTY_DAY = "20261025";
 
 export const MNO = {
-  J: "MNO-J",
-  K: "MNO-K",
-  L: "MNO-L",
-  M: "MNO-M",
-  N: "MNO-N",
+  J: "MNO10",
+  K: "MNO11",
+  L: "MNO12",
+  M: "MNO13",
+  N: "MNO14",
 } as const;
 
 // The product price GL codes the fixture sets (G-T11's N1 has none).
@@ -396,7 +396,7 @@ export async function seedGlFeedFixture(
       postedAt: at("10:00:00", "2026-10-05"),
     });
 
-  // ---- MNO-J -----------------------------------------------------------------
+  // ---- MNO10 -----------------------------------------------------------------
   const J1 = await fx.postedInvoice({
     label: "J1",
     mno: MNO.J,
@@ -548,7 +548,7 @@ export async function seedGlFeedFixture(
     "Credit after midnight",
   );
 
-  // ---- MNO-K (annual bill cycle) -----------------------------------------------
+  // ---- MNO11 (annual bill cycle) -----------------------------------------------
   const K = await newMno("K", MNO.K);
   const [annual] = await sql<{ id: string }[]>`
     INSERT INTO billing.bill_cycle (name, frequency, cycle_day, payment_due_days, state)
@@ -671,7 +671,7 @@ export async function seedGlFeedFixture(
   );
   docs.depRefundK = await approve(depRefundK.documentId, at("11:40:00"));
 
-  // ---- MNO-L ----------------------------------------------------------------
+  // ---- MNO12 ----------------------------------------------------------------
   const L = await newMno("L", MNO.L);
   docs.L1 = await manualInvoice(L, {
     lines: [
@@ -687,7 +687,7 @@ export async function seedGlFeedFixture(
     postedAt: at("12:00:00"),
   });
 
-  // ---- MNO-M (rounding through the release leg) ---------------------------------
+  // ---- MNO13 (rounding through the release leg) ---------------------------------
   const M = await newMno("M", MNO.M);
   docs.M_old = await oldInvoice(M, "100.00");
   docs.captureM = await capture(M, "250.00", earlier("10:00:00"), "TT-59001");

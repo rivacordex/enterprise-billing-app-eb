@@ -311,7 +311,7 @@ def at(h):
 def line(lid, doc, doc_type, kind, amount, frm, to, settled=None, entry=DAY):
     return PostedLine(lid, doc, doc_type, "posted", entry, DAY, None, "ref", kind, settled,
                       None if settled is None else "INV", None, D(amount), frm, to)
-def doc(did, doc_type, lines, h, total="0.00", mno="MNO-A", reason="R", mode=None, ref="TT-1", entry=DAY):
+def doc(did, doc_type, lines, h, total="0.00", mno="MNO1", reason="R", mode=None, ref="TT-1", entry=DAY):
     return Document(did, doc_type, reason, False, at(h), DAY, entry, mode, ref, D(total), mno, tuple(lines))
 def poly(udr, pid, amount, cu="CU-1", start="2025-03-01"):
     return PolygonLine("CB1", udr, "BL1", "OFF-CAP", pid, start, cu, D("1"), D(amount))
@@ -338,7 +338,7 @@ def extract(docs=DOCS, bill_lines=BILL_LINES, annual=False, day_effects="750.00"
         ledger=LedgerSnapshot(LINES, {"B1": "REC"}, {"F1": "UC"}, {"F1": "DEP"}),
         gl_codes={"REC": "1200", "UC": "2300", "DEP": "2400", "CASH": "1050", "REV": "4000", "TAX": "2200"},
         day_effects={"B1": D(day_effects)},
-        mno_billing_accounts={"MNO-A": ("B1",)},
+        mno_billing_accounts={"MNO1": ("B1",)},
         invoices={"I1": Invoice("I1", D("1350.00"), "B1"), "I0": Invoice("I0", D("1000.00"), "B1")},
         bills={"I1": Bill("I1", None, annual, bill_lines)},
         polygons=polygons if polygons is not None else (poly("u3", "P-3", "200.00"), poly("u1", "P-1", "500.00"),
@@ -358,15 +358,15 @@ describe.skipIf(!ready)("rows on a hand-built extract (D1–D4)", () => {
   it("D1 polygon rows (net Amount + Discounted_Amount), the top-up, the recurring row (GL9 fallback), the tax row; payment and deposit rows; GL13 order; D5 passes", () => {
     expect(python(`${EXTRACT}print(json.dumps(run(extract())))`)).toEqual({
       rows: [
-        "MNO-A,CU-1,P-1,,450.00,4010,20250301,,,50.00,I1,20261026,1350.00,1350.00,OFF-CAP,I",
-        "MNO-A,CU-1,P-2,,270.00,4010,20250415,,,30.00,I1,20261026,1350.00,1350.00,OFF-CAP,I",
-        "MNO-A,CU-1,P-3,,180.00,4010,20250301,,,20.00,I1,20261026,1350.00,1350.00,OFF-CAP,I",
-        "MNO-A,,,,150.00,4010,,,,,I1,20261026,1350.00,1350.00,OFF-CAP,I",
-        "MNO-A,,,,200.00,4000,,,,,I1,20261026,1350.00,1350.00,OFF-REC,I",
-        "MNO-A,,,,100.00,2200,,,,,I1,20261026,1350.00,1350.00,,I",
-        "MNO-A,,,,-1500.00,1050,,bank_transfer,TT-57001,,,20261026,,,,P",
-        "MNO-A,,,,-600.00,1200,,,TT-57001,,I0,20261021,1000.00,400.00,,P",
-        "MNO-A,,,,-5000.00,2400,,cheque,CHQ-1,,,20261026,,,,P",
+        "MNO1,CU-1,P-1,,450.00,4010,20250301,,,50.00,I1,20261026,1350.00,1350.00,OFF-CAP,I",
+        "MNO1,CU-1,P-2,,270.00,4010,20250415,,,30.00,I1,20261026,1350.00,1350.00,OFF-CAP,I",
+        "MNO1,CU-1,P-3,,180.00,4010,20250301,,,20.00,I1,20261026,1350.00,1350.00,OFF-CAP,I",
+        "MNO1,,,,150.00,4010,,,,,I1,20261026,1350.00,1350.00,OFF-CAP,I",
+        "MNO1,,,,200.00,4000,,,,,I1,20261026,1350.00,1350.00,OFF-REC,I",
+        "MNO1,,,,100.00,2200,,,,,I1,20261026,1350.00,1350.00,,I",
+        "MNO1,,,,-1500.00,1050,,bank_transfer,TT-57001,,,20261026,,,,P",
+        "MNO1,,,,-600.00,1200,,,TT-57001,,I0,20261021,1000.00,400.00,,P",
+        "MNO1,,,,-5000.00,2400,,cheque,CHQ-1,,,20261026,,,,P",
       ],
       problems: [],
       fallbacks: ["GL_CODE_FALLBACK I1 OFF-REC"],
@@ -430,8 +430,8 @@ data = extract(docs=DOCS + (dbn,), day_effects="800.00")
 data = replace(data, ledger=replace(data.ledger, lines=data.ledger.lines + (line("L6", "N1", "DBN", "charge", "50.00", "REV", "REC"),)))
 print(json.dumps([run(data)["rows"][-1], run(data, ("MANUAL_CHARGE",))["rows"][-1]]))`),
     ).toEqual([
-      "MNO-A,,,,50.00,4000,,,,,,20261026,,,,A",
-      "MNO-A,,,,50.00,4000,,,,,,20261026,,,,I",
+      "MNO1,,,,50.00,4000,,,,,,20261026,,,,A",
+      "MNO1,,,,50.00,4000,,,,,,20261026,,,,I",
     ]);
   });
 });
@@ -442,7 +442,7 @@ describe.skipIf(!ready)("D5 — the report checks", () => {
       python(
         `${EXTRACT}print(json.dumps(run(extract(day_effects="749.99"))["violations"]))`,
       ),
-    ).toEqual([[null, "Amount", "GL_RECONCILIATION MNO-A"]]);
+    ).toEqual([[null, "Amount", "GL_RECONCILIATION MNO1"]]);
   });
 
   it("(a) an invoice whose rows don't add up to its total: INVOICE_SUM <invoice_id> on its first row", () => {
@@ -464,7 +464,7 @@ print(json.dumps([[v.line, v.column, v.reason] for v in rows.check(built)]))`),
 });
 
 describe.skipIf(!ready)("encryption (D6, R09-T7, R09-T8)", () => {
-  const CSV = `${HEADER}\nMNO-A,,,,1.00,1200,,,,,,20261026,,,,P\n`;
+  const CSV = `${HEADER}\nMNO1,,,,1.00,1200,,,,,,20261026,,,,P\n`;
 
   function encryptDir(): string {
     const dir = mkdtempSync(join(tmpdir(), "rpt09-encrypt-"));

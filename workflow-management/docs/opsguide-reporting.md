@@ -207,8 +207,8 @@ page opens; wait until it shows **SUCCESS**, **WARNING** or **FAILED**
 ### 4.5 GL feed for Oracle Financials (Part E) — `report-gl-feed`
 
 - **Input:** `posting_date` (YYYYMMDD, blank = yesterday). It must be
-  yesterday or earlier, so the day is complete and a rerun gives the same
-  rows.
+  yesterday or earlier, so the day is complete and a rerun takes the same
+  documents (section 7).
 - **File:** GLFEED_ORAFIN_<posting_date>.zip (for example
   GLFEED_ORAFIN_20261026.zip), an AES-256 password-protected zip holding
   exactly one file, GLFEED_ORAFIN_<posting_date>.csv. A header row with
@@ -437,12 +437,17 @@ in Excel changes it), or it came from another run.
   name. Download the run you mean to pass on. In D, an invoice posted later
   the same day (when you ran it for today) or a skip fixed since appears on a
   rerun.
-- **Part E: the same date gives the same rows, but a different zip.** The
-  GL feed takes documents by the day they were posted, so a past day's rows
-  don't change on a rerun (a backdated entry appears on the day it was
-  posted, not on its entry date). Each run encrypts afresh, though, so the
-  zip's bytes, and the hash in its `DELIVERED` line, differ from run to run.
-  Pass Finance one run's zip, and note which (section 10).
+- **Part E: a rerun takes the same documents, but always makes a different
+  zip.** The GL feed takes documents by the day they were posted, so a rerun
+  for a past day picks up the same documents (a backdated entry appears on
+  the day it was posted, not on its entry date). Their rows aren't
+  guaranteed to match, though: an invoice's indicator follows the billing
+  account's **current** bill cycle, so if the account has moved to or from
+  yearly billing since, an old invoice's rows change between P and I.
+  Compare each rerun with the file already sent to Finance before you pass
+  it on. Each run also encrypts afresh, so the zip's bytes, and the hash in
+  its `DELIVERED` line, differ from run to run. Pass Finance one run's zip,
+  and note which (section 10).
 - **Part B: a date already delivered fails.** The rerun ends FAILED with
   `FILE_ALREADY_EXISTS` at the `deliver` task, the delivered file is left
   exactly as it was, and nothing is published. To replace a wrong file, see

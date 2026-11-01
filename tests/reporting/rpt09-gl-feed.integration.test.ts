@@ -558,7 +558,7 @@ describe.skipIf(!databaseUrl || !ready)(
       ]);
     });
 
-    it("G-T18 — the tie to Part C holds for an MNO with nothing backdated (K, L, M, N), and not for MNO-J, whose 400.00 allocation was entered 2026-10-21", () => {
+    it("G-T18 — the tie to Part C holds for an MNO with nothing backdated (K, L, M, N), and not for MNO10, whose 400.00 allocation was entered 2026-10-21", () => {
       const partC = (day: string) => {
         const run = runReport(
           "mno_outstanding",

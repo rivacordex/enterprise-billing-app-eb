@@ -193,7 +193,7 @@ describe.skipIf(!databaseUrl || !ready)(
       expect(amounts(run, "20261020")[MNO.A]).toBe("2100.00");
     });
 
-    it("MO-T10 — MNO-C has no MNO Public Key: no row, SKIPPED <party_role_id> MNO_PUBLIC_KEY_MISSING, skipped_mnos=1, WARNING", () => {
+    it("MO-T10 — MNO3 has no MNO Public Key: no row, SKIPPED <party_role_id> MNO_PUBLIC_KEY_MISSING, skipped_mnos=1, WARNING", () => {
       expect(main.logs).toEqual([
         {
           level: "WARN",
@@ -218,7 +218,7 @@ describe.skipIf(!databaseUrl || !ready)(
 
     it("a run with no party role skipped ends SUCCESS with skipped_mnos=0", async () => {
       await withSpecs(
-        { [fx.accounts.C.partyRoleId]: { mnoPublicKey1: "MNO-C" } },
+        { [fx.accounts.C.partyRoleId]: { mnoPublicKey1: "MNO3" } },
         () => {
           const run = outstanding(MAIN_DATE);
           expect(run.status, run.stderr).toBe(0);
@@ -229,7 +229,7 @@ describe.skipIf(!databaseUrl || !ready)(
             status: "SUCCESS",
           });
           // 600.00 + 90.00 invoiced − 250.00 paid − 40.00 credited.
-          expect(amounts(run, MAIN_DATE)["MNO-C"]).toBe("400.00");
+          expect(amounts(run, MAIN_DATE)["MNO3"]).toBe("400.00");
         },
       );
     });
@@ -265,12 +265,12 @@ describe.skipIf(!databaseUrl || !ready)(
         );
         compared += 1;
       }
-      // MNO-H is negative and MNO-G spans two accounts, so the comparison
+      // MNO8 is negative and MNO7 spans two accounts, so the comparison
       // covers more than 0 = 0.
       expect(compared).toBeGreaterThanOrEqual(5);
     });
 
-    it("MO-T12 — cross-check with settlement: MNO-D (one period, no account-level items) = Σ invoice_open_amount of its 202608 settlement invoices, same as_of_date", () => {
+    it("MO-T12 — cross-check with settlement: MNO4 (one period, no account-level items) = Σ invoice_open_amount of its 202608 settlement invoices, same as_of_date", () => {
       const settlement = runReport(
         "settlement_invoice",
         [

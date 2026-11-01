@@ -16,25 +16,25 @@ export type { PostedInvoice };
 // billing account, so adding MNOs there would change rpt05's expected file.
 //
 // Invoices (posted on 2026-10-05, Asia/Kuala_Lumpur, unless stated):
-//   P2 — MNO-P, posted first (the lower INV number): one polygon, 2.5 Mbps,
+//   P2 — MNO16, posted first (the lower INV number): one polygon, 2.5 Mbps,
 //        no discount (R08-T7)
-//   P1 — MNO-P, another bill run and BAN (R08-T5): polygons 500.00 / 300.00 /
+//   P1 — MNO16, another bill run and BAN (R08-T5): polygons 500.00 / 300.00 /
 //        200.00 with a 100.00 line discount (R08-T6), and a claimed row in
 //        another unit, billed as an ordinary USAGE line (R08-T3)
-//   Q1 — MNO-Q, posted 23:59: polygons 100.00 / 125.00, a 5.00 discount that
+//   Q1 — MNO17, posted 23:59: polygons 100.00 / 125.00, a 5.00 discount that
 //        doesn't split evenly (2.22 / 2.78)
-//   Q2 — MNO-Q, posted 00:01 on 2026-10-06: not on the 20261005 file (Inv 8)
-//   R1 — MNO-R, a polygon row with no polygon_id= key (POLYGON_ID_MISSING)
-//   R2 — MNO-R, a polygon row with no commercial_unit= key
-//        (COMMERCIAL_UNIT_MISSING); MNO-R gets no file
+//   Q2 — MNO17, posted 00:01 on 2026-10-06: not on the 20261005 file (Inv 8)
+//   R1 — MNO18, a polygon row with no polygon_id= key (POLYGON_ID_MISSING)
+//   R2 — MNO18, a polygon row with no commercial_unit= key
+//        (COMMERCIAL_UNIT_MISSING); MNO18 gets no file
 //   S1 — a party role with no mnoPublicKey1 (MNO_PUBLIC_KEY_MISSING)
-//   T1 — MNO-T, a commitment-only capacity line with no usage
+//   T1 — MNO20, a commitment-only capacity line with no usage
 //        (NO_POLYGON_LINES)
 
 export const INVOICE_DAY = "20261005";
 export const NEXT_DAY = "20261006";
 
-export const MNO = { P: "MNO-P", Q: "MNO-Q", R: "MNO-R", T: "MNO-T" } as const;
+export const MNO = { P: "MNO16", Q: "MNO17", R: "MNO18", T: "MNO20" } as const;
 
 const PREFIX = "RPT08";
 const PERIOD_START = "2026-09-01";

@@ -229,7 +229,7 @@ with its `DELIVERED` line (the hash is the zip's).
   the run's own `validate_output` task.
 - **The password** is the Kestra secret `GLFEED_ZIP_PASSWORD` (deployed:
   Key Vault `glfeed-zip-password`, base64, as `SECRET_GLFEED_ZIP_PASSWORD`;
-  locally `dev/.env`). It reaches `encrypt` only as the env var
+  locally `dev/.env.example`, a local-only dummy). It reaches `encrypt` only as the env var
   `GLFEED_ZIP_PASSWORD`, never on a command line or in a log. A run without it
   fails `ENCRYPTION_KEY_MISSING` at `check_secret`, before `generate` builds
   anything. `check_secret` is **not** handed `secret()`: verified on v1.3.35, a

@@ -33,32 +33,32 @@ import { writeOff } from "@/services/accounts/write-off";
 // (the INVOICE_POSTED_AT_MISSING data fault).
 //
 // MNOs:
-//   MNO-A — T1, T2, T3, T5, T7, T8, T10, T11 (and the 202607 posted_at case)
-//   MNO-B — T4, T6, T9 (fully allocated), R03-T4 (202606 time-zone pair)
-//   MNO-C — no mnoPublicKey1: T13 (202609), T16 (202605, its only invoice)
-//   MNO-D — T9 (unapplied cash, no 202609 invoice), T12 (202608 INV; an
+//   MNO1 — T1, T2, T3, T5, T7, T8, T10, T11 (and the 202607 posted_at case)
+//   MNO2 — T4, T6, T9 (fully allocated), R03-T4 (202606 time-zone pair)
+//   MNO3 — no mnoPublicKey1: T13 (202609), T16 (202605, its only invoice)
+//   MNO4 — T9 (unapplied cash, no 202609 invoice), T12 (202608 INV; an
 //           unposted 202609 bill)
-//   MNO-E — R03-T1's rounding in both directions and a DBN with tax; T21
+//   MNO5 — R03-T1's rounding in both directions and a DBN with tax; T21
 //
 // rpt05 (Part C, plan §C.4) adds MNOs whose invoices fall in billing periods
 // 202602–202604, which no Part A case reads, so Part A's files don't change:
-//   MNO-F — MO-T1 (INV 202603 1,000.00 + INV 202604 800.00, PAY 300.00 on the
+//   MNO6 — MO-T1 (INV 202603 1,000.00 + INV 202604 800.00, PAY 300.00 on the
 //           second) and MO-T8 (an INV posted and a PAY entered 2026-10-28)
-//   MNO-G — MO-T5 (two billing accounts) and R05-T4 (INVs posted 23:59 on
+//   MNO7 — MO-T5 (two billing accounts) and R05-T4 (INVs posted 23:59 on
 //           2026-10-27 and 00:01 on 2026-10-28, Asia/Kuala_Lumpur)
-//   MNO-H — MO-T7 (a credit note larger than what is owed: −150.00)
-//   MNO-I — MO-T6 (a billing account, never invoiced: 0.00)
+//   MNO8 — MO-T7 (a credit note larger than what is owed: −150.00)
+//   MNO9 — MO-T6 (a billing account, never invoiced: 0.00)
 // Every date is on or before 2026-10-28, except T10's PAY (2026-11-05).
 
 export const MNO = {
-  A: "MNO-A",
-  B: "MNO-B",
-  D: "MNO-D",
-  E: "MNO-E",
-  F: "MNO-F",
-  G: "MNO-G",
-  H: "MNO-H",
-  I: "MNO-I",
+  A: "MNO1",
+  B: "MNO2",
+  D: "MNO4",
+  E: "MNO5",
+  F: "MNO6",
+  G: "MNO7",
+  H: "MNO8",
+  I: "MNO9",
 } as const;
 
 // An instant on a given Asia/Kuala_Lumpur day (09:00 local).
@@ -75,7 +75,7 @@ export interface Account {
 export interface SettlementFixture {
   actorId: string;
   managerId: string;
-  // G2 is MNO-G's second billing account, on MNO-G's financial account.
+  // G2 is MNO7's second billing account, on MNO7's financial account.
   accounts: Record<
     "A" | "B" | "C" | "D" | "E" | "F" | "G" | "G2" | "H" | "I",
     Account
@@ -205,15 +205,15 @@ export async function seedSettlementFixture(
   }
 
   const accounts = {
-    A: await onboard("MNO-A", { mnoPublicKey1: MNO.A }),
-    B: await onboard("MNO-B", { mnoPublicKey1: MNO.B }),
-    C: await onboard("MNO-C", {}),
-    D: await onboard("MNO-D", { mnoPublicKey1: MNO.D }),
-    E: await onboard("MNO-E", { mnoPublicKey1: MNO.E }),
-    F: await onboard("MNO-F", { mnoPublicKey1: MNO.F }),
-    G: await onboard("MNO-G", { mnoPublicKey1: MNO.G }),
-    H: await onboard("MNO-H", { mnoPublicKey1: MNO.H }),
-    I: await onboard("MNO-I", { mnoPublicKey1: MNO.I }),
+    A: await onboard("MNO1", { mnoPublicKey1: MNO.A }),
+    B: await onboard("MNO2", { mnoPublicKey1: MNO.B }),
+    C: await onboard("MNO3", {}),
+    D: await onboard("MNO4", { mnoPublicKey1: MNO.D }),
+    E: await onboard("MNO5", { mnoPublicKey1: MNO.E }),
+    F: await onboard("MNO6", { mnoPublicKey1: MNO.F }),
+    G: await onboard("MNO7", { mnoPublicKey1: MNO.G }),
+    H: await onboard("MNO8", { mnoPublicKey1: MNO.H }),
+    I: await onboard("MNO9", { mnoPublicKey1: MNO.I }),
   };
   const G2 = await addBillingAccount(accounts.G);
 
@@ -374,7 +374,7 @@ export async function seedSettlementFixture(
   const documents: Record<string, string> = {};
   const { A, B, C, D, E } = accounts;
 
-  // ---- MNO-A ---------------------------------------------------------------
+  // ---- MNO1 ---------------------------------------------------------------
   invoices.A1 = await invoice(A, { ...sep, net: "1000.00", total: "1000.00" }); // T1
   invoices.A2 = await invoice(A, { ...sep, net: "500.00", total: "500.00" }); // T2
   invoices.A3 = await invoice(A, { ...sep, net: "800.00", total: "800.00" }); // T3
@@ -476,7 +476,7 @@ export async function seedSettlementFixture(
     await allocate(A, "300.00", invoices.A5, "2026-11-05", "TT-56100")
   ).documentId;
 
-  // ---- MNO-B ---------------------------------------------------------------
+  // ---- MNO2 ---------------------------------------------------------------
   invoices.B1 = await invoice(B, { ...sep, net: "200.00", total: "200.00" }); // T4
   invoices.B2 = await invoice(B, { ...sep, net: "300.00", total: "300.00" }); // T4
   invoices.B3 = await invoice(B, { ...sep, net: "300.00", total: "300.00" }); // T6
@@ -542,7 +542,7 @@ export async function seedSettlementFixture(
     postedAt: "2026-07-05T00:01:00+08:00",
   });
 
-  // ---- MNO-C (no mnoPublicKey1) ---------------------------------------------
+  // ---- MNO3 (no mnoPublicKey1) ---------------------------------------------
   invoices.C1 = await invoice(C, { ...sep, net: "600.00", total: "600.00" }); // T13
   documents.captureC = await capture(C, "250.00", "2026-10-10", "TT-C-1");
   documents.payC1 = (
@@ -556,7 +556,7 @@ export async function seedSettlementFixture(
         amount: "40.00",
         eventAt: klDay("2026-10-12"),
         entryDate: klDay("2026-10-12"),
-        referenceInfo: "MNO-C credit",
+        referenceInfo: "MNO3 credit",
       },
       actorId,
     ),
@@ -571,7 +571,7 @@ export async function seedSettlementFixture(
     postedAt: "2026-06-05T10:00:00+08:00",
   });
 
-  // ---- MNO-D ----------------------------------------------------------------
+  // ---- MNO4 ----------------------------------------------------------------
   invoices.D_aug = await invoice(D, {
     // T12 — another period's invoice.
     periodStart: "2026-08-01",
@@ -592,7 +592,7 @@ export async function seedSettlementFixture(
   `;
   documents.captureD = await capture(D, "250.00", "2026-10-13", "TT-D-1"); // T9
 
-  // ---- MNO-E: rounding both ways, a DBN with tax (R03-T1) ---------------------
+  // ---- MNO5: rounding both ways, a DBN with tax (R03-T1) ---------------------
   invoices.E1 = await invoice(E, {
     ...sep,
     net: "92.59",
@@ -670,7 +670,7 @@ export async function seedSettlementFixture(
     postedAt: null,
   });
 
-  // ---- rpt05: MNO-F — MO-T1 (sums across periods) and MO-T8 (cut-off) ---------
+  // ---- rpt05: MNO6 — MO-T1 (sums across periods) and MO-T8 (cut-off) ---------
   const { F, G, H } = accounts;
   const mar = {
     periodStart: "2026-03-01",
@@ -704,7 +704,7 @@ export async function seedSettlementFixture(
     await allocate(F, "40.00", invoices.F1, "2026-10-28", "TT-F-4")
   ).documentId;
 
-  // ---- rpt05: MNO-G — MO-T5 (two billing accounts), R05-T4 (time zone) --------
+  // ---- rpt05: MNO7 — MO-T5 (two billing accounts), R05-T4 (time zone) --------
   invoices.G1 = await invoice(G, { ...mar, net: "200.00", total: "200.00" });
   invoices.G2 = await invoice(G2, { ...mar, net: "100.00", total: "100.00" });
   invoices.G_in = await invoice(G2, {
@@ -720,7 +720,7 @@ export async function seedSettlementFixture(
     postedAt: "2026-10-28T00:01:00+08:00",
   });
 
-  // ---- rpt05: MNO-H — MO-T7 (a credit note larger than what is owed) ----------
+  // ---- rpt05: MNO8 — MO-T7 (a credit note larger than what is owed) ----------
   invoices.H1 = await invoice(H, { ...mar, net: "100.00", total: "100.00" });
   documents.crnH = posted(
     await raiseCreditNote(
@@ -735,7 +735,7 @@ export async function seedSettlementFixture(
       actorId,
     ),
   ).documentId;
-  // MNO-I — onboarded only (MO-T6).
+  // MNO9 — onboarded only (MO-T6).
 
   return {
     actorId,
