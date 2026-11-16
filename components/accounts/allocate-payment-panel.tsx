@@ -45,14 +45,18 @@ export function AllocatePaymentPanel({
         financialAccountId,
         billingAccountId,
         amount,
-        refSettledDocumentId: refSettledDocumentId.trim() || null,
+        refSettledDocumentId: refSettledDocumentId.trim(),
         eventAt,
         entryDate,
         referenceInfo,
       });
 
       if (!result.ok) {
-        setError(describeAllocateError(result.code));
+        setError(
+          result.code === "VALIDATION_ERROR"
+            ? describeValidationError(result.fieldErrors)
+            : describeAllocateError(result.code),
+        );
         return;
       }
 
@@ -96,12 +100,16 @@ export function AllocatePaymentPanel({
         </Field>
 
         <Field>
-          <FieldLabel>Settled Document (optional)</FieldLabel>
+          <FieldLabel>Settled Document (Invoice / Debit Note ID)</FieldLabel>
           <Input
-            placeholder="e.g. DBN00000042"
+            required
+            placeholder="e.g. INV00000042 or DBN00000042"
             value={refSettledDocumentId}
             onChange={(e) => setRefSettledDocumentId(e.target.value)}
           />
+          <p className="text-body-sm text-muted-foreground">
+            Required — the document this payment amount settles.
+          </p>
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
@@ -140,7 +148,13 @@ export function AllocatePaymentPanel({
 
         <Button
           type="button"
-          disabled={disabled || submitting || !amount || !referenceInfo}
+          disabled={
+            disabled ||
+            submitting ||
+            !amount ||
+            !refSettledDocumentId.trim() ||
+            !referenceInfo
+          }
           onClick={() => void handleSubmit()}
         >
           {submitting ? "Allocating…" : "Allocate Payment"}
@@ -150,6 +164,18 @@ export function AllocatePaymentPanel({
   );
 }
 
+function describeValidationError(
+  fieldErrors: Record<string, string[]>,
+): string {
+  if (fieldErrors.refSettledDocumentId) {
+    return "Enter the ID of the invoice or debit note this payment settles (e.g. INV00000042).";
+  }
+  if (fieldErrors.amount) {
+    return "Enter a valid amount with at most 2 decimal places.";
+  }
+  return "Please check the form and try again.";
+}
+
 function describeAllocateError(code: string): string {
   switch (code) {
     case "FINANCIAL_ACCOUNT_NOT_FOUND":
@@ -157,7 +183,7 @@ function describeAllocateError(code: string): string {
     case "BILLING_ACCOUNT_NOT_FOUND":
       return "Billing account not found, or does not belong to this Financial Account.";
     case "SETTLED_DOCUMENT_NOT_FOUND":
-      return "Settled document not found.";
+      return "Settled document not found on this Billing Account. Check the invoice or debit note ID.";
     case "PERIOD_CLOSED":
       return "The entry date falls in a closed accounting period. Choose a date in an open period.";
     case "UNBALANCED_DOC":

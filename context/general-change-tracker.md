@@ -4,6 +4,30 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
+- **DONE (2026-11-13) — Account Management › Allocate Payment: Settled Document is now compulsory**
+  (owner request, no spec). `validation/accounts/allocate-payment.schema.ts` requires
+  `refSettledDocumentId` (an INV/DBN id) on every allocation; the panel recaptions the field,
+  disables Allocate until it is filled and surfaces the field error. Service/DB shapes unchanged
+  (reporting fixtures still seed the historical invoice-less rpt03 SR12 row). Recorded in
+  `acctmgmt-completed-tracker.md` › Post-delivery changes. Test:
+  `tests/validation/allocate-payment.schema.test.ts`.
+
+- **DONE (2026-11-05) — `npm run db:seed-mno-demo`: the standard MNO invoice-generation demo as an opt-in seed**
+  (`db/seeds/demo/seed-mno-demo.ts`; no spec — replaces the hand re-keying the demo needed after
+  every database reset). Builds, through the real services (createCustomer, addContact,
+  onboardCustomerAccounts, status transitions, createOrder): two ACTIVE offerings — "eMBB Wholesale
+  5G Network" (specs `udrType=RAN_USAGE`, `productCardLookUp=RATECARD_RAN_USAGE_LKP`,
+  `singleSubInstPerCust=true`; prices: card-driven usage rate 100/Mbps, capacity commitment 30000,
+  capacity motivation above 30000 → 50) and "5G Private Network" (flat monthly fee, default
+  50000.00 via `DEMO_PRIVATE_NETWORK_FEE`) — then four Telecommunication customers Maxis / CelcomDigi /
+  Telekom / YTL keyed `mnoPublicKey1 = MAXIS/CELCOM/TM/YTL` (reg. nos `DEMO-MNO1..4`), one contact each,
+  FA + BAN on `DEMO_BILL_CYCLE` (default "Monthly – Day 1"), ACTIVE, and one COMPLETED order per
+  customer per offering. Idempotent; `DEMO_START_DATE` (default: 1st of last month) backdates
+  subscriptions and prices through `BOOTSTRAP_DATABASE_URL` (write-once columns). `product-demo.ts`
+  exports its price/spec builders for reuse. README "Useful scripts" row added. The rate card is
+  not seeded (its polygons belong to the UDR feed): upload `RATECARD_RAN_USAGE_LKP` afterwards with
+  each row's Subscriber Reference ID = the printed party-role id.
+
 - **DONE (2026-10-11) — Route Handlers honour `force_password_change` (cross-domain; from the billing bm62/bm63 code review, owner-approved).**
   `auth/resolver.ts` `findActiveUserById` now refuses a user who must still set a new password, the
   same gate `getActiveUser` applies to pages and actions. Affects six Route Handlers: five billing
