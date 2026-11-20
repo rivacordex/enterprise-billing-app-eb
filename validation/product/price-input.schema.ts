@@ -8,6 +8,7 @@ import {
 } from "@/types/product";
 import {
   moneyStringSchema,
+  quantitySchema,
   stepsSchema,
 } from "@/validation/product/pricing-component.schema";
 
@@ -21,7 +22,7 @@ import {
 // silently-stripped one. pm46's per-`component_type` CHECKs are the backstop
 // for a write that goes around this schema (Inv. #31/#32).
 //
-// `moneyStringSchema`/`stepsSchema` are imported from
+// `moneyStringSchema`/`quantitySchema`/`stepsSchema` are imported from
 // `pricing-component.schema.ts` rather than restated (§2.16 — no second copy
 // of a rule) — the same money/step rules the envelope itself enforces.
 
@@ -93,9 +94,7 @@ export const FLAT_FEE_ONE_TIME_PRICE_INPUT_SHAPE = {
 export const CAPACITY_COMMITMENT_PRICE_INPUT_SHAPE = {
   componentType: z.literal("capacity_commitment"),
   unitOfMeasure: unitOfMeasureFieldSchema,
-  params: z.strictObject({
-    committedQuantity: z.number().finite().positive(),
-  }),
+  params: z.strictObject({ committedQuantity: quantitySchema }),
   ...priceInputCoreShape,
 } as const;
 

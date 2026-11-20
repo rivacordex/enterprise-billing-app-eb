@@ -1,5 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import { priceInputSchema } from "@/validation/product/price-input.schema";
 import {
   capacityCommitmentComponentSchema,
   capacityMotivationComponentSchema,
@@ -369,5 +373,188 @@ describe("stepsSchema", () => {
       stepsSchema.safeParse([{ aboveQuantity: 1000, ratePerUnit: "50" }])
         .success,
     ).toBe(true);
+  });
+});
+
+// pm69-spec I4.6–I4.10 (§1.53, Inv. #68): money fits `numeric(18,6)` and
+// quantities fit `numeric(20,6)` at Zod, so Postgres never has anything to
+// round on insert.
+describe("pricingComponentSchema — pm69 scale caps", () => {
+  const issuePaths = (result: {
+    success: boolean;
+    error?: { issues: ReadonlyArray<{ path: PropertyKey[] }> };
+  }) => (result.error?.issues ?? []).map((issue) => issue.path.join("."));
+
+  it("refuses a seven-decimal flat_fee amount, naming params.amount", () => {
+    const result = pricingComponentSchema.safeParse(
+      flatFeeOneTime({ params: { amount: "0.1234567" } }),
+    );
+    expect(result.success).toBe(false);
+    expect(issuePaths(result)).toContain("params.amount");
+  });
+
+  it("refuses a seven-decimal usage_rate ratePerUnit, naming params.ratePerUnit", () => {
+    const result = pricingComponentSchema.safeParse(
+      usageRate({ params: { ratePerUnit: "0.1234567", rateCardLookUp: null } }),
+    );
+    expect(result.success).toBe(false);
+    expect(issuePaths(result)).toContain("params.ratePerUnit");
+  });
+
+  it("refuses a seven-decimal step ratePerUnit, naming params.steps.0.ratePerUnit", () => {
+    const result = pricingComponentSchema.safeParse(
+      capacityMotivationOneBand({
+        params: { steps: [{ aboveQuantity: 1000, ratePerUnit: "0.1234567" }] },
+      }),
+    );
+    expect(result.success).toBe(false);
+    expect(issuePaths(result)).toContain("params.steps.0.ratePerUnit");
+  });
+
+  it("refuses thirteen integer digits and accepts twelve plus six decimals", () => {
+    expect(
+      pricingComponentSchema.safeParse(
+        flatFeeOneTime({ params: { amount: "1234567890123" } }),
+      ).success,
+    ).toBe(false);
+    expect(
+      pricingComponentSchema.safeParse(
+        flatFeeOneTime({ params: { amount: "123456789012.123456" } }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it("refuses a seven-decimal committedQuantity, naming params.committedQuantity", () => {
+    const result = pricingComponentSchema.safeParse(
+      capacityCommitment({ params: { committedQuantity: 0.1234567 } }),
+    );
+    expect(result.success).toBe(false);
+    expect(issuePaths(result)).toContain("params.committedQuantity");
+  });
+
+  it("refuses a seven-decimal aboveQuantity, naming params.steps.0.aboveQuantity", () => {
+    const result = pricingComponentSchema.safeParse(
+      capacityMotivationOneBand({
+        params: { steps: [{ aboveQuantity: 0.1234567, ratePerUnit: "50" }] },
+      }),
+    );
+    expect(result.success).toBe(false);
+    expect(issuePaths(result)).toContain("params.steps.0.aboveQuantity");
+  });
+
+  it.each([1000, 0.123456, 12345678901234.5])(
+    "accepts committedQuantity and aboveQuantity %s",
+    (quantity) => {
+      expect(
+        pricingComponentSchema.safeParse(
+          capacityCommitment({ params: { committedQuantity: quantity } }),
+        ).success,
+      ).toBe(true);
+      expect(
+        pricingComponentSchema.safeParse(
+          capacityMotivationOneBand({
+            params: { steps: [{ aboveQuantity: quantity, ratePerUnit: "50" }] },
+          }),
+        ).success,
+      ).toBe(true);
+    },
+  );
+
+  it.each([1e15, 1e21])(
+    "refuses committedQuantity and aboveQuantity %s by its String() form",
+    (quantity) => {
+      expect(
+        pricingComponentSchema.safeParse(
+          capacityCommitment({ params: { committedQuantity: quantity } }),
+        ).success,
+      ).toBe(false);
+      expect(
+        pricingComponentSchema.safeParse(
+          capacityMotivationOneBand({
+            params: { steps: [{ aboveQuantity: quantity, ratePerUnit: "50" }] },
+          }),
+        ).success,
+      ).toBe(false);
+    },
+  );
+
+  it("still parses every worked envelope (the cap admits every existing fixture)", () => {
+    for (const envelope of [
+      usageRate(),
+      flatFeeRecurring(),
+      flatFeeOneTime(),
+      capacityCommitment(),
+      capacityMotivationOneBand(),
+      capacityMotivationTwoBand(),
+      negotiatedOverride(),
+    ]) {
+      expect(pricingComponentSchema.safeParse(envelope).success).toBe(true);
+    }
+  });
+});
+
+describe("priceInputSchema — pm69 caps propagate by import", () => {
+  const core = { name: "P", currency: "USD", glCode: null };
+
+  it("refuses a seven-decimal usage_rate ratePerUnit", () => {
+    expect(
+      priceInputSchema.safeParse({
+        ...core,
+        componentType: "usage_rate",
+        unitOfMeasure: "GB",
+        params: { ratePerUnit: "0.1234567", rateCardLookUp: null },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("refuses a seven-decimal flat_fee amount", () => {
+    expect(
+      priceInputSchema.safeParse({
+        ...core,
+        componentType: "flat_fee",
+        priceType: "oneTime",
+        params: { amount: "0.1234567" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("refuses a seven-decimal capacity_motivation step (rate and threshold)", () => {
+    for (const step of [
+      { aboveQuantity: 1000, ratePerUnit: "0.1234567" },
+      { aboveQuantity: 0.1234567, ratePerUnit: "50" },
+    ]) {
+      expect(
+        priceInputSchema.safeParse({
+          ...core,
+          componentType: "capacity_motivation",
+          unitOfMeasure: "GB",
+          params: { steps: [step] },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("refuses a seven-decimal or exponent-form capacity_commitment committedQuantity, naming the field", () => {
+    for (const committedQuantity of [0.1234567, 1e21]) {
+      const result = priceInputSchema.safeParse({
+        ...core,
+        componentType: "capacity_commitment",
+        unitOfMeasure: "GB",
+        params: { committedQuantity },
+      });
+      expect(result.success).toBe(false);
+      expect(
+        (result.error?.issues ?? []).map((issue) => issue.path.join(".")),
+      ).toContain("params.committedQuantity");
+    }
+  });
+
+  it("declares no money or quantity regex of its own", () => {
+    const source = readFileSync(
+      resolve(__dirname, "../../validation/product/price-input.schema.ts"),
+      "utf8",
+    );
+    expect(source).not.toContain("\\d{1,12}");
+    expect(source).not.toContain("\\d{1,14}");
   });
 });
