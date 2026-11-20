@@ -22,14 +22,14 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 
 ## Reporting Module Context
 
-Read the following files in order before implementing or making changes related to the Reporting Management module — the read-only report flows that run as function 4 on the Kestra workflow-management platform. rpt01 and rpt02 are complete; the next unit is rpt03 (its spec is in `context/reporting-management/specs/`). The unit list, build order and status are in `context/reporting-management/specs/rpt00-build-plan.md`:
+Read the following files in order before implementing or making changes related to the Reporting Management module — the read-only report flows that run as function 4 on the Kestra workflow-management platform. rpt01–rpt05 and rpt07–rpt09 are built; the only remaining unit is rpt06, which is blocked on the P1 (and P2) decision and has no spec yet. The unit list, build order and status are in `context/reporting-management/specs/rpt00-build-plan.md`:
 
 1. `context/reporting-management/rptmgmt-project-overview.md` — the module's definition, goals, the five reports and scope
 2. `context/reporting-management/rptmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
 3. `context/reporting-management/rptmgmt-code-standards.md` — implementation rules and conventions
 4. `context/reporting-management/rptmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
 
-This module has no pages, Server Actions, components or RBAC permissions, and owns no tables, so it has no UI context document. Its database access is the `reporting_runtime` role's `SELECT`-only grants on nine tables owned by other modules. Report logic lives in `workflow-management/` (flows and the worker's `runtime/reporting/`), never in the Next.js app.
+This module has no pages, Server Actions, components or RBAC permissions, and owns no tables, so it has no UI context document. Its database access is the `reporting_runtime` role's `SELECT`-only grants on fifteen tables and two views (`pgledger_transfers_view`, `gl_resolution_view`) across five schemas owned by other modules — enumerated in `db/bootstrap/reporting-db-roles.sql` Step 5. Report logic lives in `workflow-management/` (flows and the worker's `runtime/reporting/`), never in the Next.js app.
 
 Update `context/reporting-management/rptmgmt-progress-tracker.md` after each meaningful implementation change.
 

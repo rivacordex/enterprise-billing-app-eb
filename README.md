@@ -891,6 +891,7 @@ fi
 | `npm run db:seed-invoice-templates` | upload + verify the seeded invoice templates in blob (idempotent; part of `db:setup`) |
 | `npm run db:migrate` | apply any new forward migrations (idempotent) |
 | `npm run db:seed-sample` | `_SAMPLE_*` bill-run demo scenario — run as **superuser**, see Part 3 |
+| `npm run db:seed-mno-demo` | the standard MNO invoice-generation demo: 2 offerings (eMBB Wholesale 5G Network, 5G Private Network), 4 MNO customers Maxis/CelcomDigi/Telekom/YTL (keys MAXIS/CELCOM/TM/YTL, sector Telecommunication) with contacts + accounts, 8 completed orders — through the real services. Idempotent; an earlier `DEMO_START_DATE` on a re-run moves subscriptions and prices back. `DEMO_START_DATE=YYYY-MM-DD` (default: 1st of last month), `DEMO_BILL_CYCLE`, `DEMO_PRIVATE_NETWORK_FEE`. Backdating uses `BOOTSTRAP_DATABASE_URL` (write-once tables). Upload the `RATECARD_RAN_USAGE_LKP` rate card afterwards with the printed party-role ids |
 | `npm run db:bootstrap-roles` | create `app_runtime`/`app_migrate` + grants |
 | `npm run db:bootstrap-rating-roles` | create `rating_runtime` + grants |
 | `npm run db:bootstrap-billrun-roles` | create `billrun_runtime` + grants |

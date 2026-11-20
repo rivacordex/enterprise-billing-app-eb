@@ -39,7 +39,7 @@ const CURRENCY = "MYR"; // SYSTEM_CONFIG.default_currency (0005 seed)
 // (a rename here is a rename there).
 export const DEMO_5G_OFFERING_NAME = "Demo — 5G Nationwide Service Plan";
 
-interface SpecSeed {
+export interface SpecSeed {
   name: string;
   isMandatory: boolean;
   isDefault: boolean;
@@ -96,7 +96,7 @@ interface CapacityMotivationPriceSeed extends PriceSeedCore {
   params: { steps: Step[] };
 }
 
-type PriceSeed =
+export type PriceSeed =
   | UsageRatePriceSeed
   | FlatFeeRecurringPriceSeed
   | FlatFeeOneTimePriceSeed
@@ -113,7 +113,9 @@ interface OfferingSeed {
 // (currency, unit, period) never enters `params` (code-standards §1.25) —
 // this function derives only the envelope's own fields; `toRowColumns` below
 // derives the row columns from the same fixture.
-function buildPriceEnvelope(seed: PriceSeed): PersistablePricingComponent {
+export function buildPriceEnvelope(
+  seed: PriceSeed,
+): PersistablePricingComponent {
   switch (seed.componentType) {
     case "usage_rate":
       return {
@@ -174,7 +176,7 @@ function buildPriceEnvelope(seed: PriceSeed): PersistablePricingComponent {
 // The row columns a fixture's branch allows — a `usage_rate`/capacity
 // component always carries its unit and never a period; a `flat_fee` carries
 // the period pair iff `recurring` and never a unit (pm46 §3.3 completeness).
-function toRowColumns(seed: PriceSeed): {
+export function toRowColumns(seed: PriceSeed): {
   unitOfMeasure: string | null;
   recurringChargePeriodLength: number | null;
   recurringChargePeriodType: string | null;

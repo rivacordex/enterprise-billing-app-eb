@@ -38,7 +38,8 @@ import { UNITS_OF_MEASURE } from "@/types/product";
 //                  also carries the `priceType` of the component it overrides
 //                  — the only place `priceType` appears inside `boundTo`.
 //   params       — the branch's own numeric/rate payload. Money is always a
-//                  decimal string (`moneyStringSchema`, declared once below);
+//                  decimal string (`moneyStringSchema`, declared once below),
+//                  capped at six decimals (pm69, Inv. #68);
 //                  quantities are always JS numbers, never numeric strings.
 //
 // No `sequence` field: apply order is canonical by stage then class
@@ -166,16 +167,34 @@ const unitOfMeasureSchema = z.enum(UNITS_OF_MEASURE);
 
 // Money is a decimal string, never a float, declared exactly once and reused
 // by every money field in this file (pm47-spec D5). This module performs no
-// money arithmetic.
+// money arithmetic. pm69 (§1.53, Inv. #68): capped at twelve integer digits
+// and six decimals — exactly `numeric(18,6)` — so Postgres never has anything
+// to round on insert (it would round silently, not refuse).
 export const moneyStringSchema = z
   .string()
   .regex(
-    /^\d+(\.\d+)?$/,
-    'Must be a plain decimal amount (e.g. "100" or "12.50")',
+    /^\d{1,12}(\.\d{1,6})?$/,
+    'Must be a plain decimal amount with at most six decimal places (e.g. "100" or "12.50")',
   );
 
+// pm69 (§1.53, Inv. #68): a quantity stays a JS number, but its `String()`
+// form must fit `numeric(20,6)` — fourteen integer digits and six decimals.
+// Testing `String(n)` refuses what a float hides: `String(1e21)` is "1e+21"
+// and `String(0.1 + 0.2)` is "0.30000000000000004"; a typed `0.123456`
+// survives as "0.123456". Declared once and reused by `aboveQuantity`,
+// `committedQuantity` and `price-input.schema.ts`'s `committedQuantity`
+// (§2.16) — exported for that import so the Manage Products input path
+// tightens with the envelope (pm69 deviation, owner-approved 2026-11-19).
+export const quantitySchema = z
+  .number()
+  .finite()
+  .positive()
+  .refine((n) => /^\d{1,14}(\.\d{1,6})?$/.test(String(n)), {
+    message: "Quantity must have at most six decimal places",
+  });
+
 export const stepSchema = z.strictObject({
-  aboveQuantity: z.number().finite().positive(),
+  aboveQuantity: quantitySchema,
   ratePerUnit: moneyStringSchema,
 });
 export type Step = z.infer<typeof stepSchema>;
@@ -256,8 +275,8 @@ export const capacityCommitmentComponentSchema = z.strictObject({
   appliesAt: z.literal("post_aggregation"),
   basis: z.literal("quantity"),
   boundTo: z.strictObject({ unitOfMeasure: unitOfMeasureSchema }),
-  // VI2: a finite JS number > 0 — never a numeric string.
-  params: z.strictObject({ committedQuantity: z.number().finite().positive() }),
+  // VI2: a finite JS number > 0 — never a numeric string; pm69 scale cap.
+  params: z.strictObject({ committedQuantity: quantitySchema }),
 });
 export type CapacityCommitmentComponent = z.infer<
   typeof capacityCommitmentComponentSchema
