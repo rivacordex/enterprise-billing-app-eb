@@ -1,119 +1,154 @@
-# Product Management — Update Overview (Rate Card Lookup)
+# Product Management — Update Overview (Normalize Spec Characteristics & Price Components)
 
-**Module:** Product Management — the `RATECARD_RAN_USAGE_LKP` reference table, surfaced as **Products → Rate Card**. Stands up a RevOps-managed lookup table with an upload/diff/activate/rollback lifecycle and its UI; the rating engine's consumption of the table is a following-sprint deliverable, not part of this update.
-**Users:** Revenue Operations — upload, review, activate and roll back rate card versions.
-**Status:** Design. Invariants **RV1–RV3** and open items **OR3 / OR4 / OR-RET** are locked in `_updatemodule-ratecard-lookup-plan-v2.md`. **No blocking open items remain.**
-**Supersedes:** the previous Pricing Components update overview. That update's authoritative text remains `_updatemodule-product-pricing-components-plan.md` plus specs `pm46`–`pm56`; its prior overview is recoverable at commit `7ebcc67`.
-**Companion docs:** `_updatemodule-ratecard-lookup-plan-v2.md` (authoritative), `_updatemodule-product-pricing-components-plan.md` (PC10), `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`.
+**Module:** Product Management — the storage of `product.product_specifications.product_spec_characteristics` and `product.product_offering_price.price_component`. Replaces the two jsonb columns with six relational tables plus one runtime read view. No new screen: the Manage Products UI, server actions, Zod schemas and audit payload shapes keep their current form.
+**Users:** Billing Operations (Manage Products — same experience, characteristics now keep their entry order); BSS IT Operations (migration, workflow worker redeploy); the bill-run processor and the rating engine as runtime readers of the new view.
+**Status:** Design. Proposal dated 2026-10-28 in `_updatemodule-product-normalize-spec-price-tables-plan.md`; **not built** (verified against the codebase on 2026-11-17: `db/schema/product.ts` still declares `price_component jsonb`, migrations run to `0055`). **Owner decisions (plan §7 Q1–Q4): all four decided 2026-11-19 — recommendations accepted.** This overview adopts the plan's recommendations — subtype tables + view (Q1), forward migration with backfill (Q2), `numeric(18,6)` money / `numeric(20,6)` quantity (Q3), keep `display_order` (Q4) — and must be re-read if any is decided otherwise. Build units are assigned in `specs/pm00-build-plan.md` **Part 6** (pm69–pm75, incl. pm74b — recorded 2026-11-17); per-unit specs follow one at a time, and Q1–Q4 are closed; G-N6 is closed (2026-11-19); pm69 is unblocked, and pm70 waits on G-N2 and G-N5.
+**Supersedes:** the Rate Card Lookup update overview. That update's authoritative text remains `_updatemodule-ratecard-lookup-plan-v2.md` plus specs `pm57a` and `pm58`–`pm68`; its prior overview is recoverable at commit `0fc56cc`.
+**Companion docs:** `_updatemodule-product-normalize-spec-price-tables-plan.md` (authoritative), `_updatemodule-product-pricing-components-plan.md` (the PC10 envelope and PC12 stage order this update decomposes), `prodmgmt-architecture.md`, `prodmgmt-code-standards.md`, `bm42-capacity-aggregation.md` (capacity consumer), `rm08` / `rm30` (usage-rate consumers).
 
 ---
 
 ## Overview
 
-This update stands up a RevOps-managed lookup table that records, for any unit of RAN usage, **which subscriber reference it belongs to and which service it is**. Revenue Operations uploads a CSV keyed on `(MNO public key, commercial unit public key, polygon ID)` — the same three columns that already form the UDR's `udr_key`; each upload becomes a version that is validated and previewable as `DRAFT` and takes effect only when explicitly activated. One lookup row carries an `lkp_subscriber_ref_id` and a `service_code`, both plain stored columns. The scope of this update is the table plus its full version lifecycle — upload, diff, activate and rollback — and the `/products/rate-card` UI, **and it stops there**. Nothing consumes the table: the rating engine's resolution of a UDR against the lookup is a following-sprint deliverable and no part of it is built here.
+Today every product specification stores its characteristics as one flat jsonb object (`{"SST_ID":"01","SD_ID":"A0C4E2"}`), and every price component stores an eight-field jsonb envelope of which only two to three fields carry data — the rest (`specVersion`, `appliesAt`, `basis`, `plaSpecId`, `boundTo.unitOfMeasure`) are constant per `component_type` or duplicate a row column. The jsonb is policed by six CHECK constraints and the `product.pricing_steps_ok(jsonb)` function in `0006_product.sql`, and the price lane-key index in `0049_product_price_lane_key.sql` has to reach into the JSON with a `CASE WHEN component_type = 'flat_fee' THEN price_component->>'priceType' END` expression. This update moves characteristics into `product.product_spec_characteristic` (one row per name/value, with `display_order`), moves the constant envelope fields into two seeded reference tables (`price_component_type`, `price_component_price_type`), and moves the variable price data into four typed subtype tables (`pop_usage_rate`, `pop_flat_fee`, `pop_capacity_commitment`, `pop_motivation_step`) keyed to the `product_offering_price` header by a composite foreign key that pins each subtype row to a header of the matching type. A single view, `product.offering_price_v`, re-joins header, reference and subtype rows so the bill-run flow and `rp.py` read plain columns (`pop.amount`, `pop.price_type`, `pop.committed_quantity`, `pop.steps`) instead of JSON paths. The repository reassembles the existing `PricingComponent` envelope on read and decomposes it on write, so nothing above the repository changes shape.
 
 ---
 
 ## Goals
 
-1. Store a per-upload versioned lookup keyed on `(mno_public_key, commercial_unit_public_key, polygon_id)`, carrying `lkp_subscriber_ref_id`, `service_code` and the descriptive columns, in `product.ratecard_version` + `product.RATECARD_RAN_USAGE_LKP`.
-2. Give RevOps a self-service upload at **Products → Rate Card** that validates a ~5,000–5,500 row CSV synchronously and reports row-level errors without writing anything on failure.
-3. Make activation a deliberate, separate act: an upload lands as `DRAFT`, is diffable against the current `ACTIVE`, and only becomes live when a user activates it.
-4. Guarantee exactly one `ACTIVE` version per card name via a partial unique index, so "which card is live" always has one answer.
-5. Treat each upload as the **authoritative current state** — mediation already filters retired polygons out upstream, so a version is exactly its uploaded file. Nothing is carried forward; a key dropped from an upload stays readable in the superseded version, which is retained for audit and rollback (D-A7).
-6. Stand up the table and its lifecycle only. This update builds no consumer: no rating resolution, no price-row selection, and no change to `product_offering_price` — those belong to a following sprint.
+1. Store each specification characteristic as a row in `product.product_spec_characteristic` (`product_spec_id`, `char_name`, `char_value`, `display_order`) with primary key `(product_spec_id, char_name)` and `UNIQUE (product_spec_id, display_order)`, then drop `product_specifications.product_spec_characteristics`. Entry order survives (jsonb re-sorts object keys today).
+2. Move the fields that are constant per component type — `applies_at`, `basis`, `pla_spec_id` and the PC12 stage order as `apply_order` — into `product.price_component_type`, seeded by migration with exactly four rows: `usage_rate`, `flat_fee`, `capacity_commitment`, `capacity_motivation`.
+3. Make the allowed `(component_type, price_type)` pairs data, not code: `product.price_component_price_type` seeded with `(usage_rate, usage)`, `(flat_fee, recurring)`, `(flat_fee, oneTime)`, `(capacity_commitment, commitment)`, `(capacity_motivation, discount)`, and a new `product_offering_price.price_type NOT NULL` column with a composite FK to it.
+4. Store the variable price data in typed, NOT NULL columns: `pop_usage_rate.rate_per_unit` + `rate_card_lookup`, `pop_flat_fee.amount`, `pop_capacity_commitment.committed_quantity`, and one `pop_motivation_step` row per band (`above_quantity`, `rate_per_unit`). Drop `price_component jsonb`.
+5. Make inconsistent states unrepresentable: a composite FK `(product_offering_price_id, component_type)` plus a pinned `component_type` column on every subtype table means a `pop_flat_fee` row cannot attach to a `usage_rate` header; `plaSpecId` for `usage_rate` is derived (`'PLA_USAGE_RATE'` when `rate_card_lookup IS NOT NULL`) rather than stored, removing the D4 cross-field refinement; duplicate step quantities are rejected by the `(product_offering_price_id, above_quantity)` primary key; "strictly ascending" becomes `ORDER BY above_quantity`.
+6. Enforce completeness — every header has its subtype row, every `capacity_motivation` header has at least one step — with a `DEFERRABLE INITIALLY DEFERRED` constraint trigger that fires at COMMIT, replacing `pricing_steps_ok()` and the six JSON CHECKs.
+7. Express the price lane key as plain columns: `UNIQUE NULLS NOT DISTINCT (product_offering_id, component_type, unit_of_measure, price_type, start_date_time)`, equivalent to `0049` because `price_type` is constant for every non-`flat_fee` type.
+8. Give the bill-run flow and `rp.py` one read projection, `product.offering_price_v`, granted `SELECT` to the billrun and rating DB roles, so the subtype join logic lives in one place and workflow SQL stays a single-row read.
+9. Keep the API/UI contract unchanged: `toEnvelope(row)` / `fromEnvelope(component)` in the repository, Zod remains the single input contract, and `toEnvelope` normalizes `numeric(18,6)` output (`"100.000000"`) back to the canonical money string (`"100"`) so no audit diff or form value changes.
+10. Extend the DRAFT-only guard `child_write_requires_draft` (`0040_product_family_guards.sql`) to the five new tables, and make `branchOfferingAsDraft` copy characteristics, subtype rows and steps with an old→new header-id map.
+11. Ship as a forward migration with a verified backfill, deployed in the same release as the rewritten bill-run yml and `rp.py` (they read the dropped column).
 
 ---
 
 ## Core User Flow
 
-1. A Revenue Operations user opens **Products → Rate Card**. The version list shows every version for the card with its status (`DRAFT` / `ACTIVE` / `SUPERSEDED` / `REJECTED`), snapshot date, row count, and who uploaded and activated it.
-2. They click **Upload new version** and pick a CSV — roughly 5,000–5,500 rows, about 0.5 MB.
-3. The server action parses and validates the whole file in one request: the header is exactly the ten expected columns (`MNO Name`, `Commercial Unit ID`, `Polygon ID`, `Polygon Start Date`, `Polygon End Date`, `State`, `District`, `Subscriber Reference ID`, `Service Code`, `Rate per Unit` — exact text, any order; OR7′); no duplicate `(mno, cu, polygon)` key; every cell is typed per the contract, and `lkp_subscriber_ref_id` is present and non-empty. Validation is **structural only** — no cell is checked against another table (D-A1).
-4. **On failure**, a row-level error table appears — row number, column, value, reason — and **no version is created**. The user fixes the file and uploads again.
-5. **On success**, the version is created as `DRAFT` — validated, previewable, and never the `ACTIVE` version any future reader would resolve against. Its `snapshot_date` is the date of the upload in the app timezone, set by the service — the file has no snapshot-date column (D-A8).
-6. The user reviews the rows and the **diff against the current `ACTIVE`**: **Added** (keys new in the upload), then **Changed** (keys whose non-key columns differ), then **Removed** (keys absent from the upload) — they will not be in the new version and stay readable in the superseded one.
-7. They click **Activate**. A confirmation names the version being superseded, the change counts, and notes that removed rows stay readable in the superseded version.
-8. In one transaction the service promotes the `DRAFT` to `ACTIVE`, and demotes the prior `ACTIVE` to `SUPERSEDED` — two status flips, no row writes. An audit event is recorded in the same transaction.
-9. If the activation was a mistake, the user re-activates any `SUPERSEDED` version from the version list; versions are immutable, so rollback is a status change, not an edit.
+1. A Billing Operations user opens **Products → Manage Products** and either opens a `DRAFT` offering version or branches an `ACTIVE` version to a new `DRAFT`.
+2. They add a specification and enter its characteristics in the specification form in the order they want them shown, for example `SST_ID = 01` then `SD_ID = A0C4E2`. The server action validates with the existing `Record<string,string>` Zod schema in `validation/product/product-spec-characteristics.schema.ts` — unchanged. The repository writes one `product_spec_characteristic` row per entry with `display_order` 1, 2, …; `{}` writes no rows.
+3. The detail page re-renders the characteristic chips in entry order. Today the same chips come back alphabetically because Postgres re-sorts jsonb keys.
+4. They add a price component — picking `usage_rate`, `flat_fee` (recurring or oneTime), `capacity_commitment` or `capacity_motivation` — and fill the same fields as today. The UI posts the same `PricingComponent` envelope it posts today; Zod validates it exactly as today.
+5. `fromEnvelope` decomposes the envelope: the header row gets `component_type` and `price_type`; the matching subtype row (or one `pop_motivation_step` row per step) is inserted after the header in the same transaction. At COMMIT the deferred trigger confirms the header is complete. A `flat_fee` with `priceType: usage` fails the reference FK; a motivation with zero steps fails at COMMIT; two steps with the same `aboveQuantity` fail the step primary key. Zod already rejects each of these states before the write, so a database refusal means Zod was bypassed: it is thrown as an unexpected failure, not translated into a validation error, and no new error mapping is added (`prodmgmt-code-standards.md` §1.51; the module's only DB-error translation today is `isUniqueViolation` on the lane index, which keeps its name).
+6. The detail page reloads through one Drizzle query with `with` relations (no N+1). `toEnvelope` reassembles each envelope, deriving `plaSpecId`, `appliesAt` and `basis` from `price_component_type` and stripping trailing zeros from `numeric` values, so the form shows `100`, not `100.000000`, and the audit payload is byte-identical to today's.
+7. Editing a `DRAFT` price updates the header and replaces its subtype row (steps: delete then insert) in one transaction. Any write to any of the five new tables under a version that is not `DRAFT` is rejected by the extended guard with SQLSTATE `23514`; discarding a `DRAFT` still cascades through header → subtype → steps.
+8. They activate the version. Its characteristics, headers, subtype rows and steps are now write-protected like every other child row.
+9. Weeks later they change a price: branching the `ACTIVE` version inserts new headers with `RETURNING` ids, maps old → new, and copies every `pop_*` row, step and characteristic. Reassembling the copied envelopes yields exactly the source envelopes.
+10. The month-end bill run and the rating engine read prices from `product.offering_price_v`: the recurring resolver reads `pop.amount` where `pop.price_type = 'recurring'`, the capacity CTEs read `pop.committed_quantity` and `pop.steps` (a JSON array ordered by `above_quantity`), and `rp.py` reads `rate_per_unit`, `rate_card_lookup` and the derived `pla_spec_id`. The rated and billed amounts equal what the jsonb-backed run produced.
 
 ---
 
 ## Features
 
-### Lookup table and versioning
+### Specification characteristics
 
-- `product.ratecard_version` — one row per upload: `ratecard_version_id` (`RCV` + 8 digits), `card_name`, `version_num`, `status`, `snapshot_date`, `source_file`, `file_checksum`, `row_count`, uploader/activator and timestamps, `superseded_by_version_id`, `reject_summary`.
-- `product.RATECARD_RAN_USAGE_LKP` — one row per mapping: `mno_public_key`, `commercial_unit_public_key`, `polygon_id`, `polygon_start_date`, `polygon_end_date`, `state`, `district`, `lkp_subscriber_ref_id`, `service_code`, `rate_per_unit` (plain nullable columns).
-- Partial unique index on `card_name WHERE status = 'ACTIVE'` — at most one live version per card, enforced by the database rather than by application code.
-- Versions are immutable once activated; a correction is a new upload, and any superseded version can be re-activated. A version's rows are exactly its uploaded file.
+- `product.product_spec_characteristic` — `product_spec_id` (FK, `ON DELETE CASCADE`), `char_name` (non-empty), `char_value` (text — strings only, as today), `display_order` (integer). PK `(product_spec_id, char_name)`; `UNIQUE (product_spec_id, display_order)`. Natural composite key, no surrogate id.
+- `product_specifications.product_spec_characteristics` dropped.
+- No runtime reader changes: bill run and rating never read characteristics. The runtime-config spec rows (`udrType`, `productCardLookUp`, `singleSubInstPerCust`) are spec rows read by `name` + `default_value` and are untouched.
 
-### Row grain and validity dates
+### Price reference tables (system data, seeded by migration)
 
-- Row grain is `(mno_public_key, commercial_unit_public_key, polygon_id)`; a polygon appears at most once per version (D-A9).
-- `polygon_start_date` and `polygon_end_date` are **descriptive** validity-window dates on the row — `polygon_start_date` required, `polygon_end_date` nullable (`NULL` = open-ended / still active). They are not part of any key or index, and nothing reads them for matching in this delivery.
-- `snapshot_date` on the version header is the **upload date** in the app timezone, set by the upload service (D-A8). The file carries no date column. `snapshot_date` is never used for matching.
+- `product.price_component_type` — `component_type` PK, `applies_at` ∈ {`rating`, `billing`, `post_aggregation`}, `basis` ∈ {`quantity`, `flat`}, nullable `pla_spec_id` (`PLA_CAPACITY_*`; `NULL` for `flat_fee` and `usage_rate`), `apply_order`.
+- `product.price_component_price_type` — PK `(component_type, price_type)`; five seeded rows. Not user-editable.
 
-### Retired polygons — no carry-forward
+### Price header (`product_offering_price`, modified)
 
-- Uploads are current-state: retired polygons never appear, because the polygon list is filtered during CUPS file filtering at the mediation layer, upstream of the card. An upload is therefore authoritative.
-- A key present in the outgoing `ACTIVE` version but absent from the upload is shown as **removed** in the diff. It is not copied into the new version (no `retired_at`, no carried rows) and stays readable in the superseded version (D-A7).
-- A polygon that reappears is simply uploaded again.
-- How a future consumer resolves a past period is out of scope.
+- Add `price_type text NOT NULL` with `FOREIGN KEY (component_type, price_type) REFERENCES price_component_price_type`; drop `component_type_check` and `envelope_type_check`.
+- Drop `price_component jsonb`.
+- Add `UNIQUE (product_offering_price_id, component_type)` as the target of the subtype composite FKs.
+- Lane key replaced by `UNIQUE NULLS NOT DISTINCT (product_offering_id, component_type, unit_of_measure, price_type, start_date_time)` — plain columns, no expression. Drizzle expresses everything except `NULLS NOT DISTINCT`, which stays SQL-of-record as today.
+- Per-type unit/period CHECKs kept, now JSON-free and keyed on `price_type`: `usage_rate` / `capacity_*` require `unit_of_measure` and forbid period columns; `flat_fee`+`recurring` forbids unit and requires period columns; `flat_fee`+`oneTime` forbids both.
 
-### Upload and ingest
+### Price subtype tables
 
-- Synchronous server action — no Kestra, no `landing/`, no staging table, no streaming. At ~0.5 MB the file is parsed and inserted in one request.
-- `serverActions.bodySizeLimit` raised to `4mb` in `next.config.ts` (the Next default is 1 MB).
-- Rows insert in 1,000-row batches inside a single transaction; Postgres caps a statement at 65,535 bind parameters and 5,500 × 11 columns ≈ 60,500 would overrun it in a single statement.
+- `pop_usage_rate` — PK = header id; `rate_per_unit numeric(18,6) ≥ 0`; `rate_card_lookup` nullable, non-blank when present. `plaSpecId` is **not** stored; the view derives `'PLA_USAGE_RATE'` when `rate_card_lookup IS NOT NULL`.
+- `pop_flat_fee` — `amount numeric(18,6) ≥ 0`.
+- `pop_capacity_commitment` — `committed_quantity numeric(20,6) > 0`.
+- `pop_motivation_step` — PK `(product_offering_price_id, above_quantity)`; `above_quantity numeric(20,6) > 0`; `rate_per_unit numeric(18,6) ≥ 0`. N bands with no schema change; no `step_no` column to keep in sync.
+- Every subtype table carries `component_type NOT NULL DEFAULT '<its type>' CHECK (component_type = '<its type>')` and `FOREIGN KEY (product_offering_price_id, component_type) REFERENCES product_offering_price (product_offering_price_id, component_type) ON DELETE CASCADE`.
+- `capacity_motivation` has no scalar parameters, so it has no 1:1 table — its data is its steps.
 
-### Validation
+### Completeness and integrity
 
-- Row and file schemas as Zod `strictObject`s in `validation/product/ratecard.schema.ts`, matching pm47's house style — an unknown key is rejected, never stripped.
-- `lkp_subscriber_ref_id` is validated **structurally only** — present, non-empty, typed per the contract (D-A1). There is no referential, status or date-window check against `inventory.product_inventory`, and the upload reads no other module. The only warning is a `file_checksum` matching an earlier version — shown on the draft review, never blocking.
+- `CONSTRAINT TRIGGER … DEFERRABLE INITIALLY DEFERRED AFTER INSERT OR UPDATE ON product_offering_price`, plus `AFTER DELETE` on each `pop_*` table and `pop_motivation_step`: if the header still exists it must still be complete. Fires at COMMIT; the repository inserts header then children in one transaction.
+- `product.pricing_steps_ok(jsonb)` and the six JSON CHECKs are dropped.
 
-### UI — `/products/rate-card`
+### Runtime read projection
 
-- A fifth item in the Products section of `lib/nav-registry.ts` with an icon in `components/nav-icons.ts`.
-- Version list, upload dialog, row preview, diff against `ACTIVE`, activate confirmation, rollback, and a row-level error table on rejection.
+- `CREATE VIEW product.offering_price_v` — header columns, `applies_at`, `basis`, `COALESCE(ct.pla_spec_id, derived usage-rate id) AS pla_spec_id`, `rate_per_unit`, `rate_card_lookup`, `amount`, `committed_quantity`, and `steps` as `jsonb_agg(jsonb_build_object('aboveQuantity', …, 'ratePerUnit', …) ORDER BY above_quantity)`.
+- `GRANT SELECT` to the billrun and rating DB roles in the bootstrap SQL.
+- Reader rewrites are mechanical: `(pop.price_component #>> '{params,amount}')::numeric` → `pop.amount`; `price_component ->> 'priceType' = 'recurring'` → `pop.price_type = 'recurring'`. Files: `workflow-management/flows/bill-run-processor/bill_run_processing.template.yml` (recurring resolver and capacity CTEs, two copies each) and its local-dev copy `workflow-management/flows/bill-run-processor/local-dev/bill_run_processing.yml`; `workflow-management/worker/workflow-engine/runtime/rp.py` (`ratePerUnit`, `plaSpecId`, `rateCardLookUp`).
+- `steps[].ratePerUnit` becomes a JSON number (today a string); the capacity CTEs cast `::numeric` either way — verified by the parity tests.
+
+### Application layer
+
+- `db/repositories/product-offering-price.ts` — `toEnvelope` / `fromEnvelope`; money normalization (strip trailing zeros) with a unit test; `lead()` derived-end window re-partitioned on `(product_offering_id, component_type, unit_of_measure, price_type)`.
+- `db/repositories/product-offering.ts` — detail load via Drizzle relations; `branchOfferingAsDraft` copies grandchildren with an old→new header-id map (same for specs → characteristics).
+- `db/repositories/product-specification.ts` and `services/product/{add,update,delete}-specification.ts` — write rows instead of a jsonb object.
+- `db/schema/product.ts` — six new tables and relations; the two jsonb columns removed.
+- `child_write_requires_draft` extended to the five new tables; grandchildren resolve the offering via their parent; the "parent not found → pass" branch kept so the discard cascade works.
+
+### Migration and backfill
+
+- New forward migration `0056_product_normalize_spec_price.sql` (the plan's `0055` is taken by `0055_retire_invoice_csv_template.sql`). `0006`, `0040` and `0049` are not reopened.
+- Steps in order: create reference and child tables and seed the reference rows → backfill characteristics with `jsonb_each_text(...) WITH ORDINALITY`, `price_type` and `pop_*` from `price_component`, steps from `jsonb_array_elements(price_component #> '{params,steps}')`, with `child_write_requires_draft` disabled for the backfill → verify every reassembled envelope equals its original JSON, failing the migration on any mismatch → swap the lane-key index, drop the six JSON CHECKs and `pricing_steps_ok`, drop the two jsonb columns.
+
+### Seeds and tests
+
+- `db/seeds/demo/product-demo.ts` and `db/seeds/sample/*.ts` write through the repositories (envelopes in, rows out).
+- The 18 test files under `tests/` that reference `price_component` are updated; `tests/guardrails/price-lane-key-consistency.test.ts` asserts the new partition; the schema-diff guardrail covers all six tables and the view.
 
 ---
 
 ## In Scope
 
-- `product.ratecard_version` and `product.RATECARD_RAN_USAGE_LKP` in a new forward-only migration `0041_ratecard_ran_usage_lkp.sql`, with the hand-written Drizzle mirror. `0006_product.sql` is **not** reopened.
-- `validation/product/ratecard.schema.ts` — row schema, file schema, and the upload contract's column set (structural only — D-A1).
-- `services/product/ratecard/{upload-version,activate-version,rollback-version,diff-versions}.ts` and `db/repositories/product/ratecard.repository.ts`.
-- The `/products/rate-card` page, nav entry, icon, and RBAC wiring.
-- `next.config.ts` `bodySizeLimit` raise.
-- A demo seed card version aligned with the four-component demo offering pm48 seeds.
-- One audit event per upload, activate and rollback, in the same transaction as the write.
+- `product.product_spec_characteristic`, `product.price_component_type`, `product.price_component_price_type`, `product.pop_usage_rate`, `product.pop_flat_fee`, `product.pop_capacity_commitment`, `product.pop_motivation_step`, and the view `product.offering_price_v`, in `0056_product_normalize_spec_price.sql` with the hand-written Drizzle mirror.
+- `product_offering_price`: add `price_type`, add the `(id, component_type)` unique, replace the lane-key index, rewrite the per-type CHECKs, drop `price_component`.
+- `product_specifications`: drop `product_spec_characteristics`.
+- Deferred completeness constraint trigger; `child_write_requires_draft` extension; reference-row seeding.
+- Repository `toEnvelope` / `fromEnvelope`, money normalization, transactional writes, `branchOfferingAsDraft` grandchild copy, Drizzle relations for the detail load.
+- Rewrite of the bill-run recurring resolver and capacity CTEs (template yml and local-dev copy) and `rp.py` to read `product.offering_price_v`; `GRANT SELECT` in bootstrap SQL; same-release deployment of the worker image.
+- Backfill with row-by-row round-trip verification.
+- Seeds, the 18 affected test files, the lane-key guardrail, the new unit and integration tests in Success Criteria.
 
 ---
 
 ## Out of Scope
 
-- **Any consumer of the table.** No rating resolution, no as-of lookup, no per-UDR match, no reject events, no `udr_rated` stamping. The table is stood up and left; consumption is a following-sprint deliverable.
-- **Any change to `product_offering_price`.** No `service_code` column, no uniqueness-constraint rekey, no `lead()` partition amendment, no `AMBIGUOUS_RATE_CARD`. Price-row selection is not part of this update.
-- **Capacity.** No `capacity_mbps` column, not in the table and not in the upload contract. Capacity semantics stay post-aggregation in `capacity_commitment` / `capacity_motivation`.
-- **The negotiated override, entirely.** `ordering.order_item_price_override` is not read, modified, reshaped or reasoned about.
-- **Row-level authoring.** Upload is the only write path; there is no in-UI editing of individual card rows.
-- **The bill-run capacity resolver**, the `customer_bill_line` mapping, proration, rounding and the BAN aggregation grain.
-- **Any TMF620 API or adapter.**
-- **Editing `0006_product.sql`** — pm00's G-C authorization was scoped to `pm46` and does not extend here.
-- **Async ingest** — Kestra, `landing/`, staging tables and streaming are all set aside at this volume; the schema is identical if a future feed forces the change.
+- **Other jsonb columns.** `ordering.product_order_item.ordered_characteristics`, `inventory.product_inventory.instance_characteristics`, `product.ratecard_version.reject_summary` and `billing.customer_bill_line.additional_info` are not touched. Whether `ordered_characteristics` / `instance_characteristics` should reference `product_spec_characteristic` is plan §7 Q5, a follow-on.
+- **Any UI, server-action or Zod change.** Forms, chips, dialogs, the `PricingComponent` envelope type and the audit payload shapes do not move. The only visible difference is characteristic chips in entry order.
+- **New component types or new price parameters.** The rate-card-resolved price, the negotiated override (`ordering.order_item_price_override`) and additional motivation semantics are not added; the schema is built so they can be added as new tables later.
+- **TMF620 `characteristicValueSpecification`** (value type, allowed values, unit) — a possible further child of `product_spec_characteristic`, not built.
+- **Typing the runtime-config spec rows** (`udrType`, `productCardLookUp`, `singleSubInstPerCust`) as offering attributes — plan §7 Q5, follow-on.
+- **The typed-header-columns alternative** (plan §6) — rejected unless Q1 is decided the other way.
+- **Edit-in-place of `0006` / `0040` / `0049`** — plan §4 option A, not taken unless Q2 is decided the other way.
+- **Rating-engine consumption of the rate card lookup** and any change to how `rp.py` resolves a UDR beyond reading the view's columns.
+- **Bill-run business logic** — proration, rounding, the BAN aggregation grain and `customer_bill_line` mapping are unchanged; only the SQL that fetches price parameters is rewritten.
 
 ---
 
 ## Success Criteria
 
-- `npm run db:migrate` on an empty database produces both tables and the partial unique index on `card_name WHERE status = 'ACTIVE'`. `0006_product.sql` and `product_offering_price` are untouched.
-- Uploading a valid ~5,400-row CSV creates exactly one `DRAFT` version, inserts its rows in 1,000-row batches inside one transaction, and leaves the current `ACTIVE` version untouched and still active.
-- Each of these is refused and **creates no version**: a duplicate `(mno, cu, polygon)`; a missing expected column; an unknown column (a `Date` column included); a cell failing its type (including an empty `lkp_subscriber_ref_id`).
-- A `file_checksum` matching an earlier version produces a warning on the draft review and does **not** block activation. No subscription status or window is checked (D-A1).
-- Activating a version promotes it to `ACTIVE`, demotes the prior version to `SUPERSEDED`, and writes no rows — the new version's rows are exactly its uploaded file, and a key absent from the upload remains present in the superseded version.
-- Attempting to activate a second version while one is `ACTIVE` is refused by the partial unique index, not merely by application code.
-- Re-activating a `SUPERSEDED` version restores it to `ACTIVE` and demotes the current one; no row of either version is edited.
-- One audit event per upload, activate and rollback, written in the same transaction as the write.
-- A user holding only READ on the rate-card permission can view versions and rows but cannot upload, activate or roll back.
-- `npm run typecheck`, `lint` and the full test suite pass; the schema-diff guardrail is green against both new tables.
+Each criterion is a test that fails before the change and passes after it.
+
+- `npm run db:migrate` on an empty database creates the six tables and the view; `price_component_type` holds exactly four rows and `price_component_price_type` exactly five; `product_offering_price` has no `price_component` column and `product_specifications` has no `product_spec_characteristics` column.
+- Inserting a header with `(flat_fee, usage)` or any other unseeded pair fails the composite FK.
+- Inserting a `pop_flat_fee` row for a `usage_rate` header fails the composite FK.
+- Committing a header with no subtype row, or a `capacity_motivation` header with zero steps, fails at COMMIT; deleting the only step of a `DRAFT` motivation and committing also fails.
+- Two `pop_motivation_step` rows with the same `above_quantity` are rejected; `offering_price_v.steps` returns them in ascending `above_quantity` order as JSON numbers.
+- Two identical recurring `flat_fee` rows at one `start_date_time` are rejected by the lane key; a recurring and a oneTime `flat_fee` at the same start are both accepted.
+- A write to any of the five new tables under a non-`DRAFT` version fails with SQLSTATE `23514`; discarding a `DRAFT` version deletes its characteristics, subtype rows and steps with no orphans.
+- `toEnvelope(fromEnvelope(x))` deep-equals `x` for every seed component, including `"100"` surviving a `numeric(18,6)` round trip as `"100"`, not `"100.000000"`.
+- Branching an `ACTIVE` version copies every characteristic (same `display_order`), subtype row and step; reassembled envelopes on the branch deep-equal the source version's.
+- A specification saved with characteristics `SST_ID`, `SD_ID` in that order reads back in that order.
+- Backfill: on a database loaded with the current demo and sample seeds, every reassembled envelope equals its original `price_component` JSON and every characteristic set equals its original object; the migration aborts on any mismatch.
+- Runtime parity: the existing bill-run recurring and capacity integration tests (`bm42` coverage) and the `rm08` / `rm30` rating tests pass unchanged against `offering_price_v`; no `price_component` reference remains in `bill_run_processing.template.yml`, its local-dev copy, or `rp.py`.
+- The billrun and rating DB roles can `SELECT` from `product.offering_price_v` and have no grant on the subtype tables beyond what they had on `product_offering_price` before.
+- `npm run typecheck`, `lint` and the full test suite pass; the schema-diff guardrail is green for all six tables and the view; the 18 test files that referenced `price_component` compile against the new shape.

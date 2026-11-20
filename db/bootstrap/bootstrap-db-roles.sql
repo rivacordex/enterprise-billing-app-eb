@@ -111,6 +111,17 @@ ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "product" GRANT ALL ON T
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA "product" GRANT ALL ON SEQUENCES TO app_migrate;
 --> statement-breakpoint
+-- pm70 (G-N6a, prodmgmt Inv. #64) — the two reference tables (0056) are system
+-- data seeded by migration, not user-editable. The schema-wide grant and default
+-- privilege above hand app_runtime DML on them; the bm64 / bm50 pattern makes
+-- "read-only to the app" a database fact: GRANT SELECT first (idempotent, so the
+-- statement is correct whether or not the default privilege fired on a
+-- from-scratch database), then REVOKE only the writes. An environment migrated
+-- past 0056 must re-run this bootstrap.
+GRANT SELECT ON TABLE "product"."price_component_type", "product"."price_component_price_type" TO app_runtime;
+--> statement-breakpoint
+REVOKE INSERT, UPDATE, DELETE ON TABLE "product"."price_component_type", "product"."price_component_price_type" FROM app_runtime;
+--> statement-breakpoint
 -- `customer` schema (cm01+): same app_runtime/app_migrate split as
 -- `product` — organization/party_role/contact_medium ID columns default to
 -- nextval(...), so app_runtime needs USAGE on those sequences to satisfy

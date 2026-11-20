@@ -1,57 +1,93 @@
 # Product Management — Completed Tracker
 
-Archive record of delivered work for the Product Management module. **pm01–pm34** (three phases) are ship-gate-verified. **Part 3 (pm35–pm45)**, **Part 4 — Pricing Components (pm46–pm56, plus pm56a/pm56b and the follow-up pm46a)**, and **Part 5 — Rate Card Lookup (pm57a–pm68)** are all code-complete and verified on `dev1`. **None of Part 3/4/5 is in `main`** — they land together at gates G-0/G-A, which remain open by design. Full detail for any unit lives in its `specs/pmXX-spec.md` and in `git log`; known defects outside this ledger are in `prodmgmt-issues-tracker.md`.
+Archive of delivered work for the Product Management module. **Every phase through Part 5 is COMPLETE:** pm01–pm34 (Phases 1–3) are in `main`; **Part 3 (pm35–pm45)**, **Part 4 — Pricing Components (pm46–pm56, pm46a, pm56a, pm56b)** and **Part 5 — Rate Card Lookup (pm57a–pm68)** are complete on `dev1` and land in `main` together at gates G-0/G-A. Part 6 (pm69–pm75) is tracked in `prodmgmt-progress-tracker.md`. Full detail for any unit lives in its `specs/pmXX-*.md` and in `git log`; known defects are in `prodmgmt-issues-tracker.md`.
 
-## Outstanding
+## Carried-forward residuals (non-blocking, owned outside the delivered units)
 
-- **pm46a residuals (2026-10-10).** `0049` was verified only on databases migrated from empty (the key is strictly finer than the old one, so no existing row can violate it); the local dev database should apply it on its next `db:migrate`. The bill-run resolver change is proven on the extracted flow SQL, not a live Kestra run (TC54 harness still missing); redeploy `bill_run_processing` with `deploy_workflow_flows` **in the same rollout as `0049`** (code review): once `0049` allows a recurring and a one-time fee to share a start, the pre-pm46a flow's shared-lane `lead()` would tie on that start and resolve either row unpredictably until it is redeployed. Code-review follow-up PM-ISS-004 (lane key copies) resolved by guardrail 41.
-- **pm68 ship gate is RUN but not closed (PENDING).** Before it can be marked COMPLETE, three CI-owned items must be green: (1) the full DB-free suite clean in a single run — this session hit 3462 passed / 1 flaky timeout (`guardrail 31`, a Part-4 codebase-wide grep that passes 4/4 in isolation at `--testTimeout=60000`; environmental, not a Part 5 regression); (2) the full integration project (not just the rate-card slice + the unchanged-flow sample); (3) SAST + the DAST baseline (`infra/**`).
-- **Lookup-row immutability (Inv. #46) is NOT database-enforced.** `0041` carries no trigger/revoke on `product.ratecard_ran_usage_lkp`; immutability holds only via the repository's exported surface (guardrail 37). A trigger analogous to product's `child_write_requires_draft` (0040) is owed to a follow-up migration. Logged in `prodmgmt-issues-tracker.md`.
-- **No role→permission grant for `ratecard` is seeded.** `0043` added the PERMISSIONS row but no role grant; until some role is granted `ratecard : READ` the page stays hidden for everyone (guard/nav are correct — there is simply nothing to grant yet). Owned by a dedicated role-grant follow-up.
-- **Read surface ships ahead of its consumer (Appendix A14, deliberate).** Nothing consumes the rate card yet.
-- **Fresh-install only (G-RC6 residual).** This migrator gates on `entry.when`, not content hashes, so a DB that already applied the original `0041` would silently skip the pm57a rewrite — the local dev DB must be rebuilt from empty (`db:setup`), not incrementally migrated.
+- **pm46a rollout:** redeploy `bill_run_processing` (`deploy_workflow_flows`) in the same rollout as `0049`, or the pre-pm46a flow's shared-lane `lead()` can tie when a recurring and a one-time fee share a start. Local dev DB picks up `0049` on its next `db:migrate`.
+- **PM-ISS-002:** lookup-row immutability (Inv. #46) is repository-enforced only (guardrail 37); a DB trigger like `child_write_requires_draft` (`0040`) is owed to a follow-up migration.
+- **`ratecard` role grant:** `0043` seeds the permission but no role grant, so the Rate Card page stays hidden until a role-grant follow-up grants `ratecard : READ`.
+- **A14 (deliberate):** the rate-card read surface ships ahead of any consumer.
+- **G-RC6:** the migrator gates on `entry.when`, not content hashes — a DB that applied the original `0041` must be rebuilt from empty (`db:setup`).
 
-## Delivered ledger
+## Delivered ledger — Parts 3–5 (pm35–pm68, COMPLETE)
 
-Compacted deliverables; full detail in each `specs/pmXX-spec.md` and in `git log`.
+| Unit  | Delivered (compact)                                                                                                                                         |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| pm35  | Catalog schema target state — 5-value lifecycle enum, per-type price-completeness CHECKs, cascade FKs (`0006` edited in place).                             |
+| pm36  | Family uniqueness indexes + DRAFT-guard trigger `product.child_write_requires_draft()` (`0040`).                                                            |
+| pm37  | Domain types, total lifecycle maps, lifecycle badges; View Product hides OBSOLETE + RETIRED by default.                                                     |
+| pm38  | Price completeness + DRAFT-only price mutation (`updatePrice` / `deletePrice`).                                                                             |
+| pm39  | Manage Products families list — `findFamilyPage` CTE + page rewrite.                                                                                        |
+| pm40  | Version bar + read-only panels; `resolveSelectedVersion`.                                                                                                   |
+| pm41  | Inline editing of a DRAFT version (spec/price panels).                                                                                                      |
+| pm42  | Release path `DRAFT → TESTING → ACTIVE` (+ `TESTING → DRAFT`); activation supersedes prior ACTIVE.                                                          |
+| pm43  | Withdrawal path — stop selling and retire.                                                                                                                  |
+| pm44  | Discard — hard delete of a never-released version.                                                                                                          |
+| pm45  | Ship gate (Part 3) — guardrails, authz matrix, docs.                                                                                                        |
+| pm46  | Price table reshape — `component_type` + `price_component` envelope; uniqueness rekey.                                                                      |
+| pm46a | Flat-fee lane key — `0049` `NULLS NOT DISTINCT` index keyed on `priceType`; `lead()` + bill-run resolver rekeyed. Resolved PM-ISS-003; guardrail 41 (PM-ISS-004). |
+| pm47  | Component envelope — Zod discriminated union, domain types, `plaSpec` catalog.                                                                              |
+| pm48  | Seeds emit envelopes (four-component demo offering).                                                                                                        |
+| pm49  | Component write path — repository, services, actions, cross-row validator.                                                                                  |
+| pm50  | Ordering override-target re-key (G-G).                                                                                                                      |
+| pm51  | Rating price-resolution window re-key (`rp.py`, G-G).                                                                                                       |
+| pm52  | Bill-run recurring resolver re-key (G-G).                                                                                                                   |
+| pm53  | `PricingComponentBadge` + View Product prices panel.                                                                                                        |
+| pm54  | Authoring picker + component error banner.                                                                                                                  |
+| pm55  | Capacity components authoring (motivation steps editor).                                                                                                    |
+| pm56  | Ship gate (Part 4) — guardrails 31–34.                                                                                                                      |
+| pm56a | Fixture sweep + guardrail-31 scope correction; resolved PM-ISS-001.                                                                                         |
+| pm56b | Ordering-wizard `PriceCard` re-key — last residue closed.                                                                                                   |
+| pm57  | Superseded by pm57a (v1 card schema, reversed 2026-09-27).                                                                                                  |
+| pm57a | Card schema — `0041` rewritten in place (row key `(version_id, mno, commercial_unit, polygon_id)`); `0043` `ratecard` permission.                          |
+| pm58  | Upload contract validation — Zod `ratecard.schema.ts`, closed violation set. Pure.                                                                          |
+| pm59  | CSV parser `parse-csv.ts` (sole `csv-parse/sync` importer) + `file_checksum`.                                                                               |
+| pm60  | Card repository `db/repositories/ratecard.ts` — no row-level update/delete (Inv. #46); guardrail 37.                                                       |
+| pm61  | Upload service + action; `RATECARD_VERSION_UPLOADED`; replace-open-draft; `CONCURRENT_UPLOAD_CONFLICT`.                                                     |
+| pm62  | Diff `diffAgainstActive` — read-only, two-query budget.                                                                                                     |
+| pm63  | Activate — `RATECARD_VERSION_ACTIVATED`; locked read; demote-then-promote.                                                                                  |
+| pm64  | Rollback — `RATECARD_VERSION_ROLLED_BACK`; status-flip only; `CONCURRENT_ACTIVATION_CONFLICT`; `PRODUCT_ACTION_FILES` closed at 17.                         |
+| pm65  | Rate Card page + read UI, nav entry, four authz rows, guardrail 40.                                                                                         |
+| pm66  | Write UI (upload/activate/rollback dialogs, diff panel); `bodySizeLimit` 5mb.                                                                               |
+| pm67  | Demo seed — one `RAN_USAGE` card (v1 SUPERSEDED → v2 ACTIVE) via the real services.                                                                         |
+| pm68  | Ship gate (Part 5) — guardrail re-scoping, §8 sweep, doc amendments, Appendix A reconciliation, hand-off register. **COMPLETE.**                            |
 
-| Unit  | Delivered (compact)                                                                                                                                                                                   |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| pm35  | Catalog schema target state — 5-value lifecycle enum, per-type price-completeness CHECKs, cascade FKs (`0006` edited in place). Schema-only.                                                            |
-| pm36  | Family uniqueness indexes + DRAFT-guard trigger (`0040`) — one-active / one-open per family; `product.child_write_requires_draft()`.                                                                   |
-| pm37  | Domain types, total lifecycle maps, lifecycle badges; default View Product list hides OBSOLETE + RETIRED.                                                                                              |
-| pm38  | Price completeness + DRAFT-only price mutation — discriminated `price-input` schema, `updatePrice` / `deletePrice`.                                                                                    |
-| pm39  | Manage Products families list — `findFamilyPage` CTE (two queries, no fan-out) + page rewrite.                                                                                                         |
-| pm40  | Version bar + read-only panels on Manage Products; `resolveSelectedVersion`.                                                                                                                           |
-| pm41  | Inline editing of a DRAFT version — editable spec/price panels, one-row-at-a-time editor.                                                                                                              |
-| pm42  | Release path — `DRAFT → TESTING → ACTIVE` + `TESTING → DRAFT`; activation supersedes prior ACTIVE to OBSOLETE.                                                                                         |
-| pm43  | Withdrawal path — stop selling and retire.                                                                                                                                                             |
-| pm44  | Discard — hard delete of a never-released version.                                                                                                                                                     |
-| pm45  | Ship gate (Part 3) — guardrails, authz matrix, docs.                                                                                                                                                   |
-| pm46  | Price table reshape — `component_type` + `price_component` envelope; uniqueness rekey; drops `price_type` / `pricing_model` / `amount` / tiers.                                                        |
-| pm47  | Component envelope — Zod discriminated union, domain types, `plaSpec` catalog.                                                                                                                         |
-| pm48  | Seeds emit envelopes (four-component demo offering).                                                                                                                                                   |
-| pm49  | Component write path — repository, services, actions, cross-row validator.                                                                                                                             |
-| pm50  | Ordering — override-target re-key (cross-module G-G).                                                                                                                                                  |
-| pm51  | Rating runtime — price-resolution window re-key (`rp.py`, cross-module G-G).                                                                                                                           |
-| pm52  | Bill-run runtime — recurring resolver re-key (cross-module G-G).                                                                                                                                       |
-| pm53  | Component rendering — `PricingComponentBadge` + View Product's prices panel.                                                                                                                           |
-| pm54  | Authoring picker + component error banner.                                                                                                                                                             |
-| pm55  | Authoring capacity components (motivation steps editor).                                                                                                                                               |
-| pm56  | Ship gate (Pricing Components) — guardrails 31–34; reported defects, no production code.                                                                                                               |
-| pm56a | Pricing-components fixture sweep + guardrail-31 scope correction; resolved PM-ISS-001.                                                                                                                 |
-| pm46a | Flat-fee lane key (2026-10-10, gated follow-up to pm46) — lane adds `price_component ->> 'priceType'`: forward migration `0049` swaps the unique constraint for the `NULLS NOT DISTINCT` unique index `product_offering_price_lane_start_unique`; Drizzle mirror; `DUPLICATE_START` mapping renamed; repository `lead()` window rekeyed; bill-run `_bm29_resolved` reads the recurring lane only and `RECURRING_PRICE_UNSUPPORTED` is retired. A one-time fee no longer ends the recurring one (order detail, offering detail, bill run); the two may share a start. Resolved PM-ISS-003 / billing known-issues §21e. Integration 1165/0, unit 4077/0. |
-| pm56b | Ordering-wizard `PriceCard` re-key — closed the last residue; repo-wide `tsc` + guardrail 31 green on `dev1`.                                                                                          |
-| pm57  | **Superseded by pm57a** — v1 card schema (reversed); retained only in `git log` / spec.                                                                                                                |
-| pm57a | Card schema — rewrites `0041` in place to current design: adds `polygon_end_date`/`state`/`district`, row key `(version_id, mno, commercial_unit, polygon_id)` (drops `polygon_start_date` from key), drops the as-of index, no carry-forward columns. `0043` lands the `ratecard` permission (G-RC3). |
-| pm58  | Upload contract validation — Zod `ratecard.schema.ts`: ten-column header map, strict row schema, file validator, closed `RateCardUploadViolation` set, `RateCardIssue` line contract, `rejectSummarySchema`. Pure, no DB. |
-| pm59  | CSV parser — `parse-csv.ts`, the only importer of the exact-pinned `csv-parse/sync` (coercion off); raw bytes → cells + faithful header + 1-based line + `file_checksum`. Committed `2fac051` (closes G-RC4). |
-| pm60  | Card repository — `db/repositories/ratecard.ts` (flat path): four writes + four reads + locked `findActiveForUpdate`; no row-level update/delete of any lookup row (Inv. #46); 1,000-row batches; no cache. Guardrail 37. |
-| pm61  | Upload (service + action) — `upload-version.ts` + `upload-ratecard-version.action.ts`; `RATECARD_VERSION_UPLOADED` audit type + full ripple; replace-open-draft (D12); typed `CONCURRENT_UPLOAD_CONFLICT`; `RateCardUploadWarning` sibling type for checksum dupes. |
-| pm62  | Diff (read-only) — `diff-versions.ts`, one export `diffAgainstActive(db, cardName, versionId)`, two-query budget, compares all non-key columns (§6.29 reading), reuses pm58's `rateCardRowKey`. Two read-only repo additions. |
-| pm63  | Activate — `activate-version.ts` + action; `RATECARD_VERSION_ACTIVATED` audit (Change); `findVersionForUpdate` locked read; demote-then-promote; diff computed in-tx; concurrency serializes on row locks. |
-| pm64  | Rollback — `rollback-version.ts` + action (third/last action file; `PRODUCT_ACTION_FILES` closed at 17); `RATECARD_VERSION_ROLLED_BACK` audit; status-flip only, no `INSERT…SELECT`; lineage cleared on target; activate-vs-rollback race serialized + typed `CONCURRENT_ACTIVATION_CONFLICT`. Deleted spurious `0042_cold_paibok.sql`; fixed a promote-before-demote bug latent in pm63/pm64. |
-| pm65  | Page + read UI — `products/rate-card/{page,loading,error}.tsx`, `list-versions`/`get-version-rows` read models, status badge + version table + row preview, nav entry + glyph, four authz rows, guardrail 40 (no cache). Read-only. ISO dates via an additive `formatCalendarDate` style param. |
-| pm66  | Write UI + `bodySizeLimit` raise — upload/activate/rollback dialogs + diff panel/badge (the app's first `<input type="file">`, uncontrolled FormData), `next.config.ts` raised to 5mb. No new mutation; diff via `get-version-diff` read wrapper; view types re-homed to `types/product.ts`; `error.tsx` renamed app-wide (SonarQube). |
-| pm67  | Demo seed — `product-demo.ts` + orchestrator wiring; seeds one `RAN_USAGE` card (v1 SUPERSEDED → v2 ACTIVE) through the real upload/activate services; actor = system/ADMIN user; synthetic identifiers only. Verified DB-free + live-DB. |
-| pm68  | Ship gate (Part 5) — guardrail re-scoping verification, §8 sweep, doc amendments, Appendix A reconciliation, Part 5 hand-off register. No feature code. **RUN, PENDING** (see Outstanding). |
+## Delivered ledger — Phases 1–3 (pm01–pm34, in `main`)
+
+| Unit | Delivered (compact)                                                                                                       |
+| ---- | ------------------------------------------------------------------------------------------------------------------------- |
+| pm01 | Route-group rename `(admin)` → `(app)`; route-manifest guardrail.                                                         |
+| pm02 | `product` schema (3 tables, enum, sequences), permission wiring, validation, seeds; `0007` FK/CHECK follow-up.           |
+| pm03 | Read backend — finder-only repositories, `listOfferings`/`getOfferingDetail`; `0008`.                                     |
+| pm04 | Sectioned `NAV_SECTIONS` + "Products" section.                                                                            |
+| pm05 | View Product page shell — guard, `LifecycleBadge`, `OfferingTable`, three-seam detail region.                             |
+| pm06 | `OfferingDetail` (Details seam).                                                                                          |
+| pm07 | `SpecificationsPanel` (Specifications seam).                                                                              |
+| pm08 | `formatCurrency`, `PriceTypeBadge`, `PricesPanel` (Prices seam).                                                          |
+| pm09 | Phase-1 ship gate — authz matrix + module-boundaries guardrail; `product` grant block fix.                                |
+| pm10 | `family_offering_id` self-reference + index + CHECK (`0010`).                                                             |
+| pm11 | `insertOffering` + `createOffering` (+ `_CREATED` audit).                                                                 |
+| pm12 | `branchOfferingAsDraft` copy-on-write primitive.                                                                          |
+| pm13 | `updateOffering` four-way routing (DRAFT in place / branch / reject).                                                     |
+| pm14 | Specification CRUD services (branch-first); TOCTOU fix.                                                                   |
+| pm15 | `insertPrice` (insert-only, Inv. #1) + 3-day backdating tolerance; TOCTOU fix.                                            |
+| pm16 | Lifecycle backend — activate/retire/discard, family lock, advisory-lock branch serialization.                             |
+| pm17 | Nav — "View Product" + "Manage Products".                                                                                 |
+| pm18 | Manage Products page shell with row-action seams.                                                                         |
+| pm19 | Create Offering UI + action.                                                                                              |
+| pm20 | Edit Offering UI + action; TOCTOU fix.                                                                                    |
+| pm21 | Specification management UI + actions.                                                                                    |
+| pm22 | Add Price UI + action (tier editor, backdating warning).                                                                  |
+| pm23 | Activate / Retire / Discard UI + actions.                                                                                 |
+| pm24 | Phase-2 ship gate — guardrail rewrite, authz split, backfilled integration tests.                                         |
+| pm25 | `ordering` / `inventory` schemas (`0022`/`0023`), permissions, validation, seeds, grants.                                 |
+| pm26 | Ordering/inventory repositories (insert-only) + orders read services.                                                     |
+| pm27 | Orders/Subscriptions nav + Orders page (read).                                                                            |
+| pm28 | Order submission backend (full-rollback deviation flagged).                                                               |
+| pm29 | New Order wizard UI + action.                                                                                             |
+| pm30 | Approval backend — MANAGER ≠ submitter, races tested 4×.                                                                  |
+| pm31 | Review UI + approve/reject actions.                                                                                       |
+| pm32 | Subscription lifecycle backend (history keyed on sequence id).                                                            |
+| pm33 | Subscriptions page + lifecycle UI.                                                                                        |
+| pm34 | Phase-3 ship gate — authz matrix, guardrails 15–22, doc sync.                                                             |

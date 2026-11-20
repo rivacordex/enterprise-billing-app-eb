@@ -354,6 +354,14 @@ TO billrun_runtime;
 REVOKE SELECT ON TABLE "product"."ratecard_ran_usage_lkp", "product"."ratecard_version" FROM billrun_runtime;
 --> statement-breakpoint
 
+-- pm70 (prodmgmt Inv. #67) — price parameters are read only through the
+-- owner-privileged view `product.offering_price_v` (0056). SELECT on the view is
+-- the whole surface: NOTHING on any `pop_*` subtype table or the two reference
+-- tables. Enumerated, never ON ALL TABLES. An environment migrated past 0056
+-- must re-run this bootstrap (idempotent).
+GRANT SELECT ON TABLE "product"."offering_price_v" TO billrun_runtime;
+--> statement-breakpoint
+
 -- Step 9 — the run-state write REVOKE (billmgmt-architecture.md Inv #2). Strictly
 -- redundant (never granted) and kept as a declaration of intent a reviewer reads
 -- and a test asserts: the worker never writes run-state, the ingest handler does.

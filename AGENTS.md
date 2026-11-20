@@ -20,23 +20,33 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 -->
  
 
-## Reporting Module Context
+## Product Module Update Context — Part 6: Normalize Spec Characteristics & Price Components (pm69–pm75, incl. pm74b)
 
-Read the following files in order before implementing or making changes related to the Reporting Management module — the read-only report flows that run as function 4 on the Kestra workflow-management platform. rpt01–rpt05 and rpt07–rpt09 are built; the only remaining unit is rpt06, which is blocked on the P1 (and P2) decision and has no spec yet. The unit list, build order and status are in `context/reporting-management/specs/rpt00-build-plan.md`:
+Current phase: **Part 6 of the Product Management module**. It replaces the two `product` jsonb columns (`product_specifications.product_spec_characteristics` and `product_offering_price.price_component`) with six relational tables plus the `product.offering_price_v` read view, in migration `0056`. The `PricingComponent` envelope stays the API/UI contract and is reassembled in the repository. This is a **storage-only** change: no page, component, Server Action, route, permission, nav entry or audit event type changes. Parts 1–5 (pm01–pm68) are complete. Part 6 has not started, and **pm69 is the first unit**. The unit list, gates (G-N1–G-N7), doc conflicts (C11–C21), dependency graph and hand-offs are in `context/product-management/specs/pm00-build-plan.md` **Part 6**. Each unit's spec is `context/product-management/specs/pm69-…` through `pm75-…`.
 
-1. `context/reporting-management/rptmgmt-project-overview.md` — the module's definition, goals, the five reports and scope
-2. `context/reporting-management/rptmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
-3. `context/reporting-management/rptmgmt-code-standards.md` — implementation rules and conventions
-4. `context/reporting-management/rptmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+Read the following files in order before implementing or making any architectural decision related to the Product Module:
 
-This module has no pages, Server Actions, components or RBAC permissions, and owns no tables, so it has no UI context document. Its database access is the `reporting_runtime` role's `SELECT`-only grants on fifteen tables and two views (`pgledger_transfers_view`, `gl_resolution_view`) across five schemas owned by other modules — enumerated in `db/bootstrap/reporting-db-roles.sql` Step 5. Report logic lives in `workflow-management/` (flows and the worker's `runtime/reporting/`), never in the Next.js app.
+1. `context/product-management/prodmgmt-update-overview.md` — Part 6 definition, goals, and scope
+2. `context/product-management/prodmgmt-architecture.md` — system structure, boundaries, storage model, and invariants
+3. `context/product-management/prodmgmt-code-standards.md` — implementation rules, conventions, and guardrails
+4. `context/product-management/prodmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+5. `context/product-management/specs/pm00-build-plan.md` (Part 6) — units, gates, conflicts, and sequencing
+6. `context/product-management/prodmgmt-progress-tracker.md` — current status, recurring patterns, and permanent lessons
+7. The spec for the unit being built (`context/product-management/specs/pm69-…` onward)
 
-Update `context/reporting-management/rptmgmt-progress-tracker.md` after each meaningful implementation change.
+Also consult `context/product-management/prodmgmt-issues-tracker.md` (known defects) and `context/product-management/prodmgmt-completed-tracker.md` (delivered units pm01–pm68) when relevant. Part 6 has no UI change, so `prodmgmt-ui-context.md` is needed only if a unit unexpectedly touches the UI.
+
+Cross-module units: **pm74** rewrites the bill-run flow and `rp.py` (Rating) to read `product.offering_price_v` (gate G-N4). **pm74b** rewrites the reporting worker's `gl_feed/gl_codes.py` and `extract.py` and owns the `reporting_runtime` grant decision (gate G-N7, owned by Reporting Management). Before either unit, also read `context/workflow-management/wfm-architecture.md` and the owning module's architecture doc (e.g. `context/reporting-management/rptmgmt-architecture.md`).
+
+Update `context/product-management/prodmgmt-progress-tracker.md` after each meaningful implementation change. Write a unit's entry there in full while it is in flight, and move it to `prodmgmt-completed-tracker.md` when the unit completes.
 
 Read also the general context documents to support the changes as referenced by the context files above:
 1. `context/architecture.md` — system structure, boundaries, storage model, and invariants
-2. `context/workflow-management/wfm-architecture.md` — the Kestra platform, topology and engine registry (reporting is function 4, §10)
-3. `context/code-standards.md` — implementation rules and conventions
-4. `context/ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+2. `context/code-standards.md` — implementation rules and conventions
+3. `context/ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
+
+## Reporting Module (paused)
+
+rpt01–rpt05 and rpt07–rpt09 are built. rpt06 is blocked on the P1 (and P2) decision and has no spec. Status is in `context/reporting-management/specs/rpt00-build-plan.md` and `context/reporting-management/rptmgmt-progress-tracker.md`. For any reporting change, read the four `context/reporting-management/rptmgmt-*.md` docs first: project overview, architecture, code standards, and AI workflow rules.
 
  

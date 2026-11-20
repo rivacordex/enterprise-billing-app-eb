@@ -435,7 +435,8 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "isMandatory",
     "isDefault",
     "defaultValue",
-    "productSpecCharacteristics",
+    // pm70 (0056): productSpecCharacteristics left for the
+    // product_spec_characteristic table.
   ].sort();
   // Reshaped by pm46-spec D2/I5 — the first change to this list since pm02.
   // `priceType`/`pricingModel`/`amount`/`pricingCharacteristics` leave;
@@ -445,7 +446,9 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     "productOfferingId",
     "name",
     "componentType",
-    "priceComponent",
+    // pm70 (0056, G-N2): priceComponent left for the four pop_* tables;
+    // priceType returned under the pair FK (Inv. #38 reversed).
+    "priceType",
     "recurringChargePeriodLength",
     "recurringChargePeriodType",
     "unitOfMeasure",
@@ -607,11 +610,27 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
 
     const priceBlock = extractTableBlock(schemaSource, "productOfferingPrice");
 
-    // 1. The six new CHECKs exist in both the SQL of record and the mirror.
+    // 1. The six CHECKs exist in 0006 (history, locked). pm70 (0056) dropped
+    // component_type_check / envelope_type_check (the pair FK replaces both)
+    // and re-bodied the four per-type CHECKs JSON-free under the same names,
+    // so the mirror carries exactly those four.
+    const DROPPED_BY_0056 = [
+      "product_offering_price_component_type_check",
+      "product_offering_price_envelope_type_check",
+    ];
     for (const name of NEW_CHECKS) {
       expect(migrationSource).toContain(name);
-      expect(priceBlock).toContain(name);
+      if (DROPPED_BY_0056.includes(name)) {
+        expect(priceBlock).not.toContain(name);
+      } else {
+        expect(priceBlock).toContain(name);
+      }
     }
+    // Code only — the mirror's comments record the dropped objects as history.
+    const priceCode = priceBlock.replace(/^\s*\/\/.*$/gm, "");
+    // Word-bounded: product_offering_price_component_type_idx is not a hit.
+    expect(priceCode).not.toMatch(/\bprice_component\b/);
+    expect(priceCode).not.toContain("pricing_steps_ok");
 
     // 2. None of the ten dropped CHECK names survive anywhere under
     // db/migrations/** (0006, 0007) or the Drizzle mirror.
@@ -639,7 +658,14 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(priceBlock).toContain(
       'componentType: text("component_type").notNull()',
     );
-    expect(priceBlock).toContain(".$type<PricingComponent>()");
+    // pm70 (0056): the mirror no longer declares the jsonb envelope; the
+    // envelope's priceType returned as a column (G-N2, Inv. #38 reversed) —
+    // TMF vocabulary, FK-constrained, never the legacy axis (§1.58). 0006's
+    // "no price_type" above is history.
+    expect(priceBlock).not.toContain(".$type<PricingComponent>()");
+    expect(priceBlock).toContain(
+      'priceType: text("price_type").notNull().$type<EnvelopePriceType>()',
+    );
 
     // 5. The IMMUTABLE helper function exists, declared before the table.
     const fnIndex = migrationSource.indexOf(
@@ -685,11 +711,12 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
     expect(priceBlock).toContain(
       'uniqueIndex("product_offering_price_lane_start_unique")',
     );
-    // The priceType term is flat_fee-only in both homes (non-flat-fee rows keep
-    // pm46's exact key).
-    expect(priceBlock).toContain(
-      "(CASE WHEN ${t.componentType} = 'flat_fee' THEN ${t.priceComponent} ->> 'priceType' END)",
+    // pm70 (0056): the mirror's lane key is five plain columns — price_type
+    // replaces 0049's flat_fee-only CASE term (an equivalent key, C14).
+    expect(priceBlock).toMatch(
+      /uniqueIndex\("product_offering_price_lane_start_unique"\)\.on\(\s*t\.productOfferingId,\s*t\.componentType,\s*t\.unitOfMeasure,\s*t\.priceType,\s*t\.startDateTime,\s*\)/,
     );
+    expect(priceCode).not.toContain("CASE WHEN");
     expect(priceBlock).not.toContain(
       'unique("product_offering_price_component_start_unique")',
     );

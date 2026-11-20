@@ -67,6 +67,12 @@ describe.skipIf(!databaseUrl)(
       await sql.unsafe(
         'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "product" TO app_runtime',
       );
+      // pm70 (0056): a price is a header + its subtype row, and the deferred
+      // completeness trigger reads every pop_* table — app_runtime holds DML on
+      // all five child tables in production via the product default privilege.
+      await sql.unsafe(
+        'GRANT SELECT, INSERT, UPDATE, DELETE ON "product"."pop_usage_rate", "product"."pop_flat_fee", "product"."pop_capacity_commitment", "product"."pop_motivation_step", "product"."product_spec_characteristic" TO app_runtime',
+      );
     }, 30_000);
 
     afterAll(async () => {
@@ -102,39 +108,45 @@ describe.skipIf(!databaseUrl)(
       return id;
     }
 
-    // A complete `once` flat price (no charge period, no unit) — deliberately
-    // the price shape that trips none of pm35's completeness CHECKs, so a
-    // rejection here can only be the pm36 trigger. Returns the unawaited insert
-    // promise so a caller can assert on rejection.
-    function insertPrice(
+    // A complete one-time flat price (no charge period, no unit) — deliberately
+    // the price shape that trips none of the per-type CHECKs, so a rejection
+    // here can only be the pm36 trigger. Since pm70 (0056) a price is a header
+    // plus its `pop_flat_fee` row, written in ONE transaction (the deferred
+    // completeness trigger refuses a header committed alone). Returns the
+    // header id.
+    async function insertPrice(
       offeringId: string,
       opts: { name: string; startDateTime?: string },
-    ): Promise<unknown> {
-      return sql`
-        INSERT INTO product.product_offering_price
-          (product_offering_id, name, component_type, price_component, currency, start_date_time)
-        VALUES (
-          ${offeringId}, ${opts.name}, ${"flat_fee"},
-          ${JSON.stringify({
-            "@type": "flat_fee",
-            specVersion: 1,
-            plaSpecId: null,
-            priceType: "oneTime",
-            appliesAt: "billing",
-            basis: "flat",
-            boundTo: null,
-            params: { amount: "10.00" },
-          })}::jsonb,
-          ${"MYR"},
-          ${opts.startDateTime ?? "2026-01-01T00:00:00Z"}
-        )`;
+      client: postgresjs.Sql = sql,
+    ): Promise<string> {
+      let id = "";
+      await client.begin(async (tx) => {
+        const [row] = await tx<{ id: string }[]>`
+          INSERT INTO product.product_offering_price
+            (product_offering_id, name, component_type, price_type, currency, start_date_time)
+          VALUES (
+            ${offeringId}, ${opts.name}, ${"flat_fee"}, ${"oneTime"},
+            ${"MYR"},
+            ${opts.startDateTime ?? "2026-01-01T00:00:00Z"}
+          )
+          RETURNING product_offering_price_id AS id`;
+        id = row?.id ?? "";
+        await tx`INSERT INTO product.pop_flat_fee (product_offering_price_id, amount)
+                 VALUES (${id}, 10)`;
+      });
+      return id;
     }
 
-    function insertSpec(offeringId: string, name: string): Promise<unknown> {
-      return sql`
+    async function insertSpec(
+      offeringId: string,
+      name: string,
+    ): Promise<string> {
+      const [row] = await sql<{ id: string }[]>`
         INSERT INTO product.product_specifications
-          (ref_product_offering_id, name, is_mandatory, is_default, product_spec_characteristics)
-        VALUES (${offeringId}, ${name}, false, false, ${"{}"}::jsonb)`;
+          (ref_product_offering_id, name, is_mandatory, is_default)
+        VALUES (${offeringId}, ${name}, false, false)
+        RETURNING product_spec_id AS id`;
+      return row?.id ?? "";
     }
 
     async function countChildren(
@@ -417,6 +429,313 @@ describe.skipIf(!databaseUrl)(
       expect(onB?.count).toBe("1");
     });
 
+    // ── pm70 (0056): the five new child tables (guardrail 45, DB arm) ───────
+    // A write to any of product_spec_characteristic and the four pop_* tables
+    // under a non-DRAFT version fails 23514 naming the guard; a discarded DRAFT
+    // cascades offering → spec/header → subtype → steps with zero orphans.
+
+    async function addCharacteristic(
+      specId: string,
+      name: string,
+      order: number,
+    ): Promise<unknown> {
+      return sql`
+        INSERT INTO product.product_spec_characteristic
+          (product_spec_id, char_name, char_value, display_order)
+        VALUES (${specId}, ${name}, 'v', ${order})`;
+    }
+
+    // One of each of the four price types on a DRAFT offering, header + child
+    // in one transaction each. Returns the header ids by type.
+    type PriceType =
+      | "usage_rate"
+      | "flat_fee"
+      | "capacity_commitment"
+      | "capacity_motivation";
+    async function seedAllPriceTypes(
+      offeringId: string,
+    ): Promise<Record<PriceType, string>> {
+      const ids: Partial<Record<PriceType, string>> = {};
+      const headers: [
+        PriceType,
+        string,
+        string | null,
+        number | null,
+        string | null,
+      ][] = [
+        ["usage_rate", "usage", "GB", null, null],
+        ["flat_fee", "recurring", null, 1, "months"],
+        ["capacity_commitment", "commitment", "GB", null, null],
+        ["capacity_motivation", "discount", "GB", null, null],
+      ];
+      for (const [type, priceType, unit, len, period] of headers) {
+        await sql.begin(async (tx) => {
+          const [row] = await tx<{ id: string }[]>`
+            INSERT INTO product.product_offering_price
+              (product_offering_id, name, component_type, price_type,
+               unit_of_measure, recurring_charge_period_length,
+               recurring_charge_period_type, currency, start_date_time)
+            VALUES (${offeringId}, ${type}, ${type}, ${priceType}, ${unit},
+                    ${len}, ${period}, 'MYR', '2026-01-01T00:00:00Z')
+            RETURNING product_offering_price_id AS id`;
+          const id = row?.id ?? "";
+          ids[type] = id;
+          if (type === "usage_rate") {
+            await tx`INSERT INTO product.pop_usage_rate (product_offering_price_id, rate_per_unit) VALUES (${id}, 1)`;
+          } else if (type === "flat_fee") {
+            await tx`INSERT INTO product.pop_flat_fee (product_offering_price_id, amount) VALUES (${id}, 1)`;
+          } else if (type === "capacity_commitment") {
+            await tx`INSERT INTO product.pop_capacity_commitment (product_offering_price_id, committed_quantity) VALUES (${id}, 100)`;
+          } else {
+            await tx`INSERT INTO product.pop_motivation_step (product_offering_price_id, above_quantity, rate_per_unit)
+                     VALUES (${id}, 100, 2), (${id}, 200, 1)`;
+          }
+        });
+      }
+      return ids as Record<PriceType, string>;
+    }
+
+    type ChildCounts = Record<
+      "chars" | "usage" | "flat" | "commitment" | "steps",
+      number
+    >;
+    async function childCounts(): Promise<ChildCounts> {
+      const [row] = await sql<Record<keyof ChildCounts, string>[]>`
+        SELECT (SELECT count(*) FROM product.product_spec_characteristic)::text AS chars,
+               (SELECT count(*) FROM product.pop_usage_rate)::text AS usage,
+               (SELECT count(*) FROM product.pop_flat_fee)::text AS flat,
+               (SELECT count(*) FROM product.pop_capacity_commitment)::text AS commitment,
+               (SELECT count(*) FROM product.pop_motivation_step)::text AS steps`;
+      return {
+        chars: Number(row?.chars),
+        usage: Number(row?.usage),
+        flat: Number(row?.flat),
+        commitment: Number(row?.commitment),
+        steps: Number(row?.steps),
+      };
+    }
+
+    async function expectGuard(fn: () => Promise<unknown>): Promise<void> {
+      let err: { code?: string; message?: string } | undefined;
+      try {
+        await fn();
+      } catch (e) {
+        err = e as { code?: string; message?: string };
+      }
+      expect(err?.code).toBe("23514");
+      expect(String(err?.message)).toContain(
+        "product_child_write_requires_draft",
+      );
+      expect(String(err?.message)).toContain("ACTIVE");
+    }
+
+    it("refuses INSERT/UPDATE/DELETE on each of the five new tables under an ACTIVE version (23514)", async () => {
+      const parent = await insertOffering({
+        name: "n1 active",
+        status: "DRAFT",
+      });
+      const specId = await insertSpec(parent, "spec");
+      await addCharacteristic(specId, "SST_ID", 1);
+      const ids = await seedAllPriceTypes(parent);
+      await sql`UPDATE product.product_offering SET lifecycle_status = 'ACTIVE'
+                WHERE product_offering_id = ${parent}`;
+
+      // product_spec_characteristic
+      await expectGuard(() => addCharacteristic(specId, "SD_ID", 2));
+      await expectGuard(
+        () => sql`UPDATE product.product_spec_characteristic SET char_value = 'x'
+                  WHERE product_spec_id = ${specId}`,
+      );
+      await expectGuard(
+        () =>
+          sql`DELETE FROM product.product_spec_characteristic WHERE product_spec_id = ${specId}`,
+      );
+      // pop_usage_rate
+      await expectGuard(
+        () => sql`UPDATE product.pop_usage_rate SET rate_per_unit = 2
+                  WHERE product_offering_price_id = ${ids.usage_rate}`,
+      );
+      await expectGuard(
+        () =>
+          sql`DELETE FROM product.pop_usage_rate WHERE product_offering_price_id = ${ids.usage_rate}`,
+      );
+      // pop_flat_fee
+      await expectGuard(
+        () => sql`UPDATE product.pop_flat_fee SET amount = 2
+                  WHERE product_offering_price_id = ${ids.flat_fee}`,
+      );
+      await expectGuard(
+        () =>
+          sql`DELETE FROM product.pop_flat_fee WHERE product_offering_price_id = ${ids.flat_fee}`,
+      );
+      // pop_capacity_commitment
+      await expectGuard(
+        () => sql`UPDATE product.pop_capacity_commitment SET committed_quantity = 5
+                  WHERE product_offering_price_id = ${ids.capacity_commitment}`,
+      );
+      await expectGuard(
+        () =>
+          sql`DELETE FROM product.pop_capacity_commitment WHERE product_offering_price_id = ${ids.capacity_commitment}`,
+      );
+      // pop_motivation_step — INSERT too (a 1:N table accepts a new row)
+      await expectGuard(
+        () => sql`INSERT INTO product.pop_motivation_step (product_offering_price_id, above_quantity, rate_per_unit)
+                  VALUES (${ids.capacity_motivation}, 300, 0.5)`,
+      );
+      await expectGuard(
+        () => sql`UPDATE product.pop_motivation_step SET rate_per_unit = 9
+                  WHERE product_offering_price_id = ${ids.capacity_motivation}`,
+      );
+      await expectGuard(
+        () =>
+          sql`DELETE FROM product.pop_motivation_step WHERE product_offering_price_id = ${ids.capacity_motivation}`,
+      );
+    });
+
+    it("refuses an INSERT into each 1:1 subtype table under an ACTIVE version (23514 before the PK)", async () => {
+      // The guard is a BEFORE trigger, so it refuses ahead of the PK / FK.
+      const parent = await insertOffering({
+        name: "n1b active",
+        status: "DRAFT",
+      });
+      const ids = await seedAllPriceTypes(parent);
+      await sql`UPDATE product.product_offering SET lifecycle_status = 'ACTIVE'
+                WHERE product_offering_id = ${parent}`;
+      await expectGuard(
+        () =>
+          sql`INSERT INTO product.pop_usage_rate (product_offering_price_id, rate_per_unit) VALUES (${ids.usage_rate}, 1)`,
+      );
+      await expectGuard(
+        () =>
+          sql`INSERT INTO product.pop_flat_fee (product_offering_price_id, amount) VALUES (${ids.flat_fee}, 1)`,
+      );
+      await expectGuard(
+        () =>
+          sql`INSERT INTO product.pop_capacity_commitment (product_offering_price_id, committed_quantity) VALUES (${ids.capacity_commitment}, 1)`,
+      );
+    });
+
+    it("accepts writes to the five new tables while the version is DRAFT", async () => {
+      const parent = await insertOffering({
+        name: "n2 draft",
+        status: "DRAFT",
+      });
+      const specId = await insertSpec(parent, "spec");
+      await addCharacteristic(specId, "A", 1);
+      await sql`UPDATE product.product_spec_characteristic SET char_value = 'w'
+                WHERE product_spec_id = ${specId}`;
+      const ids = await seedAllPriceTypes(parent);
+      await sql`UPDATE product.pop_flat_fee SET amount = 3
+                WHERE product_offering_price_id = ${ids.flat_fee}`;
+      await sql`INSERT INTO product.pop_motivation_step (product_offering_price_id, above_quantity, rate_per_unit)
+                VALUES (${ids.capacity_motivation}, 300, 0.5)`;
+      const [row] = await sql<{ amount: string }[]>`
+        SELECT amount::text AS amount FROM product.pop_flat_fee
+         WHERE product_offering_price_id = ${ids.flat_fee}`;
+      expect(Number(row?.amount)).toBe(3);
+    });
+
+    it("discarding a DRAFT with a spec (two characteristics) and all four price types leaves zero rows in every child table (Inv. #69)", async () => {
+      const before = await childCounts();
+      const parent = await insertOffering({
+        name: "n3 discard",
+        status: "DRAFT",
+      });
+      const specId = await insertSpec(parent, "spec");
+      await addCharacteristic(specId, "SST_ID", 1);
+      await addCharacteristic(specId, "SD_ID", 2);
+      await seedAllPriceTypes(parent);
+      const during = await childCounts();
+      expect(during.chars - before.chars).toBe(2);
+      expect(during.steps - before.steps).toBe(2);
+
+      await sql`DELETE FROM product.product_offering WHERE product_offering_id = ${parent}`;
+
+      expect(await childCounts()).toEqual(before);
+      const counts = await countChildren(parent);
+      expect(counts).toEqual({ specs: 0, prices: 0, offerings: 0 });
+    });
+
+    it("discarding a TESTING version cascades through three levels too (parent-gone branch)", async () => {
+      const before = await childCounts();
+      const parent = await insertOffering({
+        name: "n4 testing",
+        status: "DRAFT",
+      });
+      const specId = await insertSpec(parent, "spec");
+      await addCharacteristic(specId, "K", 1);
+      await seedAllPriceTypes(parent);
+      await sql`UPDATE product.product_offering SET lifecycle_status = 'TESTING'
+                WHERE product_offering_id = ${parent}`;
+      await sql`DELETE FROM product.product_offering WHERE product_offering_id = ${parent}`;
+      expect(await childCounts()).toEqual(before);
+    });
+
+    it("refuses moving a pop_flat_fee row OFF a released version's header onto a DRAFT one (OLD-side guard)", async () => {
+      const released = await insertOffering({
+        name: "n5 released",
+        status: "DRAFT",
+      });
+      const fromHeader = await insertPrice(released, { name: "n5-from" });
+      await sql`UPDATE product.product_offering SET lifecycle_status = 'ACTIVE'
+                WHERE product_offering_id = ${released}`;
+      const draft = await insertOffering({ name: "n5 draft", status: "DRAFT" });
+      // A DRAFT flat_fee header with no child yet, inside one transaction so the
+      // re-parent attempt is the only thing that could complete it.
+      let err: { code?: string; message?: string } | undefined;
+      try {
+        await sql.begin(async (tx) => {
+          const [row] = await tx<{ id: string }[]>`
+            INSERT INTO product.product_offering_price
+              (product_offering_id, name, component_type, price_type, currency, start_date_time)
+            VALUES (${draft}, 'n5-to', 'flat_fee', 'oneTime', 'MYR', '2026-01-01T00:00:00Z')
+            RETURNING product_offering_price_id AS id`;
+          await tx`UPDATE product.pop_flat_fee SET product_offering_price_id = ${row?.id ?? ""}
+                   WHERE product_offering_price_id = ${fromHeader}`;
+        });
+      } catch (e) {
+        err = e as { code?: string; message?: string };
+      }
+      expect(err?.code).toBe("23514");
+      expect(String(err?.message)).toContain(
+        "product_child_write_requires_draft",
+      );
+    });
+
+    it("re-parenting a pop_flat_fee row onto a header of another type is refused by the FK (type pinning)", async () => {
+      const parent = await insertOffering({
+        name: "n6 draft",
+        status: "DRAFT",
+      });
+      const ids = await seedAllPriceTypes(parent);
+      let err: { code?: string; constraint_name?: string } | undefined;
+      try {
+        await sql`UPDATE product.pop_flat_fee SET product_offering_price_id = ${ids.usage_rate}
+                  WHERE product_offering_price_id = ${ids.flat_fee}`;
+      } catch (e) {
+        err = e as { code?: string; constraint_name?: string };
+      }
+      expect(err?.code).toBe("23503");
+      expect(err?.constraint_name).toBe("pop_flat_fee_header_fk");
+    });
+
+    it("a characteristic cannot be moved from a released version's spec to a DRAFT one", async () => {
+      const released = await insertOffering({
+        name: "n7 released",
+        status: "DRAFT",
+      });
+      const fromSpec = await insertSpec(released, "from");
+      await addCharacteristic(fromSpec, "MOVE_ME", 1);
+      await sql`UPDATE product.product_offering SET lifecycle_status = 'ACTIVE'
+                WHERE product_offering_id = ${released}`;
+      const draft = await insertOffering({ name: "n7 draft", status: "DRAFT" });
+      const toSpec = await insertSpec(draft, "to");
+      await expectGuard(
+        () => sql`UPDATE product.product_spec_characteristic SET product_spec_id = ${toSpec}
+                  WHERE product_spec_id = ${fromSpec}`,
+      );
+    });
+
     // ── Role-context (pm36-spec Dependencies) ───────────────────────────────
     // Proves the trigger's internal SELECT resolves under app_runtime — the
     // role the production insert-price path actually runs as. A missing SELECT
@@ -431,19 +750,16 @@ describe.skipIf(!databaseUrl)(
       });
       await sql.begin(async (tx) => {
         await tx.unsafe("SET LOCAL ROLE app_runtime");
-        await tx`
+        const [row] = await tx<{ id: string }[]>`
           INSERT INTO product.product_offering_price
-            (product_offering_id, name, component_type, price_component, currency, start_date_time)
-          VALUES (${parent}, ${"role-ok"}, ${"flat_fee"}, ${JSON.stringify({
-            "@type": "flat_fee",
-            specVersion: 1,
-            plaSpecId: null,
-            priceType: "oneTime",
-            appliesAt: "billing",
-            basis: "flat",
-            boundTo: null,
-            params: { amount: "10.00" },
-          })}::jsonb, ${"MYR"}, ${"2026-03-01T00:00:00Z"})`;
+            (product_offering_id, name, component_type, price_type, currency, start_date_time)
+          VALUES (${parent}, ${"role-ok"}, ${"flat_fee"}, ${"oneTime"}, ${"MYR"}, ${"2026-03-01T00:00:00Z"})
+          RETURNING product_offering_price_id AS id`;
+        // The pop_flat_fee guard resolves its offering through the header and
+        // the deferred completeness trigger reads pop_flat_fee — both under
+        // app_runtime.
+        await tx`INSERT INTO product.pop_flat_fee (product_offering_price_id, amount)
+                 VALUES (${row?.id ?? ""}, 10)`;
       });
       const [row] = await sql<{ count: string }[]>`
         SELECT count(*)::text AS count FROM product.product_offering_price
@@ -462,19 +778,8 @@ describe.skipIf(!databaseUrl)(
           await tx.unsafe("SET LOCAL ROLE app_runtime");
           await tx`
             INSERT INTO product.product_offering_price
-              (product_offering_id, name, component_type, price_component, currency, start_date_time)
-            VALUES (${parent}, ${"role-blocked"}, ${"flat_fee"}, ${JSON.stringify(
-              {
-                "@type": "flat_fee",
-                specVersion: 1,
-                plaSpecId: null,
-                priceType: "oneTime",
-                appliesAt: "billing",
-                basis: "flat",
-                boundTo: null,
-                params: { amount: "10.00" },
-              },
-            )}::jsonb, ${"MYR"}, ${"2026-03-01T00:00:00Z"})`;
+              (product_offering_id, name, component_type, price_type, currency, start_date_time)
+            VALUES (${parent}, ${"role-blocked"}, ${"flat_fee"}, ${"oneTime"}, ${"MYR"}, ${"2026-03-01T00:00:00Z"})`;
         });
       } catch (e) {
         err = e;

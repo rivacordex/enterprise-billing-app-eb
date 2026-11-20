@@ -656,6 +656,30 @@ describe.skipIf(!databaseUrl)(
         }
       });
 
+      it("25d. pm70 (Inv. #67): rating_runtime SELECTs product.offering_price_v and is refused every pop_* and reference table", async () => {
+        await expect(
+          ratingRuntime`SELECT 1 FROM product.offering_price_v WHERE false`,
+        ).resolves.toBeDefined();
+        for (const table of [
+          "product.pop_usage_rate",
+          "product.pop_flat_fee",
+          "product.pop_capacity_commitment",
+          "product.pop_motivation_step",
+          "product.price_component_type",
+          "product.price_component_price_type",
+        ]) {
+          await expect(
+            ratingRuntime.unsafe(`SELECT 1 FROM ${table} WHERE false`),
+          ).rejects.toThrow(/permission denied/);
+        }
+        const [priv] = await sql<{ write: boolean }[]>`
+          SELECT has_table_privilege('rating_runtime', 'product.offering_price_v', 'INSERT')
+              OR has_table_privilege('rating_runtime', 'product.offering_price_v', 'UPDATE')
+              OR has_table_privilege('rating_runtime', 'product.offering_price_v', 'DELETE') AS write
+        `;
+        expect(priv?.write).toBe(false);
+      });
+
       it("25c. rm16: the customer schema is USAGE-reachable by rating_runtime", async () => {
         const [row] = await sql<{ usage: boolean }[]>`
           SELECT has_schema_privilege('rating_runtime', 'customer', 'USAGE') AS usage

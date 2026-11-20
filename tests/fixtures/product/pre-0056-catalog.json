@@ -1,0 +1,458 @@
+{
+  "prices": [
+    {
+      "name": "_SAMPLE_ Monthly Recurring Charge",
+      "policy": null,
+      "gl_code": "GL-4100",
+      "currency": "MYR",
+      "component_type": "flat_fee",
+      "price_component": {
+        "@type": "flat_fee",
+        "basis": "flat",
+        "params": {
+          "amount": "199.00"
+        },
+        "boundTo": null,
+        "appliesAt": "billing",
+        "plaSpecId": null,
+        "priceType": "recurring",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": null,
+      "product_offering_id": "PRDOFR00000001",
+      "product_offering_price_id": "PRDOFP00000001",
+      "recurring_charge_period_type": "months",
+      "recurring_charge_period_length": 1
+    },
+    {
+      "name": "Sample 5G Usage Rate",
+      "policy": null,
+      "gl_code": null,
+      "currency": "MYR",
+      "component_type": "usage_rate",
+      "price_component": {
+        "@type": "usage_rate",
+        "basis": "quantity",
+        "params": {
+          "ratePerUnit": "100.000000",
+          "rateCardLookUp": null
+        },
+        "boundTo": {
+          "unitOfMeasure": "Mbps"
+        },
+        "appliesAt": "rating",
+        "plaSpecId": null,
+        "priceType": "usage",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": "Mbps",
+      "product_offering_id": "PRDOFR00000002",
+      "product_offering_price_id": "PRDOFP00000002",
+      "recurring_charge_period_type": null,
+      "recurring_charge_period_length": null
+    },
+    {
+      "name": "Demo — Monthly Recurring Charge",
+      "policy": null,
+      "gl_code": "GL-4100",
+      "currency": "MYR",
+      "component_type": "flat_fee",
+      "price_component": {
+        "@type": "flat_fee",
+        "basis": "flat",
+        "params": {
+          "amount": "5000.00"
+        },
+        "boundTo": null,
+        "appliesAt": "billing",
+        "plaSpecId": null,
+        "priceType": "recurring",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": null,
+      "product_offering_id": "PRDOFR00000003",
+      "product_offering_price_id": "PRDOFP00000003",
+      "recurring_charge_period_type": "months",
+      "recurring_charge_period_length": 1
+    },
+    {
+      "name": "Demo — Monthly Recurring Charge (2027)",
+      "policy": null,
+      "gl_code": "GL-4100",
+      "currency": "MYR",
+      "component_type": "flat_fee",
+      "price_component": {
+        "@type": "flat_fee",
+        "basis": "flat",
+        "params": {
+          "amount": "5500.00"
+        },
+        "boundTo": null,
+        "appliesAt": "billing",
+        "plaSpecId": null,
+        "priceType": "recurring",
+        "specVersion": 1
+      },
+      "start_date_time": "2027-01-01T00:00:00+00:00",
+      "unit_of_measure": null,
+      "product_offering_id": "PRDOFR00000003",
+      "product_offering_price_id": "PRDOFP00000004",
+      "recurring_charge_period_type": "months",
+      "recurring_charge_period_length": 1
+    },
+    {
+      "name": "Demo — Activation Fee",
+      "policy": null,
+      "gl_code": null,
+      "currency": "MYR",
+      "component_type": "flat_fee",
+      "price_component": {
+        "@type": "flat_fee",
+        "basis": "flat",
+        "params": {
+          "amount": "1000.00"
+        },
+        "boundTo": null,
+        "appliesAt": "billing",
+        "plaSpecId": null,
+        "priceType": "oneTime",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-02T00:00:00+00:00",
+      "unit_of_measure": null,
+      "product_offering_id": "PRDOFR00000003",
+      "product_offering_price_id": "PRDOFP00000005",
+      "recurring_charge_period_type": null,
+      "recurring_charge_period_length": null
+    },
+    {
+      "name": "Demo — Data Overage",
+      "policy": null,
+      "gl_code": "GL-4200",
+      "currency": "MYR",
+      "component_type": "usage_rate",
+      "price_component": {
+        "@type": "usage_rate",
+        "basis": "quantity",
+        "params": {
+          "ratePerUnit": "0.05",
+          "rateCardLookUp": null
+        },
+        "boundTo": {
+          "unitOfMeasure": "GB"
+        },
+        "appliesAt": "rating",
+        "plaSpecId": null,
+        "priceType": "usage",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": "GB",
+      "product_offering_id": "PRDOFR00000003",
+      "product_offering_price_id": "PRDOFP00000006",
+      "recurring_charge_period_type": null,
+      "recurring_charge_period_length": null
+    },
+    {
+      "name": "Demo — Monthly Recurring Charge",
+      "policy": null,
+      "gl_code": "GL-4100",
+      "currency": "MYR",
+      "component_type": "flat_fee",
+      "price_component": {
+        "@type": "flat_fee",
+        "basis": "flat",
+        "params": {
+          "amount": "1200.00"
+        },
+        "boundTo": null,
+        "appliesAt": "billing",
+        "plaSpecId": null,
+        "priceType": "recurring",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": null,
+      "product_offering_id": "PRDOFR00000004",
+      "product_offering_price_id": "PRDOFP00000007",
+      "recurring_charge_period_type": "months",
+      "recurring_charge_period_length": 1
+    },
+    {
+      "name": "Demo — Data Usage",
+      "policy": null,
+      "gl_code": "GL-4200",
+      "currency": "MYR",
+      "component_type": "usage_rate",
+      "price_component": {
+        "@type": "usage_rate",
+        "basis": "quantity",
+        "params": {
+          "ratePerUnit": "0.02",
+          "rateCardLookUp": null
+        },
+        "boundTo": {
+          "unitOfMeasure": "GB"
+        },
+        "appliesAt": "rating",
+        "plaSpecId": null,
+        "priceType": "usage",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": "GB",
+      "product_offering_id": "PRDOFR00000004",
+      "product_offering_price_id": "PRDOFP00000008",
+      "recurring_charge_period_type": null,
+      "recurring_charge_period_length": null
+    },
+    {
+      "name": "Demo — Enterprise Base Usage Rate",
+      "policy": null,
+      "gl_code": "GL-4200",
+      "currency": "MYR",
+      "component_type": "usage_rate",
+      "price_component": {
+        "@type": "usage_rate",
+        "basis": "quantity",
+        "params": {
+          "ratePerUnit": "100",
+          "rateCardLookUp": "ENTERPRISE_EA_CARD"
+        },
+        "boundTo": {
+          "unitOfMeasure": "EA"
+        },
+        "appliesAt": "rating",
+        "plaSpecId": "PLA_USAGE_RATE",
+        "priceType": "usage",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": "EA",
+      "product_offering_id": "PRDOFR00000005",
+      "product_offering_price_id": "PRDOFP00000009",
+      "recurring_charge_period_type": null,
+      "recurring_charge_period_length": null
+    },
+    {
+      "name": "Demo — Enterprise Capacity Commitment",
+      "policy": null,
+      "gl_code": null,
+      "currency": "MYR",
+      "component_type": "capacity_commitment",
+      "price_component": {
+        "@type": "capacity_commitment",
+        "basis": "quantity",
+        "params": {
+          "committedQuantity": 1000
+        },
+        "boundTo": {
+          "unitOfMeasure": "EA"
+        },
+        "appliesAt": "post_aggregation",
+        "plaSpecId": "PLA_CAPACITY_COMMITMENT",
+        "priceType": "commitment",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": "EA",
+      "product_offering_id": "PRDOFR00000005",
+      "product_offering_price_id": "PRDOFP00000010",
+      "recurring_charge_period_type": null,
+      "recurring_charge_period_length": null
+    },
+    {
+      "name": "Demo — Enterprise Capacity Motivation",
+      "policy": null,
+      "gl_code": null,
+      "currency": "MYR",
+      "component_type": "capacity_motivation",
+      "price_component": {
+        "@type": "capacity_motivation",
+        "basis": "quantity",
+        "params": {
+          "steps": [
+            {
+              "ratePerUnit": "50",
+              "aboveQuantity": 1000
+            },
+            {
+              "ratePerUnit": "25",
+              "aboveQuantity": 2000
+            }
+          ]
+        },
+        "boundTo": {
+          "unitOfMeasure": "EA"
+        },
+        "appliesAt": "post_aggregation",
+        "plaSpecId": "PLA_CAPACITY_MOTIVATION",
+        "priceType": "discount",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": "EA",
+      "product_offering_id": "PRDOFR00000005",
+      "product_offering_price_id": "PRDOFP00000011",
+      "recurring_charge_period_type": null,
+      "recurring_charge_period_length": null
+    },
+    {
+      "name": "Demo — Enterprise Platform Fee",
+      "policy": null,
+      "gl_code": "GL-4100",
+      "currency": "MYR",
+      "component_type": "flat_fee",
+      "price_component": {
+        "@type": "flat_fee",
+        "basis": "flat",
+        "params": {
+          "amount": "2000.00"
+        },
+        "boundTo": null,
+        "appliesAt": "billing",
+        "plaSpecId": null,
+        "priceType": "recurring",
+        "specVersion": 1
+      },
+      "start_date_time": "2026-01-01T00:00:00+00:00",
+      "unit_of_measure": null,
+      "product_offering_id": "PRDOFR00000005",
+      "product_offering_price_id": "PRDOFP00000012",
+      "recurring_charge_period_type": "months",
+      "recurring_charge_period_length": 1
+    }
+  ],
+  "source": "Captured by pm70 (2026-11-19) from a freshly seeded 0055 database: db:setup seeds + db:seed-sample + db:seed-sample-5g + db:seed-demo. SELECT ... FROM product.*; never edited by hand. Guardrail 50 pre-state.",
+  "offerings": [
+    {
+      "name": "_SAMPLE_ 5G Demo Plan",
+      "version": 1,
+      "is_bundle": false,
+      "is_sellable": true,
+      "billing_only": true,
+      "lifecycle_status": "ACTIVE",
+      "family_offering_id": null,
+      "product_offering_id": "PRDOFR00000001"
+    },
+    {
+      "name": "Sample 5G Services",
+      "version": 1,
+      "is_bundle": false,
+      "is_sellable": true,
+      "billing_only": false,
+      "lifecycle_status": "ACTIVE",
+      "family_offering_id": null,
+      "product_offering_id": "PRDOFR00000002"
+    },
+    {
+      "name": "Demo — 5G Nationwide Service Plan",
+      "version": 1,
+      "is_bundle": false,
+      "is_sellable": true,
+      "billing_only": false,
+      "lifecycle_status": "ACTIVE",
+      "family_offering_id": null,
+      "product_offering_id": "PRDOFR00000003"
+    },
+    {
+      "name": "Demo — Enterprise IoT Access",
+      "version": 1,
+      "is_bundle": false,
+      "is_sellable": true,
+      "billing_only": false,
+      "lifecycle_status": "ACTIVE",
+      "family_offering_id": null,
+      "product_offering_id": "PRDOFR00000004"
+    },
+    {
+      "name": "Demo — Enterprise Capacity Plan",
+      "version": 1,
+      "is_bundle": false,
+      "is_sellable": true,
+      "billing_only": false,
+      "lifecycle_status": "ACTIVE",
+      "family_offering_id": null,
+      "product_offering_id": "PRDOFR00000005"
+    }
+  ],
+  "specifications": [
+    {
+      "name": "udrType",
+      "is_default": true,
+      "is_mandatory": true,
+      "default_value": "RAN_USAGE",
+      "product_spec_id": "PRDSMD00000001",
+      "ref_product_offering_id": "PRDOFR00000002",
+      "product_spec_characteristics": {}
+    },
+    {
+      "name": "singleSubInstPerCust",
+      "is_default": false,
+      "is_mandatory": true,
+      "default_value": "true",
+      "product_spec_id": "PRDSMD00000002",
+      "ref_product_offering_id": "PRDOFR00000002",
+      "product_spec_characteristics": {}
+    },
+    {
+      "name": "productCardLookUp",
+      "is_default": false,
+      "is_mandatory": true,
+      "default_value": "RATECARD_RAN_USAGE_LKP",
+      "product_spec_id": "PRDSMD00000003",
+      "ref_product_offering_id": "PRDOFR00000002",
+      "product_spec_characteristics": {}
+    },
+    {
+      "name": "Demo — Network Slice eMBB",
+      "is_default": true,
+      "is_mandatory": true,
+      "default_value": null,
+      "product_spec_id": "PRDSMD00000004",
+      "ref_product_offering_id": "PRDOFR00000003",
+      "product_spec_characteristics": {
+        "SD_ID": "A0C4E2",
+        "SST_ID": "01"
+      }
+    },
+    {
+      "name": "Demo — QoS Profile",
+      "is_default": false,
+      "is_mandatory": false,
+      "default_value": "standard",
+      "product_spec_id": "PRDSMD00000005",
+      "ref_product_offering_id": "PRDOFR00000003",
+      "product_spec_characteristics": {
+        "5QI": "9",
+        "ARP": "8"
+      }
+    },
+    {
+      "name": "Demo — Network Slice mMTC",
+      "is_default": true,
+      "is_mandatory": true,
+      "default_value": null,
+      "product_spec_id": "PRDSMD00000006",
+      "ref_product_offering_id": "PRDOFR00000004",
+      "product_spec_characteristics": {
+        "SD_ID": "B1D2E3",
+        "SST_ID": "03"
+      }
+    },
+    {
+      "name": "Demo — Capacity Plan Profile",
+      "is_default": true,
+      "is_mandatory": true,
+      "default_value": null,
+      "product_spec_id": "PRDSMD00000007",
+      "ref_product_offering_id": "PRDOFR00000005",
+      "product_spec_characteristics": {
+        "PLAN_TIER": "ENTERPRISE"
+      }
+    }
+  ]
+}
