@@ -826,7 +826,6 @@ async function ensureSubscription(
   const [existing] = await db
     .select({
       productInventoryId: productInventory.productInventoryId,
-      startDate: productInventory.startDate,
     })
     .from(productInventory)
     .where(
@@ -840,14 +839,14 @@ async function ensureSubscription(
   if (existing) {
     // An interrupted earlier run can leave the subscription at its submitted
     // (today's) start date — finish that backdate; never move one forward.
-    if (existing.startDate > demoStartDate) {
-      await backdateSubscription(
-        backdateDb,
-        existing.productInventoryId,
-        demoStartDate,
-      );
+    const previousStartDate = await backdateSubscription(
+      backdateDb,
+      existing.productInventoryId,
+      demoStartDate,
+    );
+    if (previousStartDate !== null) {
       logger.info(
-        `db:seed-mno-demo: ${seed.name} × "${offering.name}" start moved ${existing.startDate} → ${demoStartDate}.`,
+        `db:seed-mno-demo: ${seed.name} × "${offering.name}" start moved ${previousStartDate} → ${demoStartDate}.`,
       );
     }
     return { inventoryId: existing.productInventoryId, created: false };
@@ -886,16 +885,21 @@ async function backdateSubscription(
   backdateDb: Database,
   inventoryId: string,
   startDate: string,
-): Promise<void> {
-  await backdateDb.transaction(async (tx) => {
+): Promise<string | null> {
+  return backdateDb.transaction(async (tx) => {
     const [inventory] = await tx
-      .select({ productOrderItemId: productInventory.productOrderItemId })
+      .select({
+        productOrderItemId: productInventory.productOrderItemId,
+        startDate: productInventory.startDate,
+      })
       .from(productInventory)
       .where(eq(productInventory.productInventoryId, inventoryId))
-      .limit(1);
+      .for("update");
     if (!inventory) {
       throw new Error(`db:seed-mno-demo: inventory ${inventoryId} vanished.`);
     }
+    if (inventory.startDate <= startDate) return null;
+
     await tx
       .update(productOrderItem)
       .set({ startDate })
@@ -916,6 +920,7 @@ async function backdateSubscription(
           gt(inventoryStatusHistory.effectiveDate, startDate),
         ),
       );
+    return inventory.startDate;
   });
 }
 

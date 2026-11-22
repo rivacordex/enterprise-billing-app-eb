@@ -751,6 +751,42 @@ describe.skipIf(!databaseUrl)(
       expect(row?.n).toBe("1");
     });
 
+    test("concurrent step deletions serialize on the same price header", async () => {
+      const offeringId = await insertOffering("Concurrent Steps Offering");
+      const headerId = await insertPrice(offeringId, {
+        type: "capacity_motivation",
+      });
+      const other = postgres(databaseUrl as string, { max: 1 });
+      try {
+        await sql.begin(async (tx) => {
+          await tx`DELETE FROM product.pop_motivation_step
+                   WHERE product_offering_price_id = ${headerId} AND above_quantity = 1000`;
+          await tx`SET CONSTRAINTS ALL IMMEDIATE`;
+
+          // The other row is visible to the first checker; a concurrent
+          // checker must wait for that transaction to commit or roll back.
+          const error = await caught(() =>
+            other.begin(async (concurrent) => {
+              await concurrent`DELETE FROM product.pop_motivation_step
+                               WHERE product_offering_price_id = ${headerId} AND above_quantity = 2000`;
+              await concurrent`SET LOCAL lock_timeout = '250ms'`;
+              await concurrent`SET CONSTRAINTS ALL IMMEDIATE`;
+            }),
+          );
+          expect(error.code).toBe("55P03");
+        });
+
+        const error = await caught(
+          () =>
+            sql`DELETE FROM product.pop_motivation_step
+               WHERE product_offering_price_id = ${headerId} AND above_quantity = 2000`,
+        );
+        expect(error.code).toBe("23514");
+      } finally {
+        await other.end();
+      }
+    });
+
     test("moving a DRAFT header's only subtype row to another header is refused at COMMIT", async () => {
       const offeringId = await insertOffering("Moved Child Offering");
       const fromHeader = await insertPrice(offeringId, { type: "flat_fee" });

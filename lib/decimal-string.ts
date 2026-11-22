@@ -7,9 +7,9 @@
 // through here. This is the only function in the codebase that edits a money
 // string's text.
 //
-// It strips trailing fractional zeros (and a `.` left behind) and nothing
-// else: it never rounds, never truncates a significant digit, never touches an
-// integer digit, never pads, and never parses to `number`. Anything that is
+// Like a numeric read, it removes redundant leading integer zeros (keeping
+// one zero for values below one) and trailing fractional zeros. It never
+// rounds, removes significant digits, pads, or parses to `number`. Anything that is
 // not a plain unsigned decimal — a sign, an exponent, a thousands separator,
 // whitespace, a bare `.` on either side — throws a `TypeError`: the caller
 // treats a row set that does not reassemble as corruption (§1.49), and a
@@ -22,10 +22,8 @@ export function canonicalDecimalString(value: string): string {
       `canonicalDecimalString: ${JSON.stringify(value)} is not a plain unsigned decimal string`,
     );
   }
-  if (!value.includes(".")) {
-    return value;
-  }
-  // Anchored at the end and only reached when a fractional part exists, so the
-  // strip can never reach an integer digit ("100100" returned above).
-  return value.replace(/0+$/, "").replace(/\.$/, "");
+  const normalized = value.replace(/^0+(?=\d)/, "");
+  return normalized.includes(".")
+    ? normalized.replace(/0+$/, "").replace(/\.$/, "")
+    : normalized;
 }
