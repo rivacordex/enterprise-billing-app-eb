@@ -25,12 +25,7 @@ export function canonicalDecimalString(value: string): string {
   if (!value.includes(".")) {
     return value;
   }
-  // Only reached when a fractional part exists, so the scan back from the end
-  // stops at the `.` at the latest and can never reach an integer digit
-  // ("100100" returned above). A linear scan rather than `/0+$/`, which
-  // backtracks quadratically on a long zero run that is not at the end.
-  let end = value.length;
-  while (value[end - 1] === "0") end--;
-  if (value[end - 1] === ".") end--;
-  return value.slice(0, end);
+  // Anchored at the end and only reached when a fractional part exists, so the
+  // strip can never reach an integer digit ("100100" returned above).
+  return value.replace(/0+$/, "").replace(/\.$/, "");
 }
