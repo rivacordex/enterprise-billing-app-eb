@@ -751,7 +751,47 @@ describe.skipIf(!databaseUrl)(
       expect(row?.n).toBe("1");
     });
 
-    test("header + child in one transaction is accepted, for every type and in either order", async () => {
+    test("moving a DRAFT header's only subtype row to another header is refused at COMMIT", async () => {
+      const offeringId = await insertOffering("Moved Child Offering");
+      const fromHeader = await insertPrice(offeringId, { type: "flat_fee" });
+      const err = await caught(() =>
+        sql.begin(async (tx) => {
+          // A second flat_fee header in its own lane (oneTime), left childless
+          // so the move is what completes it — and what empties fromHeader.
+          const toHeader = await insertHeader(tx, offeringId, {
+            type: "flat_fee",
+            priceType: "oneTime",
+          });
+          await tx`UPDATE product.pop_flat_fee SET product_offering_price_id = ${toHeader}
+                   WHERE product_offering_price_id = ${fromHeader}`;
+        }),
+      );
+      expect(err.code).toBe("23514");
+      expect(err.message).toContain("product_price_header_incomplete");
+      expect(err.message).toContain(fromHeader);
+    });
+
+    test("moving every step off a DRAFT motivation is refused at COMMIT", async () => {
+      const offeringId = await insertOffering("Moved Steps Offering");
+      const fromHeader = await insertPrice(offeringId, {
+        type: "capacity_motivation",
+      });
+      const err = await caught(() =>
+        sql.begin(async (tx) => {
+          const toHeader = await insertHeader(tx, offeringId, {
+            type: "capacity_motivation",
+            unit: "MB",
+          });
+          await tx`UPDATE product.pop_motivation_step SET product_offering_price_id = ${toHeader}
+                   WHERE product_offering_price_id = ${fromHeader}`;
+        }),
+      );
+      expect(err.code).toBe("23514");
+      expect(err.message).toContain("product_price_header_incomplete");
+      expect(err.message).toContain(fromHeader);
+    });
+
+    test("header + child in one transaction is accepted for every type — header first (the subtype FKs are not deferrable)", async () => {
       const offeringId = await insertOffering("Complete Offering");
       for (const type of [
         "usage_rate",
@@ -765,6 +805,15 @@ describe.skipIf(!databaseUrl)(
         SELECT count(*)::text AS n FROM product.product_offering_price
          WHERE product_offering_id = ${offeringId}`;
       expect(row?.n).toBe("4");
+      // Child first is refused at once, not at COMMIT.
+      const childFirst = await caught(() =>
+        sql.begin(async (tx) => {
+          await tx`INSERT INTO product.pop_flat_fee (product_offering_price_id, amount)
+                   VALUES ('PRDOFP_NOT_YET_INSERTED', 1)`;
+        }),
+      );
+      expect(childFirst.code).toBe("23503");
+      expect(childFirst.constraint_name).toBe("pop_flat_fee_header_fk");
     });
 
     test("two steps at one above_quantity is a PK violation", async () => {

@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { AUDIT_EVENT_TYPES } from "@/types/audit";
+import { stripComments } from "@/tests/helpers/strip-code-comments";
 
 // pm09-spec §3.3 — the module's ship-gate guardrail sweep. Turns the v1
 // negative-space invariants (no mutation surface, no new audited path,
@@ -627,7 +628,7 @@ describe("product module boundaries (pm09 ship-gate sweep)", () => {
       }
     }
     // Code only — the mirror's comments record the dropped objects as history.
-    const priceCode = priceBlock.replace(/^\s*\/\/.*$/gm, "");
+    const priceCode = stripComments(priceBlock);
     // Word-bounded: product_offering_price_component_type_idx is not a hit.
     expect(priceCode).not.toMatch(/\bprice_component\b/);
     expect(priceCode).not.toContain("pricing_steps_ok");

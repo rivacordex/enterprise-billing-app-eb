@@ -196,10 +196,14 @@ SELECT p.product_offering_price_id,
        jsonb_array_elements(p.price_component #> '{params,steps}') AS s
  WHERE p.component_type = 'capacity_motivation';
 --> statement-breakpoint
--- THE ONE PLACE today's alphabetical (jsonb key) order is frozen into
--- display_order (architecture §3.5) — recorded, not hidden: a backfilled
--- specification reads back in the order it rendered in yesterday, the only order
--- anyone has ever seen. From pm72 on, display_order is the author's entry order.
+-- THE ONE PLACE today's jsonb key order is frozen into display_order
+-- (architecture §3.5, which calls it "alphabetical") — recorded, not hidden: a
+-- backfilled specification reads back in the order it rendered in yesterday,
+-- the only order anyone has ever seen. jsonb stores object keys SHORTER FIRST,
+-- then bytewise — not strictly alphabetical ({"ZONE","BANDWIDTH"} is stored
+-- ZONE first) — and jsonb_each_text yields that stored order, which is exactly
+-- what Object.entries rendered. Never "fix" this to ORDER BY key. From pm72 on,
+-- display_order is the author's entry order.
 INSERT INTO "product"."product_spec_characteristic" ("product_spec_id", "char_name", "char_value", "display_order")
 SELECT ps.product_spec_id, e.key, e.value, e.ordinality
   FROM "product"."product_specifications" ps,
@@ -336,12 +340,16 @@ ALTER TABLE "product"."product_offering_price" ENABLE TRIGGER "product_offering_
 -- and a capacity_motivation header at least one step. A CHECK cannot do this —
 -- a CHECK sees one row, and completeness is a fact about two tables. So: one
 -- function, five CONSTRAINT TRIGGERs, all DEFERRABLE INITIALLY DEFERRED, so the
--- check runs at COMMIT and header + child may be written in either order inside
--- one transaction. The platform's one prior DEFERRABLE object is a customer FK
+-- check runs at COMMIT and a header may be committed together with the child
+-- written after it in the same transaction. The order is HEADER FIRST: the
+-- subtype FKs are NOT deferrable, so a child inserted before its header fails
+-- 23503 at once. The platform's one prior DEFERRABLE object is a customer FK
 -- (0009); these are its first deferred TRIGGERS.
 --
 -- The header id comes from NEW on the header (AFTER INSERT OR UPDATE) or from
--- OLD.product_offering_price_id on each child table (AFTER DELETE). If the
+-- OLD.product_offering_price_id on each child table (AFTER DELETE, and AFTER
+-- UPDATE OF product_offering_price_id — a row or step moved to another header
+-- leaves its OLD header to be re-checked, exactly as a delete would). If the
 -- header no longer exists, pass: that is the discard cascade (offering → header
 -- → subtype → steps), where the header is gone by the time a child's AFTER
 -- DELETE is checked. Refused with 23514 — the DRAFT guard's code — so a write
@@ -408,22 +416,22 @@ CREATE CONSTRAINT TRIGGER "product_offering_price_complete_ct"
   FOR EACH ROW EXECUTE FUNCTION "product"."price_header_is_complete"();
 --> statement-breakpoint
 CREATE CONSTRAINT TRIGGER "pop_usage_rate_complete_ct"
-  AFTER DELETE ON "product"."pop_usage_rate"
+  AFTER UPDATE OF "product_offering_price_id" OR DELETE ON "product"."pop_usage_rate"
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION "product"."price_header_is_complete"();
 --> statement-breakpoint
 CREATE CONSTRAINT TRIGGER "pop_flat_fee_complete_ct"
-  AFTER DELETE ON "product"."pop_flat_fee"
+  AFTER UPDATE OF "product_offering_price_id" OR DELETE ON "product"."pop_flat_fee"
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION "product"."price_header_is_complete"();
 --> statement-breakpoint
 CREATE CONSTRAINT TRIGGER "pop_capacity_commitment_complete_ct"
-  AFTER DELETE ON "product"."pop_capacity_commitment"
+  AFTER UPDATE OF "product_offering_price_id" OR DELETE ON "product"."pop_capacity_commitment"
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION "product"."price_header_is_complete"();
 --> statement-breakpoint
 CREATE CONSTRAINT TRIGGER "pop_motivation_step_complete_ct"
-  AFTER DELETE ON "product"."pop_motivation_step"
+  AFTER UPDATE OF "product_offering_price_id" OR DELETE ON "product"."pop_motivation_step"
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION "product"."price_header_is_complete"();
 --> statement-breakpoint

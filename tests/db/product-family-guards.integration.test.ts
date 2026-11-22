@@ -117,10 +117,9 @@ describe.skipIf(!databaseUrl)(
     async function insertPrice(
       offeringId: string,
       opts: { name: string; startDateTime?: string },
-      client: postgresjs.Sql = sql,
     ): Promise<string> {
       let id = "";
-      await client.begin(async (tx) => {
+      await sql.begin(async (tx) => {
         const [row] = await tx<{ id: string }[]>`
           INSERT INTO product.product_offering_price
             (product_offering_id, name, component_type, price_type, currency, start_date_time)
