@@ -5,6 +5,13 @@
 // application of already-received cash; there is no dedicated "allocate"
 // reason code in the ac03 seed set). After posting, flips
 // `billing_account.payment_status` from the live receivables balance (V8).
+//
+// `refSettledDocumentId` is mandatory at the action boundary
+// (`allocate-payment.schema.ts`, owner decision 2026-11-13) — every operator
+// allocation names the INV/DBN it settles. The service keeps the nullable
+// shape only for programmatic callers (test fixtures modelling the historical
+// account-level "advance applied to account" rows the settlement reports still
+// classify — rpt03 SR12); when present it must belong to the target BAN.
 
 import { db } from "@/db/client";
 import { billingAccountRepository } from "@/db/repositories/accounts/billing-account.repository";

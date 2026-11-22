@@ -8,19 +8,24 @@ import {
   jsonb,
   numeric,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 import { appuser } from "@/db/schema/identity";
-import type { ProductSpecCharacteristics } from "@/validation/product/product-spec-characteristics.schema";
-import type { PricingComponent } from "@/validation/product/pricing-component.schema";
 import type { RejectSummary } from "@/validation/product/ratecard.schema";
-import type { RateCardVersionStatus } from "@/types/product";
+import type {
+  AppliesAt,
+  Basis,
+  ComponentType,
+  EnvelopePriceType,
+  RateCardVersionStatus,
+} from "@/types/product";
 
 export const product = pgSchema("product");
 
@@ -128,9 +133,8 @@ export const productSpecifications = product.table(
     isMandatory: boolean("is_mandatory").notNull(),
     isDefault: boolean("is_default").notNull(),
     defaultValue: text("default_value"),
-    productSpecCharacteristics: jsonb("product_spec_characteristics")
-      .notNull()
-      .$type<ProductSpecCharacteristics>(),
+    // pm70 (0056): the `product_spec_characteristics` jsonb column is gone —
+    // characteristics are rows in `product_spec_characteristic` (below).
   },
   (t) => [
     // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
@@ -155,9 +159,14 @@ export const productOfferingPrice = product.table(
     productOfferingId: text("product_offering_id").notNull(),
     name: text("name").notNull(),
     componentType: text("component_type").notNull(),
-    priceComponent: jsonb("price_component")
-      .$type<PricingComponent>()
-      .notNull(),
+    // pm70 (0056, G-N2 — Inv. #38 reversed 2026-11-19): the envelope's TMF
+    // `priceType` as a column, constrained by the composite FK
+    // `product_offering_price_price_type_fk` to the five seeded pairs in
+    // `price_component_price_type`. Never equated with the legacy
+    // `ordering.order_item_price_override.price_type` axis (§1.58). Replaces
+    // the dropped `price_component` jsonb, whose variable half now lives in
+    // the four `pop_*` subtype tables below.
+    priceType: text("price_type").notNull().$type<EnvelopePriceType>(),
     recurringChargePeriodLength: integer("recurring_charge_period_length"),
     recurringChargePeriodType: text("recurring_charge_period_type"),
     unitOfMeasure: text("unit_of_measure"),
@@ -176,23 +185,28 @@ export const productOfferingPrice = product.table(
       .default(sql`now()`),
   },
   (t) => [
-    // The price lane key (pm46-spec D6/G-F, extended by pm46a): one lane per
-    // (product_offering_id, component_type, unit_of_measure,
-    // CASE WHEN component_type = 'flat_fee' THEN price_component ->> 'priceType'
-    // END). pm46a added the envelope priceType so a recurring and a one-time
-    // `flat_fee` (both NULL unit) are separate lanes. The term is flat_fee-only
-    // because the DB pins priceType only for flat_fee; for every other type it
-    // is NULL, so their key and uniqueness are exactly pm46's. SQL of record:
-    // 0049_product_price_lane_key.sql, which creates this as a unique INDEX
-    // (a UNIQUE constraint cannot hold an expression) with `NULLS NOT
-    // DISTINCT` — without it two identical recurring flat fees (NULL unit) at
-    // one start would both insert (precedent:
-    // 0013_gl_mapping_nulls_not_distinct.sql). drizzle-orm 0.45.2 has no
-    // `nullsNotDistinct()` on `uniqueIndex()`, so that clause lives in the SQL
-    // only; guardrail 13 asserts it there. A sentinel `unit_of_measure` string
-    // and a `COALESCE` expression index stay rejected (G-F). The `lead()`
-    // derived-end window in the repository (pm49) and the bill-run recurring
-    // resolver (pm52) MUST partition on this same key.
+    // The price lane key (Inv. #2), plain columns since pm70 (0056):
+    // (product_offering_id, component_type, unit_of_measure, price_type,
+    // start_date_time), NULLS NOT DISTINCT. Equivalent to the pm46a key it
+    // replaces — 0049_product_price_lane_key.sql's expression index on
+    // `CASE WHEN component_type = 'flat_fee' THEN price_component ->> 'priceType'
+    // END`: price_type is a constant per type for every non-flat_fee type (so it
+    // adds nothing to their key, exactly as the CASE evaluated to NULL), and for
+    // flat_fee it equals the envelope's priceType by 0056's backfill, so a
+    // recurring and a one-time flat fee (both NULL unit) stay separate lanes.
+    // History kept from 0049: NULLS NOT DISTINCT is load-bearing — without it two
+    // identical recurring flat fees (NULL unit) at one start would both insert
+    // (precedent: 0013_gl_mapping_nulls_not_distinct.sql); a sentinel
+    // `unit_of_measure` string and a `COALESCE` expression index stay rejected
+    // (G-F). C14 decision (pm70 D7, code-standards §6.34): it STAYS a unique
+    // INDEX under the SAME NAME — services/product/insert-price.ts maps a 23505
+    // on this name to DUPLICATE_START, and keeping the object kind keeps the
+    // error's `constraint` field identical; a `unique().nullsNotDistinct()`
+    // constraint was rejected for changing the kind under that name.
+    // drizzle-orm 0.45 has no `nullsNotDistinct()` on `uniqueIndex()`, so the
+    // clause lives in 0056's SQL only; guardrail 13 asserts it in pg_indexes.
+    // The `lead()` derived-end window in the repository and the bill-run
+    // recurring resolver MUST partition on this same key.
     // Explicit FK name — Drizzle's derived name exceeds Postgres's 63-byte
     // identifier cap (code-standards §"Constraint & index naming").
     foreignKey({
@@ -204,9 +218,25 @@ export const productOfferingPrice = product.table(
       t.productOfferingId,
       t.componentType,
       t.unitOfMeasure,
-      sql`(CASE WHEN ${t.componentType} = 'flat_fee' THEN ${t.priceComponent} ->> 'priceType' END)`,
+      t.priceType,
       t.startDateTime,
     ),
+    // pm70 (§6.33/§6.36): the target of every subtype table's composite FK —
+    // what pins a pop_* row to a header of its own type (Inv. #62).
+    unique("product_offering_price_id_type_unique").on(
+      t.productOfferingPriceId,
+      t.componentType,
+    ),
+    // pm70: only seeded (component_type, price_type) pairs exist — replaces
+    // the dropped component_type_check and envelope_type_check (§6.41).
+    foreignKey({
+      columns: [t.componentType, t.priceType],
+      foreignColumns: [
+        priceComponentPriceType.componentType,
+        priceComponentPriceType.priceType,
+      ],
+      name: "product_offering_price_price_type_fk",
+    }),
     index("product_offering_price_offering_idx").on(t.productOfferingId),
     index("product_offering_price_component_type_idx").on(t.componentType),
     check(
@@ -221,36 +251,354 @@ export const productOfferingPrice = product.table(
       "product_offering_price_unit_value_check",
       sql`unit_of_measure IS NULL OR unit_of_measure IN ('Mbps', 'GB', 'MB', 'EA')`,
     ),
-    // Per-component-type completeness (pm46-spec D3 / I1.4). Mirrors
-    // 0006_product.sql exactly — the database owns these predicates; Drizzle
-    // is the mirror (code-standards §6.5). Six constraints so a violation
-    // names its own cause; `product.pricing_steps_ok` is the schema-local
-    // IMMUTABLE helper the last one calls (a CHECK cannot contain a subquery).
-    check(
-      "product_offering_price_component_type_check",
-      sql`component_type IN ('usage_rate','flat_fee','capacity_commitment','capacity_motivation')`,
-    ),
-    check(
-      "product_offering_price_envelope_type_check",
-      sql`component_type = price_component ->> '@type'`,
-    ),
+    // Per-type unit/period shape (pm70 D8). Same names as pm46's CHECKs (the
+    // schema-diff guardrail keys on names), JSON-free since 0056 and keyed on
+    // price_type for flat_fee. Completeness of the price parameters is no
+    // longer a CHECK: it is the deferred `*_complete_ct` constraint triggers
+    // (0056, §6.37 — a function and triggers have no Drizzle representation).
     check(
       "product_offering_price_usage_rate_check",
-      sql`component_type <> 'usage_rate' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,ratePerUnit}'), 'missing') = 'string' AND price_component #>> '{params,ratePerUnit}' ~ '^[0-9]+(\\.[0-9]+)?$')`,
+      sql`component_type <> 'usage_rate' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)`,
     ),
     check(
       "product_offering_price_flat_fee_check",
-      sql`component_type <> 'flat_fee' OR (unit_of_measure IS NULL AND COALESCE(jsonb_typeof(price_component #> '{params,amount}'), 'missing') = 'string' AND price_component #>> '{params,amount}' ~ '^[0-9]+(\\.[0-9]+)?$' AND COALESCE(price_component ->> 'priceType', '') IN ('recurring', 'oneTime') AND ((price_component ->> 'priceType' = 'recurring' AND recurring_charge_period_length IS NOT NULL AND recurring_charge_period_type IS NOT NULL) OR (price_component ->> 'priceType' = 'oneTime' AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)))`,
+      sql`component_type <> 'flat_fee' OR (unit_of_measure IS NULL AND ((price_type = 'recurring' AND recurring_charge_period_length IS NOT NULL AND recurring_charge_period_type IS NOT NULL) OR (price_type = 'oneTime' AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)))`,
     ),
     check(
       "product_offering_price_capacity_commitment_check",
-      sql`component_type <> 'capacity_commitment' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND CASE WHEN jsonb_typeof(price_component #> '{params,committedQuantity}') = 'number' THEN (price_component #>> '{params,committedQuantity}')::numeric > 0 ELSE false END)`,
+      sql`component_type <> 'capacity_commitment' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)`,
     ),
     check(
       "product_offering_price_capacity_motivation_check",
-      sql`component_type <> 'capacity_motivation' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL AND product.pricing_steps_ok(price_component #> '{params,steps}'))`,
+      sql`component_type <> 'capacity_motivation' OR (unit_of_measure IS NOT NULL AND recurring_charge_period_length IS NULL AND recurring_charge_period_type IS NULL)`,
     ),
   ],
+);
+
+// ---------------------------------------------------------------------------
+// pm70 (Part 6 — Normalize). Physical DDL of record:
+// db/migrations/0056_product_normalize_spec_price.sql; the declarations below
+// are the hand-synced mirror (no drizzle-kit generate, no snapshot — README).
+// Every constraint is named by hand, identical in SQL, here and in guardrail 13
+// (code-standards §6.39): Drizzle's derived name for the subtype FKs is 67
+// bytes and would be truncated by Postgres. Not mirrored here because Drizzle
+// cannot represent them: the deferred completeness function + five
+// `*_complete_ct` constraint triggers, the five `*_draft_guard` triggers, and
+// the owner-privileged view `product.offering_price_v` — a SQL-only contract
+// for billrun_runtime / rating_runtime, never declared in Drizzle and never
+// read by the application (§1.62, §7.16).
+// ---------------------------------------------------------------------------
+
+// Reference table — system data seeded by migration, exactly four rows; not
+// user-editable (app_runtime holds SELECT only, Inv. #64). `plaSpecId` is NULL
+// for flat_fee and usage_rate (usage_rate's is derived from
+// rate_card_lookup IS NOT NULL, Inv. #65). `applyOrder` is PC12 made explicit
+// (Inv. #37).
+export const priceComponentType = product.table(
+  "price_component_type",
+  {
+    componentType: text("component_type").notNull().$type<ComponentType>(),
+    appliesAt: text("applies_at").notNull().$type<AppliesAt>(),
+    basis: text("basis").notNull().$type<Basis>(),
+    plaSpecId: text("pla_spec_id"),
+    applyOrder: integer("apply_order").notNull(),
+  },
+  (t) => [
+    primaryKey({ name: "price_component_type_pk", columns: [t.componentType] }),
+    check(
+      "price_component_type_applies_at_check",
+      sql`applies_at IN ('rating', 'billing', 'post_aggregation')`,
+    ),
+    check(
+      "price_component_type_basis_check",
+      sql`basis IN ('quantity', 'flat')`,
+    ),
+  ],
+);
+
+// Reference table — the five allowed (component_type, price_type) pairs, the
+// target of the header's `product_offering_price_price_type_fk`.
+export const priceComponentPriceType = product.table(
+  "price_component_price_type",
+  {
+    componentType: text("component_type").notNull().$type<ComponentType>(),
+    priceType: text("price_type").notNull().$type<EnvelopePriceType>(),
+  },
+  (t) => [
+    primaryKey({
+      name: "price_component_price_type_pk",
+      columns: [t.componentType, t.priceType],
+    }),
+    foreignKey({
+      columns: [t.componentType],
+      foreignColumns: [priceComponentType.componentType],
+      name: "price_component_price_type_type_fk",
+    }),
+  ],
+);
+
+// The four subtype tables carry the type-pinning pattern (§6.36, Inv. #62): a
+// `component_type` column pinned by DEFAULT + CHECK to the table's own type, and
+// a composite FK to the header's (id, component_type) unique, ON DELETE
+// CASCADE. A subtype row for a header of another type is unrepresentable, and a
+// header's component_type cannot change while one references it (Inv. #70).
+// Money is numeric(18,6) and quantity numeric(20,6) (Inv. #68), returned as
+// strings at the declared scale — `toEnvelope` canonicalizes them (pm71).
+export const popUsageRate = product.table(
+  "pop_usage_rate",
+  {
+    productOfferingPriceId: text("product_offering_price_id").notNull(),
+    componentType: text("component_type")
+      .notNull()
+      .default("usage_rate")
+      .$type<ComponentType>(),
+    ratePerUnit: numeric("rate_per_unit", {
+      mode: "string",
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    // A rate-card NAME, never a reference — no FK (Inv. #42).
+    rateCardLookup: text("rate_card_lookup"),
+  },
+  (t) => [
+    primaryKey({
+      name: "pop_usage_rate_pkey",
+      columns: [t.productOfferingPriceId],
+    }),
+    foreignKey({
+      columns: [t.productOfferingPriceId, t.componentType],
+      foreignColumns: [
+        productOfferingPrice.productOfferingPriceId,
+        productOfferingPrice.componentType,
+      ],
+      name: "pop_usage_rate_header_fk",
+    }).onDelete("cascade"),
+    check("pop_usage_rate_type_check", sql`component_type = 'usage_rate'`),
+    check("pop_usage_rate_rate_check", sql`rate_per_unit >= 0`),
+    check(
+      "pop_usage_rate_lookup_check",
+      sql`rate_card_lookup IS NULL OR btrim(rate_card_lookup) <> ''`,
+    ),
+  ],
+);
+
+export const popFlatFee = product.table(
+  "pop_flat_fee",
+  {
+    productOfferingPriceId: text("product_offering_price_id").notNull(),
+    componentType: text("component_type")
+      .notNull()
+      .default("flat_fee")
+      .$type<ComponentType>(),
+    amount: numeric("amount", {
+      mode: "string",
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+  },
+  (t) => [
+    primaryKey({
+      name: "pop_flat_fee_pkey",
+      columns: [t.productOfferingPriceId],
+    }),
+    foreignKey({
+      columns: [t.productOfferingPriceId, t.componentType],
+      foreignColumns: [
+        productOfferingPrice.productOfferingPriceId,
+        productOfferingPrice.componentType,
+      ],
+      name: "pop_flat_fee_header_fk",
+    }).onDelete("cascade"),
+    check("pop_flat_fee_type_check", sql`component_type = 'flat_fee'`),
+    check("pop_flat_fee_amount_check", sql`amount >= 0`),
+  ],
+);
+
+export const popCapacityCommitment = product.table(
+  "pop_capacity_commitment",
+  {
+    productOfferingPriceId: text("product_offering_price_id").notNull(),
+    componentType: text("component_type")
+      .notNull()
+      .default("capacity_commitment")
+      .$type<ComponentType>(),
+    committedQuantity: numeric("committed_quantity", {
+      mode: "string",
+      precision: 20,
+      scale: 6,
+    }).notNull(),
+  },
+  (t) => [
+    primaryKey({
+      name: "pop_capacity_commitment_pkey",
+      columns: [t.productOfferingPriceId],
+    }),
+    foreignKey({
+      columns: [t.productOfferingPriceId, t.componentType],
+      foreignColumns: [
+        productOfferingPrice.productOfferingPriceId,
+        productOfferingPrice.componentType,
+      ],
+      name: "pop_capacity_commitment_header_fk",
+    }).onDelete("cascade"),
+    check(
+      "pop_capacity_commitment_type_check",
+      sql`component_type = 'capacity_commitment'`,
+    ),
+    check(
+      "pop_capacity_commitment_quantity_check",
+      sql`committed_quantity > 0`,
+    ),
+  ],
+);
+
+// One row per band. The PK rejects a duplicate threshold; strict ascent is
+// `ORDER BY above_quantity` — no step_no (§6.44). `capacity_motivation` has no
+// 1:1 table: its data IS its steps.
+export const popMotivationStep = product.table(
+  "pop_motivation_step",
+  {
+    productOfferingPriceId: text("product_offering_price_id").notNull(),
+    componentType: text("component_type")
+      .notNull()
+      .default("capacity_motivation")
+      .$type<ComponentType>(),
+    aboveQuantity: numeric("above_quantity", {
+      mode: "string",
+      precision: 20,
+      scale: 6,
+    }).notNull(),
+    ratePerUnit: numeric("rate_per_unit", {
+      mode: "string",
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+  },
+  (t) => [
+    primaryKey({
+      name: "pop_motivation_step_pk",
+      columns: [t.productOfferingPriceId, t.aboveQuantity],
+    }),
+    foreignKey({
+      columns: [t.productOfferingPriceId, t.componentType],
+      foreignColumns: [
+        productOfferingPrice.productOfferingPriceId,
+        productOfferingPrice.componentType,
+      ],
+      name: "pop_motivation_step_header_fk",
+    }).onDelete("cascade"),
+    check(
+      "pop_motivation_step_type_check",
+      sql`component_type = 'capacity_motivation'`,
+    ),
+    check("pop_motivation_step_quantity_check", sql`above_quantity > 0`),
+    check("pop_motivation_step_rate_check", sql`rate_per_unit >= 0`),
+  ],
+);
+
+// One row per characteristic, natural PK, no surrogate id. `displayOrder` is
+// 1…n per specification (Inv. #66) — the author's entry order from pm72 on;
+// 0056's backfill froze the pre-update jsonb key order into it. Every read
+// orders by it; it never appears in a read model (§2.32).
+export const productSpecCharacteristic = product.table(
+  "product_spec_characteristic",
+  {
+    productSpecId: text("product_spec_id").notNull(),
+    charName: text("char_name").notNull(),
+    charValue: text("char_value").notNull(),
+    displayOrder: integer("display_order").notNull(),
+  },
+  (t) => [
+    primaryKey({
+      name: "product_spec_characteristic_pk",
+      columns: [t.productSpecId, t.charName],
+    }),
+    foreignKey({
+      columns: [t.productSpecId],
+      foreignColumns: [productSpecifications.productSpecId],
+      name: "product_spec_characteristic_spec_fk",
+    }).onDelete("cascade"),
+    unique("product_spec_characteristic_order_unique").on(
+      t.productSpecId,
+      t.displayOrder,
+    ),
+    check("product_spec_characteristic_name_check", sql`char_name <> ''`),
+  ],
+);
+
+// The codebase's first `relations()` (pm70 D11, code-standards §2.27) — for
+// pm71/pm72's single-query `db.query.*` detail reads (§3.24); nothing in pm70
+// calls them. `type` (the sixth price relation) lets `toEnvelope` take
+// appliesAt / basis / pla_spec_id from the reference table inside that one
+// query (§1.59) instead of a TypeScript constant. Drizzle resolves a `many`
+// through the child's `one`, so each child declares its inverse.
+export const productOfferingPriceRelations = relations(
+  productOfferingPrice,
+  ({ one, many }) => ({
+    offering: one(productOffering, {
+      fields: [productOfferingPrice.productOfferingId],
+      references: [productOffering.productOfferingId],
+    }),
+    type: one(priceComponentType, {
+      fields: [productOfferingPrice.componentType],
+      references: [priceComponentType.componentType],
+    }),
+    usageRate: one(popUsageRate),
+    flatFee: one(popFlatFee),
+    capacityCommitment: one(popCapacityCommitment),
+    motivationSteps: many(popMotivationStep),
+  }),
+);
+
+export const popUsageRateRelations = relations(popUsageRate, ({ one }) => ({
+  header: one(productOfferingPrice, {
+    fields: [popUsageRate.productOfferingPriceId],
+    references: [productOfferingPrice.productOfferingPriceId],
+  }),
+}));
+
+export const popFlatFeeRelations = relations(popFlatFee, ({ one }) => ({
+  header: one(productOfferingPrice, {
+    fields: [popFlatFee.productOfferingPriceId],
+    references: [productOfferingPrice.productOfferingPriceId],
+  }),
+}));
+
+export const popCapacityCommitmentRelations = relations(
+  popCapacityCommitment,
+  ({ one }) => ({
+    header: one(productOfferingPrice, {
+      fields: [popCapacityCommitment.productOfferingPriceId],
+      references: [productOfferingPrice.productOfferingPriceId],
+    }),
+  }),
+);
+
+export const popMotivationStepRelations = relations(
+  popMotivationStep,
+  ({ one }) => ({
+    header: one(productOfferingPrice, {
+      fields: [popMotivationStep.productOfferingPriceId],
+      references: [productOfferingPrice.productOfferingPriceId],
+    }),
+  }),
+);
+
+export const productSpecificationsRelations = relations(
+  productSpecifications,
+  ({ many }) => ({
+    characteristics: many(productSpecCharacteristic),
+  }),
+);
+
+export const productSpecCharacteristicRelations = relations(
+  productSpecCharacteristic,
+  ({ one }) => ({
+    specification: one(productSpecifications, {
+      fields: [productSpecCharacteristic.productSpecId],
+      references: [productSpecifications.productSpecId],
+    }),
+  }),
 );
 
 // pm57-spec D2/I1/I2 — physical DDL of record is

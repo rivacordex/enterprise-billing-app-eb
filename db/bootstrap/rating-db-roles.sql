@@ -204,6 +204,14 @@ GRANT SELECT ON TABLE
 TO rating_runtime;
 --> statement-breakpoint
 
+-- Step 7b — pm70 (prodmgmt Inv. #67): price parameters are read only through
+-- the owner-privileged view `product.offering_price_v` (0056). SELECT on the
+-- view is the whole surface: NOTHING on any `pop_*` subtype table or the two
+-- reference tables. Enumerated, never ON ALL TABLES. An environment migrated
+-- past 0056 must re-run this bootstrap (idempotent).
+GRANT SELECT ON TABLE "product"."offering_price_v" TO rating_runtime;
+--> statement-breakpoint
+
 -- Step 8 — the explicit `billing` write revoke (Inv #1). Strictly redundant —
 -- the role was never granted them — and kept anyway as a declaration of intent
 -- a reviewer reads and a test asserts. If someone later widens `billing`'s

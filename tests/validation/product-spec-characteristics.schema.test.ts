@@ -30,3 +30,23 @@ describe("productSpecCharacteristicsSchema", () => {
     expect(result.success).toBe(false);
   });
 });
+
+// pm69-spec D5 / I4.11 (§1.55): all-digit names are refused because
+// JavaScript hoists integer-like keys ahead of insertion order.
+describe("productSpecCharacteristicsSchema — pm69 all-digit names", () => {
+  it.each([{ "2": "x" }, { "02": "x" }])("rejects %j", (record) => {
+    expect(productSpecCharacteristicsSchema.safeParse(record).success).toBe(
+      false,
+    );
+  });
+
+  it("accepts names that merely contain digits", () => {
+    expect(
+      productSpecCharacteristicsSchema.safeParse({
+        SST_ID: "01",
+        A1: "x",
+        "2A": "y",
+      }).success,
+    ).toBe(true);
+  });
+});

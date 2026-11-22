@@ -292,8 +292,21 @@ export type SpecificationCard = {
 // legacy. `componentType` + `component` replace the four dropped columns
 // (`priceType`/`pricingModel`/`amount`/`pricingCharacteristics`, gone since
 // pm47) — the component's money lives in its envelope, never in a `PriceCard`
-// field, because the two axes (component type vs. the deleted row-level
-// price type) must never be conflated (Inv. #38). `component` is parsed once,
+// field. Inv. #38 as first written ("never reintroduce `price_type` on
+// `product_offering_price` under any name") protected one thing: the deleted
+// row-level price type (the legacy `recurring`/`usage`/`once` product axis)
+// must never be conflated with the component type or the envelope's TMF
+// `priceType`. Inv. #38 was REVERSED by design review G-N2 (2026-11-19,
+// authorizer: project owner) for the Normalize update (pm70, 0056):
+// `product_offering_price.price_type` returns, carrying `EnvelopePriceType`
+// (the TMF vocabulary `usage`/`recurring`/`oneTime`/`discount`/`commitment`),
+// constrained by the composite FK `product_offering_price_price_type_fk` to the
+// five seeded `(component_type, price_type)` pairs in
+// `product.price_component_price_type`. What the old rule protected survives
+// (§1.58): the legacy axis exists only on `ordering.order_item_price_override`,
+// and the two columns of the same name are never equated, mapped or derived
+// from each other. `PriceCard` still carries the type only inside `component`
+// (no `priceType` field is added here). `component` is parsed once,
 // at the repository read boundary, with `persistablePricingComponentSchema`
 // (D2) — a page or a component imports the envelope type-only (§2.18) and
 // never re-parses it.
