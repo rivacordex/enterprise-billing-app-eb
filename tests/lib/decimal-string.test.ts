@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { canonicalDecimalString } from "@/lib/decimal-string";
+import { moneyStringSchema } from "@/validation/product/pricing-component.schema";
 
 // pm69-spec I4.1–I4.5 (§1.52, Inv. #68). The one helper that turns a
 // `numeric` read-back into the canonical decimal string — never rounding,
@@ -17,6 +18,8 @@ const D2_TABLE: ReadonlyArray<readonly [string, string]> = [
   ["100", "100"],
   ["5500.00", "5500"],
   ["100100", "100100"],
+  ["000.050000", "0.05"],
+  ["000", "0"],
 ];
 
 describe("canonicalDecimalString — the D2 contract", () => {
@@ -25,7 +28,17 @@ describe("canonicalDecimalString — the D2 contract", () => {
   });
 });
 
-describe("canonicalDecimalString — integer digits are never touched", () => {
+it.each(["100.00", "000100.00"])(
+  "preserves accepted money text %j and canonicalizes it like a numeric read",
+  (input) => {
+    const accepted = moneyStringSchema.parse(input);
+    expect(accepted).toBe(input);
+    expect(canonicalDecimalString(accepted)).toBe("100");
+    expect(canonicalDecimalString("100.000000")).toBe("100");
+  },
+);
+
+describe("canonicalDecimalString — significant integer digits are preserved", () => {
   it.each([
     ["100100", "100100"],
     ["1000000.000000", "1000000"],

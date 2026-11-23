@@ -375,9 +375,12 @@ BEGIN
     header_id := OLD.product_offering_price_id;
   END IF;
 
+  -- Serialize checks for the same header. Keep the existence check in a
+  -- separate statement so READ COMMITTED sees changes made by the lock holder.
   SELECT component_type INTO header_type
     FROM "product"."product_offering_price"
-   WHERE product_offering_price_id = header_id;
+   WHERE product_offering_price_id = header_id
+   FOR NO KEY UPDATE;
   IF NOT FOUND THEN
     RETURN NULL;
   END IF;
