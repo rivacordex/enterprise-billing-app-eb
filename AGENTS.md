@@ -22,7 +22,7 @@ Update `context/general-change-tracker.md` after each meaningful general impleme
 
 ## Product Module Update Context — Part 6: Normalize Spec Characteristics & Price Components (pm69–pm75, incl. pm74b)
 
-Current phase: **Part 6 of the Product Management module**. It replaces the two `product` jsonb columns (`product_specifications.product_spec_characteristics` and `product_offering_price.price_component`) with six relational tables plus the `product.offering_price_v` read view, in migration `0056`. The `PricingComponent` envelope stays the API/UI contract and is reassembled in the repository. This is a **storage-only** change: no page, Server Action, route, permission, nav entry or audit event type changes. The price form checks quantity text before converting it to a number. Parts 1–5 (pm01–pm68) are complete. **pm69, pm70 and pm71 are built; start with pm72**, the specification-characteristic repository. The G-N5 window remains open through pm73. The unit list, gates (G-N1–G-N7), doc conflicts (C11–C21), dependency graph and hand-offs are in `context/product-management/specs/pm00-build-plan.md` **Part 6**. Each unit's spec is `context/product-management/specs/pm69-…` through `pm75-…`.
+Current phase: **Part 6 of the Product Management module**. It replaces the two `product` jsonb columns (`product_specifications.product_spec_characteristics` and `product_offering_price.price_component`) with six relational tables plus the `product.offering_price_v` read view, in migration `0056`. The `PricingComponent` envelope stays the API/UI contract and is reassembled in the repository. This is a **storage-only** change: no page, Server Action, route, permission, nav entry or audit event type changes. The price form checks quantity text before converting it to a number. Parts 1–5 (pm01–pm68) are complete. **pm69, pm70, pm71 and pm72 are built; start with pm73**, the seeds, fixtures and tests. The G-N5 window remains open through pm73. The unit list, gates (G-N1–G-N7), doc conflicts (C11–C21), dependency graph and hand-offs are in `context/product-management/specs/pm00-build-plan.md` **Part 6**. Each unit's spec is `context/product-management/specs/pm69-…` through `pm75-…`.
 
 Read the following files in order before implementing or making any architectural decision related to the Product Module:
 
@@ -32,7 +32,7 @@ Read the following files in order before implementing or making any architectura
 4. `context/product-management/prodmgmt-ai-workflow-rules.md` — development workflow, scoping rules, and delivery approach
 5. `context/product-management/specs/pm00-build-plan.md` (Part 6) — units, gates, conflicts, and sequencing
 6. `context/product-management/prodmgmt-progress-tracker.md` — current status, recurring patterns, and permanent lessons
-7. The spec for the unit being built (`context/product-management/specs/pm71-…` onward)
+7. The spec for the unit being built (`context/product-management/specs/pm73-…` onward)
 
 Also consult `context/product-management/prodmgmt-issues-tracker.md` (known defects) and `context/product-management/prodmgmt-completed-tracker.md` (delivered units pm01–pm68) when relevant. Part 6 has no UI change, so `prodmgmt-ui-context.md` is needed only if a unit unexpectedly touches the UI.
 

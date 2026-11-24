@@ -20,6 +20,7 @@ import {
   popUsageRate,
   productOffering,
   productOfferingPrice,
+  productSpecCharacteristic,
   productSpecifications,
 } from "@/db/schema/product";
 import type {
@@ -125,6 +126,60 @@ async function resolveNextVersion(
       ),
     );
   return (row?.maxVersion ?? 0) + 1;
+}
+
+// pm72 D4 — the specification half of `branchOfferingAsDraft`: copy ROWS under
+// new ids (§1.60). A specification has no natural key within an offering
+// (`name` is not unique) and Postgres does not promise that a multi-row INSERT
+// … RETURNING keeps VALUES order, so the clones are inserted one statement per
+// specification — the accepted price of an exact id map, on a write path only.
+// The characteristic rows are then copied verbatim, `display_order` included:
+// no renumbering and no record round-trip.
+async function copySpecificationsToBranch(
+  tx: Database,
+  sourceOfferingId: string,
+  offeringId: string,
+): Promise<void> {
+  const sourceSpecs = await tx.query.productSpecifications.findMany({
+    where: eq(productSpecifications.refProductOfferingId, sourceOfferingId),
+    with: {
+      characteristics: {
+        orderBy: asc(productSpecCharacteristic.displayOrder),
+      },
+    },
+  });
+
+  const newIdBySourceId = new Map<string, string>();
+  for (const spec of sourceSpecs) {
+    const [inserted] = await tx
+      .insert(productSpecifications)
+      .values({
+        refProductOfferingId: offeringId,
+        name: spec.name,
+        isMandatory: spec.isMandatory,
+        isDefault: spec.isDefault,
+        defaultValue: spec.defaultValue,
+      })
+      .returning({ productSpecId: productSpecifications.productSpecId });
+    if (!inserted) {
+      throw new Error(
+        `branchOfferingAsDraft: no copied row for source specification ${spec.productSpecId}`,
+      );
+    }
+    newIdBySourceId.set(spec.productSpecId, inserted.productSpecId);
+  }
+
+  const characteristics = sourceSpecs.flatMap((spec) =>
+    spec.characteristics.map((c) => ({
+      productSpecId: newIdBySourceId.get(spec.productSpecId)!,
+      charName: c.charName,
+      charValue: c.charValue,
+      displayOrder: c.displayOrder,
+    })),
+  );
+  if (characteristics.length > 0) {
+    await tx.insert(productSpecCharacteristic).values(characteristics);
+  }
 }
 
 // pm71 D10 — the price half of `branchOfferingAsDraft`: copy ROWS, not
@@ -715,23 +770,7 @@ export const productOfferingRepository = {
     }
     const offeringId = branched.offeringId;
 
-    const sourceSpecs = await tx
-      .select()
-      .from(productSpecifications)
-      .where(eq(productSpecifications.refProductOfferingId, sourceOfferingId));
-    if (sourceSpecs.length > 0) {
-      await tx.insert(productSpecifications).values(
-        sourceSpecs.map((spec) => ({
-          refProductOfferingId: offeringId,
-          name: spec.name,
-          isMandatory: spec.isMandatory,
-          isDefault: spec.isDefault,
-          defaultValue: spec.defaultValue,
-          productSpecCharacteristics: spec.productSpecCharacteristics,
-        })),
-      );
-    }
-
+    await copySpecificationsToBranch(tx, sourceOfferingId, offeringId);
     await copyPricesToBranch(tx, sourceOfferingId, offeringId);
 
     return { offeringId };
