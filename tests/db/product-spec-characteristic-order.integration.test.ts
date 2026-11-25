@@ -1,15 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import type postgresjs from "postgres";
 
-import * as schema from "@/db/schema";
-import { appuser } from "@/db/schema/identity";
 import { productOfferingRepository } from "@/db/repositories/product-offering";
 import { productOfferingPriceRepository } from "@/db/repositories/product-offering-price";
 import { productSpecificationRepository } from "@/db/repositories/product-specification";
-import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import type { activateOffering as ActivateOffering } from "@/services/product/activate-offering";
 import type { addSpecification as AddSpecification } from "@/services/product/add-specification";
 import type { deleteOffering as DeleteOffering } from "@/services/product/delete-offering";
@@ -18,6 +13,16 @@ import type { submitForTesting as SubmitForTesting } from "@/services/product/su
 import type { updateSpecification as UpdateSpecification } from "@/services/product/update-specification";
 import type * as AuditRepository from "@/db/repositories/audit.repository";
 import type { AuditEventInput } from "@/db/repositories/audit.repository";
+
+import {
+  auditCalls,
+  closeProductDatabase,
+  connectProductDatabase,
+  countingDb,
+  insertTestActor,
+  migrateProductDatabase,
+  type ProductTestDb,
+} from "./helpers/product-db-harness";
 
 // pm72-spec I1 — guardrail 49 (characteristics keep entry order), guardrail 45
 // (spec half), Inv. #66 / #69 / #73 (spec half), §1.63 and §3.24.
@@ -28,30 +33,11 @@ const databaseUrl = process.env.DATABASE_URL;
 // Audit payloads are asserted on the object the service hands to
 // insertAuditEvent: `before_data` / `after_data` are jsonb, which re-orders
 // keys, so key ORDER can only be seen before it is stored.
-const audit = vi.hoisted(() => ({ calls: [] as AuditEventInput[] }));
-vi.mock("@/db/repositories/audit.repository", async (importOriginal) => {
-  const actual = await importOriginal<typeof AuditRepository>();
-  return {
-    ...actual,
-    insertAuditEvent: async (
-      ...args: Parameters<typeof actual.insertAuditEvent>
-    ) => {
-      audit.calls.push(args[1]);
-      return actual.insertAuditEvent(...args);
-    },
-  };
-});
-
-const SCHEMAS = [
-  "billing",
-  "customer",
-  "product",
-  "inventory",
-  "ordering",
-  "rating",
-  "core",
-  "drizzle",
-];
+vi.mock("@/db/repositories/audit.repository", async (importOriginal) =>
+  (await import("./helpers/product-db-harness")).captureAuditEvents(
+    await importOriginal<typeof AuditRepository>(),
+  ),
+);
 
 const START = new Date(Date.now() - 60 * 60 * 1000); // 1 hour ago
 
@@ -86,7 +72,7 @@ describe.skipIf(!databaseUrl)(
   "pm72 specification characteristics — guardrails 49, 45 (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
-    let db: ReturnType<typeof drizzle<typeof schema>>;
+    let db: ProductTestDb;
     let addSpecification: typeof AddSpecification;
     let updateSpecification: typeof UpdateSpecification;
     let deleteSpecification: typeof DeleteSpecification;
@@ -98,16 +84,8 @@ describe.skipIf(!databaseUrl)(
     const repo = productSpecificationRepository;
 
     beforeAll(async () => {
-      assertTestDatabaseUrl(databaseUrl as string);
-      sql = postgres(databaseUrl as string, { max: 1, onnotice: () => {} });
-      for (const s of SCHEMAS) {
-        await sql.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-      }
-      db = drizzle(sql, { schema });
-      await migrate(db, {
-        migrationsFolder: "./db/migrations",
-        migrationsSchema: "drizzle",
-      });
+      sql = connectProductDatabase(databaseUrl as string);
+      db = await migrateProductDatabase(sql);
       ({ addSpecification } =
         await import("@/services/product/add-specification"));
       ({ updateSpecification } =
@@ -119,27 +97,11 @@ describe.skipIf(!databaseUrl)(
       ({ activateOffering } =
         await import("@/services/product/activate-offering"));
       ({ deleteOffering } = await import("@/services/product/delete-offering"));
-      const [user] = await db
-        .insert(appuser)
-        .values({
-          id: crypto.randomUUID(),
-          userName: "Characteristic Tester",
-          userEmail: `${crypto.randomUUID()}@example.com`,
-          emailVerified: false,
-          authMethod: "LOCAL",
-          status: "ACTIVE",
-        })
-        .returning({ id: appuser.id });
-      actorId = user!.id;
+      actorId = await insertTestActor(db, "Characteristic Tester");
     }, 120_000);
 
     afterAll(async () => {
-      if (sql) {
-        for (const s of SCHEMAS) {
-          await sql.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-        }
-        await sql.end();
-      }
+      await closeProductDatabase(sql);
     }, 120_000);
 
     async function createDraft(name: string): Promise<string> {
@@ -249,13 +211,6 @@ describe.skipIf(!databaseUrl)(
          WHERE product_spec_id = ${specId}
          ORDER BY display_order`;
       return rows.map((r) => [r.char_name, r.char_value, r.display_order]);
-    }
-
-    function countingDb(statements: string[]) {
-      return drizzle(sql, {
-        schema,
-        logger: { logQuery: (query) => statements.push(query) },
-      });
     }
 
     // I1.1
@@ -484,7 +439,7 @@ describe.skipIf(!databaseUrl)(
     // I1.8 (§1.63)
     describe("audit payloads carry the record, in order", () => {
       const eventOf = (eventType: AuditEventInput["eventType"]) => {
-        const event = audit.calls.find((e) => e.eventType === eventType);
+        const event = auditCalls.find((e) => e.eventType === eventType);
         if (!event) throw new Error(`no ${eventType} event`);
         return {
           before: event.beforeData as Record<string, unknown> | null,
@@ -497,7 +452,7 @@ describe.skipIf(!databaseUrl)(
 
       it("CREATED, UPDATED and DELETED on a DRAFT", async () => {
         const offeringId = await createDraft("audit draft");
-        audit.calls.length = 0;
+        auditCalls.length = 0;
         const id = await add(offeringId, "Slice", { Z: "1", A: "2", M: "3" });
         const created = eventOf("PRODUCT_SPECIFICATION_CREATED");
         const read1 = await cardOf(offeringId, id);
@@ -536,7 +491,7 @@ describe.skipIf(!databaseUrl)(
         const id = await add(offeringId, "Slice", { Z: "1", A: "2" });
         await activate(offeringId);
         const readBefore = await cardOf(offeringId, id);
-        audit.calls.length = 0;
+        auditCalls.length = 0;
         const result = await update(id, offeringId, "Slice", {
           N: "0",
           A: "2",
@@ -564,7 +519,7 @@ describe.skipIf(!databaseUrl)(
 
       const readStatements: string[] = [];
       const cards = await repo.findByOfferingId(
-        countingDb(readStatements),
+        countingDb(sql, readStatements),
         offeringId,
       );
       expect(cards).toHaveLength(3);
@@ -572,7 +527,7 @@ describe.skipIf(!databaseUrl)(
 
       const lockStatements: string[] = [];
       const lockedCards = await repo.findByOfferingIdForUpdate(
-        countingDb(lockStatements),
+        countingDb(sql, lockStatements),
         offeringId,
       );
       expect(lockStatements).toHaveLength(2);
@@ -585,7 +540,7 @@ describe.skipIf(!databaseUrl)(
       lockStatements.length = 0;
       expect(
         await repo.findByOfferingIdForUpdate(
-          countingDb(lockStatements),
+          countingDb(sql, lockStatements),
           emptyId,
         ),
       ).toEqual([]);

@@ -1,11 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
 import type postgresjs from "postgres";
 
-import * as schema from "@/db/schema";
-import { appuser } from "@/db/schema/identity";
 import {
   fromEnvelope,
   productOfferingPriceRepository,
@@ -13,12 +8,20 @@ import {
   type PriceWriteData,
 } from "@/db/repositories/product-offering-price";
 import { canonicalDecimalString } from "@/lib/decimal-string";
-import { assertTestDatabaseUrl } from "@/tests/helpers/assert-test-database";
 import type { insertPrice as InsertPriceService } from "@/services/product/insert-price";
 import type * as AuditRepository from "@/db/repositories/audit.repository";
-import type { AuditEventInput } from "@/db/repositories/audit.repository";
 import type { ComponentType, UnitOfMeasure } from "@/types/product";
 import type { PersistablePricingComponent } from "@/validation/product/pricing-component.schema";
+
+import {
+  auditCalls,
+  closeProductDatabase,
+  connectProductDatabase,
+  countingDb,
+  insertTestActor,
+  migrateProductDatabase,
+  type ProductTestDb,
+} from "./helpers/product-db-harness";
 
 // pm71-spec I1 — guardrail 42 (the envelope round-trip), Inv. #73 (price half:
 // a branch copies rows and its envelopes deep-equal the source's) and §1.63
@@ -33,30 +36,11 @@ const databaseUrl = process.env.DATABASE_URL;
 // The PRODUCT_PRICE_ADDED payload is asserted on the object the service hands
 // to insertAuditEvent — `after_data` is jsonb, which re-orders keys, so the key
 // ORDER can only be seen before it is stored.
-const audit = vi.hoisted(() => ({ calls: [] as AuditEventInput[] }));
-vi.mock("@/db/repositories/audit.repository", async (importOriginal) => {
-  const actual = await importOriginal<typeof AuditRepository>();
-  return {
-    ...actual,
-    insertAuditEvent: async (
-      ...args: Parameters<typeof actual.insertAuditEvent>
-    ) => {
-      audit.calls.push(args[1]);
-      return actual.insertAuditEvent(...args);
-    },
-  };
-});
-
-const SCHEMAS = [
-  "billing",
-  "customer",
-  "product",
-  "inventory",
-  "ordering",
-  "rating",
-  "core",
-  "drizzle",
-];
+vi.mock("@/db/repositories/audit.repository", async (importOriginal) =>
+  (await import("./helpers/product-db-harness")).captureAuditEvents(
+    await importOriginal<typeof AuditRepository>(),
+  ),
+);
 
 const START = new Date(Date.now() - 60 * 60 * 1000); // 1 hour ago
 const LATER = new Date(START.getTime() + 365 * 24 * 60 * 60 * 1000);
@@ -358,46 +342,22 @@ describe.skipIf(!databaseUrl)(
   "pm71 envelope round-trip through the database (requires DATABASE_URL)",
   () => {
     let sql: postgresjs.Sql;
-    let db: ReturnType<typeof drizzle<typeof schema>>;
+    let db: ProductTestDb;
     let insertPriceService: typeof InsertPriceService;
     let actorId: string;
 
     const repo = productOfferingPriceRepository;
 
     beforeAll(async () => {
-      assertTestDatabaseUrl(databaseUrl as string);
-      sql = postgres(databaseUrl as string, { max: 1, onnotice: () => {} });
-      for (const s of SCHEMAS) {
-        await sql.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-      }
-      db = drizzle(sql, { schema });
-      await migrate(db, {
-        migrationsFolder: "./db/migrations",
-        migrationsSchema: "drizzle",
-      });
+      sql = connectProductDatabase(databaseUrl as string);
+      db = await migrateProductDatabase(sql);
       insertPriceService = (await import("@/services/product/insert-price"))
         .insertPrice;
-      const [user] = await db
-        .insert(appuser)
-        .values({
-          id: crypto.randomUUID(),
-          userName: "Envelope Tester",
-          userEmail: `${crypto.randomUUID()}@example.com`,
-          emailVerified: false,
-          authMethod: "LOCAL",
-          status: "ACTIVE",
-        })
-        .returning({ id: appuser.id });
-      actorId = user!.id;
+      actorId = await insertTestActor(db, "Envelope Tester");
     }, 120_000);
 
     afterAll(async () => {
-      if (sql) {
-        for (const s of SCHEMAS) {
-          await sql.unsafe(`DROP SCHEMA IF EXISTS "${s}" CASCADE`);
-        }
-        await sql.end();
-      }
+      await closeProductDatabase(sql);
     }, 120_000);
 
     async function createDraft(name: string): Promise<string> {
@@ -568,8 +528,7 @@ describe.skipIf(!databaseUrl)(
       expect(await countRows("product_offering_price", id)).toBe(0);
     });
 
-    // I1.7 — a counting drizzle instance over the suite's own connection; kept
-    // local until a second test needs it.
+    // I1.7
     it("findByOfferingIdWithDerivedEnd is ONE statement for four prices of four types (§1.61)", async () => {
       const offeringId = await createDraft("one query");
       await insert(offeringId, USAGE_WITH_CARD);
@@ -577,12 +536,8 @@ describe.skipIf(!databaseUrl)(
       await insert(offeringId, COMMITMENT);
       await insert(offeringId, MOTIVATION_FIVE);
       const statements: string[] = [];
-      const counting = drizzle(sql, {
-        schema,
-        logger: { logQuery: (query) => statements.push(query) },
-      });
       const result = await repo.findByOfferingIdWithDerivedEnd(
-        counting,
+        countingDb(sql, statements),
         offeringId,
       );
       expect(result).toHaveLength(4);
@@ -704,7 +659,7 @@ describe.skipIf(!databaseUrl)(
     // I1.10 — §1.63.
     it('PRODUCT_PRICE_ADDED: "12.50" is "12.5" in the event and on the card; key order unchanged', async () => {
       const offeringId = await createDraft("audit");
-      audit.calls.length = 0;
+      auditCalls.length = 0;
       const result = await insertPriceService(
         offeringId,
         {
@@ -720,7 +675,7 @@ describe.skipIf(!databaseUrl)(
       );
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      const event = audit.calls.find(
+      const event = auditCalls.find(
         (e) => e.eventType === "PRODUCT_PRICE_ADDED",
       );
       const afterData = event!.afterData as Record<string, unknown> & {
