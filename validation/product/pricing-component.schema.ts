@@ -169,7 +169,8 @@ const unitOfMeasureSchema = z.enum(UNITS_OF_MEASURE);
 // by every money field in this file (pm47-spec D5). This module performs no
 // money arithmetic. pm69 (§1.53, Inv. #68): capped at twelve integer digits
 // and six decimals — exactly `numeric(18,6)` — so Postgres never has anything
-// to round on insert (it would round silently, not refuse).
+// to round on insert (it would round silently, not refuse). Parsing preserves
+// the original text; the normalized repository canonicalizes on read.
 export const moneyStringSchema = z
   .string()
   .regex(

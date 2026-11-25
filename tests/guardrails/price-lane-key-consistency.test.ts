@@ -3,29 +3,49 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "@/tests/helpers/strip-code-comments";
+
 // Product guardrail 41 — the price lane key is the same everywhere
 // (PM-ISS-004, option B; DB-free).
 //
 // A price row's lane is (product_offering_id, component_type, unit_of_measure,
-// CASE WHEN component_type = 'flat_fee' THEN price_component ->> 'priceType'
-// END) (pm46, extended by pm46a). Within a lane a newer row supersedes the
-// older one; rows in different lanes never touch. The key is written out by
-// hand in the unique index (0049), its Drizzle mirror, the repository's
-// `lead()` window and the runtime readers (bill-run flow, rating). pm46a's
-// defect was exactly one such copy missing a term, so this test:
-//   1. asserts the three definition sites spell the lane term identically;
+// price_type) — plain columns since pm70 (0056) and pm71. Before Part 6 the
+// last term was the expression CASE WHEN component_type = 'flat_fee' THEN
+// price_component ->> 'priceType' END (pm46, extended by pm46a); `price_type`
+// equals it (a constant per non-flat_fee type, the envelope's priceType for
+// flat_fee). Within a lane a newer row supersedes the older one; rows in
+// different lanes never touch. The key is written out by hand in the unique
+// index (re-created by 0056 under the 0049 name), its Drizzle mirror, the
+// repository's `lead()` window and the runtime readers (bill-run flow,
+// rating). pm46a's defect was exactly one such copy missing a term, so this
+// test:
+//   1. asserts the three definition sites carry the column lane term and none
+//      still spells the CASE … price_component term;
 //   2. finds EVERY `PARTITION BY … component_type …` window in the app,
 //      worker and flow sources and accepts it only if its keys are the lane
 //      key, or a form provably equal to it for the component types that
-//      window scans, or a documented exception; and
-//   3. pins the inventory of such windows, so a new reader is reviewed here.
+//      window scans, or a documented exception;
+//   3. asserts the CASE … price_component term is gone from every scanned
+//      source (migrations before 0056 are history and are skipped); and
+//   4. pins the inventory of such windows, so a new reader is reviewed here.
 // It is a text heuristic, not a SQL parser: comments are blanked first, and
 // any window it cannot classify fails loudly rather than passing.
+//
+// RED FROM pm71 TO pm74, BY DESIGN (G-N5 window): the bill-run flow yml still
+// partitions on the CASE … price_component term until pm74 rewrites its
+// readers onto product.offering_price_v (pm74 I3 also makes `scannedTypes`'
+// FROM detection accept the view). Do NOT "fix" this by widening EXCEPTIONS or
+// re-admitting the CASE term — the failure is pm74's unfinished work and it
+// closes there.
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
 
-// The lane's priceType term, normalized (see `normalizeSql`).
-const LANE_TERM =
+// The lane's priceType term, normalized (see `normalizeSql`): the plain
+// `price_type` column since pm71.
+const LANE_TERM = "price_type";
+
+// The pre-Part-6 term, normalized. It must appear nowhere any more.
+const RETIRED_CASE_TERM =
   "case when component_type = 'flat_fee' then price_component ->> 'pricetype' end";
 
 const ALL_COMPONENT_TYPES = [
@@ -91,7 +111,6 @@ type KeyToken =
   | "component_type"
   | "unit_of_measure"
   | "LANE_TERM"
-  | "RAW_PRICE_TYPE"
   | string;
 
 function classifyKey(raw: string): KeyToken {
@@ -99,7 +118,6 @@ function classifyKey(raw: string): KeyToken {
   while (key.startsWith("(") && key.endsWith(")"))
     key = key.slice(1, -1).trim();
   if (key === LANE_TERM) return "LANE_TERM";
-  if (key === "price_component ->> 'pricetype'") return "RAW_PRICE_TYPE";
   return key;
 }
 
@@ -143,16 +161,9 @@ function judgeWindow(site: WindowSite): Verdict {
   if (eq(site.keys, [...base, "LANE_TERM"])) {
     return { ok: true, reason: "full lane key" };
   }
-  // The raw priceType equals the lane term on flat_fee rows.
-  if (eq(site.keys, [...base, "RAW_PRICE_TYPE"])) {
-    return scans.every((t) => t === "flat_fee")
-      ? { ok: true, reason: "raw priceType on a flat_fee-only scan" }
-      : {
-          ok: false,
-          reason: `raw priceType term on a scan of [${scans.join(", ")}] — use the CASE lane term`,
-        };
-  }
-  // The lane term is NULL for every non-flat_fee type.
+  // pm71: the raw `price_component ->> 'priceType'` form (once proven equal on
+  // a flat_fee-only scan) is gone with the jsonb column, so its acceptance
+  // branch is deleted. `price_type` is a constant per non-flat_fee type.
   if (eq(site.keys, base)) {
     return scans.includes("flat_fee")
       ? {
@@ -259,13 +270,17 @@ describe("guardrail 41 — judgeWindow (self-tests)", () => {
     expect(judgeWindow(site([...base, "LANE_TERM"], null)).ok).toBe(true);
   });
 
-  it("accepts the raw priceType only on a flat_fee-only scan", () => {
+  it("rejects the retired CASE and raw price_component terms on any scan (pm71)", () => {
     expect(
-      judgeWindow(site([...base, "RAW_PRICE_TYPE"], ["flat_fee"])).ok,
-    ).toBe(true);
+      judgeWindow(site([...base, classifyKey(RETIRED_CASE_TERM)], null)).ok,
+    ).toBe(false);
     expect(
-      judgeWindow(site([...base, "RAW_PRICE_TYPE"], ["flat_fee", "usage_rate"]))
-        .ok,
+      judgeWindow(
+        site(
+          [...base, classifyKey("price_component ->> 'priceType'")],
+          ["flat_fee"],
+        ),
+      ).ok,
     ).toBe(false);
   });
 
@@ -311,18 +326,38 @@ describe("guardrail 41 — judgeWindow (self-tests)", () => {
 });
 
 describe("guardrail 41 — the price lane key is the same everywhere (PM-ISS-004)", () => {
-  it("the three definition sites spell the lane term identically", () => {
+  // 0049 is history and no longer defines anything: 0056 re-creates the index
+  // under the same name on the plain columns.
+  it("the three definition sites carry the column lane term, not the CASE term", () => {
     for (const file of [
-      "db/migrations/0049_product_price_lane_key.sql",
+      "db/migrations/0056_product_normalize_spec_price.sql",
       "db/schema/product.ts",
       "db/repositories/product-offering-price.ts",
     ]) {
-      const source = blankComments(
-        fs.readFileSync(path.join(REPO_ROOT, file), "utf8"),
-        file,
+      const source = normalizeSql(
+        blankComments(
+          fs.readFileSync(path.join(REPO_ROOT, file), "utf8"),
+          file,
+        ),
       );
-      expect(normalizeSql(source), file).toContain(LANE_TERM);
+      expect(source, file).toContain(LANE_TERM);
+      expect(source, file).not.toContain(RETIRED_CASE_TERM);
     }
+    const migration = normalizeSql(
+      blankComments(
+        fs.readFileSync(
+          path.join(
+            REPO_ROOT,
+            "db/migrations/0056_product_normalize_spec_price.sql",
+          ),
+          "utf8",
+        ),
+        "0056.sql",
+      ),
+    );
+    expect(migration).toContain(
+      "(product_offering_id, component_type, unit_of_measure, price_type, start_date_time) nulls not distinct",
+    );
   });
 
   const sites = SOURCE_ROOTS.flatMap((root) =>
@@ -337,6 +372,56 @@ describe("guardrail 41 — the price lane key is the same everywhere (PM-ISS-004
       .filter(({ v }) => !v.ok)
       .map(({ s, v }) => `${s.file}:${s.line} — ${v.reason}`);
     expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  // Migrations before 0056 are immutable history (0049 defined the CASE index).
+  const isHistoricMigration = (file: string) => {
+    const m = /^db\/migrations\/(\d{4})_/.exec(file);
+    return m !== null && Number(m[1]) < 56;
+  };
+
+  it("the CASE … price_component lane term appears nowhere under the scanned roots (pm71)", () => {
+    const offenders = SOURCE_ROOTS.flatMap((root) =>
+      collectFiles(path.join(REPO_ROOT, root)),
+    )
+      .map((file) => rel(file))
+      .filter((file) => !isHistoricMigration(file))
+      .filter((file) =>
+        normalizeSql(
+          blankComments(
+            fs.readFileSync(path.join(REPO_ROOT, file), "utf8"),
+            file,
+          ),
+        ).includes(RETIRED_CASE_TERM),
+      );
+    expect(offenders, offenders.join("\n")).toEqual([]);
+  });
+
+  // §1.49 / Inv. #61: the envelope is assembled and disassembled in exactly one
+  // place. Outside the price repository only `tests/**` may name either
+  // function (comments stripped).
+  it("toEnvelope / fromEnvelope are referenced only by the price repository and tests", () => {
+    const roots = [
+      "app",
+      "actions",
+      "services",
+      "components",
+      "db/seeds",
+      "db/repositories",
+      "workflow-management",
+    ];
+    const offenders = roots
+      .flatMap((root) => collectFiles(path.join(REPO_ROOT, root)))
+      .map((file) => rel(file))
+      .filter((file) => file !== "db/repositories/product-offering-price.ts")
+      .filter((file) => {
+        const raw = fs.readFileSync(path.join(REPO_ROOT, file), "utf8");
+        const code = /\.tsx?$/.test(file)
+          ? stripComments(raw)
+          : blankComments(raw, file);
+        return /\b(toEnvelope|fromEnvelope)\b/.test(code);
+      });
+    expect(offenders, offenders.join("\n")).toEqual([]);
   });
 
   // Every reader that derives effectivity from product_offering_price. A new

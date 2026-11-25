@@ -14,8 +14,13 @@ import {
 import type { Database } from "@/db/client";
 import { appuser } from "@/db/schema/identity";
 import {
+  popCapacityCommitment,
+  popFlatFee,
+  popMotivationStep,
+  popUsageRate,
   productOffering,
   productOfferingPrice,
+  productSpecCharacteristic,
   productSpecifications,
 } from "@/db/schema/product";
 import type {
@@ -121,6 +126,232 @@ async function resolveNextVersion(
       ),
     );
   return (row?.maxVersion ?? 0) + 1;
+}
+
+// pm72 D4 — the specification half of `branchOfferingAsDraft`: copy ROWS under
+// new ids (§1.60). A specification has no natural key within an offering
+// (`name` is not unique) and Postgres does not promise that a multi-row INSERT
+// … RETURNING keeps VALUES order, so the clones are inserted one statement per
+// specification — the accepted price of an exact id map, on a write path only.
+// The characteristic rows are then copied verbatim, `display_order` included:
+// no renumbering and no record round-trip.
+async function copySpecificationsToBranch(
+  tx: Database,
+  sourceOfferingId: string,
+  offeringId: string,
+): Promise<void> {
+  const sourceSpecs = await tx.query.productSpecifications.findMany({
+    where: eq(productSpecifications.refProductOfferingId, sourceOfferingId),
+    with: {
+      characteristics: {
+        orderBy: asc(productSpecCharacteristic.displayOrder),
+      },
+    },
+  });
+
+  const newIdBySourceId = new Map<string, string>();
+  for (const spec of sourceSpecs) {
+    const [inserted] = await tx
+      .insert(productSpecifications)
+      .values({
+        refProductOfferingId: offeringId,
+        name: spec.name,
+        isMandatory: spec.isMandatory,
+        isDefault: spec.isDefault,
+        defaultValue: spec.defaultValue,
+      })
+      .returning({ productSpecId: productSpecifications.productSpecId });
+    if (!inserted) {
+      throw new Error(
+        `branchOfferingAsDraft: no copied row for source specification ${spec.productSpecId}`,
+      );
+    }
+    newIdBySourceId.set(spec.productSpecId, inserted.productSpecId);
+  }
+
+  const characteristics = sourceSpecs.flatMap((spec) =>
+    spec.characteristics.map((c) => ({
+      productSpecId: newIdBySourceId.get(spec.productSpecId)!,
+      charName: c.charName,
+      charValue: c.charValue,
+      displayOrder: c.displayOrder,
+    })),
+  );
+  if (characteristics.length > 0) {
+    await tx.insert(productSpecCharacteristic).values(characteristics);
+  }
+}
+
+// pm71 D10 — the price half of `branchOfferingAsDraft`: copy ROWS, not
+// envelopes. No `canonicalDecimalString`, `toEnvelope` or `fromEnvelope` on
+// this path (§1.60): a round-trip would re-normalize the stored text, and the
+// branch must be byte-identical in content; envelopes are compared by the test
+// (Inv. #73). Numeric columns are read as `::text` because Drizzle serializes a
+// nested relation through json_build_array, where `numeric` would become a
+// lossy JSON number (same reason as the price repository's read).
+const BRANCH_PRICE_CHILDREN_WITH = {
+  usageRate: {
+    columns: { rateCardLookup: true },
+    extras: {
+      ratePerUnit: sql<string>`${popUsageRate.ratePerUnit}::text`.as(
+        "rate_per_unit",
+      ),
+    },
+  },
+  flatFee: {
+    columns: {},
+    extras: { amount: sql<string>`${popFlatFee.amount}::text`.as("amount") },
+  },
+  capacityCommitment: {
+    columns: {},
+    extras: {
+      committedQuantity:
+        sql<string>`${popCapacityCommitment.committedQuantity}::text`.as(
+          "committed_quantity",
+        ),
+    },
+  },
+  motivationSteps: {
+    columns: {},
+    extras: {
+      aboveQuantity: sql<string>`${popMotivationStep.aboveQuantity}::text`.as(
+        "above_quantity",
+      ),
+      ratePerUnit: sql<string>`${popMotivationStep.ratePerUnit}::text`.as(
+        "rate_per_unit",
+      ),
+    },
+    orderBy: asc(popMotivationStep.aboveQuantity),
+  },
+} as const;
+
+// The lane key (pm70 C14) — unique within one offering by the lane unique
+// index (NULLS NOT DISTINCT), so it maps a source header to its copy without
+// depending on Postgres returning multi-row VALUES in input order.
+function priceLaneKey(row: {
+  componentType: string;
+  unitOfMeasure: string | null;
+  priceType: string;
+  startDateTime: Date;
+}): string {
+  return [
+    row.componentType,
+    row.unitOfMeasure ?? "",
+    row.priceType,
+    row.startDateTime.toISOString(),
+  ].join("\u0000");
+}
+
+async function copyPricesToBranch(
+  tx: Database,
+  sourceOfferingId: string,
+  offeringId: string,
+): Promise<void> {
+  // 1. The source prices with their subtype rows, one relational statement.
+  const sourcePrices = await tx.query.productOfferingPrice.findMany({
+    where: eq(productOfferingPrice.productOfferingId, sourceOfferingId),
+    with: BRANCH_PRICE_CHILDREN_WITH,
+  });
+  if (sourcePrices.length === 0) return;
+
+  // 2. The new headers, one multi-row INSERT, every column copied as before
+  // (pm49 I2), `price_type` added.
+  const inserted = await tx
+    .insert(productOfferingPrice)
+    .values(
+      sourcePrices.map((price) => ({
+        productOfferingId: offeringId,
+        name: price.name,
+        componentType: price.componentType,
+        priceType: price.priceType,
+        recurringChargePeriodLength: price.recurringChargePeriodLength,
+        recurringChargePeriodType: price.recurringChargePeriodType,
+        unitOfMeasure: price.unitOfMeasure,
+        currency: price.currency,
+        glCode: price.glCode,
+        policy: price.policy,
+        startDateTime: price.startDateTime,
+        // Copied, not defaulted — "byte-identical in content" (Design).
+        createdAt: price.createdAt,
+      })),
+    )
+    .returning({
+      productOfferingPriceId: productOfferingPrice.productOfferingPriceId,
+      componentType: productOfferingPrice.componentType,
+      unitOfMeasure: productOfferingPrice.unitOfMeasure,
+      priceType: productOfferingPrice.priceType,
+      startDateTime: productOfferingPrice.startDateTime,
+    });
+
+  // 3. The id map, by lane key.
+  const newIdByLane = new Map<string, string>();
+  for (const row of inserted) {
+    const key = priceLaneKey(row);
+    if (newIdByLane.has(key)) {
+      throw new Error(
+        `branchOfferingAsDraft: two copied prices share the lane key ${JSON.stringify(key)}`,
+      );
+    }
+    newIdByLane.set(key, row.productOfferingPriceId);
+  }
+  const newIdOf = (price: (typeof sourcePrices)[number]): string => {
+    const id = newIdByLane.get(priceLaneKey(price));
+    if (id === undefined) {
+      throw new Error(
+        `branchOfferingAsDraft: no copied header for source price ${price.productOfferingPriceId}`,
+      );
+    }
+    return id;
+  };
+
+  // 4. The children, column for column under the mapped ids — at most four
+  // multi-row INSERTs, each skipped when empty. `component_type` takes each
+  // table's default (§6.36); the stored numeric text passes through unchanged.
+  const usageRates = sourcePrices.flatMap((p) =>
+    p.usageRate
+      ? [
+          {
+            productOfferingPriceId: newIdOf(p),
+            ratePerUnit: p.usageRate.ratePerUnit,
+            rateCardLookup: p.usageRate.rateCardLookup,
+          },
+        ]
+      : [],
+  );
+  const flatFees = sourcePrices.flatMap((p) =>
+    p.flatFee
+      ? [{ productOfferingPriceId: newIdOf(p), amount: p.flatFee.amount }]
+      : [],
+  );
+  const commitments = sourcePrices.flatMap((p) =>
+    p.capacityCommitment
+      ? [
+          {
+            productOfferingPriceId: newIdOf(p),
+            committedQuantity: p.capacityCommitment.committedQuantity,
+          },
+        ]
+      : [],
+  );
+  const steps = sourcePrices.flatMap((p) =>
+    p.motivationSteps.map((s) => ({
+      productOfferingPriceId: newIdOf(p),
+      aboveQuantity: s.aboveQuantity,
+      ratePerUnit: s.ratePerUnit,
+    })),
+  );
+  if (usageRates.length > 0) {
+    await tx.insert(popUsageRate).values(usageRates);
+  }
+  if (flatFees.length > 0) {
+    await tx.insert(popFlatFee).values(flatFees);
+  }
+  if (commitments.length > 0) {
+    await tx.insert(popCapacityCommitment).values(commitments);
+  }
+  if (steps.length > 0) {
+    await tx.insert(popMotivationStep).values(steps);
+  }
 }
 
 export const productOfferingRepository = {
@@ -539,50 +770,8 @@ export const productOfferingRepository = {
     }
     const offeringId = branched.offeringId;
 
-    const sourceSpecs = await tx
-      .select()
-      .from(productSpecifications)
-      .where(eq(productSpecifications.refProductOfferingId, sourceOfferingId));
-    if (sourceSpecs.length > 0) {
-      await tx.insert(productSpecifications).values(
-        sourceSpecs.map((spec) => ({
-          refProductOfferingId: offeringId,
-          name: spec.name,
-          isMandatory: spec.isMandatory,
-          isDefault: spec.isDefault,
-          defaultValue: spec.defaultValue,
-          productSpecCharacteristics: spec.productSpecCharacteristics,
-        })),
-      );
-    }
-
-    const sourcePrices = await tx
-      .select()
-      .from(productOfferingPrice)
-      .where(eq(productOfferingPrice.productOfferingId, sourceOfferingId));
-    if (sourcePrices.length > 0) {
-      await tx.insert(productOfferingPrice).values(
-        sourcePrices.map((price) => ({
-          productOfferingId: offeringId,
-          name: price.name,
-          // Re-keyed to the component envelope (pm49 I2) — the branch copies
-          // the already-persisted, already-validated envelope verbatim; it is
-          // not re-parsed (§2.18, the envelope is parsed once, at its
-          // original write).
-          componentType: price.componentType,
-          priceComponent: price.priceComponent,
-          recurringChargePeriodLength: price.recurringChargePeriodLength,
-          recurringChargePeriodType: price.recurringChargePeriodType,
-          unitOfMeasure: price.unitOfMeasure,
-          currency: price.currency,
-          glCode: price.glCode,
-          policy: price.policy,
-          startDateTime: price.startDateTime,
-          // Copied, not defaulted — "byte-identical in content" (Design).
-          createdAt: price.createdAt,
-        })),
-      );
-    }
+    await copySpecificationsToBranch(tx, sourceOfferingId, offeringId);
+    await copyPricesToBranch(tx, sourceOfferingId, offeringId);
 
     return { offeringId };
   },

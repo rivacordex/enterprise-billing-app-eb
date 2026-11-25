@@ -312,6 +312,36 @@ describe("PriceForm — submission assembly", () => {
     }
   });
 
+  it.each([
+    ["Target capacity commitment", "Committed quantity"],
+    ["Target capacity motivation", "Above quantity"],
+  ])("checks raw quantity text before submitting %s", async (type, label) => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { onSubmit } = renderForm();
+    await user.type(screen.getByLabelText("Price name"), "Capacity price");
+    await user.type(screen.getByLabelText("Currency"), "USD");
+    await user.click(screen.getByRole("radio", { name: type }));
+    await user.selectOptions(screen.getByLabelText("Unit of measure"), "EA");
+    if (label === "Above quantity") {
+      await user.type(screen.getByLabelText("Rate per unit"), "25");
+    }
+    setStartDate(TOMORROW);
+    const field = screen.getByLabelText(label);
+
+    for (const invalid of ["1e3", "1000.0000000", "10000000000000.0000001"]) {
+      fireEvent.change(field, { target: { value: invalid } });
+      submitForm();
+      await waitFor(() =>
+        expect(field).toHaveAttribute("aria-invalid", "true"),
+      );
+      expect(onSubmit).not.toHaveBeenCalled();
+    }
+
+    fireEvent.change(field, { target: { value: "1000" } });
+    submitForm();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+  });
+
   it("shows the --bg-warning banner only when currentStatus is ACTIVE", () => {
     const { unmount } = renderForm({ currentStatus: "DRAFT" });
     expect(screen.queryByText(/is active\. Saving will not/)).toBeNull();

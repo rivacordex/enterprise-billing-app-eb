@@ -50,12 +50,16 @@ const RECURRING_PERIOD_LENGTH_STRINGS: readonly string[] =
 
 const MONEY_REGEX = /^\d+(\.\d+)?$/;
 
+const QUANTITY_ERROR =
+  "Enter a plain decimal quantity greater than 0 with at most six decimal places.";
+
 function isPositiveFiniteNumber(raw: string): boolean {
   const trimmed = raw.trim();
   // A plain positive decimal — the same shape the money fields accept, so a
   // quantity field never silently swallows hex/exponent forms the decimal
   // input never intends (Number("0x10") → 16, Number("1e3") → 1000).
-  if (!MONEY_REGEX.test(trimmed)) return false;
+  // Check the typed scale before Number() can discard digits.
+  if (!/^\d+(\.\d{1,6})?$/.test(trimmed)) return false;
   // `MONEY_REGEX` bounds the shape but not the magnitude — a long enough digit
   // string still parses to `Infinity` (`Number("9".repeat(400))`), which would
   // slip past a bare `> 0`. Require a finite value so the name's promise holds.
@@ -180,7 +184,7 @@ function makePriceFormSchema(baselineStartDate?: string) {
       if (!isPositiveFiniteNumber(value.committedQuantity)) {
         ctx.addIssue({
           code: "custom",
-          message: "Enter a quantity greater than 0.",
+          message: QUANTITY_ERROR,
           path: ["committedQuantity"],
         });
       }
@@ -208,7 +212,7 @@ function makePriceFormSchema(baselineStartDate?: string) {
         if (!isPositiveFiniteNumber(step.aboveQuantity)) {
           ctx.addIssue({
             code: "custom",
-            message: "Enter a quantity greater than 0.",
+            message: QUANTITY_ERROR,
             path: ["steps", index, "aboveQuantity"],
           });
         } else {

@@ -132,22 +132,26 @@ export async function insertPrice(
         throw new OfferingComponentViolationError(validation);
       }
 
-      const { productOfferingPriceId } =
-        await productOfferingPriceRepository.insertPrice(tx, {
-          productOfferingId: targetOfferingId,
-          ...priceData,
-        });
+      const inserted = await productOfferingPriceRepository.insertPrice(tx, {
+        productOfferingId: targetOfferingId,
+        ...priceData,
+      });
 
       await insertAuditEvent(tx, {
         eventType: "PRODUCT_PRICE_ADDED",
         actorUserId: actorId,
         targetEntity: "PRODUCT_OFFERING_PRICE",
-        targetId: productOfferingPriceId,
+        targetId: inserted.productOfferingPriceId,
         beforeData: null,
         afterData: {
           offeringId: targetOfferingId,
           ...(branched ? { branchedFromOfferingId: offeringId } : {}),
           ...priceData,
+          // pm71 D8 (§1.63): the envelope reassembled from the RETURNING rows,
+          // not the parsed input — so the event and the first read agree
+          // (C18: "12.50" in, "12.5" stored and shown). Reassigning a spread
+          // key keeps its first position, so the payload's key order holds.
+          component: inserted.component,
           backdated,
         },
       });
@@ -155,7 +159,7 @@ export async function insertPrice(
       return {
         ok: true,
         offeringId: targetOfferingId,
-        productOfferingPriceId,
+        productOfferingPriceId: inserted.productOfferingPriceId,
         branched,
         backdated,
       };
